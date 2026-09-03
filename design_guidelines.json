@@ -1,0 +1,62 @@
+{
+  "app_name": "NexusERP / NexusHesap",
+  "app_type": "saas_app",
+  "description": "Advanced Cloud ERP, CRM, Accounting & Operations Suite (inspired by BizimHesap and modern enterprise software), featuring automated e-commerce sync, B2B portal, warehouse, manufacturing BOM, barcode management, and an AI Financial Advisor.",
+  "theme_decision": "Professional SaaS Clean Theme with Sophisticated Dark/Light Palette. Deep Slate Obsidian (#0F172A) headers/sidebar, crisp neutral backgrounds (#F8FAFC), emerald financial accents (#10B981), and electric indigo primary highlights (#6366F1).",
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Plus Jakarta Sans",
+    "mono_font": "JetBrains Mono",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight font-extrabold",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base text-slate-600",
+      "small": "text-sm text-slate-500"
+    }
+  },
+  "colors": {
+    "primary": "#6366F1",
+    "primary_hover": "#4F46E5",
+    "secondary": "#0F172A",
+    "accent": "#10B981",
+    "warning": "#F59E0B",
+    "danger": "#EF4444",
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "card_border": "#E2E8F0",
+    "text_main": "#0F172A",
+    "text_muted": "#64748B"
+  },
+  "modules": [
+    "Dashboard KPIs & AI Assistant",
+    "Muhasebe & E-Fatura / E-Arşiv",
+    "Cari Hesaplar (Müşteri & Tedarikçi CRM)",
+    "Banka & Kasa & Sanal POS",
+    "Stok & Barkod Yönetimi",
+    "E-Ticaret Entegrasyon Merkezi (Trendyol, Hepsiburada, Amazon, Shopify, WooCommerce)",
+    "Kargo Entegrasyonları (Yurtiçi, Aras, MNG kargo fişi & barkod)",
+    "Sipariş Yönetimi & B2B Sipariş Portalı",
+    "Depo Transferleri",
+    "Üretim & Reçete (BOM)",
+    "Personel & Bordro",
+    "Multi-Company / Multi-User Switcher"
+  ],
+  "surface_strategies": {
+    "cards": "Flat background, 1px subtle border (#E2E8F0), no harsh shadows, hover lift (-translate-y-0.5) with soft shadow",
+    "headers": "Crystal Glass backdrop-blur-xl bg-white/80 border-b border-slate-200/80 sticky z-50",
+    "tables": "Clean structured layout with sticky header, alternating rows or hover highlights, pill badges for statuses"
+  },
+  "component_path": "/app/frontend/src",
+  "instructions_to_main_agent": [
+    "Build a fully functional, gorgeous, high-performance React SaaS ERP application inspired by BizimHesap with advanced modules.",
+    "Ensure all 12 modules are fully interactive with robust mock data, state management, search filters, modal forms, and live calculations.",
+    "Implement the AI Financial Advisor chat & insights box that provides cash flow forecasting and instant automated answers.",
+    "Include Multi-Company switcher in the top header bar.",
+    "Ensure all interactive buttons, inputs, tabs, and tables include appropriate data-testid attributes for testing.",
+    "Use Lucide icons for clean, modern iconography.",
+    "Use Sonner for toast notifications on successful actions (e.g. 'Fatura başarıyla kesildi', 'Trendyol siparişleri senkronize edildi', 'Stok güncellendi')."
+  ],
+  "image_urls": []
+}
