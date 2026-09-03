@@ -12,6 +12,40 @@ export const AuthProvider = ({ children }) => {
   const [companies, setCompanies] = useState([]);
   const [activeCompany, setActiveCompany] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [moduleOrder, setModuleOrder] = useState(() => { try { return JSON.parse(localStorage.getItem("module_order") || "[]"); } catch { return []; } });
+
+  const BASE_MENU = [
+    { label: "Genel Bakış", path: "/" },
+    { label: "Ön Muhasebe & E-Fatura", path: "/invoices", badge: "GİB" },
+    { label: "Cari Hesaplar", path: "/contacts" },
+    { label: "Banka & Kasa & POS", path: "/banking" },
+    { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
+    { label: "Teklif / Proje / Keşif", path: "/projects", badge: "Yeni" },
+    { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
+    { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
+    { label: "Siparişler", path: "/orders", badge: "B2B" },
+    { label: "Depo & Transfer", path: "/warehouses" },
+    { label: "Üretim & Reçete (BOM)", path: "/production" },
+    { label: "Personel & Bordro", path: "/personnel" },
+    { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
+    { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
+    { label: "Firma Ayarları", path: "/settings" },
+  ];
+  const menuItems = [...BASE_MENU].sort((a, b) => { const ia = moduleOrder.indexOf(a.path), ib = moduleOrder.indexOf(b.path); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
+
+  const persistOrder = async (order) => {
+    setModuleOrder(order);
+    localStorage.setItem("module_order", JSON.stringify(order));
+    try { await axios.put(`${API_URL}/auth/me/preferences`, { module_order: order }, { withCredentials: true }); } catch { /* offline */ }
+  };
+  const moveModule = (from, to) => {
+    if (to < 0 || to >= menuItems.length) return;
+    const paths = menuItems.map((m) => m.path);
+    const [moved] = paths.splice(from, 1);
+    paths.splice(to, 0, moved);
+    persistOrder(paths);
+  };
+  const resetModuleOrder = () => persistOrder([]);
 
   useEffect(() => {
     checkAuth();
@@ -21,6 +55,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
       setUser(res.data.user);
+      if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
         const found = res.data.companies.find(c => c.id === res.data.user?.active_company_id || c._id === res.data.user?.active_company_id);
@@ -87,7 +122,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder }}>
       {children}
     </AuthContext.Provider>
   );

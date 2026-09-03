@@ -25,7 +25,9 @@ import {
   ShieldCheck,
   Menu,
   X,
-  MailOpen
+  MailOpen,
+  Briefcase,
+  Settings
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
@@ -34,21 +36,10 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const menuItems = [
-    { label: "Genel Bakış", icon: LayoutDashboard, path: "/" },
-    { label: "Ön Muhasebe & E-Fatura", icon: FileText, path: "/invoices", badge: "GİB" },
-    { label: "Cari Hesaplar", icon: Users, path: "/contacts" },
-    { label: "Banka & Kasa & POS", icon: Landmark, path: "/banking" },
-    { label: "Stok & Barkod", icon: Package, path: "/stock", badge: "EAN-13" },
-    { label: "E-Ticaret Entegrasyon", icon: ShoppingCart, path: "/ecommerce", badge: "Trendyol" },
-    { label: "Kargo Entegrasyon", icon: Truck, path: "/cargo", badge: "Yurtiçi" },
-    { label: "Siparişler & B2B", icon: Boxes, path: "/orders", badge: "B2B" },
-    { label: "Depo & Transfer", icon: Building2, path: "/warehouses" },
-    { label: "Üretim & Reçete (BOM)", icon: Factory, path: "/production" },
-    { label: "Personel & Bordro", icon: UserCheck, path: "/personnel" },
-    { label: "İletişim: Mail & SMS", icon: MailOpen, path: "/communication", badge: "Netgsm" },
-    { label: "Nexus AI Danışman", icon: Bot, path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
-  ];
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings };
+  const { menuItems: orderedMenu, moveModule } = useAuth();
+  const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
+  const [dragIdx, setDragIdx] = useState(null);
 
   const roleLabels = {
     admin: "Yönetici",
@@ -114,13 +105,18 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
         {/* Navigation Menu */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
-          {menuItems.map((item) => {
+          {menuItems.map((item, idx) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
               <Link
                 key={item.path}
                 to={item.path}
+                draggable
+                onDragStart={() => setDragIdx(idx)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => { if (dragIdx !== null && dragIdx !== idx) moveModule(dragIdx, idx); setDragIdx(null); }}
+                title="Sürükleyip sıralayabilirsiniz"
                 onClick={() => setMobileMenuOpen(false)}
                 data-testid={`nav-item-${item.path.replace('/', '') || 'dashboard'}`}
                 className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${

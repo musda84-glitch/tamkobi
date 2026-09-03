@@ -15,7 +15,6 @@ import {
   CheckCircle2
   , ClipboardList
 } from "lucide-react";
-import { StockCountPanel } from "../components/StockCountPanel";
 
 export default function WarehousePage() {
   const { activeCompany } = useAuth();
@@ -143,11 +142,11 @@ export default function WarehousePage() {
       </div>
 
       <div className="flex items-center gap-1 border-b border-slate-200">
-        {[["warehouses", "Depolar & Transferler", Building2], ["count", "Barkodlu Stok Sayımı", ClipboardList]].map(([k, l, Icon]) => (
+        {[["warehouses", "Depolar & Transferler", Building2], ["count", "Stok Sayımı (Stoklar sayfasına taşındı)", ClipboardList]].map(([k, l, Icon]) => (
           <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`warehouse-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
-      {tab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={warehouses} />}
+      {tab === "count" && <div className="bg-white border border-dashed rounded-2xl p-8 text-center text-xs text-slate-500">Stok sayımı artık <a href="/stock?tab=count" className="text-emerald-700 font-semibold underline" data-testid="goto-stock-count-link">Stoklar & Ürünler → Barkodlu Stok Sayımı</a> sekmesinde.</div>}
       {tab === "warehouses" && (<>
       {/* Warehouses Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

@@ -28,6 +28,7 @@ from seed_data import seed_all_data, seed_partners
 from ai_service import get_financial_ai_advice
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
+from urllib.parse import quote
 import comm_service
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -168,9 +169,276 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "role": user.get("role", "admin"),
             "company_ids": user.get("company_ids", []),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
+            "preferences": user.get("preferences", {}),
         },
         "companies": clean_docs(companies)
     }
+
+@api_router.put("/auth/me/preferences")
+async def update_preferences(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    allowed = {k: v for k, v in req.items() if k in {"module_order", "hidden_modules", "theme"}}
+    await db.users.update_one({"_id": user.get("_id", user.get("id"))}, {"$set": {f"preferences.{k}": v for k, v in allowed.items()}})
+    u = await db.users.find_one({"_id": user.get("_id", user.get("id"))})
+    return (u or {}).get("preferences", {})
+
+# ----------------- FİRMA AYARLARI -----------------
+@api_router.get("/companies/{company_id}")
+async def get_company(company_id: str):
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return clean_doc(c)
+
+@api_router.put("/companies/{company_id}")
+async def update_company(company_id: str, req: Dict[str, Any]):
+    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry"}}
+    await db.companies.update_one({"_id": company_id}, {"$set": allowed})
+    return clean_doc(await db.companies.find_one({"_id": company_id}))
+
+EINVOICE_PROVIDERS = {
+    "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
+    "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
+    "uyumsoft": {"name": "Uyumsoft", "fields": ["username", "password"], "docs": "https://www.uyumsoft.com/"},
+    "izibiz": {"name": "İzibiz", "fields": ["username", "password"], "docs": "https://www.izibiz.com.tr/"},
+    "other": {"name": "Diğer Entegratör", "fields": ["api_url", "username", "password", "api_key"], "docs": ""},
+}
+
+@api_router.get("/einvoice/providers")
+async def einvoice_providers():
+    return [{"code": k, **v} for k, v in EINVOICE_PROVIDERS.items()]
+
+@api_router.get("/einvoice/settings")
+async def get_einvoice_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+    s = await db.einvoice_settings.find_one({"company_id": company_id})
+    if not s:
+        return {"company_id": company_id, "provider": "", "mode": "test", "username": "", "has_password": False, "status": "simulated", "alias": ""}
+    return {"id": str(s["_id"]), "company_id": company_id, "provider": s.get("provider", ""), "mode": s.get("mode", "test"), "username": s.get("username", ""),
+            "api_url": s.get("api_url", ""), "alias": s.get("alias", ""), "has_password": bool(s.get("password_enc")), "status": s.get("status", "simulated"), "updated_at": s.get("updated_at")}
+
+@api_router.put("/einvoice/settings")
+async def save_einvoice_settings(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    provider = req.get("provider", "")
+    if provider and provider not in EINVOICE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
+    update = {"provider": provider, "mode": req.get("mode", "test"), "username": (req.get("username") or "").strip(), "api_url": req.get("api_url", ""), "alias": req.get("alias", ""),
+              "updated_at": datetime.now(timezone.utc).isoformat()}
+    if req.get("password"):
+        update["password_enc"] = comm_service.encrypt(req["password"])
+    existing = await db.einvoice_settings.find_one({"company_id": company_id})
+    has_creds = bool(update["username"] and (update.get("password_enc") or (existing or {}).get("password_enc")))
+    update["status"] = "configured" if provider and has_creds else "simulated"
+    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    return await get_einvoice_settings(company_id)
+
+DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
+                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": ""}
+
+@api_router.get("/companies/{company_id}/print-templates")
+async def get_print_templates(company_id: str):
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    templates = c.get("print_templates", {})
+    return {doc: {**DEFAULT_PRINT_TEMPLATE, **templates.get(doc, {})} for doc in ("invoice", "order", "quote", "dispatch")}
+
+@api_router.put("/companies/{company_id}/print-templates/{doc_type}")
+async def save_print_template(company_id: str, doc_type: str, req: Dict[str, Any]):
+    if doc_type not in ("invoice", "order", "quote", "dispatch"):
+        raise HTTPException(status_code=400, detail="Geçersiz belge türü.")
+    allowed = {k: v for k, v in req.items() if k in DEFAULT_PRINT_TEMPLATE}
+    await db.companies.update_one({"_id": company_id}, {"$set": {f"print_templates.{doc_type}": allowed}})
+    return {**DEFAULT_PRINT_TEMPLATE, **allowed}
+
+@api_router.post("/files/upload")
+async def upload_generic_file(file: UploadFile = File(...), entity: str = Query("misc"), entity_id: str = Query(""), company_id: str = Query("comp_nexus_main_01")):
+    if file.content_type not in ALLOWED_IMAGE_TYPES and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya PDF yükleyebilirsiniz.")
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
+    try:
+        result = put_object(path, data, file.content_type)
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
+    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data),
+                               "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    url = f"/api/files/{result['path']}"
+    if entity in ("quote", "project", "survey", "company") and entity_id:
+        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies}[entity]
+        if entity == "company":
+            await coll.update_one({"_id": entity_id}, {"$set": {"logo_url": url}})
+        else:
+            await coll.update_one({"_id": entity_id}, {"$push": {"images": url}})
+    return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(data)}
+
+# ----------------- TEKLİF / PROJE / KEŞİF -----------------
+async def _next_number(prefix: str, coll) -> str:
+    year = datetime.now(timezone.utc).year
+    c = await db.counters.find_one_and_update({"_id": f"{prefix}-{year}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
+    return f"{prefix}-{year}-{c['seq']:04d}"
+
+def _calc_items(items: List[Dict[str, Any]]):
+    subtotal = vat_total = 0.0
+    for it in items:
+        qty, price, vat = float(it.get("quantity", 0)), float(it.get("unit_price", 0)), float(it.get("vat_rate", 20))
+        disc = float(it.get("discount_rate", 0))
+        line = qty * price * (1 - disc / 100)
+        it["total"] = round(line, 2)
+        it["vat_amount"] = round(line * vat / 100, 2)
+        subtotal += line
+        vat_total += line * vat / 100
+    return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
+
+@api_router.get("/quotes")
+async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, status: Optional[str] = None):
+    q = {"company_id": company_id}
+    if contact_id:
+        q["contact_id"] = contact_id
+    if status:
+        q["status"] = status
+    return clean_docs(await db.quotes.find(q).sort("created_at", -1).to_list(500))
+
+@api_router.post("/quotes")
+async def create_quote(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    items = req.get("items") or []
+    if not items:
+        raise HTTPException(status_code=400, detail="En az bir kalem ekleyin.")
+    subtotal, vat_total, grand_total = _calc_items(items)
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "quote_number": await _next_number("TKF", db.quotes), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
+           "title": req.get("title") or "Fiyat Teklifi", "items": items, "subtotal": subtotal, "vat_total": vat_total, "grand_total": grand_total, "currency": "TRY",
+           "status": "draft", "valid_until": req.get("valid_until"), "notes": req.get("notes", ""), "terms": req.get("terms", ""), "images": [], "project_id": req.get("project_id"),
+           "survey_id": req.get("survey_id"), "invoice_id": None, "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.quotes.insert_one(doc)
+    return clean_doc(doc)
+
+@api_router.get("/quotes/{quote_id}")
+async def get_quote(quote_id: str):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    return clean_doc(q)
+
+@api_router.put("/quotes/{quote_id}")
+async def update_quote(quote_id: str, req: Dict[str, Any]):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    allowed = {k: v for k, v in req.items() if k in {"title", "items", "valid_until", "notes", "terms", "status", "contact_id", "contact_name", "images", "project_id"}}
+    if "items" in allowed:
+        allowed["subtotal"], allowed["vat_total"], allowed["grand_total"] = _calc_items(allowed["items"])
+    await db.quotes.update_one({"_id": quote_id}, {"$set": allowed})
+    return clean_doc(await db.quotes.find_one({"_id": quote_id}))
+
+@api_router.delete("/quotes/{quote_id}")
+async def delete_quote(quote_id: str):
+    await db.quotes.delete_one({"_id": quote_id})
+    return {"status": "success"}
+
+@api_router.post("/quotes/{quote_id}/convert-to-invoice")
+async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    if q.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Bu teklif zaten faturaya dönüştürülmüş.")
+    req = req or {}
+    inv_count = await db.invoices.count_documents({})
+    items = [{"product_id": it.get("product_id"), "name": it.get("name"), "quantity": it.get("quantity"), "unit": it.get("unit", "Adet"), "unit_price": it.get("unit_price"),
+              "vat_rate": it.get("vat_rate", 20), "discount_rate": it.get("discount_rate", 0), "total": it.get("total")} for it in q.get("items", [])]
+    inv = {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "invoice_number": f"NX{datetime.now(timezone.utc).year}{str(inv_count + 1).zfill(8)}", "contact_id": q.get("contact_id"),
+           "contact_name": q.get("contact_name"), "invoice_type": "sales", "e_type": req.get("e_type", "e_archive"), "items": items, "subtotal": q["subtotal"], "vat_total": q["vat_total"],
+           "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
+           "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
+           "quote_id": quote_id, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.invoices.insert_one(inv)
+    if q.get("contact_id"):
+        await db.contacts.update_one({"_id": q["contact_id"]}, {"$inc": {"balance": q["grand_total"]}})
+    await db.quotes.update_one({"_id": quote_id}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
+    return {"status": "success", "invoice": clean_doc(inv), "message": f"{q['quote_number']} → {inv['invoice_number']} taslak fatura oluşturuldu."}
+
+@api_router.get("/projects")
+async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
+    projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
+    out = []
+    for p in projects:
+        quotes = await db.quotes.find({"project_id": p["_id"]}).to_list(100)
+        p["quote_count"] = len(quotes)
+        p["quoted_total"] = sum(q.get("grand_total", 0) for q in quotes)
+        p["invoiced_total"] = sum(q.get("grand_total", 0) for q in quotes if q.get("invoice_id"))
+        out.append(clean_doc(p))
+    return out
+
+@api_router.post("/projects")
+async def create_project(req: Dict[str, Any]):
+    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
+           "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
+           "start_date": req.get("start_date"), "end_date": req.get("end_date"), "description": req.get("description", ""), "address": req.get("address", ""),
+           "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
+           "images": [], "tasks": req.get("tasks", []), "created_at": datetime.now(timezone.utc).isoformat()}
+    if not doc["name"]:
+        raise HTTPException(status_code=400, detail="Proje adı gerekli.")
+    await db.projects.insert_one(doc)
+    return clean_doc(doc)
+
+@api_router.put("/projects/{project_id}")
+async def update_project(project_id: str, req: Dict[str, Any]):
+    allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "tasks", "latitude", "longitude", "location_url"}}
+    await db.projects.update_one({"_id": project_id}, {"$set": allowed})
+    p = await db.projects.find_one({"_id": project_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    return clean_doc(p)
+
+@api_router.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    await db.projects.delete_one({"_id": project_id})
+    return {"status": "success"}
+
+@api_router.get("/surveys")
+async def list_surveys(company_id: Optional[str] = "comp_nexus_main_01"):
+    return clean_docs(await db.surveys.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
+
+@api_router.post("/surveys")
+async def create_survey(req: Dict[str, Any]):
+    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "survey_number": await _next_number("KSF", db.surveys), "contact_id": req.get("contact_id"),
+           "contact_name": req.get("contact_name"), "address": req.get("address", ""), "survey_date": req.get("survey_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+           "assigned_to": req.get("assigned_to", ""), "status": "planned", "notes": req.get("notes", ""), "measurements": req.get("measurements", []), "images": [],
+           "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
+           "project_id": req.get("project_id"), "quote_id": None, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.surveys.insert_one(doc)
+    return clean_doc(doc)
+
+@api_router.put("/surveys/{survey_id}")
+async def update_survey(survey_id: str, req: Dict[str, Any]):
+    allowed = {k: v for k, v in req.items() if k in {"contact_id", "contact_name", "address", "survey_date", "assigned_to", "status", "notes", "measurements", "images", "project_id", "latitude", "longitude", "location_url"}}
+    await db.surveys.update_one({"_id": survey_id}, {"$set": allowed})
+    s = await db.surveys.find_one({"_id": survey_id})
+    if not s:
+        raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
+    return clean_doc(s)
+
+@api_router.delete("/surveys/{survey_id}")
+async def delete_survey(survey_id: str):
+    await db.surveys.delete_one({"_id": survey_id})
+    return {"status": "success"}
+
+@api_router.post("/surveys/{survey_id}/convert-to-quote")
+async def convert_survey_to_quote(survey_id: str):
+    s = await db.surveys.find_one({"_id": survey_id})
+    if not s:
+        raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
+    items = [{"name": m.get("name") or "Kalem", "quantity": float(m.get("quantity", 1) or 1), "unit": m.get("unit", "Adet"), "unit_price": float(m.get("unit_price", 0) or 0), "vat_rate": 20, "discount_rate": 0}
+             for m in s.get("measurements", [])] or [{"name": "Keşif sonrası işçilik/malzeme", "quantity": 1, "unit": "Adet", "unit_price": 0, "vat_rate": 20, "discount_rate": 0}]
+    quote = await create_quote({"company_id": s["company_id"], "contact_id": s.get("contact_id"), "contact_name": s.get("contact_name"), "title": f"{s['survey_number']} keşfine dayalı teklif",
+                                "items": items, "notes": s.get("notes", ""), "project_id": s.get("project_id"), "survey_id": survey_id})
+    await db.quotes.update_one({"_id": quote["id"]}, {"$set": {"images": s.get("images", [])}})
+    await db.surveys.update_one({"_id": survey_id}, {"$set": {"status": "quoted", "quote_id": quote["id"]}})
+    return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu."}
 
 @api_router.post("/auth/register")
 async def register(req: RegisterRequest, response: Response):
@@ -228,6 +496,7 @@ async def get_me(user: dict = Depends(get_current_user)):
             "name": user["name"],
             "role": user.get("role", "admin"),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
+            "preferences": user.get("preferences", {}),
         },
         "companies": clean_docs(companies)
     }
@@ -351,14 +620,18 @@ async def get_contact_overview(contact_id: str):
     orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
-    comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails], key=lambda x: x.get("created_at", ""), reverse=True)
+    wa = await db.whatsapp_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     total_invoiced = sum(i.get("grand_total", 0) for i in invoices if i.get("invoice_type") == "sales")
     total_paid = sum(i.get("paid_amount", 0) for i in invoices if i.get("invoice_type") == "sales")
     return {
         "contact": clean_doc(contact),
         "summary": {"invoice_count": len(invoices), "draft_count": sum(1 for i in invoices if i.get("status") == "draft"), "total_invoiced": total_invoiced,
                     "total_paid": total_paid, "open_amount": total_invoiced - total_paid, "order_count": len(orders), "overdue_count": sum(1 for i in invoices if i.get("payment_status") != "paid" and i.get("invoice_type") == "sales")},
-        "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm
+        "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm,
+        "quotes": clean_docs(quotes), "surveys": clean_docs(surveys)
     }
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
@@ -1420,6 +1693,27 @@ async def mail_send(request: Request, company_id: str = Form("comp_nexus_main_01
 async def mail_logs(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 200):
     logs = await db.mail_logs.find({"company_id": company_id}).sort("created_at", -1).to_list(limit)
     return clean_docs(logs)
+
+@api_router.get("/comm/whatsapp/logs")
+async def whatsapp_logs(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None):
+    q = {"company_id": company_id}
+    if contact_id:
+        q["contact_id"] = contact_id
+    return clean_docs(await db.whatsapp_logs.find(q).sort("created_at", -1).to_list(300))
+
+@api_router.post("/comm/whatsapp/logs")
+async def whatsapp_log(req: Dict[str, Any]):
+    phone = comm_service.normalize_phone(req.get("phone", ""))
+    if not phone:
+        raise HTTPException(status_code=400, detail="Geçerli bir GSM numarası gerekli.")
+    message = (req.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Mesaj boş olamaz.")
+    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
+           "to": phone, "phone": phone, "message": message, "direction": req.get("direction", "outbound"), "status": "logged", "context": req.get("context", "manual"),
+           "wa_link": f"https://wa.me/90{phone}?text={quote(message)}", "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.whatsapp_logs.insert_one(doc)
+    return clean_doc(doc)
 
 @api_router.get("/comm/history")
 async def comm_history(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, ref_id: Optional[str] = None):

@@ -113,6 +113,10 @@ class Product(BaseDocument):
     images: List[str] = []
     show_in_b2b: bool = True
     track_stock: bool = True
+    purchase_vat_rate: float = 20.0
+    price_includes_vat: bool = False
+    vat_exemption_code: Optional[str] = None
+    tags: List[str] = []
     is_active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 

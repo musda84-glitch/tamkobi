@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
-import { Mail, MessageSquare, Megaphone } from "lucide-react";
+import { Mail, MessageSquare, Megaphone, MessageCircle } from "lucide-react";
+import { WhatsAppCenter } from "../components/WhatsAppCenter";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { MailClient } from "../components/MailClient";
 import { SmsCenter } from "../components/SmsCenter";
@@ -10,6 +11,7 @@ import { BulkCampaign } from "../components/BulkCampaign";
 const TABS = [
   { key: "mail", label: "E-posta (Outlook)", icon: Mail },
   { key: "sms", label: "SMS (Netgsm)", icon: MessageSquare },
+  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
   { key: "campaign", label: "Toplu Kampanya", icon: Megaphone }
 ];
 
@@ -26,7 +28,7 @@ export default function CommunicationPage() {
     <div className="space-y-6" data-testid="communication-page">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">İletişim Merkezi</h1>
-        <p className="text-xs sm:text-sm text-slate-500">E-posta kutunuz, Netgsm SMS gönderimi ve toplu kampanyalar tek ekranda</p>
+        <p className="text-xs sm:text-sm text-slate-500">E-posta kutunuz, Netgsm SMS, WhatsApp görüşmeleri ve toplu kampanyalar tek ekranda</p>
       </div>
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
         {TABS.map(({ key, label, icon: Icon }) => (
@@ -37,6 +39,7 @@ export default function CommunicationPage() {
       </div>
       {tab === "mail" && <MailClient companyId={companyId} />}
       {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}
+      {tab === "whatsapp" && <WhatsAppCenter companyId={companyId} contacts={contacts} />}
       {tab === "campaign" && <BulkCampaign companyId={companyId} contacts={contacts} />}
     </div>
   );

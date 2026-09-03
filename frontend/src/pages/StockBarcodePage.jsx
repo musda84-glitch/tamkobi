@@ -20,6 +20,7 @@ import {
   Pencil,
   ClipboardList
 } from "lucide-react";
+import { StockCountPanel } from "../components/StockCountPanel";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -28,6 +29,7 @@ export default function StockBarcodePage() {
   const { activeCompany } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [pageTab, setPageTab] = useState(searchParams.get("tab") || "products");
   const [products, setProducts] = useState([]);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -166,7 +168,7 @@ export default function StockBarcodePage() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Stok & Barkod Yönetimi</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Stoklar & Ürünler</h1>
           <p className="text-xs sm:text-sm text-slate-500">Ürünler, Varyantlar, Barkod Yazdırma ve Hızlı Terminal Modu</p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -179,7 +181,7 @@ export default function StockBarcodePage() {
             <span>Barkod Okuyucu</span>
           </button>
           <button
-            onClick={() => navigate("/warehouses?tab=count")}
+            onClick={() => setPageTab("count")}
             className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition"
             data-testid="go-stock-count-btn"
           >
@@ -197,6 +199,13 @@ export default function StockBarcodePage() {
         </div>
       </div>
 
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        {[["products", "Ürünler & Stoklar", Package], ["count", "Barkodlu Stok Sayımı", ClipboardList]].map(([k, l, Icon]) => (
+          <button key={k} onClick={() => setPageTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${pageTab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`stock-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
+        ))}
+      </div>
+      {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
+      {pageTab === "products" && (<>
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div className="flex items-center gap-2 text-xs overflow-x-auto">
@@ -262,6 +271,7 @@ export default function StockBarcodePage() {
                           <div className="font-bold text-slate-900">{prod.name}</div>
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] font-mono text-indigo-600 font-semibold">SKU: {prod.sku}</span>
+                            {(prod.tags || []).map((t) => <span key={t} className="bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1 py-0.5 text-[9px] font-semibold">{t}</span>)}
                             {prod.variants?.length > 0 && (
                               <button onClick={() => openDetail(prod, "variants")} className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold hover:bg-violet-100" data-testid={`variant-badge-${prod.sku}`}>
                                 <Layers className="w-3 h-3" /> {prod.variants.length} Varyant
@@ -448,6 +458,8 @@ export default function StockBarcodePage() {
           </div>
         </div>
       )}
+
+      </>)}
 
       {/* PRINT BARCODE MODAL */}
       {printBarcodeProduct && (

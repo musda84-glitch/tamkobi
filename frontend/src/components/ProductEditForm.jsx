@@ -7,8 +7,9 @@ import { API_URL } from "../context/AuthContext";
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
 
-export const ProductEditForm = ({ product, onUpdated }) => {
-  const [f, setF] = useState({ name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit, vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price, min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type, show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false });
+export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
+  const [f, setF] = useState({ name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit, vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price, min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type, show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false, purchase_vat_rate: product.purchase_vat_rate ?? 20, price_includes_vat: product.price_includes_vat === true, vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [] });
+  const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
   const genBarcode = () => set("barcode", "868" + String(Math.floor(Math.random() * 1e10)).padStart(10, "0"));
@@ -16,7 +17,7 @@ export const ProductEditForm = ({ product, onUpdated }) => {
     e.preventDefault(); setBusy(true);
     try {
       const r = await axios.put(`${API_URL}/products/${product.id}`, { ...f, vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price), min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity) });
-      onUpdated(r.data); toast.success("Stok kartı güncellendi.");
+      onUpdated(r.data); toast.success("Stok kartı güncellendi."); onSaved?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
@@ -31,12 +32,27 @@ export const ProductEditForm = ({ product, onUpdated }) => {
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
         <F label="Birim"><select value={f.unit} onChange={(e) => set("unit", e.target.value)} className={inputCls}>{["Adet", "Kg", "Metre", "Litre", "Paket", "Koli"].map((u) => <option key={u}>{u}</option>)}</select></F>
       </div>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <F label="Alış (₺)"><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} /></F>
         <F label="Satış (₺)"><input type="number" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-price-input" /></F>
-        <F label="KDV %"><select value={f.vat_rate} onChange={(e) => set("vat_rate", e.target.value)} className={inputCls}>{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></F>
         <F label="Kritik Stok"><input type="number" value={f.min_stock_alert} onChange={(e) => set("min_stock_alert", e.target.value)} className={inputCls} /></F>
       </div>
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2" data-testid="vat-details">
+        <div className="font-bold text-slate-700">KDV Detayları</div>
+        <div className="grid grid-cols-3 gap-2">
+          <F label="Satış KDV %"><select value={f.vat_rate} onChange={(e) => set("vat_rate", e.target.value)} className={inputCls}>{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></F>
+          <F label="Alış KDV %"><select value={f.purchase_vat_rate} onChange={(e) => set("purchase_vat_rate", e.target.value)} className={inputCls} data-testid="edit-purchase-vat-select">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></F>
+          <F label="KDV İstisna Kodu"><input value={f.vat_exemption_code} onChange={(e) => set("vat_exemption_code", e.target.value)} placeholder="Örn: 301, 350" className={inputCls} /></F>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={f.price_includes_vat} onChange={(e) => set("price_includes_vat", e.target.checked)} data-testid="edit-vat-included-checkbox" /><span className="font-semibold">Satış fiyatı KDV dahil</span></label>
+        <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{(f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b> • KDV dahil: <b>{(f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b></div>
+      </div>
+      <F label="Etiketler">
+        <div className="flex flex-wrap gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="tags-editor">
+          {f.tags.map((t) => <span key={t} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5 text-[11px] font-semibold">{t}<button type="button" onClick={() => set("tags", f.tags.filter((x) => x !== t))} className="text-indigo-400 hover:text-rose-600">×</button></span>)}
+          <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); const t = tagInput.trim(); if (t && !f.tags.includes(t)) set("tags", [...f.tags, t]); setTagInput(""); } }} placeholder="Etiket yaz + Enter" className="flex-1 min-w-[120px] bg-transparent outline-none" data-testid="tag-input" />
+        </div>
+      </F>
       {!product.has_variants && <F label="Mevcut Stok (düzeltme)"><input type="number" step="0.01" value={f.stock_quantity} onChange={(e) => set("stock_quantity", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-stock-input" /></F>}
       <div className="grid grid-cols-3 gap-2">
         {[["show_in_b2b", "B2B'de göster"], ["track_stock", "Stok takibi"], ["is_active", "Aktif"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer"><input type="checkbox" checked={f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`edit-${k}-checkbox`} /><span className="font-semibold">{l}</span></label>)}

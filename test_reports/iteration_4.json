@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration-4 verification of NexusHesap Phase-4 (module ordering, Firma Ayarları, print/form system, Teklif/Proje/Keşif, Stoklar & Ürünler). BACKEND: new pytest suite /app/backend/tests/test_iteration4.py (26 cases) + iteration-3 regression suite re-run => 52/53 passed (98%). Covered: PUT /api/auth/me/preferences (persist + disallowed-key filtering), GET/PUT /api/companies/{id} (+404), print-templates GET defaults for 4 doc types / PUT persist / invalid doc_type 400, /einvoice/providers (5) and GET/PUT /einvoice/settings (configured/simulated transitions, password never returned, bad provider 400), POST /api/files/upload (png->quote.images, company logo -> company.logo_url and file served 200 image/png, pdf allowed, txt 400), quotes (TKF numbering, 2000/400/2400 totals, empty items 400, status update, items recalculation on PUT, convert-to-invoice with matching totals + contact balance +grand_total + double-convert 400, delete, 404), projects (PRJ numbering, missing name 400, status PUT, list quote_count/quoted_total/invoiced_total aggregation, delete, 404), surveys (KSF numbering, status PUT, convert-to-quote item Duvar 12x150 = 1800/2160 with survey status quoted + quote_id, delete, 404). FRONTEND (public preview URL): /settings all 8 tabs render clean (no console errors) — company info edit+save toast, logo input present, print template editor (footer edit + save + persistence), e-invoice provider configure -> YAPILANDIRILDI and reset -> SİMÜLE, module up/down reorders the sidebar instantly and survives reload, sidebar HTML5 drag&drop DID work (nav-item-contacts dropped on nav-item-dashboard reordered). /projects: quote create with searchable cari + product picker ('kulak' -> price 1899 auto-filled), row with totals, print preview with correct number/subtotal/KDV/grand total + Yazdır, send -> Gönderildi, image upload -> thumbnail, convert -> NX invoice number in row, reject -> Reddedildi, delete; projects create/status/'Teklif Oluştur' prefilled; surveys create with measurement, 'Yapıldı', 'Teklife Çevir' -> quote appears in Teklifler tab. /contacts?contact_id=cnt_01: detail print buttons for invoices and orders open PrintDocument with 'Form Düzenle' -> template editor; detail-goto-invoices-btn -> /invoices?contact_id=cnt_01 (filter works) and detail-goto-orders-btn -> /orders?customer=...; print-inv-btn / print-order-btn previews OK. /stock: heading 'Stoklar & Ürünler', both tabs + go-stock-count-btn show stock-count-panel, product edit form KDV Detayları (Alış KDV, KDV dahil, istisna kodu) and tags editor (Enter -> chip, saved chip visible in product row). Auth playbook re-verified: bcrypt $2b$12$ hash, httpOnly+Secure+SameSite=None+Partitioned access/refresh cookies, allow_credentials=True with explicit CORS_ORIGINS env list. All test artefacts cleaned via /app/backend/tests/cleanup_iteration4.py; cnt_01 balance restored to -73.573,73; user's mail account (bilgi@matekdekor.com) untouched.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/auth/me", "issue": "Response omits user.preferences (only login returns it). AuthContext line 58 reads res.data.user?.preferences?.module_order on session check, so the server-side module_order is NEVER applied: verified by writing module_order with '/settings' first, clearing localStorage and reloading -> sidebar fell back to the default order. Module ordering is effectively localStorage-only (lost on cache clear / other browser / other device). Fix: add \"preferences\": user.get(\"preferences\", {}) to get_me()."},
+      {"endpoint": "POST /api/quotes, /projects, /surveys (_next_number)", "issue": "Document numbers are generated from count_documents({}), so numbers are reused after a delete (observed TKF-2026-0003 issued twice after the first one was deleted) and are not company-scoped. Use a counters collection or max(existing number)+1 per company."},
+      {"endpoint": "POST /api/integrations/ecommerce/{id}/sync-now and order->invoice (server.py:2033, 2197)", "issue": "contact_id is hardcoded to 'cnt_01' while contact_name comes from the marketplace order, so 5 'Ayşe Gökmen (Pazaryeri Müşterisi)' invoices are attached to Trend Mağazacılık (cnt_01). This corrupts the contact statement/balance and makes /invoices?contact_id=cnt_01 show foreign customers. Create/lookup a real contact per marketplace customer."},
+      {"endpoint": "PUT /api/einvoice/settings", "issue": "Resetting provider to '' keeps the stored password_enc (has_password stays true, UI still shows 'Şifre (kayıtlı)'). Consider clearing credentials when the integrator is unset."},
+      {"endpoint": "clean_doc() (all endpoints)", "issue": "Still returns Mongo `_id` next to `id` in every payload (carried over from iteration 3)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ProjectsPage quote print preview", "issue": "PrintDocument is rendered without onEditTemplate, so the 'Form Düzenle' button is missing on quote previews (it exists on invoice and order previews). Spec asks for Yazdır + Form Düzenle on invoices, orders AND quotes.", "selector": "[data-testid='print-edit-template-btn']", "priority": "MEDIUM"},
+      {"component": "ProductDetailModal / ProductEditForm", "issue": "Modal stays open after a successful save (row updates behind it) and its overlay blocks all clicks on the table, so the user must close it manually; automated re-open of another product was blocked by the overlay.", "selector": "[data-testid='save-product-edit-btn']", "priority": "LOW"},
+      {"component": "ProjectsPage / PersonnelPage (console)", "issue": "React DOM-nesting error persists: '<span> cannot be a child of <option>' (thrown while rendering select options).", "selector": "select option", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Sidebar module ordering persistence", "issue": "Order only survives because of localStorage; server preferences are written but never read back (GET /api/auth/me has no preferences field), so ordering is not per-user cross-device.", "affected_selectors": ["[data-testid='module-down-0']", "nav [data-testid^='nav-item-']"]}
+    ],
+    "design_issues": [
+      {"screen": "/projects quote & survey forms", "issues": ["'Geçerlilik', 'Keşif Tarihi', 'Başlangıç/Bitiş' use the raw browser date input (mm/dd/yyyy, US format inside a Turkish UI) instead of a styled/locale-aware date picker"]},
+      {"screen": "/projects Teklifler table", "issues": ["'Red' (reject) action is a plain text button with no icon/confirm; rejecting is irreversible from the UI (no way to move a rejected quote back to draft)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/cleanup_iteration4.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "Add `\"preferences\": user.get(\"preferences\", {})` to GET /api/auth/me so module_order is restored from the server (currently localStorage-only).",
+    "Pass onEditTemplate to PrintDocument in ProjectsPage so quotes also get the 'Form Düzenle' button.",
+    "Replace count_documents-based numbering (_next_number) with a per-company counter to avoid reused TKF/PRJ/KSF numbers after deletion.",
+    "Stop hardcoding contact_id='cnt_01' in ecommerce sync / order->invoice creation (server.py:2033 & 2197); resolve or create the real contact.",
+    "Close the product edit modal after a successful save (or at least stop the overlay from blocking the grid).",
+    "Optional: clear stored e-invoice password when provider is reset to '' ; fix the <span> inside <option> DOM-nesting warning."
+  ],
+  "critical_code_review_comments": [
+    "get_me() and login return different user shapes (login includes preferences, /auth/me does not) — the frontend relies on the richer shape; keep one serializer for the user object.",
+    "server.py is now 2500 lines with settings/quotes/projects/surveys appended at the top of the file before /auth/register; split into routers per the 700-line guideline.",
+    "update_company / update_project / update_survey silently ignore unknown keys and return 200 even when nothing matched (update_company does not 404 on unknown company id).",
+    "convert_quote_to_invoice builds the invoice dict inline and re-implements numbering (NX+count) instead of reusing create_invoice — duplicate logic drifts from the invoices endpoint (e.g. no stock/e-type validation).",
+    "_calc_items mutates the caller's item dicts in place; acceptable here but surprising for a helper named 'calc'."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new)",
+    "/app/backend/tests/cleanup_iteration4.py (new)",
+    "/app/frontend/src/pages/ProjectsPage.jsx (added missing data-testid='reject-quote-{quote_number}' to the 'Red' button)",
+    "/app/test_reports/iteration_4.json (new)"
+  ],
+  "success_rate": {"backend": "98% (52/53 pytest cases; only the /auth/me preferences assertion fails)", "frontend": "95% (all Phase-4 flows work; missing 'Form Düzenle' on quote preview + module order not server-restored)"},
+  "seed_data_creation": "Temporary only, all removed by /app/backend/tests/cleanup_iteration4.py: quotes TEST_UI_Teklif (TKF-2026-0003) / TEST_RED_Teklif / API TEST_ quotes, project TEST_UI_Proje (PRJ-2026-0001), survey TEST_UI_Kesif_Adres (KSF-2026-0002) + its generated quote, invoices NX202600000012/13, product tag TEST_ETIKET and purchase_vat_rate on NX-BT-PRO (restored to 20), company phone/iban and invoice print template restored, company logo_url restored to null, e-invoice settings reset to simulated. cnt_01 balance restored to -73.573,73. Pre-existing dev rows left untouched (TKF-2026-0001/0002, KSF-2026-0001, mail account bilgi@matekdekor.com).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (login OK, bcrypt $2b$12$, httpOnly cookies set)",
+  "context_for_next_testing_agent": "Regression suites: /app/backend/tests/backend_test.py (iter2), test_iteration3.py (iter3, 27 green), test_iteration4.py (iter4, 25/26 green — the single failure is the real GET /auth/me preferences defect, keep it failing until fixed). Run `python /app/backend/tests/cleanup_iteration4.py` after any /projects UI test (it deletes TEST_ quotes/projects/surveys, their invoices and rebalances cnt_01; it subtracts converted invoice totals, so do not run it twice for the same data). Use the public preview URL from /app/frontend/.env. Verified working: settings tabs, print/form editor, e-invoice simulate/configure, module up/down + sidebar drag&drop, full quote/project/survey lifecycle, contact detail print & navigation, stock tags/KDV editor. Not retested this round: SMS/mail send flows, banking connections, barcode stock-count full flow (smoke only).",
+  "rca_of_the_issue": "Module ordering persistence: update_preferences writes preferences.module_order to db.users (verified in Mongo), but get_me() serialises only id/email/name/role/active_company_id. AuthContext.checkAuth reads res.data.user?.preferences?.module_order, gets undefined, and keeps the localStorage/default order. Reproduce: PUT /api/auth/me/preferences {module_order:['/settings',...]} -> 200; GET /api/auth/me -> user object without 'preferences'; clear localStorage['module_order'] and reload -> sidebar shows default order. Fix: return preferences from get_me (one line), same shape as the login response."
+}

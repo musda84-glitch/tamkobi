@@ -22,7 +22,8 @@ import {
 } from "lucide-react";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { SearchSelect } from "../components/SearchSelect";
 
 export default function InvoicesPage() {
@@ -38,6 +39,10 @@ export default function InvoicesPage() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const contactFilter = searchParams.get("contact_id") || "";
+  const [printInv, setPrintInv] = useState(null);
+  const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState("");
@@ -113,8 +118,8 @@ export default function InvoicesPage() {
   const handleItemChange = (index, field, val) => {
     const items = [...formData.items];
     items[index][field] = val;
-    if (field === "quantity" || field === "unit_price") {
-      items[index].total = Number(items[index].quantity || 0) * Number(items[index].unit_price || 0);
+    if (field === "quantity" || field === "unit_price" || field === "discount_rate") {
+      items[index].total = Number(items[index].quantity || 0) * Number(items[index].unit_price || 0) * (1 - Number(items[index].discount_rate || 0) / 100);
     }
     setFormData({ ...formData, items });
   };
@@ -246,7 +251,7 @@ export default function InvoicesPage() {
                   </td>
                 </tr>
               ) : (
-                invoices.map((inv) => (
+                invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter).map((inv) => (
                   <tr key={inv.id || inv._id || inv.invoice_number} className="hover:bg-slate-50/70 transition" data-testid={`invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
@@ -300,6 +305,7 @@ export default function InvoicesPage() {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
+                        <button onClick={() => setPrintInv(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Şablonlu Yazdır / Form Düzenle" data-testid={`print-inv-btn-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
                         <button
                           onClick={() => setNotifyInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
@@ -341,6 +347,8 @@ export default function InvoicesPage() {
         </div>
       </div>
 
+      {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
+      {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
       {notifyInvoice && (() => {
         const c = contacts.find(cnt => cnt.id === notifyInvoice.contact_id) || {};
         const overdue = notifyInvoice.payment_status !== 'paid';
@@ -452,7 +460,7 @@ export default function InvoicesPage() {
 
                 {formData.items.map((item, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
-                    <div className="col-span-4">
+                    <div className="col-span-3">
                       <SearchSelect
                         value={item.product_id}
                         options={products}
@@ -472,6 +480,19 @@ export default function InvoicesPage() {
                         value={item.quantity}
                         onChange={(e) => handleItemChange(idx, "quantity", e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded p-1.5 text-center"
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        placeholder="İsk. %"
+                        title="İskonto %"
+                        value={item.discount_rate || ""}
+                        onChange={(e) => handleItemChange(idx, "discount_rate", e.target.value)}
+                        className="w-full bg-white border border-rose-200 rounded p-1.5 text-center text-rose-700"
+                        data-testid={`inv-item-discount-${idx}`}
                       />
                     </div>
                     <div className="col-span-2">

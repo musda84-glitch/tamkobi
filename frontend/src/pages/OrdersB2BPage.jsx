@@ -20,12 +20,21 @@ import {
   MessageSquare
 } from "lucide-react";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
+import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { useSearchParams } from "react-router-dom";
+import { Printer, Tag } from "lucide-react";
+import { CargoLabel } from "../components/CargoLabel";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
   const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
   const [orders, setOrders] = useState([]);
   const [notifyOrder, setNotifyOrder] = useState(null);
+  const [printOrder, setPrintOrder] = useState(null);
+  const [labelOrder, setLabelOrder] = useState(null);
+  const [editTpl, setEditTpl] = useState(false);
+  const [searchParams] = useSearchParams();
+  const customerFilter = searchParams.get("customer") || "";
   const [products, setProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +166,9 @@ export default function OrdersB2BPage() {
 
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
+      {labelOrder && <CargoLabel order={labelOrder} company={activeCompany} onClose={() => setLabelOrder(null)} />}
+      {printOrder && <PrintDocument docType="order" doc={printOrder} company={activeCompany} onClose={() => setPrintOrder(null)} onEditTemplate={() => setEditTpl(true)} />}
+      {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="order" onClose={() => setEditTpl(false)} />}
       {notifyOrder && (
         <QuickMessageModal
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
@@ -215,7 +227,7 @@ export default function OrdersB2BPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {orders.map((ord) => (
+                {orders.filter((o) => !customerFilter || o.customer_name === customerFilter).map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className="hover:bg-slate-50/70 transition" data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
@@ -284,6 +296,8 @@ export default function OrdersB2BPage() {
                             {ord.cargo_tracking_number}
                           </span>
                         )}
+                        <button onClick={() => setLabelOrder(ord)} className="p-1.5 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition" title="Kargo Etiketi Yazdır" data-testid={`cargo-label-btn-${ord.order_number}`}><Tag className="w-4 h-4" /></button>
+                        <button onClick={() => setPrintOrder(ord)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Sipariş Formu Yazdır" data-testid={`print-order-btn-${ord.order_number}`}><Printer className="w-4 h-4" /></button>
                         <button
                           onClick={() => setNotifyOrder(ord)}
                           className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"

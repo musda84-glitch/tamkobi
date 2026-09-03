@@ -46,7 +46,7 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
         </div>
 
         <div className="p-6 overflow-y-auto">
-          {tab === "general" && <ProductEditForm key={product.id} product={product} onUpdated={onUpdated} />}
+          {tab === "general" && <ProductEditForm key={product.id} product={product} onUpdated={onUpdated} onSaved={onClose} />}
           {tab === "images" && <ProductImageGallery product={product} onUpdated={onUpdated} />}
           {tab === "variants" && <VariantManager key={product.id} product={product} onUpdated={onUpdated} />}
         </div>
