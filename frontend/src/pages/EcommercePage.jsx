@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { ProductMappingPanel } from "../components/ProductMappingPanel";
 import {
   ShoppingCart,
   CheckCircle2,
@@ -290,6 +291,10 @@ export default function EcommercePage() {
           </div>
         </div>
       )}
+      <div className="pt-4 border-t border-slate-200">
+        <h2 className="text-base font-bold text-slate-900 mb-3">Ürün Eşleştirme (Pazaryeri SKU ↔ Stok Kartı)</h2>
+        <ProductMappingPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+      </div>
     </div>
   );
 }

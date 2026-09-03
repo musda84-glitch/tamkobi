@@ -19,6 +19,7 @@ import AIAssistantPage from "./pages/AIAssistantPage";
 import CommunicationPage from "./pages/CommunicationPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import AccountantPage from "./pages/AccountantPage";
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="/communication" element={<CommunicationPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/accountant" element={<AccountantPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </MainLayout>

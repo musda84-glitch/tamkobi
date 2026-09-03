@@ -18,6 +18,7 @@ import {
   , CalendarDays, Gift
 } from "lucide-react";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
+import { AttendancePanel } from "../components/AttendancePanel";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -148,10 +149,12 @@ export default function PersonnelPage() {
       </div>
 
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
-        {[["payroll", "Çalışanlar & Bordro", UserCheck], ["leaves", "İzin Talepleri", CalendarDays], ["salary", "Maaş Hesaplama", Calculator], ["bonus", "Prim / İkinci Maaş", Gift]].map(([k, l, Icon]) => (
+        {[["payroll", "Çalışanlar & Bordro", UserCheck], ["attendance", "Puantaj", Clock],
+          ["leaves", "İzin Talepleri", CalendarDays], ["salary", "Maaş Hesaplama", Calculator], ["bonus", "Prim / İkinci Maaş", Gift]].map(([k, l, Icon]) => (
           <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`personnel-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
+      {tab === "attendance" && <AttendancePanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
       {tab === "leaves" && <LeaveRequestsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} onChanged={loadPersonnelData} />}
       {tab === "salary" && <SalaryCalculator />}
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}

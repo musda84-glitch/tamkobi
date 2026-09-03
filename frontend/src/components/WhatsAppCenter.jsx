@@ -16,8 +16,10 @@ export const WhatsAppCenter = ({ companyId, contacts }) => {
     e.preventDefault();
     const c = contacts.find((x) => x.id === form.contact_id);
     try {
-      const r = await axios.post(`${API_URL}/comm/whatsapp/logs`, { company_id: companyId, ...form, contact_id: c?.id, contact_name: c?.name });
-      if (openWa && form.direction === "outbound") window.open(r.data.wa_link, "_blank");
+      const url = form.direction === "outbound" && openWa ? `${API_URL}/comm/whatsapp/send` : `${API_URL}/comm/whatsapp/logs`;
+      const r = await axios.post(url, { company_id: companyId, ...form, contact_id: c?.id, contact_name: c?.name });
+      if (openWa && form.direction === "outbound" && r.data.status !== "sent") window.open(r.data.wa_link, "_blank");
+      if (r.data.message_info) toast.info(r.data.message_info);
       toast.success(form.direction === "outbound" ? "Mesaj kaydedildi." : "Gelen görüşme kaydedildi."); setForm({ ...form, message: "" }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };

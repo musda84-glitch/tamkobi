@@ -22,7 +22,7 @@ import {
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
-import { Printer, Tag } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon } from "lucide-react";
 import { CargoLabel } from "../components/CargoLabel";
 
 export default function OrdersB2BPage() {
@@ -32,6 +32,12 @@ export default function OrdersB2BPage() {
   const [notifyOrder, setNotifyOrder] = useState(null);
   const [printOrder, setPrintOrder] = useState(null);
   const [labelOrder, setLabelOrder] = useState(null);
+  const [dispatchDoc, setDispatchDoc] = useState(null);
+  const [returnOrder, setReturnOrder] = useState(null);
+  const [returnReason, setReturnReason] = useState("");
+  const approve = async (ord) => { try { const carrier = window.prompt("Kargo firması seçin (yurtici / aras / mng / surat / ptt / trendyol_express / hepsijet):", ord.cargo_carrier || "yurtici"); if (carrier === null) return; await axios.post(`${API_URL}/orders/${ord.id}/approve`, { cargo_carrier: carrier }); toast.success("Sipariş onaylandı."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
+  const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
+  const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams] = useSearchParams();
   const customerFilter = searchParams.get("customer") || "";
@@ -166,6 +172,14 @@ export default function OrdersB2BPage() {
 
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
+      {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
+      {returnOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
+          <h3 className="text-sm font-bold">İade — {returnOrder.order_number}</h3><p className="text-slate-500">Tüm kalemler iade alınır, stok geri eklenir ve iade kaydı oluşturulur.</p>
+          <textarea value={returnReason} onChange={(e) => setReturnReason(e.target.value)} rows={3} placeholder="İade nedeni" className="w-full bg-slate-50 border rounded-lg p-2" data-testid="return-reason-input" />
+          <div className="flex justify-end gap-2"><button onClick={() => setReturnOrder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={doReturn} className="px-4 py-1.5 bg-rose-600 text-white rounded-lg font-semibold" data-testid="return-confirm-btn">İadeyi Kaydet</button></div>
+        </div></div>
+      )}
       {labelOrder && <CargoLabel order={labelOrder} company={activeCompany} onClose={() => setLabelOrder(null)} />}
       {printOrder && <PrintDocument docType="order" doc={printOrder} company={activeCompany} onClose={() => setPrintOrder(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="order" onClose={() => setEditTpl(false)} />}
@@ -261,6 +275,8 @@ export default function OrdersB2BPage() {
                         <option value="preparing">Hazırlanıyor</option>
                         <option value="shipped">Kargolandı</option>
                         <option value="completed">Tamamlandı</option>
+                        <option value="returned">İade Edildi</option>
+                        <option value="partially_returned">Kısmi İade</option>
                       </select>
                     </td>
                     <td className="px-4 py-3 text-center">
@@ -296,6 +312,9 @@ export default function OrdersB2BPage() {
                             {ord.cargo_tracking_number}
                           </span>
                         )}
+                        {["pending", "new"].includes(ord.order_status) && <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Siparişi Onayla + Kargo Seç" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button>}
+                        <button onClick={() => makeDispatch(ord)} className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition" title={ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır"} data-testid={`dispatch-btn-${ord.order_number}`}><FileIcon className="w-4 h-4" /></button>
+                        {!["returned"].includes(ord.order_status) && <button onClick={() => setReturnOrder(ord)} className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="İade Al" data-testid={`return-order-btn-${ord.order_number}`}><RotateCcw className="w-4 h-4" /></button>}
                         <button onClick={() => setLabelOrder(ord)} className="p-1.5 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition" title="Kargo Etiketi Yazdır" data-testid={`cargo-label-btn-${ord.order_number}`}><Tag className="w-4 h-4" /></button>
                         <button onClick={() => setPrintOrder(ord)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Sipariş Formu Yazdır" data-testid={`print-order-btn-${ord.order_number}`}><Printer className="w-4 h-4" /></button>
                         <button

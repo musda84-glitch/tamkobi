@@ -27,7 +27,8 @@ import {
   X,
   MailOpen,
   Briefcase,
-  Settings
+  Settings,
+  Calculator
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
@@ -36,7 +37,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings };
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator };
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);

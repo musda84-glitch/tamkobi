@@ -28,6 +28,7 @@ from seed_data import seed_all_data, seed_partners
 from ai_service import get_financial_ai_advice
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
+import httpx
 from urllib.parse import quote
 import comm_service
 
@@ -876,8 +877,28 @@ async def create_invoice(invoice: Invoice):
     await db.invoices.insert_one(doc)
     return clean_doc(doc)
 
+@api_router.put("/invoices/{invoice_id}")
+async def update_invoice(invoice_id: str, req: Dict[str, Any]):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="Sadece taslak faturalar düzenlenebilir.")
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name"}}
+    if "items" in allowed:
+        subtotal = sum(float(i.get("total", 0)) for i in allowed["items"])
+        vat_total = sum(float(i.get("total", 0)) * float(i.get("vat_rate", 20)) / 100 for i in allowed["items"])
+        allowed.update({"subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "grand_total": round(subtotal + vat_total, 2)})
+        if inv.get("contact_id") and inv.get("invoice_type") == "sales":
+            await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["grand_total"] - inv.get("grand_total", 0)}})
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
+    return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
+
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
-async def send_invoice_to_gib(invoice_id: str):
+async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    if req.get("e_type"):
+        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"e_type": req["e_type"]}})
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
@@ -1984,6 +2005,266 @@ async def delete_bonus(bonus_id: str):
         await db.bank_accounts.update_one({"_id": b["account_id"]}, {"$inc": {"current_balance": b["amount"]}})
     await db.bonus_payments.delete_one({"_id": bonus_id})
     return {"status": "success"}
+
+
+# ----------------- E-TİCARET DETAYLARI: EŞLEŞTİRME, İADE, KARGO SEÇİMİ -----------------
+@api_router.get("/integrations/ecommerce/mappings")
+async def list_mappings(company_id: Optional[str] = "comp_nexus_main_01"):
+    return clean_docs(await db.marketplace_mappings.find({"company_id": company_id}).sort("created_at", -1).to_list(1000))
+
+@api_router.post("/integrations/ecommerce/mappings")
+async def create_mapping(req: Dict[str, Any]):
+    product = await db.products.find_one({"_id": req.get("product_id")})
+    if not product:
+        raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+    channel = (req.get("channel") or "").lower()
+    ext_sku = (req.get("marketplace_sku") or "").strip()
+    if not channel or not ext_sku:
+        raise HTTPException(status_code=400, detail="Pazaryeri ve pazaryeri SKU/barkod zorunludur.")
+    doc = {"company_id": req.get("company_id", "comp_nexus_main_01"), "channel": channel, "marketplace_sku": ext_sku, "marketplace_product_id": req.get("marketplace_product_id", ""),
+           "product_id": product["_id"], "product_name": product["name"], "sku": product.get("sku"), "variant_id": req.get("variant_id"), "sync_stock": bool(req.get("sync_stock", True)),
+           "sync_price": bool(req.get("sync_price", True)), "updated_at": datetime.now(timezone.utc).isoformat()}
+    await db.marketplace_mappings.update_one({"company_id": doc["company_id"], "channel": channel, "marketplace_sku": ext_sku},
+                                             {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return clean_doc(await db.marketplace_mappings.find_one({"company_id": doc["company_id"], "channel": channel, "marketplace_sku": ext_sku}))
+
+@api_router.delete("/integrations/ecommerce/mappings/{mapping_id}")
+async def delete_mapping(mapping_id: str):
+    await db.marketplace_mappings.delete_one({"_id": mapping_id})
+    return {"status": "success"}
+
+@api_router.get("/integrations/ecommerce/unmapped")
+async def unmapped_items(company_id: Optional[str] = "comp_nexus_main_01"):
+    orders = await db.orders.find({"company_id": company_id, "channel": {"$nin": ["b2b", None]}}).to_list(1000)
+    maps = await db.marketplace_mappings.find({"company_id": company_id}).to_list(1000)
+    mapped = {(m["channel"], m["marketplace_sku"]) for m in maps}
+    products = {p["_id"] for p in await db.products.find({"company_id": company_id}, {"_id": 1}).to_list(5000)}
+    seen, out = set(), []
+    for o in orders:
+        for it in o.get("items", []):
+            key = (o.get("channel"), it.get("sku") or it.get("product_name"))
+            if key in mapped or key in seen or (it.get("product_id") in products and key in mapped):
+                continue
+            seen.add(key)
+            out.append({"channel": o.get("channel"), "marketplace_sku": it.get("sku") or "", "product_name": it.get("product_name"), "has_local_product": it.get("product_id") in products})
+    return out
+
+@api_router.post("/orders/{order_id}/approve")
+async def approve_order(order_id: str, req: Dict[str, Any] = None):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    req = req or {}
+    update = {"order_status": "approved", "approved_at": datetime.now(timezone.utc).isoformat()}
+    if req.get("cargo_carrier"):
+        update["cargo_carrier"] = req["cargo_carrier"]
+    await db.orders.update_one({"_id": order_id}, {"$set": update})
+    return clean_doc(await db.orders.find_one({"_id": order_id}))
+
+@api_router.post("/orders/{order_id}/return")
+async def return_order(order_id: str, req: Dict[str, Any]):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("order_status") in ("returned", "İade Edildi"):
+        raise HTTPException(status_code=400, detail="Sipariş zaten iade edilmiş.")
+    items = req.get("items") or o.get("items", [])
+    restock = bool(req.get("restock", True))
+    total = 0.0
+    for it in items:
+        qty = float(it.get("quantity", 0))
+        total += qty * float(it.get("unit_price", 0))
+        if restock and it.get("product_id"):
+            await db.products.update_one({"_id": it["product_id"]}, {"$inc": {"stock_quantity": qty}})
+            await db.stock_movements.insert_one({"_id": str(uuid.uuid4()), "product_id": it["product_id"], "product_name": it.get("product_name"), "change": qty, "reason": f"İade: {o['order_number']}", "date": datetime.now(timezone.utc).isoformat()})
+    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "order_id": order_id, "order_number": o["order_number"], "channel": o.get("channel"), "customer_name": o.get("customer_name"),
+           "items": items, "reason": req.get("reason", ""), "refund_amount": round(total, 2), "restocked": restock, "status": "completed", "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.returns.insert_one(doc)
+    partial = len(items) < len(o.get("items", []))
+    await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "partially_returned" if partial else "returned", "return_id": doc["_id"]}})
+    return {"status": "success", "return": clean_doc(doc), "message": f"{o['order_number']} için {total:,.2f} ₺ iade kaydedildi{' ve stok geri alındı' if restock else ''}."}
+
+@api_router.get("/returns")
+async def list_returns(company_id: Optional[str] = "comp_nexus_main_01"):
+    return clean_docs(await db.returns.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
+
+@api_router.post("/orders/{order_id}/create-dispatch")
+async def create_dispatch(order_id: str):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("dispatch_id"):
+        d = await db.invoices.find_one({"_id": o["dispatch_id"]})
+        return {"status": "exists", "dispatch": clean_doc(d), "message": "Bu sipariş için irsaliye zaten mevcut."}
+    number = await _next_number("IRS", db.invoices)
+    contact = await db.contacts.find_one({"name": o.get("customer_name"), "company_id": o["company_id"]})
+    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"] if contact else None,
+           "contact_name": o.get("customer_name"), "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
+           "items": [{"product_id": it.get("product_id"), "name": it.get("product_name"), "quantity": it.get("quantity"), "unit": "Adet", "unit_price": it.get("unit_price"), "vat_rate": 0, "total": it.get("total")} for it in o.get("items", [])],
+           "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
+           "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier"), "cargo_tracking_number": o.get("cargo_tracking_number"),
+           "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.invoices.insert_one(doc)
+    await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
+    return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
+
+# ----------------- PERSONEL PUANTAJ -----------------
+@api_router.get("/personnel/attendance")
+async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    rows = await db.attendance.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
+    emps = await db.employees.find({"company_id": company_id}).to_list(200)
+    summary = []
+    for e in emps:
+        mine = [r for r in rows if r["employee_id"] == e["_id"]]
+        summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], "days_present": sum(1 for r in mine if r.get("status") == "present"),
+                        "days_absent": sum(1 for r in mine if r.get("status") == "absent"), "days_leave": sum(1 for r in mine if r.get("status") == "leave"),
+                        "total_hours": round(sum(r.get("hours", 0) for r in mine), 2), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in mine), 2),
+                        "today": next((r for r in mine if r["date"] == datetime.now(timezone.utc).strftime("%Y-%m-%d")), None)})
+    return {"month": month, "records": clean_docs(rows), "summary": summary}
+
+@api_router.post("/personnel/attendance")
+async def upsert_attendance(req: Dict[str, Any]):
+    emp = await db.employees.find_one({"_id": req.get("employee_id")})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    action = req.get("action")
+    now_hm = datetime.now(timezone.utc).astimezone().strftime("%H:%M")
+    rec = {"company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "date": date, "status": req.get("status") or existing.get("status") or "present",
+           "check_in": req.get("check_in") or existing.get("check_in"), "check_out": req.get("check_out") or existing.get("check_out"), "note": req.get("note", existing.get("note", ""))}
+    if action in ("check_in", "check_out"):
+        rec["status"] = "present"
+    if action == "check_in":
+        rec["check_in"] = now_hm
+    if action == "check_out":
+        rec["check_out"] = now_hm
+    if rec.get("check_in") and rec.get("check_out"):
+        h1, m1 = map(int, rec["check_in"].split(":")); h2, m2 = map(int, rec["check_out"].split(":"))
+        hours = max(0.0, ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60 - float(req.get("break_hours", 1)))
+        rec["hours"] = round(hours, 2)
+        rec["overtime_hours"] = round(max(0.0, hours - float(req.get("daily_hours", 8))), 2)
+    else:
+        rec["hours"] = existing.get("hours", 0); rec["overtime_hours"] = existing.get("overtime_hours", 0)
+    if rec["status"] in ("absent", "leave"):
+        rec.update({"check_in": None, "check_out": None, "hours": 0, "overtime_hours": 0})
+    rec["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.attendance.update_one({"employee_id": emp["_id"], "date": date}, {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4())}}, upsert=True)
+    return clean_doc(await db.attendance.find_one({"employee_id": emp["_id"], "date": date}))
+
+# ----------------- MALİ MÜŞAVİR PANELİ -----------------
+@api_router.get("/accountant/summary")
+async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    invs = await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).to_list(5000)
+    sales = [i for i in invs if i.get("invoice_type") == "sales"]
+    purchases = [i for i in invs if i.get("invoice_type") == "purchase"]
+    by_vat = {}
+    for i in sales + purchases:
+        for it in i.get("items", []):
+            r = str(it.get("vat_rate", 20)); base = float(it.get("total", 0)); vat = base * float(it.get("vat_rate", 20)) / 100
+            k = ("sales" if i.get("invoice_type") == "sales" else "purchase")
+            by_vat.setdefault(r, {"rate": r, "sales_base": 0, "sales_vat": 0, "purchase_base": 0, "purchase_vat": 0})
+            by_vat[r][f"{k}_base"] += base; by_vat[r][f"{k}_vat"] += vat
+    txs = await db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).to_list(5000)
+    payrolls = await db.payrolls.find({"company_id": company_id, "period": month}).to_list(500)
+    calc_vat = sum(i.get("vat_total", 0) for i in sales); ded_vat = sum(i.get("vat_total", 0) for i in purchases)
+    return {"month": month,
+            "sales": {"count": len(sales), "subtotal": sum(i.get("subtotal", 0) for i in sales), "vat": calc_vat, "total": sum(i.get("grand_total", 0) for i in sales), "unpaid": sum(i.get("grand_total", 0) - i.get("paid_amount", 0) for i in sales if i.get("payment_status") != "paid")},
+            "purchases": {"count": len(purchases), "subtotal": sum(i.get("subtotal", 0) for i in purchases), "vat": ded_vat, "total": sum(i.get("grand_total", 0) for i in purchases)},
+            "vat": {"calculated": calc_vat, "deductible": ded_vat, "payable": max(0.0, calc_vat - ded_vat), "carryover": max(0.0, ded_vat - calc_vat), "by_rate": sorted(by_vat.values(), key=lambda x: -float(x["rate"]))},
+            "cash": {"inflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "outflow"), "count": len(txs)},
+            "payroll": {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls)},
+            "e_docs": {"gib_sent": sum(1 for i in invs if i.get("status") == "sent"), "draft": sum(1 for i in invs if i.get("status") == "draft"), "dispatch": sum(1 for i in invs if i.get("invoice_type") == "dispatch")},
+            "invoices": clean_docs(sorted(invs, key=lambda x: x.get("issue_date", ""), reverse=True))}
+
+@api_router.get("/accountant/export")
+async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None, kind: str = "invoices"):
+    import csv, io
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    buf = io.StringIO(); w = csv.writer(buf, delimiter=";")
+    if kind == "invoices":
+        w.writerow(["Belge No", "Tarih", "Tür", "E-Belge", "Cari", "VKN", "Matrah", "KDV", "Toplam", "Ödeme", "GİB"])
+        for i in await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000):
+            c = await db.contacts.find_one({"_id": i.get("contact_id")}) if i.get("contact_id") else None
+            w.writerow([i.get("invoice_number"), i.get("issue_date"), i.get("invoice_type"), i.get("e_type"), i.get("contact_name"), (c or {}).get("tax_number_or_id", ""), f"{i.get('subtotal', 0):.2f}", f"{i.get('vat_total', 0):.2f}", f"{i.get('grand_total', 0):.2f}", i.get("payment_status"), i.get("gib_status") or ""])
+    else:
+        w.writerow(["Tarih", "Hesap", "Tür", "Kategori", "Açıklama", "Tutar"])
+        for t in await db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", 1).to_list(5000):
+            w.writerow([t.get("date"), t.get("account_name"), "Giriş" if t.get("type") == "inflow" else "Çıkış", t.get("category"), t.get("description"), f"{t.get('amount', 0):.2f}"])
+    return Response(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}_{month}.csv"})
+
+# ----------------- WHATSAPP BUSINESS (CLOUD API) -----------------
+@api_router.get("/comm/whatsapp/settings")
+async def get_wa_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+    s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
+    return {"company_id": company_id, "phone_number_id": s.get("phone_number_id", ""), "verify_token": s.get("verify_token", ""), "has_token": bool(s.get("access_token_enc")),
+            "status": "connected" if s.get("access_token_enc") and s.get("phone_number_id") else "simulated", "webhook_url": "/api/comm/whatsapp/webhook"}
+
+@api_router.put("/comm/whatsapp/settings")
+async def save_wa_settings(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    update = {"phone_number_id": (req.get("phone_number_id") or "").strip(), "verify_token": (req.get("verify_token") or "").strip(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    if req.get("access_token"):
+        update["access_token_enc"] = comm_service.encrypt(req["access_token"])
+    if not update["phone_number_id"]:
+        update["access_token_enc"] = ""
+    await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    return await get_wa_settings(company_id)
+
+@api_router.get("/comm/whatsapp/webhook")
+async def wa_webhook_verify(request: Request):
+    q = request.query_params
+    s = await db.whatsapp_settings.find_one({"verify_token": q.get("hub.verify_token")}) if q.get("hub.verify_token") else None
+    if q.get("hub.mode") == "subscribe" and s:
+        return Response(content=q.get("hub.challenge", ""), media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Doğrulama başarısız.")
+
+@api_router.post("/comm/whatsapp/webhook")
+async def wa_webhook(payload: Dict[str, Any]):
+    saved = 0
+    for entry in payload.get("entry", []):
+        for ch in entry.get("changes", []):
+            v = ch.get("value", {})
+            pn_id = (v.get("metadata") or {}).get("phone_number_id")
+            s = await db.whatsapp_settings.find_one({"phone_number_id": pn_id}) if pn_id else None
+            company_id = (s or {}).get("company_id", "comp_nexus_main_01")
+            names = {c.get("wa_id"): (c.get("profile") or {}).get("name") for c in v.get("contacts", [])}
+            for m in v.get("messages", []):
+                phone = comm_service.normalize_phone(m.get("from", ""))
+                text = (m.get("text") or {}).get("body") or f"[{m.get('type')} mesajı]"
+                contact = None
+                if phone:
+                    pattern = r"\D*".join(list(phone[-7:]))
+                    contact = await db.contacts.find_one({"company_id": company_id, "phone": {"$regex": pattern + r"\D*$"}})
+                await db.whatsapp_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "contact_id": contact["_id"] if contact else None, "contact_name": (contact or {}).get("name") or names.get(m.get("from")),
+                                                   "to": phone or m.get("from"), "phone": phone or m.get("from"), "message": text, "direction": "inbound", "status": "received", "context": "whatsapp_api",
+                                                   "wa_message_id": m.get("id"), "created_at": datetime.now(timezone.utc).isoformat()})
+                saved += 1
+    return {"status": "ok", "saved": saved}
+
+@api_router.post("/comm/whatsapp/send")
+async def wa_send(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
+    phone = comm_service.normalize_phone(req.get("phone", ""))
+    if not phone or not (req.get("message") or "").strip():
+        raise HTTPException(status_code=400, detail="Numara ve mesaj zorunludur.")
+    status_val, err = "simulated", None
+    if s.get("access_token_enc") and s.get("phone_number_id"):
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.post(f"https://graph.facebook.com/v21.0/{s['phone_number_id']}/messages", headers={"Authorization": f"Bearer {comm_service.decrypt(s['access_token_enc'])}"},
+                                      json={"messaging_product": "whatsapp", "to": f"90{phone}", "type": "text", "text": {"body": req["message"]}})
+            status_val = "sent" if r.status_code < 400 else "failed"
+            err = None if r.status_code < 400 else r.text[:200]
+        except Exception as e:
+            status_val, err = "failed", str(e)[:160]
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "to": phone, "phone": phone, "message": req["message"].strip(),
+           "direction": "outbound", "status": status_val, "error": err, "context": "whatsapp_api", "wa_link": f"https://wa.me/90{phone}?text={quote(req['message'])}", "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.whatsapp_logs.insert_one(doc)
+    return {**clean_doc(doc), "message_info": "Gönderildi." if status_val == "sent" else ("SİMÜLE — Cloud API anahtarı girilmedi; wa.me linki kullanılabilir." if status_val == "simulated" else f"Hata: {err}")}
 
 # ----------------- E-TİCARET ENTEGRASYONLARI -----------------
 @api_router.get("/integrations/ecommerce")

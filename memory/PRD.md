@@ -40,6 +40,15 @@ Env: MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS (açık origin listesi, `*` yo
 - **Fatura kalemi iskonto %**; **stok kartı**: KDV detayları (alış KDV, KDV dahil fiyat, istisna kodu), etiketler; sayfa adı "Stoklar & Ürünler", stok sayımı bu sayfaya sekme olarak taşındı; menü "Siparişler".
 - Test: iteration_4 → backend 52/53, frontend %95; eksikler düzeltildi (preferences, teklif Form Düzenle, sayaç, modal kapanma).
 
+### İterasyon 5 (2026-09-03)
+- **E-ticaret detayları**: pazaryeri SKU ↔ stok kartı eşleştirme (+ eşleşmemiş liste), sipariş onayla + kargo firması seçimi, iade (stok geri, iade kaydı, `/api/returns`), **e-İrsaliye** oluştur & şablonlu yazdır (`POST /orders/{id}/create-dispatch`, IRS-YYYY-####).
+- **Puantaj** (Personel > Puantaj): giriş/çıkış, devamsız, aylık özet (gün/saat/mesai); avans zaten Prim sekmesinde.
+- **Mali Müşavir Paneli** (/accountant): aylık satış/alış/KDV beyanı (hesaplanan/indirilecek/ödenecek/devreden, oran dağılımı), kasa-banka, bordro, e-belge sayıları; fatura & hareket CSV dışa aktarma.
+- **WhatsApp Business (Meta Cloud API)**: Ayarlar > WhatsApp (Phone Number ID + token şifreli, webhook verify), gelen mesaj webhook'u telefonla cariye eşler (boşluk toleranslı), gönderim API varsa gerçek yoksa **SİMÜLE** + wa.me; cari kartında ayrı WhatsApp sekmesi (numara eşleme, sohbet balonları).
+- **Cari kart**: panel genişletildi (max-w-6xl), **Tahsilat Yap** (kasa/banka seçimi, tahsilat/ödeme), taslak fatura no'ya tıkla → düzenle (kalem/tür/vade), keserken belge türü seçimi (E-Fatura/E-Arşiv/Kağıt/İrsaliye), **Makbuz Yazdır** (tahsilat/tediye makbuzu).
+- Fatura düzenleme: `PUT /api/invoices/{id}` (sadece taslak). Sipariş durumları tek sözlük: pending/approved/preparing/shipped/completed/returned/partially_returned.
+- Test: iteration_5 → backend 21/22 (webhook eşleşme düzeltildi), frontend smoke %100; diğer aksiyonlar uygulandı.
+
 ## Bilinen Notlar
 - Test sırasında kullanıcının bağladığı Gmail hesabı silindi → **yeniden bağlanmalı**.
 - Gerçek banka/Netgsm anahtarı yok → simüle; anahtar girildiğinde aynı ekrandan canlıya geçer.
@@ -48,7 +57,9 @@ Env: MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS (açık origin listesi, `*` yo
 
 ## Backlog (kullanıcı istekleri — öncelik sırası önerisi)
 P0 (son mesajlardan, henüz yapılmadı):
-c. **Personel modülü "Netesnaf gibi"**: kullanıcıdan hangi özelliklerin istendiği netleştirilmeli (puantaj/giriş-çıkış, avans, mesai, SGK bildirimi, bordro PDF?).
+e. **B2B portalı "ovocrm gibi"**: kullanıcıdan hangi özellikler netleştirilmeli (bayi girişi/fiyat listeleri/sipariş takibi/cari ekstre/kampanya?).
+f. WhatsApp Cloud API gerçek anahtarla canlı test (kullanıcı henüz anahtar vermedi).
+c. Personel "Netesnaf gibi": puantaj/mesai/avans yapıldı; kalan olası: bordro PDF, SGK bildirim, vardiya planı.
 d. "Cari detaylarında 'Satıcılar' yazan yazı → 'Ödemeler'": ekranda "Satıcılar" metni bulunamadı — kullanıcıya hangi ekran olduğu sorulacak.
 P0 (kullanıcının son mesajı):
 4. **E-ticaret entegrasyonu detayları**: ürün eşleştirme (pazaryeri SKU ↔ stok kartı), iade yönetimi, sipariş onaylama & durum, kargo seçimi + etiket/barkod yazdırma.

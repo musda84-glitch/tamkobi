@@ -29,6 +29,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Personel & Bordro", path: "/personnel" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
     { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
+    { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
   ];
   const menuItems = [...BASE_MENU].sort((a, b) => { const ia = moduleOrder.indexOf(a.path), ib = moduleOrder.indexOf(b.path); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
