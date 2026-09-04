@@ -51,7 +51,7 @@ export default function InvoicesPage() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const contactFilter = searchParams.get("contact_id") || "";
   const visibleInvoices = useMemo(() => applyInvoiceFilters(invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter), filters), [invoices, contactFilter, filters]);
   const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.grand_total) || 0), 0), [visibleInvoices]);
@@ -93,6 +93,15 @@ export default function InvoicesPage() {
     general_discount_amount: 0
   });
   const [gdMode, setGdMode] = useState("percent");
+  const newParam = searchParams.get("new");
+  const newContactParam = searchParams.get("contact_id");
+  useEffect(() => {
+    if (!newParam || contacts.length === 0) return;
+    const c = contacts.find((x) => x.id === newContactParam);
+    setFormData((fd) => ({ ...fd, invoice_type: newParam === "purchase" ? "purchase" : "sales", e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"), contact_id: c?.id || "", contact_name: c?.name || "" }));
+    setShowNewModal(true);
+    setSearchParams(newContactParam ? { contact_id: newContactParam } : {}, { replace: true });
+  }, [newParam, newContactParam, contacts, setSearchParams]);
 
   const loadData = useCallback(async () => {
     try {

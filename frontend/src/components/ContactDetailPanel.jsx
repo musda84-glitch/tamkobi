@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -115,13 +115,18 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {mapsLink(c) && <a href={mapsLink(c)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold flex items-center gap-1 hover:underline"><Navigation className="w-3 h-3" /> Konum</a>}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={openPay} className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold" data-testid="detail-collect-btn"><Wallet className="w-3.5 h-3.5" /> Tahsilat Yap</button>
-            <button onClick={async () => { try { const r = await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled: true, base_url: window.location.origin, discount: c.b2b_discount || 0 }); await navigator.clipboard?.writeText(r.data.link).catch(() => {}); toast.success(`B2B portal linki kopyalandı: ${r.data.link}`); window.open(r.data.link, "_blank"); load(); } catch (err) { toast.error(err.response?.data?.detail || "B2B erişimi oluşturulamadı."); } }} className="flex items-center gap-1 px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-xs font-semibold hover:bg-blue-50" title="Müşteriye B2B sipariş portalı linki ver" data-testid="detail-b2b-access-btn"><ShoppingCart className="w-3.5 h-3.5" /> B2B Portal{c.b2b_enabled ? " ✓" : ""}</button>
-            <button onClick={() => setTermsOpen(true)} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" title="Vade günü ve vade farkı uygula" data-testid="detail-terms-btn"><CalendarClock className="w-3.5 h-3.5 text-slate-500" /> Vade Uygula{c.payment_term_days ? <span className="ml-1 text-[10px] bg-slate-900 text-white rounded-full px-1.5">{c.payment_term_days}g</span> : null}</button>
-            <button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="flex items-center gap-1 px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg text-xs font-semibold hover:bg-violet-50 disabled:opacity-40" title="Açık bakiyeyi taksitlendir (Taksitler modülüne bağlı)" data-testid="detail-balance-installments-btn"><Layers className="w-3.5 h-3.5" /> Bakiyeyi Taksitlendir</button>
-            <button onClick={() => onMessage?.(c)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold" data-testid="detail-message-btn"><MessageSquare className="w-3.5 h-3.5" /> Mesaj</button>
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 flex items-center gap-1" title="Kapat (Esc)" data-testid="close-contact-detail-btn"><kbd className="text-[9px] border rounded px-1 text-slate-400">ESC</kbd><X className="w-5 h-5" /></button>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <button onClick={() => navigate(`/invoices?new=sales&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition" title="Bu cariye satış faturası kes" data-testid="detail-sell-btn"><ArrowUpRight className="w-3.5 h-3.5" /> Satış Yap</button>
+            <button onClick={() => navigate(`/invoices?new=purchase&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Bu cariden alış faturası gir" data-testid="detail-buy-btn"><ArrowDownLeft className="w-3.5 h-3.5" /> Alış Yap</button>
+            <button onClick={openPay} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition" data-testid="detail-collect-btn"><Wallet className="w-3.5 h-3.5" /> Tahsilat</button>
+            <span className="w-px h-6 bg-slate-200 mx-1" aria-hidden="true" />
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5" data-testid="detail-icon-actions">
+              <button onClick={() => onMessage?.(c)} className="p-1.5 rounded-md text-slate-600 hover:bg-white hover:text-indigo-600 transition" title="SMS / E-posta / WhatsApp mesajı" data-testid="detail-message-btn"><MessageSquare className="w-4 h-4" /></button>
+              <button onClick={async () => { try { const r = await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled: true, base_url: window.location.origin, discount: c.b2b_discount || 0 }); await navigator.clipboard?.writeText(r.data.link).catch(() => {}); toast.success(`B2B portal linki kopyalandı: ${r.data.link}`); window.open(r.data.link, "_blank"); load(); } catch (err) { toast.error(err.response?.data?.detail || "B2B erişimi oluşturulamadı."); } }} className={`p-1.5 rounded-md transition hover:bg-white ${c.b2b_enabled ? "text-blue-600" : "text-slate-600 hover:text-blue-600"}`} title={c.b2b_enabled ? "B2B portal linki (aktif)" : "Müşteriye B2B sipariş portalı linki ver"} data-testid="detail-b2b-access-btn"><ShoppingCart className="w-4 h-4" /></button>
+              <button onClick={() => setTermsOpen(true)} className="relative p-1.5 rounded-md text-slate-600 hover:bg-white hover:text-slate-900 transition" title={`Vade uygula${c.payment_term_days ? ` (${c.payment_term_days} gün)` : ""}`} data-testid="detail-terms-btn"><CalendarClock className="w-4 h-4" />{c.payment_term_days ? <span className="absolute -top-1 -right-1 text-[8px] bg-slate-900 text-white rounded-full px-1 leading-3">{c.payment_term_days}</span> : null}</button>
+              <button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="p-1.5 rounded-md text-slate-600 hover:bg-white hover:text-violet-600 transition disabled:opacity-30" title="Açık bakiyeyi taksitlendir" data-testid="detail-balance-installments-btn"><Layers className="w-4 h-4" /></button>
+            </div>
+            <button onClick={onClose} className="ml-1 text-slate-400 hover:text-slate-700 flex items-center gap-1" title="Kapat (Esc)" data-testid="close-contact-detail-btn"><kbd className="text-[9px] border rounded px-1 text-slate-400">ESC</kbd><X className="w-5 h-5" /></button>
           </div>
         </div>
 
