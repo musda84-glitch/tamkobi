@@ -20,6 +20,8 @@ import {
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
+import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
+import { QuickPayModal } from "../components/QuickPayModal";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -32,6 +34,9 @@ export default function PersonnelPage() {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [cardEmp, setCardEmp] = useState(null);
+  const [quickPay, setQuickPay] = useState(null);
+  const openQuickPay = (p, type) => setQuickPay({ p, type });
+
   const [showPayrollModal, setShowPayrollModal] = useState(false);
   const [payPayrollItem, setPayPayrollItem] = useState(null);
   const [selectedBankId, setSelectedBankId] = useState("");
@@ -147,6 +152,8 @@ export default function PersonnelPage() {
         </div>
       </div>
 
+      <GeoAttendanceCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onChanged={loadPersonnelData} />
+
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
         {[["payroll", "Çalışanlar & Bordro", UserCheck], ["attendance", "Puantaj", Clock],
           ["leaves", "İzin Talepleri", CalendarDays], ["salary", "Maaş Hesaplama", Calculator], ["bonus", "Prim / İkinci Maaş", Gift]].map(([k, l, Icon]) => (
@@ -244,7 +251,9 @@ export default function PersonnelPage() {
                       {p.status === 'paid' ? `Ödendi (${p.paid_date})` : 'Ödeme Bekliyor'}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-center">
+                  <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                    <button onClick={() => openQuickPay(p, "advance")} className="px-2.5 py-1 mr-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold" title="Avans ver (maaştan mahsup edilir)" data-testid={`advance-btn-${p.employee_name}`}>Avans</button>
+                    <button onClick={() => openQuickPay(p, "expense")} className="px-2.5 py-1 mr-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg text-xs font-semibold" title="Masraf ödemesi (yol, yemek, harcama)" data-testid={`expense-btn-${p.employee_name}`}>Masraf</button>
                     {p.status !== 'paid' ? (
                       <button
                         onClick={() => setPayPayrollItem(p)}
@@ -421,6 +430,7 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
+      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
     </div>
   );
 }

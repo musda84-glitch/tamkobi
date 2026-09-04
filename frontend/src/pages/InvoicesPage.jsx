@@ -347,7 +347,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
+                      <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</div>
                       <div className="text-[10px] text-slate-400">{inv.invoice_type === 'dispatch' ? "KDV'siz (Sevk)" : 'KDV Dahil'}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -623,9 +623,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
                 <div className="flex justify-between w-80">
                   <span>Mal / Hizmet Toplamı:</span>
-                  <span className="font-semibold">{totals.itemsSum.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                  <span className="font-semibold">{totals.itemsSum.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                 </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{totals.lineDiscount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span></div>}
+                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{totals.lineDiscount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span></div>}
                 <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
                   <span>Genel İskonto:</span>
                   <div className="flex items-center gap-1">
@@ -634,20 +634,20 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
                     </div>
                     <input type="number" min="0" value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(e) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: e.target.value })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{totals.gd.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                    <span className="text-rose-600 font-semibold w-24 text-right">-{totals.gd.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                   </div>
                 </div>
                 <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
                   <span>Ara Toplam (İskontolu):</span>
-                  <span className="font-semibold">{totals.subtotal.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                  <span className="font-semibold">{totals.subtotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                 </div>
                 <div className="flex justify-between w-80">
                   <span>Toplam KDV:</span>
-                  <span className="font-semibold">{totals.vat.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                  <span className="font-semibold">{totals.vat.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                 </div>
                 <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
                   <span>Genel Toplam:</span>
-                  <span className="text-emerald-700">{totals.grandTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                  <span className="text-emerald-700">{totals.grandTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                 </div>
               </div>
 
@@ -738,9 +738,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <tr key={i}>
                       <td className="py-2.5 font-medium text-slate-900">{it.name}</td>
                       <td className="py-2.5 text-center">{it.quantity} {it.unit}</td>
-                      <td className="py-2.5 text-right">{it.unit_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</td>
+                      <td className="py-2.5 text-right">{it.unit_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
                       <td className="py-2.5 text-center">%{it.vat_rate}</td>
-                      <td className="py-2.5 text-right font-semibold">{it.total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</td>
+                      <td className="py-2.5 text-right font-semibold">{it.total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
                     </tr>
                   ))}
                 </tbody>
@@ -755,15 +755,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div className="w-64 space-y-1.5 text-xs text-right">
                   <div className="flex justify-between text-slate-600">
                     <span>Mal Hizmet Toplamı:</span>
-                    <span>{previewInvoice.subtotal?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                    <span>{previewInvoice.subtotal?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Hesaplanan KDV (%20):</span>
-                    <span>{previewInvoice.vat_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                    <span>{previewInvoice.vat_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-300">
                     <span>Ödenecek Tutar:</span>
-                    <span className="text-emerald-700">{previewInvoice.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                    <span className="text-emerald-700">{previewInvoice.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
                   </div>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon } from "luci
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { channelTr } from "../utils/labels";
+import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -63,6 +64,9 @@ export default function OrdersB2BPage() {
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams] = useSearchParams();
   const customerFilter = searchParams.get("customer") || "";
+  const [ordF, setOrdF] = useState(ORDER_FILTER_DEFAULTS);
+  const visibleOrders = useMemo(() => applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF), [orders, customerFilter, ordF]);
+  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -264,8 +268,8 @@ export default function OrdersB2BPage() {
         </div>
       </div>
 
-      {activeTab === "orders" ? (
-        /* ORDERS LIST VIEW */
+      {activeTab === "orders" ? (<>
+        <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-600">
@@ -281,7 +285,8 @@ export default function OrdersB2BPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {orders.filter((o) => !customerFilter || o.customer_name === customerFilter).map((ord) => (
+                {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
+                {visibleOrders.map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className={`hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium">
@@ -383,7 +388,7 @@ export default function OrdersB2BPage() {
             </table>
           </div>
         </div>
-      ) : (
+      </>) : (
         /* B2B WHOLESALE PORTAL VIEW */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" data-testid="b2b-portal-view">
           {/* Products Catalog */}

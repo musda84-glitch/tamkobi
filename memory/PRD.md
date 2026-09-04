@@ -159,6 +159,17 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - Teklif/Proje/Keşif formunda "+ Yeni cari aç" (inline cari oluştur & seç).
 - Lint: `npx eslint -c /app/memory/eslint.hooks.config.mjs src` → 0 hook uyarısı.
 
+## İterasyon 14 (Haziran 2026) — UI iyileştirmeleri + yeni modüller (test agent iteration_14: backend 7/7, frontend %100)
+- **Masraflar modülü** (`backend/expenses.py`, `/expenses`, `ExpensesPage.jsx`): kategori (15 varsayılan + özel), KDV dahil/hariç, kasa/banka ile öde/geri al, tedarikçi/personel bağlama, fiş yükleme, aylık tekrarlayan masraf (`run-recurring`), kategori dağılımı; kâr raporunda `expenses`/`net_profit`.
+- **İrsaliyeler modülü** (`/dispatches`, menü + rbac): faturadan irsaliye (`POST /invoices/{id}/create-dispatch`), irsaliyeden fatura (`POST /invoices/{id}/convert-to-invoice`), Yeni İrsaliye (invoice_type dispatch, IRS-…, KDV'siz). Liste `type=all` irsaliye içermez.
+- Fatura listesi: `InvoiceToolbar` (arama, ödeme/belge türü/tarih/tutar filtreleri, sıralama), `SourceBadge` (kaynak: Kullanıcı/B2B/Trendyol/GİB/AI PDF…), Yeni Fatura modalı geniş + `QuickContactForm` hızlı cari, `/invoices?new=sales|purchase&contact_id=` ön dolu.
+- Cariler: `ContactRow` yatay liste, finans filtresi select; cari kartı ortada modal + Esc; üst bar Satış Yap / Alış Yap / Tahsilat + ikon grubu; Faturalar tablosu `SortableColumns` (sırala + sürükle-bırak, localStorage).
+- Stok: `StockToolbar` (kategori/stok durumu/B2B/sıralama select'leri, stok değeri); işlem butonları sabit grid hizası.
+- Siparişler: `OrdersToolbar` (arama, durum, kanal, fatura/kargo durumu, tarih, sıralama).
+- Banka → Ortaklar: `PartnerTxTable` sıralama + satır içi düzenle/sil (`PUT/DELETE /banking/partners/transactions/{id}`, bakiyeler geri alınır; bank_transactions.partner_tx_id).
+- Personel: bordro satırında **Avans** / **Masraf** (`QuickPayModal`, Esc; masraf → Masraflar modülüne bağlı: kayıtlı masrafı öde veya yeni masraf), **Konumla Giriş/Çıkış** (`GeoAttendanceCard`; `PUT /companies/{id}/location` firma konumu 300 m yarıçap; `POST /personnel/attendance/geo` haversine kontrol, kullanıcı→personel kartı bağı gerekir; `GET .../geo-status`). Demo firma konumu İstanbul (41.0082, 28.9784) olarak sabitlendi — kullanıcı "Firma Konumunu Güncelle" ile değiştirmeli.
+- Teklif formunda "+ Yeni cari aç".
+
 ## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).

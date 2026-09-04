@@ -35,6 +35,7 @@ from urllib.parse import quote
 import comm_service
 import cargo_providers
 import rbac
+import expenses
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1704,7 +1705,12 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
                 x["profit"] = x["revenue"] - x["cost"]; x["margin"] = (x["profit"] / x["revenue"] * 100) if x["revenue"] else 0
         rows = sorted([{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in by.values()], key=lambda r: -r["profit"])
         rev, cost = R(sum(r["revenue"] for r in rows)), R(sum(r["cost"] for r in rows))
-        return {"kind": kind, "group": group, "rows": rows, "totals": {"revenue": rev, "cost": cost, "profit": R(rev - cost), "margin": R((rev - cost) / rev * 100) if rev else 0}}
+        eq: Dict[str, Any] = {"company_id": company_id}
+        if date_from or date_to:
+            eq["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
+        expenses_total = R(sum(e.get("amount", 0) for e in await db.expenses.find(eq, {"amount": 1}).to_list(10000)))
+        net = R(rev - cost - expenses_total)
+        return {"kind": kind, "group": group, "rows": rows, "totals": {"revenue": rev, "cost": cost, "profit": R(rev - cost), "margin": R((rev - cost) / rev * 100) if rev else 0, "expenses": expenses_total, "net_profit": net, "net_margin": R(net / rev * 100) if rev else 0}}
     raise HTTPException(status_code=404, detail="Rapor türü bulunamadı.")
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
@@ -2816,8 +2822,10 @@ async def create_bonus(req: Dict[str, Any]):
     amount = float(req.get("amount", 0))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    b_type = req.get("type", "bonus")  # bonus, second_salary, advance
-    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans"}
+    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense
+    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi"}
+    if b_type not in labels:
+        raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
     account_id = req.get("account_id")
     account_name, status_val = None, "pending"
@@ -2971,6 +2979,66 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
                         "total_hours": round(sum(r.get("hours", 0) for r in mine), 2), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in mine), 2),
                         "today": next((r for r in mine if r["date"] == datetime.now(timezone.utc).strftime("%Y-%m-%d")), None)})
     return {"month": month, "records": clean_docs(rows), "summary": summary}
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    import math
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+@api_router.put("/companies/{company_id}/location")
+async def set_company_location(company_id: str, req: Dict[str, Any]):
+    try:
+        lat, lng = float(req["latitude"]), float(req["longitude"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Geçerli enlem/boylam gerekli.")
+    radius = int(req.get("radius_m") or 300)
+    await db.companies.update_one({"_id": company_id}, {"$set": {"location": {"latitude": lat, "longitude": lng, "radius_m": radius, "label": req.get("label") or "Firma", "updated_at": datetime.now(timezone.utc).isoformat()}}})
+    return {"status": "success", "location": {"latitude": lat, "longitude": lng, "radius_m": radius}}
+
+@api_router.get("/personnel/attendance/geo-status")
+async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depends(get_current_user)):
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) if emp else None
+    return {"location": company.get("location"), "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None, "today": clean_doc(rec) if rec else None}
+
+@api_router.post("/personnel/attendance/geo")
+async def geo_attendance(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    action = req.get("action")
+    if action not in ("check_in", "check_out"):
+        raise HTTPException(status_code=400, detail="action check_in veya check_out olmalı.")
+    company_id = req.get("company_id") or user.get("active_company_id") or "comp_nexus_main_01"
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    loc = company.get("location")
+    if not loc:
+        raise HTTPException(status_code=400, detail="Firma konumu tanımlı değil. Yönetici Personel → Konumla Giriş kartından firma konumunu sabitlemeli.")
+    emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    try:
+        lat, lng = float(req["latitude"]), float(req["longitude"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Telefon konumu alınamadı.")
+    dist = _haversine_m(lat, lng, loc["latitude"], loc["longitude"])
+    radius = float(loc.get("radius_m") or 300)
+    acc = float(req.get("accuracy_m") or 0)
+    if dist > radius:
+        raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). {'Giriş' if action == 'check_in' else 'Çıkış'} yapılamadı.")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    if action == "check_in" and existing.get("check_in"):
+        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_in']} saatinde giriş yapılmış.")
+    if action == "check_out" and not existing.get("check_in"):
+        raise HTTPException(status_code=400, detail="Önce giriş yapmalısınız.")
+    if action == "check_out" and existing.get("check_out"):
+        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
+    rec = await upsert_attendance({"employee_id": emp["_id"], "action": action, "note": f"Konumla {'giriş' if action == 'check_in' else 'çıkış'} ({int(dist)} m, ±{int(acc)} m)"})
+    await db.attendance.update_one({"employee_id": emp["_id"], "date": today}, {"$set": {f"geo_{action}": {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": acc, "at": datetime.now(timezone.utc).isoformat()}}})
+    return {"status": "success", "distance_m": round(dist), "record": rec, "message": f"{'Giriş' if action == 'check_in' else 'Çıkış'} kaydedildi · firma konumuna {int(dist)} m"}
 
 @api_router.post("/personnel/attendance")
 async def upsert_attendance(req: Dict[str, Any]):
@@ -4116,8 +4184,10 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
+expenses.init(db)
 app.include_router(api_router)
 app.include_router(rbac.router)
+app.include_router(expenses.router)
 
 @app.get("/")
 async def root():
