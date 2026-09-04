@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   ChevronRight,
   MessageSquare,
-  Navigation
+  Navigation,
+  Filter
 } from "lucide-react";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
@@ -154,10 +155,16 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap text-xs" data-testid="contact-fin-filters">
-          {FIN_FILTERS.map(([k, l, n]) => (
-            <button key={k} onClick={() => setFinFilter(k)} className={`px-2.5 py-1.5 rounded-lg font-medium transition border ${finFilter === k ? (k === "overdue" ? "bg-rose-600 border-rose-600 text-white" : k === "installments" ? "bg-violet-600 border-violet-600 text-white" : "bg-emerald-600 border-emerald-600 text-white") : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} data-testid={`contact-fin-filter-${k}`}>{l} <span className={finFilter === k ? "opacity-80" : "text-slate-400"}>({n})</span></button>
-          ))}
+        <div className="flex items-center gap-2 text-xs" data-testid="contact-fin-filters">
+          <Filter className="w-3.5 h-3.5 text-slate-400" />
+          <select
+            value={finFilter}
+            onChange={(e) => setFinFilter(e.target.value)}
+            className={`border rounded-lg px-2.5 py-1.5 font-medium outline-none focus:ring-2 focus:ring-emerald-500 ${finFilter === "overdue" ? "bg-rose-50 border-rose-200 text-rose-700" : finFilter === "installments" ? "bg-violet-50 border-violet-200 text-violet-700" : finFilter !== "all" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-white border-slate-200 text-slate-700"}`}
+            data-testid="contact-fin-filter-select"
+          >
+            {FIN_FILTERS.map(([k, l, n]) => <option key={k} value={k} data-testid={`contact-fin-filter-${k}`}>{l} ({n})</option>)}
+          </select>
         </div>
 
         <div className="relative">
