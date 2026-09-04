@@ -25,6 +25,8 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
 import { ContactDetailPanel } from "../components/ContactDetailPanel";
 import { ContactRow } from "../components/ContactRow";
+import { ExportButtons } from "../components/ExportButtons";
+const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
@@ -155,6 +157,7 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
+        <ExportButtons rows={filtered} columns={CONTACT_COLS} filename="cariler" title="Cari Listesi" />
         <div className="flex items-center gap-2 text-xs" data-testid="contact-fin-filters">
           <Filter className="w-3.5 h-3.5 text-slate-400" />
           <select

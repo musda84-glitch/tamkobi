@@ -10,6 +10,7 @@ import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { UsersRolesPanel } from "../components/UsersRolesPanel";
+import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["modules", "Modül Sıralama", ListOrdered]];
@@ -194,7 +195,7 @@ export default function SettingsPage() {
           ))}
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
-          {tab === "company" && <CompanyForm companyId={companyId} />}
+          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
           {tab === "print" && <PrintSettings companyId={companyId} />}
           {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
           {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}

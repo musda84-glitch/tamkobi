@@ -269,13 +269,13 @@ export default function OrdersB2BPage() {
       </div>
 
       {activeTab === "orders" ? (<>
-        <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} />
+        <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-600">
-              <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
+                  <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
                   <th className="px-4 py-3">Sipariş No & Kanal</th>
                   <th className="px-4 py-3">Müşteri / Alıcı</th>
                   <th className="px-4 py-3">Ürünler</th>

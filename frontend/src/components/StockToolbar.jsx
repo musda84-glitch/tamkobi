@@ -1,5 +1,8 @@
 import React from "react";
 import { Search, Tag, PackageCheck, ArrowUpDown, X, Globe } from "lucide-react";
+import { ExportButtons } from "./ExportButtons";
+
+const STOCK_COLS = [{ key: "sku", label: "SKU" }, { key: "barcode", label: "Barkod" }, { key: "name", label: "Ürün" }, { key: "category", label: "Kategori" }, { key: "unit", label: "Birim" }, { key: "stock_quantity", label: "Stok", num: true }, { key: "min_stock_alert", label: "Min. Stok", num: true }, { key: "purchase_price", label: "Alış Fiyatı", num: true }, { key: "sale_price", label: "Satış Fiyatı", num: true }, { key: "vat_rate", label: "KDV %" }, { label: "Stok Değeri", value: (r) => (r.stock_quantity || 0) * (r.purchase_price || 0), num: true }];
 
 export const STOCK_FILTER_DEFAULTS = { status: "all", b2b: "all", sort: "name_asc" };
 const STATUS = [["all", "Tüm Stok Durumları"], ["critical", "Kritik Stok (min. altı)"], ["out", "Stokta Yok"], ["in", "Stokta Var"], ["untracked", "Stok Takibi Yok (Hizmet)"]];
@@ -23,7 +26,7 @@ export const applyStockFilters = (products, f) => {
   return cmp ? [...list].sort(cmp) : list;
 };
 
-export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f, setF, search, setSearch, count, stockValue, criticalCount }) => {
+export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f, setF, search, setSearch, count, stockValue, criticalCount, rows = [] }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
   const active = (filterCategory !== "all" ? 1 : 0) + (f.status !== "all" ? 1 : 0) + (f.b2b !== "all" ? 1 : 0) + (search ? 1 : 0);
@@ -55,7 +58,7 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {active > 0 && <button onClick={() => { setFilterCategory("all"); setSearch(""); setF(STOCK_FILTER_DEFAULTS); }} className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="stock-filters-clear">Filtreleri temizle ({active})</button>}
-        <div className="ml-auto text-slate-500" data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{stockValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{stockValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div></div>
       </div>
     </div>
   );

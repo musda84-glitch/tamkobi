@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { PartnersPanel } from "../components/PartnersPanel";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
+import { CardStatementImport } from "../components/CardStatementImport";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -36,6 +37,7 @@ export default function BankingPage() {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [stmtAccount, setStmtAccount] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Modals
@@ -206,12 +208,14 @@ export default function BankingPage() {
           const isBank = acc.type === 'bank';
           const isCash = acc.type === 'cash_box';
           const isPos = acc.type === 'pos';
+          const isCard = acc.type === 'credit_card';
           const accId = acc.id || acc._id;
           const isSelected = selectedAccountId === accId;
 
           return (
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               key={accId}
               onClick={() => setSelectedAccountId(isSelected ? null : accId)}
               className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : 'border-slate-200/90'}`}
@@ -226,13 +230,14 @@ export default function BankingPage() {
                     {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
                   </div>
                   <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
-                    {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : 'Sanal/Fiziki POS'}
+                    {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
                   </span>
                 </div>
 
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
                   <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
+                  {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                   {acc.iban && acc.iban !== '-' && (
                     <div className="text-[11px] font-mono text-slate-400 mt-1 truncate">{acc.iban}</div>
                   )}
@@ -248,7 +253,7 @@ export default function BankingPage() {
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{isSelected ? 'Hareketler ↓' : 'Hareketleri Gör'}</span>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -421,10 +426,12 @@ export default function BankingPage() {
                   value={newAccount.type}
                   onChange={(e) => setNewAccount({ ...newAccount, type: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                  data-testid="account-type-select"
                 >
                   <option value="bank">Banka Vadesiz Ticari</option>
                   <option value="cash_box">Nakit Kasa</option>
                   <option value="pos">POS Cihazı / Sanal POS</option>
+                  <option value="credit_card">Kredi Kartı (Şirket Kartı)</option>
                 </select>
               </div>
               <div>
@@ -488,6 +495,7 @@ export default function BankingPage() {
           </div>
         </div>
       )}
+      {stmtAccount && <CardStatementImport account={stmtAccount} onClose={() => setStmtAccount(null)} onDone={loadBankingData} />}
     </div>
   );
 }

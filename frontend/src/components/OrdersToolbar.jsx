@@ -1,6 +1,9 @@
 import React from "react";
 import { Search, ArrowUpDown, X } from "lucide-react";
 import { channelTr } from "../utils/labels";
+import { ExportButtons } from "./ExportButtons";
+
+const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { key: "total_amount", label: "Tutar", num: true }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = { q: "", status: "all", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "date_desc" };
 const STATUS = [["all", "Tüm Durumlar"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
@@ -26,7 +29,7 @@ export const applyOrderFilters = (orders, f) => {
   return cmp ? [...list].sort(cmp) : list;
 };
 
-export const OrdersToolbar = ({ f, setF, orders, count, total }) => {
+export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [] }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const channels = [...new Set(orders.map((o) => o.channel || "b2b"))];
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -45,7 +48,7 @@ export const OrdersToolbar = ({ f, setF, orders, count, total }) => {
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <input type="date" value={f.from} onChange={(e) => set("from", e.target.value)} className={sel} data-testid="ord-from" /><span className="text-slate-400">–</span><input type="date" value={f.to} onChange={(e) => set("to", e.target.value)} className={sel} data-testid="ord-to" />
         {active > 0 && <button onClick={() => setF({ ...ORDER_FILTER_DEFAULTS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="ord-filters-clear">Filtreleri temizle ({active})</button>}
-        <div className="ml-auto text-slate-500" data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" /><div data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div></div>
       </div>
     </div>
   );

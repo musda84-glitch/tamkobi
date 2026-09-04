@@ -15,7 +15,7 @@ _db = None
 _mail_account: Optional[Callable[..., Awaitable[dict]]] = None
 _current_user = None
 
-MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"),
+MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"),
            ("/stock", "Stoklar & Ürünler"), ("/projects", "Teklif / Proje / Keşif"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/warehouses", "Depo"),
            ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
            ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları")]
@@ -35,7 +35,7 @@ DEFAULT_ROLES = [
 
 # API path prefix -> module key (longest prefix wins)
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
-                  ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/products", "/stock"),
+                  ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/products", "/stock"),
                   ("/api/warehouses", "/warehouses"), ("/api/quotes", "/projects"), ("/api/projects", "/projects"), ("/api/surveys", "/projects"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
@@ -73,6 +73,7 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p = r.setdefault("permissions", {})
         p.setdefault("/dispatches", p.get("/invoices", "none"))
         p.setdefault("/expenses", p.get("/banking", "none"))
+        p.setdefault("/loans", p.get("/banking", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 

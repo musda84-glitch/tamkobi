@@ -170,6 +170,11 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - Personel: bordro satırında **Avans** / **Masraf** (`QuickPayModal`, Esc; masraf → Masraflar modülüne bağlı: kayıtlı masrafı öde veya yeni masraf), **Konumla Giriş/Çıkış** (`GeoAttendanceCard`; `PUT /companies/{id}/location` firma konumu 300 m yarıçap; `POST /personnel/attendance/geo` haversine kontrol, kullanıcı→personel kartı bağı gerekir; `GET .../geo-status`). Demo firma konumu İstanbul (41.0082, 28.9784) olarak sabitlendi — kullanıcı "Firma Konumunu Güncelle" ile değiştirmeli.
 - Teklif formunda "+ Yeni cari aç".
 
+## İterasyon 15–16 (Haziran 2026)
+- it15 (test agent): masraf bütçeleri (`BudgetPanel`), dashboard `OverviewPanel` (`GET /dashboard/overview`), Krediler `/loans` (`finance.py`, AI PDF ödeme planı), kredi kartı hesabı + `CardStatementImport`. Sonrası küçük düzeltmeler (hesap silme, boş ekstre mesajı, DOM nesting) — retest bekliyor.
+- **Firma Konumu paneli** (`CompanyLocationPanel.jsx`) Firma Ayarları → Şirket Bilgileri altına bağlandı: adres ara (`GET /geocode`, Nominatim) → sonuç seç → `PUT /companies/{id}/location`; "Konumumu Bul" (GPS); yarıçap. Self-test: e2e ekran + geo-status doğrulandı (kullanıcı onayı bekliyor).
+- Açık: `ExportButtons.jsx` tüm liste ekranlarına (Faturalar, Cariler, Siparişler, Masraflar) bağlanması teyit edilmeli; roller için kullanıcının istediği özel rol seti netleştirilmeli; personel bordro `2099-01` dönemi incelenmeli.
+
 ## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).

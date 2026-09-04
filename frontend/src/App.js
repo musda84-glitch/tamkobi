@@ -28,6 +28,7 @@ import AccountantPage from "./pages/AccountantPage";
 import InviteAcceptPage from "./pages/InviteAcceptPage";
 import LoginPage from "./pages/LoginPage";
 import ExpensesPage from "./pages/ExpensesPage";
+import LoansPage from "./pages/LoansPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="/davet/:token" element={<InviteAcceptPage />} />
             <Route path="/dispatches" element={<DispatchesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
+            <Route path="/loans" element={<LoansPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -6,6 +6,9 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { ExportButtons } from "../components/ExportButtons";
+import { BudgetPanel } from "../components/BudgetPanel";
+const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -94,6 +97,7 @@ export default function ExpensesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Masraflar</h1><p className="text-xs sm:text-sm text-slate-500">Kira, fatura, yakıt, yemek, personel masrafları — kategori bazlı gider takibi ve kasa/banka entegrasyonu</p></div>
         <div className="flex gap-2 self-start">
+          <ExportButtons rows={rows} columns={EXP_COLS} filename="masraflar" title="Masraf Listesi" size="md" />
           {s?.recurring_count > 0 && <button onClick={runRecurring} className="flex items-center gap-1.5 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 rounded-xl text-xs font-semibold" title="Vadesi gelen tekrarlayan masrafları oluştur" data-testid="exp-run-recurring"><RefreshCw className="w-3.5 h-3.5" /> Tekrarlayanları İşle ({s.recurring_count})</button>}
           <button onClick={() => setModal({ ...EMPTY })} className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-rose-600/20" data-testid="exp-new-btn"><Plus className="w-4 h-4" /> Yeni Masraf</button>
         </div>
@@ -108,6 +112,7 @@ export default function ExpensesPage() {
             {s.by_category.length === 0 && <div className="text-xs text-slate-400">Kayıt yok</div>}</div>
         </div>
       )}
+      <BudgetPanel companyId={companyId} refreshKey={data.expenses.length} />
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3 flex flex-wrap items-center gap-2" data-testid="exp-toolbar">
         <div className="relative flex-1 min-w-[200px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="Açıklama, no, tedarikçi ara…" className="w-full pl-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500" data-testid="exp-search" /></div>
         <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })} className={sel} data-testid="exp-filter-category"><option value="all">Tüm Kategoriler</option>{categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select>

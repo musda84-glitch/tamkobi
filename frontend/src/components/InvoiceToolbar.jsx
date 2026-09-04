@@ -1,5 +1,8 @@
 import React from "react";
 import { Search, ArrowUpDown, X, CalendarDays } from "lucide-react";
+import { ExportButtons } from "./ExportButtons";
+
+const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi" }, { key: "gib_status", label: "GİB" }];
 
 export const SORT_OPTIONS = [["date_desc", "Tarih (yeni → eski)"], ["date_asc", "Tarih (eski → yeni)"], ["due_asc", "Vade (yakın önce)"], ["amount_desc", "Tutar (çoktan aza)"], ["amount_asc", "Tutar (azdan çoğa)"], ["contact_asc", "Cari (A → Z)"], ["number_desc", "Fatura No"]];
 const PAY = [["all", "Tümü"], ["unpaid", "Ödenmedi"], ["partially_paid", "Kısmi"], ["paid", "Ödendi"], ["overdue", "Vadesi Geçti"]];
@@ -37,7 +40,7 @@ export const applyInvoiceFilters = (invoices, f) => {
 
 export const DEFAULT_FILTERS = { q: "", pay: "all", etype: "all", from: "", to: "", preset: "", min: "", max: "", sort: "date_desc" };
 
-export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false }) => {
+export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = [] }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const setPreset = (p) => { const [from, to] = presetRange(p); setF((s) => ({ ...s, preset: p, from, to })); };
   const active = Object.keys(DEFAULT_FILTERS).filter((k) => k !== "sort" && f[k] !== DEFAULT_FILTERS[k]).length;
@@ -64,7 +67,7 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false }) => {
         <input type="number" value={f.min} onChange={(e) => set("min", e.target.value)} placeholder="Min ₺" className={`${sel} w-24`} data-testid="inv-min" />
         <input type="number" value={f.max} onChange={(e) => set("max", e.target.value)} placeholder="Max ₺" className={`${sel} w-24`} data-testid="inv-max" />
         {active > 0 && <button onClick={() => setF({ ...DEFAULT_FILTERS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
-        <div className="ml-auto text-slate-500" data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} /><div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div></div>
       </div>
     </div>
   );

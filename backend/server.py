@@ -36,6 +36,7 @@ import comm_service
 import cargo_providers
 import rbac
 import expenses
+import finance
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -664,6 +665,53 @@ async def logout(response: Response):
     return {"status": "success", "message": "Çıkış yapıldı."}
 
 # ----------------- DASHBOARD & KPIS -----------------
+@api_router.get("/dashboard/overview")
+async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
+    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    invs = await db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}}, {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1, "created_at": 1}).to_list(20000)
+    def bucket(t):
+        tot = over = notdue = 0.0
+        for i in invs:
+            if i.get("invoice_type") != t or i.get("status") == "draft" or i.get("payment_status") == "paid":
+                continue
+            open_amt = float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0) or 0)
+            if open_amt <= 0:
+                continue
+            tot += open_amt
+            if i.get("due_date") and i["due_date"] < today:
+                over += open_amt
+            else:
+                notdue += open_amt
+        return {"total": round(tot, 2), "overdue": round(over, 2), "not_due": round(notdue, 2)}
+    def counts(t):
+        rows = [i for i in invs if i.get("invoice_type") == t and i.get("status") != "draft"]
+        return {"month": sum(1 for i in rows if (i.get("issue_date") or "") >= f"{month}-01"), "week": sum(1 for i in rows if (i.get("issue_date") or "") >= week_start), "today": sum(1 for i in rows if i.get("issue_date") == today)}
+    drafts = [i for i in invs if i.get("status") == "draft"]
+    sales_vat = round(sum(float(i.get("vat_total", 0)) for i in invs if i.get("invoice_type") == "sales" and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(month)), 2)
+    purch_vat = round(sum(float(i.get("vat_total", 0)) for i in invs if i.get("invoice_type") == "purchase" and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(month)), 2)
+    exp_vat = round(sum([e.get("vat_amount", 0) async for e in db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1})]), 2)
+    nxt = (now.replace(day=1) + timedelta(days=32)).replace(day=26)
+    inst_today = await db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": today})
+    inst_overdue = await db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": {"$lt": today}})
+    tasks = [
+        {"key": "pending_orders", "label": "Onay bekleyen sipariş", "count": await db.orders.count_documents({"company_id": company_id, "order_status": "pending"}), "path": "/orders"},
+        {"key": "due_today", "label": "Bugün vadesi gelen fatura", "count": sum(1 for i in invs if i.get("due_date") == today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
+        {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
+        {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
+        {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
+        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/projects"},
+        {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
+        {"key": "leaves", "label": "Bekleyen izin talebi", "count": await db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}), "path": "/personnel"},
+    ]
+    budgets = await expenses.get_budgets(company_id)
+    return {"date": today, "tasks": [t for t in tasks if t["count"]], "collections": bucket("sales"), "payments": bucket("purchase"),
+            "drafts": {"count": len(drafts), "total": round(sum(float(i.get("grand_total", 0)) for i in drafts), 2)},
+            "invoices": {"incoming": counts("purchase"), "outgoing": counts("sales")},
+            "vat": {"month": month, "calculated": sales_vat, "deductible": round(purch_vat + exp_vat, 2), "payable": round(sales_vat - purch_vat - exp_vat, 2), "declaration_date": nxt.strftime("%Y-%m-%d"), "days_left": (nxt.date() - now.date()).days},
+            "budget_warnings": budgets["warnings"]}
+
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
     bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(100)
@@ -2988,6 +3036,30 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
 
+@api_router.get("/geocode")
+async def geocode(q: str):
+    if len(q.strip()) < 3:
+        raise HTTPException(status_code=400, detail="En az 3 karakter girin.")
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get("https://nominatim.openstreetmap.org/search", params={"q": q, "format": "json", "limit": 5, "countrycodes": "tr", "addressdetails": 0}, headers={"User-Agent": "NexusHesap/1.0 (erp)"})
+        r.raise_for_status()
+        return [{"label": x.get("display_name"), "latitude": float(x["lat"]), "longitude": float(x["lon"])} for x in r.json()]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Adres servisi yanıt vermedi: {str(e)[:80]}")
+
+@api_router.delete("/banking/accounts/{account_id}")
+async def delete_bank_account(account_id: str):
+    acc = await db.bank_accounts.find_one({"_id": account_id})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    if await db.bank_transactions.count_documents({"account_id": account_id}):
+        raise HTTPException(status_code=400, detail="Hareketi olan hesap silinemez; önce hareketleri kontrol edin.")
+    await db.bank_accounts.delete_one({"_id": account_id})
+    return {"status": "success"}
+
 @api_router.put("/companies/{company_id}/location")
 async def set_company_location(company_id: str, req: Dict[str, Any]):
     try:
@@ -4185,9 +4257,11 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 expenses.init(db)
+finance.init(db)
 app.include_router(api_router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
+app.include_router(finance.router)
 
 @app.get("/")
 async def root():

@@ -218,7 +218,7 @@ export default function StockBarcodePage() {
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
-      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} />
+      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} />
 
       {/* Products Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">

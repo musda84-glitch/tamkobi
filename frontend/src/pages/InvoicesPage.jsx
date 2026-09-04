@@ -281,7 +281,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         ))}
       </div>}
 
-      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} hidePay={filterType === "dispatch"} />
+      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} hidePay={filterType === "dispatch"} rows={visibleInvoices} />
 
       {/* Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
