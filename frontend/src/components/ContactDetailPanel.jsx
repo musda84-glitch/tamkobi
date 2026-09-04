@@ -11,6 +11,7 @@ import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu } from "./InvoiceContextMenu";
 import { useEscape } from "../utils/useEscape";
+import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
@@ -44,6 +45,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [editQuote, setEditQuote] = useState(null);
   const [termsOpen, setTermsOpen] = useState(false);
   const [invCtx, setInvCtx] = useState(null);
+  const colState = useSortableColumns();
+  const sortedInvoices = useSortedRows(data?.invoices || [], colState.sort);
   const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
   const [balancePlan, setBalancePlan] = useState(false);
   const [insts, setInsts] = useState([]);
@@ -147,20 +150,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         <div className="flex-1 overflow-y-auto p-6 text-xs">
           {tab === "invoices" && (
             <table className="w-full text-left">
-              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Fatura No</th><th className="py-2">Tarih</th><th className="py-2">Tür</th><th className="py-2 text-right">Tutar</th><th className="py-2">GİB</th><th className="py-2">Ödeme</th><th className="py-2"></th></tr></thead>
+              <SortableHeader {...colState} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {data.invoices.map((inv) => (
+                {sortedInvoices.map((inv) => { const cells = {
+                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
+                    date: <td key="date" className="py-2 text-slate-500">{inv.issue_date}</td>,
+                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>,
+                    amount: <td key="amount" className="py-2 text-right font-bold">{fmt(inv.grand_total)} ₺</td>,
+                    gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
+                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>,
+                  }; return (
                   <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"}`} title="Sağ tık: fatura kes / yazdır / tahsilat" data-testid={`detail-inv-${inv.invoice_number}`}>
-                    <td className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>
-                    <td className="py-2 text-slate-500">{inv.issue_date}</td>
-                    <td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>
-                    <td className="py-2 text-right font-bold">{fmt(inv.grand_total)} ₺</td>
-                    <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>
-                    <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>
+                    {colState.cols.map((k) => cells[k])}
                     <td className="py-2 text-right"><button onClick={() => setEditInv({ ...inv })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold mr-1 hover:bg-slate-50" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc(inv)} className="inline-flex items-center px-2 py-1 border rounded-md text-[10px] font-semibold mr-1" data-testid={`detail-inv-print-${inv.invoice_number}`}>Yazdır</button>{inv.status === "draft" && <span className="inline-flex items-center gap-1"><select defaultValue={inv.e_type} id={`etype-${inv.id}`} className="bg-white border border-slate-200 rounded-md p-1 text-[10px]" data-testid={`detail-etype-${inv.invoice_number}`}><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select><button onClick={() => sendToGib(inv, document.getElementById(`etype-${inv.id}`).value)} disabled={busy === inv.id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold disabled:opacity-50" data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />} Kes</button></span>}</td>
                   </tr>
-                ))}
+                ); })}
               </tbody>
             </table>
           )}
