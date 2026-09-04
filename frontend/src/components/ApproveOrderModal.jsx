@@ -15,7 +15,7 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
     axios.get(`${API_URL}/integrations/cargo?company_id=${companyId}`).then((r) => {
       const list = r.data.sort((a, b) => Number(b.status === "connected" && b.is_active) - Number(a.status === "connected" && a.is_active));
       setCarriers(list);
-      if (!carrier) setCarrier((list.find((c) => c.status === "connected" && c.is_active) || list[0])?.carrier_code || "");
+      setCarrier((cur) => cur || (list.find((c) => c.status === "connected" && c.is_active) || list[0])?.carrier_code || "");
     }).catch(() => setCarriers([]));
   }, [companyId]);
   const selected = carriers?.find((c) => c.carrier_code === carrier);

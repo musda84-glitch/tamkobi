@@ -20,9 +20,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const companyId = company?.id || "comp_nexus_main_01";
-  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { if (p.image_url) m[p.id] = p.image_url; }); setProdImgs(m); }).catch(() => {}); }, [company]);
-  useEffect(() => { axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); }, [docType, company]);
-  useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [doc.id]);
+  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { if (p.image_url) m[p.id] = p.image_url; }); setProdImgs(m); }).catch(() => {}); }, [companyId]);
+  useEffect(() => { axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); }, [docType, companyId]);
+  useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
   const pickLayout = async (l) => { const next = { ...tpl, layout: l }; setTpl(next); try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, next); } catch { /* keep local */ } };

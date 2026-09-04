@@ -142,6 +142,15 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 | **Diğer yazılımlardaki kolaylaştırıcı özellikler** | ⏳ Kapsam netleştirilecek |
 | Sağlayıcı canlı bağlantıları (WhatsApp, banka, e-fatura, pazaryeri, kargo) | SİMÜLE — kullanıcı API anahtarı gerekir |
 
+## İterasyon 12 (Haziran 2026) — Kod kalitesi / güvenlik (test agent iteration_12: backend 75/75, frontend %100)
+- Test secret'ları: `backend/tests/conftest.py` (TEST_COMPANY_ID / TEST_B2B_TOKEN env, yoksa API'den dinamik); test_iteration10/11 buradan okur; it11 autouse cleanup fixture (sızıntı yok).
+- `bank_providers.py`: MD5/SHA1 → SHA256 (simülasyon seed/ID), `mode=="simulation"` bağlantılar canlı OAuth'a gitmez.
+- 44 `react-hooks/exhaustive-deps` uyarısı → 0 (load fonksiyonları `useCallback`, doğru bağımlılıklar; eslint-disable yok). Lint komutu: `npx eslint -c /tmp/eslint.config.mjs src` (flat config react-hooks plugin).
+- Rapor yanlış pozitifleri: CargoPage:95 (etiket metni), B2BPortalPage localStorage (yalnızca sepet) — kullanıcı kararı: localStorage kalsın.
+- Kullanıcı kararı: refactor (ContactDetailPanel/seed_all_data/büyük sayfalar bölme, index-key, useMemo) **ertelendi** (kapsam "sadece 1–2").
+- Siparişler: onay butonu başlığı "Onayla".
+- Kullanıcı Geliver API örneği paylaştı (`POST https://api.geliver.io/api/v1/shipments`, Bearer token, senderAddressID, recipientAddress, order) → gerçek Geliver kargo entegrasyonu istiyor olabilir; **integration_expert + kullanıcıdan Bearer token/senderAddressID gerekir**.
+
 ## SIRADAKİ FAZ (kullanıcı onayladı, henüz başlanmadı)
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).

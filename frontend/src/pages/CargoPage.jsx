@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -29,15 +29,11 @@ export default function CargoPage() {
   const [catalog, setCatalog] = useState([]);
   const [addProv, setAddProv] = useState(null);
   const [creds, setCreds] = useState({});
-  const loadCatalog = () => axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCatalog(r.data)).catch(() => {});
-  useEffect(() => { loadCatalog(); }, [activeCompany]);
+  const loadCatalog = useCallback(() => axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCatalog(r.data)).catch(() => {}), [activeCompany]);
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
   const addProvider = async () => { try { const r = await axios.post(`${API_URL}/integrations/cargo`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01", carrier_code: addProv.carrier_code, ...creds }); toast.success(r.data.message); setAddProv(null); setCreds({}); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Eklenemedi."); } };
   const removeProvider = async (car) => { if (!window.confirm(`${car.carrier_name} kaldırılsın mı?`)) return; try { await axios.delete(`${API_URL}/integrations/cargo/${car.id}`); toast.success("Kaldırıldı."); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Kaldırılamadı."); } };
-  useEffect(() => {
-    loadCargoData();
-  }, [activeCompany]);
-
-  const loadCargoData = async () => {
+  const loadCargoData = useCallback(async () => {
     try {
       setLoading(true);
       const [confRes, shipRes] = await Promise.all([
@@ -51,7 +47,8 @@ export default function CargoPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadCargoData(); }, [loadCargoData]);
 
   const handleSaveConfig = async (e) => {
     e.preventDefault();

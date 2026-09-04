@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useParams } from "react-router-dom";
@@ -21,9 +21,9 @@ export default function B2BPortalPage() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
-  const load = () => axios.get(`${API_URL}/public/b2b/${token}`).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.detail || "Portal yüklenemedi."));
-  useEffect(() => { load(); }, [token]);
-  useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart]);
+  const load = useCallback(() => axios.get(`${API_URL}/public/b2b/${token}`).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.detail || "Portal yüklenemedi.")), [token]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart, token]);
   if (err) return <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6"><div className="bg-white rounded-2xl p-8 shadow-xl text-center font-bold text-slate-800" data-testid="b2b-error">{err}</div></div>;
   if (!d) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>;
   const cats = ["all", ...Array.from(new Set(d.products.map((p) => p.category).filter(Boolean)))];

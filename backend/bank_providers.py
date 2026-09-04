@@ -78,8 +78,12 @@ async def _oauth_token(conn: dict) -> str:
         return resp.json()["access_token"]
 
 
+def _is_simulated(conn: dict) -> bool:
+    return conn.get("mode") == "simulation" or not has_credentials(conn)
+
+
 async def test_connection(conn: dict) -> Dict[str, Any]:
-    if not has_credentials(conn):
+    if _is_simulated(conn):
         return {"ok": True, "simulated": True, "message": "API kimlik bilgisi girilmedi. Bağlantı SİMÜLE modda çalışıyor."}
     try:
         token = await _oauth_token(conn)
@@ -91,7 +95,7 @@ async def test_connection(conn: dict) -> Dict[str, Any]:
 
 
 def _simulate_transactions(conn: dict, since: datetime) -> List[Dict[str, Any]]:
-    seed = int(hashlib.md5(f"{conn.get('_id')}-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}".encode()).hexdigest(), 16)
+    seed = int(hashlib.sha256(f"{conn.get('_id')}-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}".encode()).hexdigest(), 16)
     rng = random.Random(seed)
     count = rng.randint(3, 6)
     txs = []
@@ -100,7 +104,7 @@ def _simulate_transactions(conn: dict, since: datetime) -> List[Dict[str, Any]]:
         day = datetime.now(timezone.utc) - timedelta(days=rng.randint(0, 6), hours=rng.randint(0, 20))
         amount = round(rng.uniform(450, 28500), 2)
         txs.append({
-            "external_id": f"SIM-{hashlib.sha1(f'{seed}-{i}'.encode()).hexdigest()[:12].upper()}",
+            "external_id": f"SIM-{hashlib.sha256(f'{seed}-{i}'.encode()).hexdigest()[:12].upper()}",
             "date": day.strftime("%Y-%m-%d"),
             "amount": amount,
             "direction": direction,
@@ -128,7 +132,7 @@ async def _fetch_live_transactions(conn: dict, since: datetime) -> List[Dict[str
     for r in raw:
         amount = float(r.get("amount") or r.get("Amount") or 0)
         txs.append({
-            "external_id": str(r.get("transactionId") or r.get("id") or r.get("referenceNo") or hashlib.sha1(str(r).encode()).hexdigest()[:16]),
+            "external_id": str(r.get("transactionId") or r.get("id") or r.get("referenceNo") or hashlib.sha256(str(r).encode()).hexdigest()[:16]),
             "date": str(r.get("transactionDate") or r.get("date") or "")[:10],
             "amount": abs(amount),
             "direction": "credit" if amount >= 0 else "debit",
@@ -141,7 +145,7 @@ async def _fetch_live_transactions(conn: dict, since: datetime) -> List[Dict[str
 
 
 async def fetch_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
-    if not has_credentials(conn):
+    if _is_simulated(conn):
         return {"simulated": True, "transactions": _simulate_transactions(conn, since)}
     txs = await _fetch_live_transactions(conn, since)
     return {"simulated": False, "transactions": txs}

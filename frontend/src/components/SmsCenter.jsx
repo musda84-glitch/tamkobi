@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { MessageSquare, Settings, Send, Loader2, Wallet, CheckCircle2, AlertCircle, FlaskConical } from "lucide-react";
@@ -15,13 +15,13 @@ export const SmsCenter = ({ companyId, contacts }) => {
   const [single, setSingle] = useState({ contact_id: "", phone: "", message: "" });
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [s, l] = await Promise.all([axios.get(`${API_URL}/comm/sms/settings?company_id=${companyId}`), axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`)]);
       setSettings(s.data); setForm({ usercode: s.data.usercode, password: "", msgheader: s.data.msgheader, is_active: s.data.is_active ?? true }); setLogs(l.data);
     } catch { toast.error("SMS verileri yüklenemedi."); }
-  };
-  useEffect(() => { load(); }, [companyId]);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
 
   const saveSettings = async (e) => {
     e.preventDefault();

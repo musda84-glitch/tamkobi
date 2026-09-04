@@ -1,17 +1,10 @@
 """Iteration 10 — Phase 9: Reports, Cargo catalog/marketplaces, Workshop performance, B2B portal."""
-import os
 import requests
 import pytest
-from dotenv import dotenv_values
 
-frontend_env = dotenv_values("/app/frontend/.env")
-base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
-if not base_url:
-    raise RuntimeError("REACT_APP_BACKEND_URL missing")
-BASE = base_url.rstrip("/") + "/api"
-CO = "comp_nexus_main_01"
+from conftest import API as BASE, TEST_COMPANY_ID as CO, TEST_B2B_CONTACT_ID, resolve_b2b_token
 DF, DT = "2026-01-01", "2026-12-31"
-TOKEN = "57b063b0e3fb4e7e893b8429c3f8b654"
+TOKEN = resolve_b2b_token()
 
 
 @pytest.fixture(scope="module")
@@ -139,6 +132,12 @@ class TestReports:
 class TestCargoCatalog:
     created = []
 
+    def test_cleanup_leftover_providers(self, s):
+        """Idempotency guard: remove navlungo/geliver left behind by an aborted run (shared with test_iteration11)."""
+        for c in s.get(f"{BASE}/integrations/cargo", params={"company_id": CO}).json():
+            if c.get("carrier_code") in ("navlungo", "geliver"):
+                s.delete(f"{BASE}/integrations/cargo/{c['id']}")
+
     def test_catalog_14_items(self, s):
         r = s.get(f"{BASE}/integrations/cargo/catalog", params={"company_id": CO})
         assert r.status_code == 200
@@ -235,7 +234,7 @@ class TestB2BPortal:
     order_id = None
 
     def test_enable_access_link(self, s):
-        r = s.post(f"{BASE}/contacts/cnt_01/b2b-access", json={"enabled": True, "discount": 5, "base_url": "https://x"})
+        r = s.post(f"{BASE}/contacts/{TEST_B2B_CONTACT_ID}/b2b-access", json={"enabled": True, "discount": 5, "base_url": "https://x"})
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["b2b_enabled"] is True and d["b2b_discount"] == 5
@@ -305,11 +304,11 @@ class TestB2BPortal:
         assert r2.status_code == 400
 
     def test_disable_then_reenable(self, s):
-        r = s.post(f"{BASE}/contacts/cnt_01/b2b-access", json={"enabled": False})
+        r = s.post(f"{BASE}/contacts/{TEST_B2B_CONTACT_ID}/b2b-access", json={"enabled": False})
         assert r.status_code == 200
         assert s.get(f"{BASE}/public/b2b/{TOKEN}").status_code == 404
         assert s.post(f"{BASE}/public/b2b/{TOKEN}/orders", json={"items": [{"product_id": "prod_01", "quantity": 1}]}).status_code == 404
-        r = s.post(f"{BASE}/contacts/cnt_01/b2b-access", json={"enabled": True, "discount": 5})
+        r = s.post(f"{BASE}/contacts/{TEST_B2B_CONTACT_ID}/b2b-access", json={"enabled": True, "discount": 5})
         assert r.status_code == 200
         assert s.get(f"{BASE}/public/b2b/{TOKEN}").status_code == 200
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -48,11 +48,7 @@ export default function WarehousePage() {
     manager_name: ""
   });
 
-  useEffect(() => {
-    loadWarehouseData();
-  }, [activeCompany]);
-
-  const loadWarehouseData = async () => {
+  const loadWarehouseData = useCallback(async () => {
     try {
       setLoading(true);
       const [whRes, trRes, prodRes] = await Promise.all([
@@ -76,7 +72,8 @@ export default function WarehousePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadWarehouseData(); }, [loadWarehouseData]);
 
   const handleSaveWarehouse = async (e) => {
     e.preventDefault();

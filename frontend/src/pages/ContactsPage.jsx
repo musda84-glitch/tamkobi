@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -64,11 +64,7 @@ export default function ContactsPage() {
     notes: ""
   });
 
-  useEffect(() => {
-    loadContacts();
-  }, [activeCompany, filterType]);
-
-  const loadContacts = async () => {
+  const loadContacts = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`);
@@ -79,7 +75,8 @@ export default function ContactsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany, filterType]);
+  useEffect(() => { loadContacts(); }, [loadContacts]);
 
   const handleSaveContact = async (e) => {
     e.preventDefault();

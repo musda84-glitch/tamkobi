@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Mail, Inbox, Send, Settings, RefreshCw, Loader2, Paperclip, Star, Trash2, X, PenSquare, Folder, CheckCircle2, AlertCircle, Reply, Download } from "lucide-react";
@@ -90,17 +90,17 @@ export const MailClient = ({ companyId }) => {
   const [sentLogs, setSentLogs] = useState([]);
   const [error, setError] = useState(null);
 
-  const loadAccount = async () => { const r = await axios.get(`${API_URL}/comm/mail/account?company_id=${companyId}`); setAccount(r.data); return r.data; };
-  const loadFolders = async () => { try { const r = await axios.get(`${API_URL}/comm/mail/folders?company_id=${companyId}`); setFolders(r.data); } catch { setFolders([{ name: "INBOX" }]); } };
-  const loadMessages = async (f = folder) => {
+  const loadAccount = useCallback(async () => { const r = await axios.get(`${API_URL}/comm/mail/account?company_id=${companyId}`); setAccount(r.data); return r.data; }, [companyId]);
+  const loadFolders = useCallback(async () => { try { const r = await axios.get(`${API_URL}/comm/mail/folders?company_id=${companyId}`); setFolders(r.data); } catch { setFolders([{ name: "INBOX" }]); } }, [companyId]);
+  const loadMessages = useCallback(async (f) => {
     setLoading(true); setError(null);
     try { const r = await axios.get(`${API_URL}/comm/mail/messages?company_id=${companyId}&folder=${encodeURIComponent(f)}&limit=40`); setMessages(r.data.messages); setTotal(r.data.total); }
     catch (err) { setError(err.response?.data?.detail || "Mesajlar alınamadı."); setMessages([]); }
     finally { setLoading(false); }
-  };
-  const loadSent = async () => { const r = await axios.get(`${API_URL}/comm/mail/logs?company_id=${companyId}`); setSentLogs(r.data); };
+  }, [companyId]);
+  const loadSent = useCallback(async () => { const r = await axios.get(`${API_URL}/comm/mail/logs?company_id=${companyId}`); setSentLogs(r.data); }, [companyId]);
 
-  useEffect(() => { (async () => { const a = await loadAccount(); if (a && a.status !== "error") { loadFolders(); loadMessages("INBOX"); } loadSent(); })(); }, [companyId]);
+  useEffect(() => { (async () => { const a = await loadAccount(); if (a && a.status !== "error") { loadFolders(); loadMessages("INBOX"); } loadSent(); })(); }, [loadAccount, loadFolders, loadMessages, loadSent]);
 
   const openMessage = async (m) => {
     try {
@@ -110,7 +110,7 @@ export const MailClient = ({ companyId }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Mesaj açılamadı."); }
   };
   const deleteMessage = async (m) => {
-    try { await axios.post(`${API_URL}/comm/mail/messages/${m.uid}/flag`, { company_id: companyId, folder, flag: "deleted", add: true }); toast.success("Mesaj silindi."); setSelected(null); loadMessages(); }
+    try { await axios.post(`${API_URL}/comm/mail/messages/${m.uid}/flag`, { company_id: companyId, folder, flag: "deleted", add: true }); toast.success("Mesaj silindi."); setSelected(null); loadMessages(folder); }
     catch { toast.error("Silinemedi."); }
   };
   const download = (att) => { const a = document.createElement("a"); a.href = `data:${att.content_type};base64,${att.data_b64}`; a.download = att.filename; a.click(); };
@@ -137,7 +137,7 @@ export const MailClient = ({ companyId }) => {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setCompose({})} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="mail-compose-btn"><PenSquare className="w-4 h-4" /> Yeni E-posta</button>
-          <button onClick={() => loadMessages()} className="p-2 border rounded-xl hover:bg-slate-50" title="Yenile" data-testid="mail-refresh-btn"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
+          <button onClick={() => loadMessages(folder)} className="p-2 border rounded-xl hover:bg-slate-50" title="Yenile" data-testid="mail-refresh-btn"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
           <button onClick={() => setShowSetup(true)} className="p-2 border rounded-xl hover:bg-slate-50" title="Hesap Ayarları" data-testid="mail-settings-btn"><Settings className="w-4 h-4" /></button>
         </div>
       </div>

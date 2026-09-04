@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { ClipboardList, Plus, Scan, CheckCircle2, Trash2, Loader2, AlertTriangle } from "lucide-react";
@@ -14,8 +14,8 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
   const [filter, setFilter] = useState("all");
   const inputRef = useRef(null);
 
-  const load = async () => { try { const r = await axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`); setCounts(r.data); } catch { toast.error("Sayımlar yüklenemedi."); } };
-  useEffect(() => { load(); }, [companyId]);
+  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`); setCounts(r.data); } catch { toast.error("Sayımlar yüklenemedi."); } }, [companyId]);
+  useEffect(() => { load(); }, [load]);
 
   const open = async (id) => { const r = await axios.get(`${API_URL}/warehouses/stock-counts/${id}`); setActive(r.data); setTimeout(() => inputRef.current?.focus(), 100); };
 

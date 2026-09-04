@@ -1,19 +1,21 @@
 """Iteration 11 regression: B2B order create/delete, cargo integrations collection unification,
 convert-to-invoice idempotency + e_type + contact resolution, product units CRUD."""
 import os
+import subprocess
+import sys
 import uuid
 
 import pytest
 import requests
-from dotenv import dotenv_values
 
-frontend_env = dotenv_values("/app/frontend/.env")
-base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
-if not base_url:
-    raise RuntimeError("REACT_APP_BACKEND_URL missing")
-BASE = base_url.rstrip("/") + "/api"
-COMPANY = "comp_nexus_main_01"
-B2B_TOKEN = "57b063b0e3fb4e7e893b8429c3f8b654"
+from conftest import API as BASE, TEST_COMPANY_ID as COMPANY, TEST_B2B_CONTACT_ID, resolve_b2b_token
+B2B_TOKEN = resolve_b2b_token()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cleanup_it11():
+    yield
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "cleanup_iteration11.py")], check=False, capture_output=True)
 
 
 @pytest.fixture(scope="module")

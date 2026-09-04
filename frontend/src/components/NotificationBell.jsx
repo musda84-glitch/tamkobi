@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { Bell, CheckCircle2, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -9,8 +9,8 @@ export const NotificationBell = ({ companyId }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const navigate = useNavigate();
-  const load = () => axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => setItems(r.data)).catch(() => {});
-  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [companyId]);
+  const load = useCallback(() => axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => setItems(r.data)).catch(() => {}), [companyId]);
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   useEffect(() => { const h = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false); document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
   const unread = items.filter((n) => !n.is_read).length;
   const openItem = async (n) => {

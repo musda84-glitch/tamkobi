@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { BarChart3, Download, Printer, TrendingUp, TrendingDown, Clock, Package, Wallet, Percent, PieChart } from "lucide-react";
@@ -28,8 +28,8 @@ export default function ReportsPage() {
   const [group, setGroup] = useState("contact");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const load = async () => { setLoading(true); try { const r = await axios.get(`${API_URL}/reports/${kind}?company_id=${companyId}&date_from=${from}&date_to=${to}&group=${group}`); setData(r.data); } catch { toast.error("Rapor alınamadı."); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, [kind, from, to, group, companyId]);
+  const load = useCallback(async () => { setLoading(true); try { const r = await axios.get(`${API_URL}/reports/${kind}?company_id=${companyId}&date_from=${from}&date_to=${to}&group=${group}`); setData(r.data); } catch { toast.error("Rapor alınamadı."); } finally { setLoading(false); } }, [kind, from, to, group, companyId]);
+  useEffect(() => { load(); }, [load]);
   const cols = COLS[kind];
   const rows = data?.rows || [];
   const preset = (d) => { const t = new Date(); const f = new Date(); if (d === "month") f.setDate(1); else if (d === "quarter") { f.setMonth(Math.floor(t.getMonth() / 3) * 3, 1); } else if (d === "year") f.setMonth(0, 1); else f.setDate(t.getDate() - d); setFrom(f.toISOString().slice(0, 10)); setTo(t.toISOString().slice(0, 10)); };

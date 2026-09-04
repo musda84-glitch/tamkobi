@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Clock, LogIn, LogOut, CalendarX2 } from "lucide-react";
@@ -7,8 +7,8 @@ import { API_URL } from "../context/AuthContext";
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [data, setData] = useState(null);
-  const load = async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } };
-  useEffect(() => { load(); }, [companyId, month]);
+  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
+  useEffect(() => { load(); }, [load]);
   const act = async (employee_id, body) => { try { await axios.post(`${API_URL}/personnel/attendance`, { employee_id, ...body }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   if (!data) return null;
   return (

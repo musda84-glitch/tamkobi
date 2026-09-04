@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -21,14 +21,14 @@ export default function InstallmentsPage() {
   const [filter, setFilter] = useState("pending");
   const [remind, setRemind] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const qs = filter === "receivable" || filter === "payable" ? `direction=${filter}&status=pending` : `status=${filter === "all" ? "" : filter}`;
     try {
       const [r, s, a, c] = await Promise.all([axios.get(`${API_URL}/installments?company_id=${companyId}&${qs}`), axios.get(`${API_URL}/installments/summary?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`)]);
       setRows(r.data); setSummary(s.data); setAccounts(a.data); setContacts(c.data);
     } catch { toast.error("Taksitler yüklenemedi."); }
-  };
-  useEffect(() => { load(); }, [companyId, filter]);
+  }, [companyId, filter]);
+  useEffect(() => { load(); }, [load]);
 
   const grouped = rows.reduce((acc, r) => { const k = r.invoice_id || `bal-${r.contact_id}`; (acc[k] = acc[k] || []).push(r); return acc; }, {});
   const Card = ({ icon: Icon, label, value, sub, tone, testId }) => (

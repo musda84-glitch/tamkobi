@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Users, Plus, ArrowDownRight, ArrowUpRight, PieChart, X, Trash2 } from "lucide-react";
@@ -30,7 +30,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [p, s, t] = await Promise.all([
         axios.get(`${API_URL}/banking/partners?company_id=${companyId}`),
@@ -39,8 +39,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       ]);
       setPartners(p.data); setSummary(s.data); setTxs(t.data);
     } catch { toast.error("Ortak verileri yüklenemedi."); }
-  };
-  useEffect(() => { load(); }, [companyId]);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
 
   const firstAcc = accounts[0]?.id || "";
 

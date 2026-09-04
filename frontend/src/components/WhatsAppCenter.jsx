@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { MessageCircle, ExternalLink, Send, ArrowDownLeft, ArrowUpRight } from "lucide-react";
@@ -9,8 +9,8 @@ const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 export const WhatsAppCenter = ({ companyId, contacts }) => {
   const [logs, setLogs] = useState([]);
   const [form, setForm] = useState({ contact_id: "", phone: "", message: "", direction: "outbound" });
-  const load = async () => { try { const r = await axios.get(`${API_URL}/comm/whatsapp/logs?company_id=${companyId}`); setLogs(r.data); } catch { toast.error("WhatsApp kayıtları yüklenemedi."); } };
-  useEffect(() => { load(); }, [companyId]);
+  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/comm/whatsapp/logs?company_id=${companyId}`); setLogs(r.data); } catch { toast.error("WhatsApp kayıtları yüklenemedi."); } }, [companyId]);
+  useEffect(() => { load(); }, [load]);
 
   const submit = async (e, openWa) => {
     e.preventDefault();

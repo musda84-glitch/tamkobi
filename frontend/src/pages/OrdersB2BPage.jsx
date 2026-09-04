@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -71,11 +71,7 @@ export default function OrdersB2BPage() {
   const [cart, setCart] = useState({});
   const [b2bCustomer, setB2bCustomer] = useState("");
 
-  useEffect(() => {
-    loadData();
-  }, [activeCompany]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [ordRes, prodRes, cntRes] = await Promise.all([
@@ -92,7 +88,8 @@ export default function OrdersB2BPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   const [invChooser, setInvChooser] = useState(null);
   const handleConvertToInvoice = async (orderId, eType) => {
@@ -365,7 +362,7 @@ export default function OrdersB2BPage() {
                             {ord.cargo_tracking_number}
                           </span>
                         )}
-                        {["pending", "new"].includes(ord.order_status) && <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Siparişi Onayla + Kargo Seç" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button>}
+                        {["pending", "new"].includes(ord.order_status) && <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button>}
                         <button onClick={() => makeDispatch(ord)} className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition" title={ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır"} data-testid={`dispatch-btn-${ord.order_number}`}><FileIcon className="w-4 h-4" /></button>
                         {!["returned"].includes(ord.order_status) && <button onClick={() => setReturnOrder(ord)} className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="İade Al" data-testid={`return-order-btn-${ord.order_number}`}><RotateCcw className="w-4 h-4" /></button>}
                         <button onClick={() => setLabelOrder(ord)} className="p-1.5 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition" title="Kargo Etiketi Yazdır" data-testid={`cargo-label-btn-${ord.order_number}`}><Tag className="w-4 h-4" /></button>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -37,7 +37,7 @@ export default function StockBarcodePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
-  const loadCategories = () => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {});
+  const loadCategories = useCallback(() => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {}), [activeCompany]);
   const [loading, setLoading] = useState(true);
 
   // Modals & Scanner state
@@ -87,11 +87,7 @@ export default function StockBarcodePage() {
     track_stock: true
   });
 
-  useEffect(() => {
-    loadProducts();
-  }, [activeCompany, filterCategory]);
-
-  const loadProducts = async () => {
+  const loadProducts = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&category=${encodeURIComponent(filterCategory)}`);
@@ -103,7 +99,8 @@ export default function StockBarcodePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany, filterCategory, loadCategories]);
+  useEffect(() => { loadProducts(); }, [loadProducts]);
 
   const handleSaveProduct = async (e) => {
     e.preventDefault();

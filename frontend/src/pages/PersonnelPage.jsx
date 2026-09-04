@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -45,11 +45,7 @@ export default function PersonnelPage() {
     start_date: new Date().toISOString().split("T")[0]
   });
 
-  useEffect(() => {
-    loadPersonnelData();
-  }, [activeCompany]);
-
-  const loadPersonnelData = async () => {
+  const loadPersonnelData = useCallback(async () => {
     try {
       setLoading(true);
       const [empRes, payRes, bankRes] = await Promise.all([
@@ -66,7 +62,8 @@ export default function PersonnelPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
 
   const handleSaveEmployee = async (e) => {
     e.preventDefault();

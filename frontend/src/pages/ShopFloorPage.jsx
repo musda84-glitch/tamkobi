@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package } from "lucide-react";
@@ -20,16 +20,16 @@ export default function ShopFloorPage() {
   const [showDone, setShowDone] = useState(false);
   const [perf, setPerf] = useState(null);
   const [showPerf, setShowPerf] = useState(false);
-  const loadPerf = () => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {});
-  useEffect(() => { loadPerf(); }, [companyId, wos.length]);
+  const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
+  useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [w, e, s] = await Promise.all([axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`)]);
       setWos(w.data); setEmployees(e.data); setStations(s.data);
     } catch { /* keep last */ }
-  };
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [companyId, station]);
+  }, [companyId, station]);
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
   useEffect(() => { localStorage.setItem("nx_operator", operator); localStorage.setItem("nx_station", station); }, [operator, station]);
 
   const act = async (w, action, body) => {

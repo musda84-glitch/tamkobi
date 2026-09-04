@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -25,14 +25,14 @@ export default function ProductionPage() {
   const [completeQty, setCompleteQty] = useState({});
   const [filter, setFilter] = useState("open");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [r, o, p, w] = await Promise.all([axios.get(`${API_URL}/production/recipes?company_id=${companyId}`), axios.get(`${API_URL}/production/orders?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders?company_id=${companyId}`)]);
       setRecipes(r.data); setOrders(o.data); setProducts(p.data); setWos(w.data);
     } catch { toast.error("Üretim verileri yüklenemedi."); }
-  };
-  useEffect(() => { load(); }, [companyId]);
-  useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products]);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products, setParams]);
 
   const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };

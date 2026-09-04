@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -27,11 +27,7 @@ export default function EcommercePage() {
   // Settings Modal
   const [selectedConfig, setSelectedConfig] = useState(null);
 
-  useEffect(() => {
-    loadIntegrations();
-  }, [activeCompany]);
-
-  const loadIntegrations = async () => {
+  const loadIntegrations = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
@@ -41,7 +37,8 @@ export default function EcommercePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadIntegrations(); }, [loadIntegrations]);
 
   const handleTestConnection = async (channelId) => {
     try {

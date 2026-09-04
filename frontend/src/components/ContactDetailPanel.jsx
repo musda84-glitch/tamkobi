@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers } from "lucide-react";
@@ -28,11 +28,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const navigate = useNavigate();
   const { activeCompany } = useAuth();
 
-  const load = async () => {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const load = useCallback(async () => {
     try { const r = await axios.get(`${API_URL}/contacts/${contactId}/overview`); setData(r.data); }
-    catch { toast.error("Cari detayı yüklenemedi."); onClose(); }
-  };
-  useEffect(() => { load(); }, [contactId]);
+    catch { toast.error("Cari detayı yüklenemedi."); onCloseRef.current(); }
+  }, [contactId]);
+  useEffect(() => { load(); }, [load]);
 
   const convertQuote = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const convertSurvey = async (sv) => { try { const r = await axios.post(`${API_URL}/surveys/${sv.id}/convert-to-quote`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
@@ -43,9 +45,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
   const [balancePlan, setBalancePlan] = useState(false);
   const [insts, setInsts] = useState([]);
-  const loadInsts = () => axios.get(`${API_URL}/installments?company_id=${data?.contact?.company_id}&contact_id=${contactId}`).then((r) => setInsts(r.data)).catch(() => {});
-  useEffect(() => { if (data?.contact) loadInsts(); }, [data?.contact?.id]);
-  useEffect(() => { if (tab === "installments" && data?.contact) { loadInsts(); axios.get(`${API_URL}/banking/accounts?company_id=${data.contact.company_id}`).then((r) => setAccounts(r.data)).catch(() => {}); } }, [tab, contactId, data?.contact?.id]);
+  const contactCompanyId = data?.contact?.company_id;
+  const loadInsts = useCallback(() => { if (contactCompanyId) axios.get(`${API_URL}/installments?company_id=${contactCompanyId}&contact_id=${contactId}`).then((r) => setInsts(r.data)).catch(() => {}); }, [contactCompanyId, contactId]);
+  useEffect(() => { loadInsts(); }, [loadInsts]);
+  useEffect(() => { if (tab === "installments" && contactCompanyId) { loadInsts(); axios.get(`${API_URL}/banking/accounts?company_id=${contactCompanyId}`).then((r) => setAccounts(r.data)).catch(() => {}); } }, [tab, contactCompanyId, loadInsts]);
   const [surveyDetail, setSurveyDetail] = useState(null);
   const [editPay, setEditPay] = useState(null);
   const isLockedTx = (p) => p.source === "bank_sync" || p.source === "partner";

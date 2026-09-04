@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
@@ -36,11 +36,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchStats();
-  }, [activeCompany]);
-
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/dashboard/stats?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
@@ -50,7 +46,8 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
 
   if (loading || !stats) {
     return (

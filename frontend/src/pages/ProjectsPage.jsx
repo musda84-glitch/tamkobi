@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
@@ -63,11 +63,11 @@ export default function ProjectsPage() {
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [q, p, s, c, pr] = await Promise.all([axios.get(`${API_URL}/quotes?company_id=${companyId}`), axios.get(`${API_URL}/projects?company_id=${companyId}`), axios.get(`${API_URL}/surveys?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`)]);
     setQuotes(q.data); setProjects(p.data); setSurveys(s.data); setContacts(c.data); setProducts(pr.data);
-  };
-  useEffect(() => { load().catch(() => toast.error("Veriler yüklenemedi.")); }, [companyId]);
+  }, [companyId]);
+  useEffect(() => { load().catch(() => toast.error("Veriler yüklenemedi.")); }, [load]);
 
   const openForm = (kind) => { setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [] }); setItems([{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]); };
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });

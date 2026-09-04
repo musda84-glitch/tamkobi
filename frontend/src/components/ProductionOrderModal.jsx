@@ -18,11 +18,12 @@ export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp,
   const [notes, setNotes] = useState("");
   const [req, setReq] = useState(null);
   const [busy, setBusy] = useState(false);
+  const productId = product?.id;
   useEffect(() => {
     if (recipesProp) return;
-    axios.get(`${API_URL}/production/recipes?company_id=${companyId}${product ? `&product_id=${product.id}` : ""}`).then((r) => setRecipes(r.data.filter((x) => x.is_active !== false))).catch(() => setRecipes([]));
-  }, [companyId, product?.id]);
-  useEffect(() => { if (recipes?.length && !recipeId) setRecipeId((recipes.find((r) => r.finished_product_id === product?.id) || recipes[0]).id); }, [recipes]);
+    axios.get(`${API_URL}/production/recipes?company_id=${companyId}${productId ? `&product_id=${productId}` : ""}`).then((r) => setRecipes(r.data.filter((x) => x.is_active !== false))).catch(() => setRecipes([]));
+  }, [companyId, productId, recipesProp]);
+  useEffect(() => { if (recipes?.length) setRecipeId((cur) => cur || (recipes.find((r) => r.finished_product_id === productId) || recipes[0]).id); }, [recipes, productId]);
   useEffect(() => { if (recipeId && qty > 0) axios.get(`${API_URL}/production/requirements?recipe_id=${recipeId}&quantity=${qty}`).then((r) => setReq(r.data)).catch(() => setReq(null)); }, [recipeId, qty]);
   const recipe = recipes?.find((r) => r.id === recipeId);
   const submit = async () => {

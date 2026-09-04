@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -77,11 +77,7 @@ export default function InvoicesPage() {
   });
   const [gdMode, setGdMode] = useState("percent");
 
-  useEffect(() => {
-    loadData();
-  }, [activeCompany, filterType]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [invRes, cntRes, prodRes, bankRes] = await Promise.all([
@@ -100,7 +96,8 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCompany, filterType]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   const handleAddItem = () => {
     setFormData({

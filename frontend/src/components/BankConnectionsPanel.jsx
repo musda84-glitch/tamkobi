@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2 } from "lucide-react";
@@ -31,7 +31,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showRules, setShowRules] = useState(false);
   const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [p, c, u, r] = await Promise.all([
         axios.get(`${API_URL}/banking/providers`),
@@ -44,8 +44,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       u.data.forEach((t) => { if (t.suggested_contact_id) init[t.id] = t.suggested_contact_id; });
       setMatchSel(init);
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
-  };
-  useEffect(() => { load(); }, [companyId]);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
 
   const provider = providers.find((p) => p.code === form.provider);
 

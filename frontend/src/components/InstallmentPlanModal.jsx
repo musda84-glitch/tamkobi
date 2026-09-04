@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
@@ -78,8 +78,8 @@ export const InstallmentPlanModal = ({ doc, kind = "invoice", accounts = [], com
   const isQuote = kind === "quote";
   const isBalance = kind === "balance";
   const base = isBalance ? `${API_URL}/contacts/${doc.id}/installments` : `${API_URL}/invoices/${doc.id}/installments`;
-  const load = () => isQuote ? setRows(doc.payment_plan?.rows || []) : axios.get(base).then((r) => setRows(r.data));
-  useEffect(() => { load(); }, [doc.id]);
+  const load = useCallback(() => isQuote ? setRows(doc.payment_plan?.rows || []) : axios.get(base).then((r) => setRows(r.data)), [isQuote, doc.payment_plan?.rows, base]);
+  useEffect(() => { load(); }, [load]);
   const save = async (cfg) => {
     try {
       if (isQuote) { const r = await axios.post(`${API_URL}/quotes/${doc.id}/payment-plan`, cfg); setRows(r.data.payment_plan.rows); }

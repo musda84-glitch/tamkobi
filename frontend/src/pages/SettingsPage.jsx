@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
@@ -119,8 +119,8 @@ const UcBox = ({ title, sub, items, base, testId, companyId, call }) => {
 const UnitsCategories = ({ companyId }) => {
   const [units, setUnits] = useState([]);
   const [cats, setCats] = useState([]);
-  const load = () => { axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => setUnits(r.data)).catch(() => {}); axios.get(`${API_URL}/products/categories?company_id=${companyId}`).then((r) => setCats(r.data)).catch(() => {}); };
-  useEffect(() => { load(); }, [companyId]);
+  const load = useCallback(() => { axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => setUnits(r.data)).catch(() => {}); axios.get(`${API_URL}/products/categories?company_id=${companyId}`).then((r) => setCats(r.data)).catch(() => {}); }, [companyId]);
+  useEffect(() => { load(); }, [load]);
   const call = async (fn, ok) => { try { await fn(); toast.success(ok); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   return (<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <UcBox title="Birimler" sub="Adet, Kg, Mt… Stok kartında listelenir; kullanılan birim silinemez, yeniden adlandırılabilir." items={units} base="/products/units" testId="units-box" companyId={companyId} call={call} />
@@ -131,8 +131,8 @@ const UnitsCategories = ({ companyId }) => {
 const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
-  const load = () => axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => setD(r.data)).catch(() => toast.error("B2B ayarları yüklenemedi."));
-  useEffect(() => { load(); }, [companyId]);
+  const load = useCallback(() => axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => setD(r.data)).catch(() => toast.error("B2B ayarları yüklenemedi.")), [companyId]);
+  useEffect(() => { load(); }, [load]);
   if (!d) return null;
   const st = d.settings;
   const set = (k, v) => setD({ ...d, settings: { ...st, [k]: v } });

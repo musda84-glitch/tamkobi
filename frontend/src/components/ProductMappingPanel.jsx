@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Link2, Trash2, Plus, AlertTriangle } from "lucide-react";
@@ -8,8 +8,8 @@ import { SearchSelect } from "./SearchSelect";
 export const ProductMappingPanel = ({ companyId }) => {
   const [maps, setMaps] = useState([]); const [unmapped, setUnmapped] = useState([]); const [products, setProducts] = useState([]);
   const [form, setForm] = useState({ channel: "trendyol", marketplace_sku: "", product_id: "" });
-  const load = async () => { const [m, u, p] = await Promise.all([axios.get(`${API_URL}/integrations/ecommerce/mappings?company_id=${companyId}`), axios.get(`${API_URL}/integrations/ecommerce/unmapped?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`)]); setMaps(m.data); setUnmapped(u.data); setProducts(p.data); };
-  useEffect(() => { load().catch(() => toast.error("Eşleştirmeler yüklenemedi.")); }, [companyId]);
+  const load = useCallback(async () => { const [m, u, p] = await Promise.all([axios.get(`${API_URL}/integrations/ecommerce/mappings?company_id=${companyId}`), axios.get(`${API_URL}/integrations/ecommerce/unmapped?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`)]); setMaps(m.data); setUnmapped(u.data); setProducts(p.data); }, [companyId]);
+  useEffect(() => { load().catch(() => toast.error("Eşleştirmeler yüklenemedi.")); }, [load]);
   const save = async (e) => { e.preventDefault(); try { await axios.post(`${API_URL}/integrations/ecommerce/mappings`, { company_id: companyId, ...form }); toast.success("Ürün eşleştirildi."); setForm({ ...form, marketplace_sku: "", product_id: "" }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Eşleştirilemedi."); } };
   const del = async (id) => { await axios.delete(`${API_URL}/integrations/ecommerce/mappings/${id}`); load(); };
   return (

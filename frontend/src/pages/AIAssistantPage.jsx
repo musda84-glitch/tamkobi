@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -42,21 +42,18 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
-    loadForecast();
-  }, [activeCompany]);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const loadForecast = async () => {
+  const loadForecast = useCallback(async () => {
     try {
       const res = await axios.get(`${API_URL}/ai/cashflow-forecast?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
       setForecast(res.data);
     } catch (err) {
       console.error("Nakit tahmini yüklenemedi", err);
     }
-  };
+  }, [activeCompany]);
+  useEffect(() => { loadForecast(); }, [loadForecast]);
 
   const handleSendMessage = async (msgText) => {
     const textToSend = msgText || inputMessage;

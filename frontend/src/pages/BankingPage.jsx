@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -62,11 +62,7 @@ export default function BankingPage() {
     description: "Hesaplar arası transfer (Virman)"
   });
 
-  useEffect(() => {
-    loadBankingData();
-  }, [activeCompany]);
-
-  const loadBankingData = async () => {
+  const loadBankingData = useCallback(async () => {
     try {
       setLoading(true);
       const [accRes, txRes, cRes, psRes] = await Promise.all([
@@ -91,7 +87,8 @@ export default function BankingPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyId]);
+  useEffect(() => { loadBankingData(); }, [loadBankingData]);
 
   const handleSaveAccount = async (e) => {
     e.preventDefault();
