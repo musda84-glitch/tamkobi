@@ -1207,16 +1207,79 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["invoice_type"] = type
+    else:
+        query["invoice_type"] = {"$ne": "dispatch"}
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
+
+@api_router.post("/invoices/{invoice_id}/create-dispatch")
+async def create_dispatch_from_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("invoice_type") == "dispatch":
+        raise HTTPException(status_code=400, detail="Bu belge zaten bir irsaliye.")
+    if inv.get("dispatch_id"):
+        d = await db.invoices.find_one({"_id": inv["dispatch_id"]})
+        if d:
+            return {"status": "exists", "dispatch": clean_doc(d), "message": f"Bu faturanın irsaliyesi zaten var: {d['invoice_number']}"}
+    number = await _next_number("IRS", db.invoices)
+    contact = await db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    doc = {"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
+           "contact_tax_id": inv.get("contact_tax_id"), "shipping_address": (contact or {}).get("address"), "city": (contact or {}).get("city"), "items": [{**it, "vat_rate": 0} for it in inv.get("items", [])],
+           "subtotal": inv.get("subtotal", 0), "vat_total": 0, "grand_total": inv.get("subtotal", 0), "currency": inv.get("currency", "TRY"), "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
+           "invoice_id": invoice_id, "invoice_ref_number": inv.get("invoice_number"), "source_channel": inv.get("source_channel", "manual"), "dispatch_status": "draft",
+           "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.invoices.insert_one(doc)
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
+    return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} irsaliyesi oluşturuldu."}
+
+@api_router.post("/invoices/{dispatch_id}/convert-to-invoice")
+async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, Any]] = None):
+    d = await db.invoices.find_one({"_id": dispatch_id})
+    if not d or d.get("invoice_type") != "dispatch":
+        raise HTTPException(status_code=404, detail="İrsaliye bulunamadı.")
+    if d.get("converted_invoice_id"):
+        ex = await db.invoices.find_one({"_id": d["converted_invoice_id"]})
+        if ex:
+            return {"status": "exists", "invoice": clean_doc(ex), "message": f"Bu irsaliye zaten faturalandı: {ex['invoice_number']}"}
+    req = req or {}
+    products = {p["_id"]: p for p in await db.products.find({"company_id": d["company_id"]}, {"vat_rate": 1}).to_list(3000)}
+    items = []
+    for it in d.get("items", []):
+        vat = int(it.get("vat_rate") or 0) or int((products.get(it.get("product_id")) or {}).get("vat_rate") or 20)
+        items.append(InvoiceItem(product_id=it.get("product_id"), name=it.get("name") or "Kalem", quantity=float(it.get("quantity") or 1), unit=it.get("unit") or "Adet", unit_price=float(it.get("unit_price") or 0), vat_rate=vat, discount_rate=float(it.get("discount_rate") or 0), total=float(it.get("total") or 0)))
+    if not items:
+        raise HTTPException(status_code=400, detail="İrsaliyede kalem yok.")
+    if not d.get("contact_id"):
+        raise HTTPException(status_code=400, detail="İrsaliyede cari bağlı değil; önce cari seçin.")
+    inv = Invoice(company_id=d["company_id"], invoice_type="sales", e_type=req.get("e_type") or "e_archive", contact_id=d["contact_id"], contact_name=d.get("contact_name") or "", contact_tax_id=d.get("contact_tax_id") or "",
+                  issue_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"), items=items, currency=d.get("currency") or "TRY", status="draft", notes=f"İrsaliye: {d['invoice_number']}" + (f" · Sipariş: {d['order_number']}" if d.get("order_number") else ""),
+                  source_channel=d.get("source_channel") or "manual")
+    created = await create_invoice(inv)
+    await db.invoices.update_one({"_id": created["id"]}, {"$set": {"dispatch_id": dispatch_id, "dispatch_number": d["invoice_number"], "order_id": d.get("order_id"), "order_number": d.get("order_number")}})
+    await db.invoices.update_one({"_id": dispatch_id}, {"$set": {"converted_invoice_id": created["id"], "converted_invoice_number": created["invoice_number"], "dispatch_status": "invoiced"}})
+    if d.get("order_id"):
+        await db.orders.update_one({"_id": d["order_id"], "invoice_id": None}, {"$set": {"invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
+    return {"status": "success", "invoice": clean_doc(await db.invoices.find_one({"_id": created["id"]})), "message": f"{d['invoice_number']} → {created['invoice_number']} satış faturası oluşturuldu."}
 
 @api_router.post("/invoices")
 async def create_invoice(invoice: Invoice):
     if not invoice.invoice_number:
-        prefix = "NX" if invoice.invoice_type == "sales" else "AL"
-        year = datetime.now().strftime("%Y")
-        count = await db.invoices.count_documents({"company_id": invoice.company_id}) + 1
-        invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
+        if invoice.invoice_type == "dispatch":
+            invoice.invoice_number = await _next_number("IRS", db.invoices)
+        else:
+            prefix = "NX" if invoice.invoice_type == "sales" else "AL"
+            year = datetime.now().strftime("%Y")
+            count = await db.invoices.count_documents({"company_id": invoice.company_id}) + 1
+            invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
+    if invoice.invoice_type == "dispatch":
+        invoice.e_type = "e_dispatch"
+        invoice.status = "draft"
+        invoice.gib_status = "Taslak (e-İrsaliye)"
+        invoice.payment_status = "n/a"
+        for it in invoice.items:
+            it.vat_rate = 0
 
     if not invoice.due_date and invoice.contact_id:
         _c = await db.contacts.find_one({"_id": invoice.contact_id})
@@ -2841,7 +2904,7 @@ async def create_dispatch(order_id: str):
            "contact_name": o.get("customer_name"), "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
            "items": [{"product_id": it.get("product_id"), "name": it.get("product_name"), "quantity": it.get("quantity"), "unit": "Adet", "unit_price": it.get("unit_price"), "vat_rate": 0, "total": it.get("total")} for it in o.get("items", [])],
            "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
-           "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier"), "cargo_tracking_number": o.get("cargo_tracking_number"),
+           "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})

@@ -20,7 +20,8 @@ import {
   QrCode,
   MessageSquare,
   MoreVertical,
-  MousePointerClick
+  MousePointerClick,
+  FileCheck2
 } from "lucide-react";
 import { InvoiceContextMenu, E_TYPE_LABELS } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -33,6 +34,7 @@ import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument"
 import { SearchSelect } from "../components/SearchSelect";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
+import { SourceBadge } from "../components/SourceBadge";
 
 export default function InvoicesPage() {
   const { activeCompany } = useAuth();
@@ -64,6 +66,15 @@ export default function InvoicesPage() {
   const closeCtx = React.useCallback(() => setCtxMenu(null), []);
   const openCtx = (e, inv) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, inv }); };
   const openCtxFromButton = (e, inv) => { const r = e.currentTarget.getBoundingClientRect(); setCtxMenu({ x: r.left - 240, y: r.bottom + 4, inv }); };
+  const handleConvertDispatch = async (inv) => {
+    if (!window.confirm(`${inv.invoice_number} irsaliyesinden satış faturası oluşturulsun mu?`)) return;
+    try { const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/convert-to-invoice`, {}); toast.success(r.data.message); loadData(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); }
+  };
+  const handleCreateDispatch = async (inv) => {
+    try { const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/create-dispatch`); toast[r.data.status === "exists" ? "info" : "success"](r.data.message); loadData(); }
+    catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); }
+  };
   const openPayment = (inv) => { setPaymentModalInvoice(inv); setPaymentAmount(inv.grand_total - (inv.paid_amount || 0)); };
 
   // New Invoice Form
@@ -225,12 +236,12 @@ export default function InvoicesPage() {
         <div className="flex gap-2 self-start">
         <button onClick={() => setShowAiImport(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>PDF'den Aktar (AI)</span></button>
         <button
-          onClick={() => setShowNewModal(true)}
+          onClick={() => { if (filterType === "dispatch") setFormData((fd) => ({ ...fd, invoice_type: "dispatch", e_type: "e_dispatch" })); setShowNewModal(true); }}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition self-start sm:self-auto"
           data-testid="create-new-invoice-btn"
         >
           <Plus className="w-4 h-4" />
-          <span>Yeni Fatura Kes</span>
+          <span>{filterType === "dispatch" ? "Yeni İrsaliye" : "Yeni Fatura Kes"}</span>
         </button>
         </div>
       </div>
@@ -243,7 +254,8 @@ export default function InvoicesPage() {
           { id: "sales", label: "Satış Faturaları" },
           { id: "purchase", label: "Alış Faturaları" },
           { id: "proforma", label: "Proforma & Teklif" },
-          { id: "return", label: "İade Faturaları" }
+          { id: "return", label: "İade Faturaları" },
+          { id: "dispatch", label: "İrsaliyeler" }
         ].map(tab => (
           <button
             key={tab.id}
@@ -275,12 +287,12 @@ export default function InvoicesPage() {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
-                <th className="px-4 py-3">Fatura No / Tür</th>
+                <th className="px-4 py-3">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</th>
                 <th className="px-4 py-3">Cari (Müşteri / Tedarikçi)</th>
                 <th className="px-4 py-3">Tarih / Vade</th>
                 <th className="px-4 py-3">GİB Durumu</th>
                 <th className="px-4 py-3 text-right">Tutar</th>
-                <th className="px-4 py-3 text-right">Ödeme Durumu</th>
+                <th className="px-4 py-3 text-right">{filterType === "dispatch" ? "İrsaliye Durumu" : "Ödeme Durumu"}</th>
                 <th className="px-4 py-3 text-center">İşlemler</th>
               </tr>
             </thead>
@@ -298,10 +310,11 @@ export default function InvoicesPage() {
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                          inv.invoice_type === 'sales' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
+                          inv.invoice_type === 'sales' ? 'bg-blue-50 text-blue-700' : inv.invoice_type === 'dispatch' ? 'bg-fuchsia-50 text-fuchsia-700' : 'bg-amber-50 text-amber-700'
                         }`}>
-                          {inv.invoice_type === 'sales' ? 'Satış' : 'Alış'}
+                          {inv.invoice_type === 'sales' ? 'Satış' : inv.invoice_type === 'dispatch' ? 'İrsaliye' : 'Alış'}
                         </span>
+                        <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
                         <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
                           {E_TYPE_LABELS[inv.e_type] || 'İrsaliye'}
                         </span>
@@ -324,9 +337,14 @@ export default function InvoicesPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
-                      <div className="text-[10px] text-slate-400">KDV Dahil</div>
+                      <div className="text-[10px] text-slate-400">{inv.invoice_type === 'dispatch' ? "KDV'siz (Sevk)" : 'KDV Dahil'}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
+                      {inv.invoice_type === 'dispatch' ? (
+                        <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${inv.converted_invoice_id ? 'bg-emerald-100 text-emerald-800' : 'bg-fuchsia-100 text-fuchsia-800'}`} data-testid={`dispatch-status-${inv.invoice_number}`}>
+                          {inv.converted_invoice_id ? `Faturalandı · ${inv.converted_invoice_number}` : inv.order_number ? `Sipariş ${inv.order_number}` : inv.invoice_ref_number ? `Fatura ${inv.invoice_ref_number}` : 'Faturalanmadı'}
+                        </span>
+                      ) : (
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                         inv.payment_status === 'paid'
                           ? 'bg-emerald-100 text-emerald-800'
@@ -336,6 +354,7 @@ export default function InvoicesPage() {
                       }`}>
                         {inv.payment_status === 'paid' ? 'Ödendi' : inv.payment_status === 'partially_paid' ? 'Kısmi Ödendi' : 'Ödenmedi'}
                       </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center w-[220px] min-w-[220px]">
                       <div className="grid grid-cols-6 gap-1 justify-items-center items-center">
@@ -367,7 +386,9 @@ export default function InvoicesPage() {
                           </button>
                         ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
                         <button onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
-                        {inv.payment_status !== 'paid' ? (
+                        {inv.invoice_type === 'dispatch' ? (
+                          <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
+                        ) : inv.payment_status !== 'paid' ? (
                           <button
                             onClick={() => openPayment(inv)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
@@ -387,7 +408,7 @@ export default function InvoicesPage() {
         </div>
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onInstallments={setInstallmentInv} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
@@ -435,6 +456,7 @@ export default function InvoicesPage() {
                     <option value="purchase">Alış Faturası</option>
                     <option value="proforma">Proforma Fatura</option>
                     <option value="return">İade Faturası</option>
+                    <option value="dispatch">İrsaliye (Sevk)</option>
                   </select>
                 </div>
                 <div>

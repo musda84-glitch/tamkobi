@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock } from "lucide-react";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck } from "lucide-react";
 
 export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye" };
 
@@ -9,7 +9,7 @@ const ISSUE_OPTIONS = [
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" }
 ];
 
-export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments }) => {
+export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch }) => {
   const ref = useRef(null);
   useEffect(() => {
     if (!menu) return;
@@ -51,6 +51,7 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
       <Item icon={Printer} label="Şablonlu Yazdır" onClick={() => onPrint(inv)} testId="ctx-print" />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
+      {onDispatch && inv.invoice_type === "sales" && <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />}
       {inv.payment_status !== "paid" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
       {onInstallments && <Item icon={CalendarClock} color="text-violet-600" label={inv.installment_plan ? `Taksitler (${inv.installment_plan.paid_count}/${inv.installment_plan.count})` : "Taksitlendir"} sub={inv.installment_plan ? "Planı gör, tahsil et" : "Ödeme planı oluştur"} onClick={() => onInstallments(inv)} testId="ctx-installments" />}
     </div>
