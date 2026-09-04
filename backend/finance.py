@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from bank_guard import assert_manual_allowed
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 router = APIRouter(prefix="/api")
@@ -119,6 +120,7 @@ async def create_loan(req: Dict[str, Any]):
     if req.get("account_id") and req.get("credit_to_account"):
         acc = await _db.bank_accounts.find_one({"_id": req["account_id"]})
         if acc:
+            await assert_manual_allowed(_db, acc["_id"])
             await _db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": doc["principal"]}})
             await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "source": "loan", "loan_id": doc["_id"], "date": doc["start_date"], "created_at": _now()})
     return _clean(doc)
@@ -139,6 +141,7 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any]):
     if not acc:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
     pay_date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    await assert_manual_allowed(_db, account_id)
     await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -ins["amount"]}})
     await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "source": "loan", "loan_id": loan_id, "date": pay_date, "created_at": _now()})
     await _db.loans.update_one({"_id": loan_id, "installments.no": ins["no"]}, {"$set": {"installments.$.paid": True, "installments.$.paid_date": pay_date, "installments.$.account_name": acc.get("account_name")}})

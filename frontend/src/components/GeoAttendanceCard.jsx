@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
-const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
+export const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
 
 export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   const { user } = useAuth();
@@ -39,7 +39,8 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
           {st?.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3 text-emerald-400" /> Firma konumu tanımlı · yarıçap {st.location.radius_m} m</span> : <span className="text-amber-300">Firma konumu henüz tanımlı değil.</span>}
           {st?.employee ? <span className="ml-2">· {st.employee.full_name}</span> : <span className="ml-2 text-amber-300">· Kullanıcınız bir personel kartına bağlı değil</span>}
         </div>
-        {t && <div className="text-xs mt-1.5 flex gap-3" data-testid="geo-today"><span>Giriş: <b className="text-emerald-300">{t.check_in || "—"}</b></span><span>Çıkış: <b className="text-rose-300">{t.check_out || "—"}</b></span>{t.hours ? <span>Süre: <b>{t.hours} sa</b></span> : null}</div>}
+        {t && <div className="text-xs mt-1.5 flex gap-3" data-testid="geo-today"><span>Giriş: <b className="text-emerald-300">{t.check_in || "—"}</b></span><span>Çıkış: <b className="text-rose-300">{t.check_out || "—"}</b></span>{t.hours ? <span>Süre: <b>{t.hours} sa</b></span> : null}{t.overtime_hours ? <span className="text-indigo-300">+{t.overtime_hours} sa mesai</span> : null}</div>}
+        <a href="/mesai" className="inline-block text-[11px] text-emerald-300 hover:underline mt-1" data-testid="geo-my-attendance-link">Personel kendi giriş/çıkış ve mesai kayıtlarını "Mesaim" ekranından görür →</a>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => act("check_in")} disabled={!!busy || !st?.location || !st?.employee || !!t?.check_in} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkin-btn">{busy === "check_in" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Giriş Yap</button>

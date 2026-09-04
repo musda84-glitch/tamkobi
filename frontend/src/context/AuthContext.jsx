@@ -33,6 +33,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
     { label: "Personel & Bordro", path: "/personnel" },
+    { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
     { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },

@@ -318,6 +318,7 @@ class BankConnection(BaseDocument):
     bank_account_number: Optional[str] = ""
     base_url: Optional[str] = ""
     auto_sync: bool = True
+    auto_match: bool = False
     status: str = "disconnected"  # disconnected, connected, simulated, error
     last_synced_at: Optional[str] = None
     last_error: Optional[str] = None

@@ -40,7 +40,8 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/dashboard", "/")]
-SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health")
+SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo")
+SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute")
 
 
 def init(db, mail_account_fn, current_user_dep):
@@ -88,7 +89,7 @@ def module_for_path(path: str) -> Optional[str]:
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if not path.startswith("/api") or path.startswith(SKIP_PREFIXES) or request.method in ("GET", "OPTIONS", "HEAD"):
+        if not path.startswith("/api") or path.startswith(SKIP_PREFIXES) or request.method in ("GET", "OPTIONS", "HEAD") or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             return await call_next(request)
         token = request.cookies.get("access_token") or (request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None)
         user = None

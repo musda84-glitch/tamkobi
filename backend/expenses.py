@@ -4,6 +4,7 @@ from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
+from bank_guard import assert_manual_allowed
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -46,6 +47,7 @@ async def _post_payment(exp: dict, account_id: str, pay_date: str):
     acc = await _db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+    await assert_manual_allowed(_db, account_id)
     await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -exp["total"]}})
     await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": exp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": f"Masraf: {exp.get('category')}",
                                             "amount": exp["total"], "currency": acc.get("currency", "TRY"), "description": f"{exp['expense_number']} {exp.get('description', '')}", "source": "expense", "expense_id": exp["_id"], "date": pay_date, "created_at": _now()})

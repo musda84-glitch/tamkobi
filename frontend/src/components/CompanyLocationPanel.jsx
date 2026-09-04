@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { MapPin, Search, Crosshair, Loader2, ExternalLink } from "lucide-react";
+import { MapPin, Search, Crosshair, Loader2, ExternalLink, Check, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { LocationMap } from "./LocationMap";
 
 export const CompanyLocationPanel = ({ companyId }) => {
   const [loc, setLoc] = useState(null);
@@ -10,11 +11,12 @@ export const CompanyLocationPanel = ({ companyId }) => {
   const [results, setResults] = useState([]);
   const [radius, setRadius] = useState(300);
   const [busy, setBusy] = useState(null);
+  const [pending, setPending] = useState(null);
   const load = () => axios.get(`${API_URL}/companies/${companyId}`).then((r) => { setLoc(r.data.location || null); if (r.data.location?.radius_m) setRadius(r.data.location.radius_m); }).catch(() => {});
   useEffect(() => { load(); }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async (latitude, longitude, label) => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/companies/${companyId}/location`, { latitude, longitude, radius_m: Number(radius) || 300, label }); toast.success("Firma konumu kaydedildi. Personel bu noktanın " + radius + " m içinden giriş/çıkış yapabilir."); setResults([]); load(); }
+    try { await axios.put(`${API_URL}/companies/${companyId}/location`, { latitude, longitude, radius_m: Number(radius) || 300, label }); toast.success("Firma konumu kaydedildi. Personel bu noktanın " + radius + " m içinden giriş/çıkış yapabilir."); setResults([]); setPending(null); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(null); }
   };
   const search = async (e) => {
@@ -36,6 +38,14 @@ export const CompanyLocationPanel = ({ companyId }) => {
           <a href={`https://www.google.com/maps?q=${loc.latitude},${loc.longitude}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-emerald-700 font-semibold hover:underline" data-testid="company-location-map"><ExternalLink className="w-3.5 h-3.5" /> Haritada Gör</a>
         </div>
       ) : <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3" data-testid="company-location-empty">Henüz konum tanımlı değil.</div>}
+      <LocationMap lat={loc?.latitude} lng={loc?.longitude} radius={radius} pending={pending} onPick={(lat, lng) => setPending({ lat, lng })} />
+      {pending ? (
+        <div className="flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-200 rounded-xl p-2.5 text-xs" data-testid="company-location-pending">
+          <span className="flex-1 text-violet-800">Haritadan seçilen nokta: <span className="font-mono">{pending.lat.toFixed(6)}, {pending.lng.toFixed(6)}</span></span>
+          <button type="button" onClick={() => save(pending.lat, pending.lng, "Haritadan seçildi")} disabled={!!busy} className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-40" data-testid="company-location-pending-save"><Check className="w-3.5 h-3.5" /> Bu noktayı kaydet</button>
+          <button type="button" onClick={() => setPending(null)} className="p-1.5 text-slate-400 hover:text-rose-600" data-testid="company-location-pending-cancel"><X className="w-4 h-4" /></button>
+        </div>
+      ) : <p className="text-[11px] text-slate-400">İpucu: Haritada bir noktaya tıklayarak da konumu seçebilirsiniz. Yeşil daire giriş/çıkış yarıçapını gösterir.</p>}
       <form onSubmit={search} className="flex flex-col sm:flex-row gap-2 text-xs">
         <div className="relative flex-1"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Adres ara: örn. Atatürk Cad. No:12 Kadıköy İstanbul" className="w-full pl-9 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500" data-testid="company-location-search" /></div>
         <div className="flex items-center gap-1"><span className="text-slate-500">Yarıçap</span><input type="number" min="50" step="50" value={radius} onChange={(e) => setRadius(e.target.value)} className="w-20 border rounded-lg p-2 bg-slate-50" data-testid="company-location-radius" /><span className="text-slate-500">m</span></div>

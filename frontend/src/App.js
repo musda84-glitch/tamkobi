@@ -15,6 +15,7 @@ import OrdersB2BPage from "./pages/OrdersB2BPage";
 import WarehousePage from "./pages/WarehousePage";
 import ProductionPage from "./pages/ProductionPage";
 import PersonnelPage from "./pages/PersonnelPage";
+import MyAttendancePage from "./pages/MyAttendancePage";
 import AIAssistantPage from "./pages/AIAssistantPage";
 import CommunicationPage from "./pages/CommunicationPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/warehouses" element={<WarehousePage />} />
             <Route path="/production" element={<ProductionPage />} />
             <Route path="/personnel" element={<PersonnelPage />} />
+            <Route path="/mesai" element={<MyAttendancePage />} />
             <Route path="/ai-advisor" element={<AIAssistantPage />} />
             <Route path="/communication" element={<CommunicationPage />} />
             <Route path="/settings" element={<SettingsPage />} />

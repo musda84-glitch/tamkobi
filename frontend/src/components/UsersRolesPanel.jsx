@@ -71,21 +71,51 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
 
 const RolesTab = ({ companyId, rolesData, reload }) => {
   const [newRole, setNewRole] = useState("");
+  const [template, setTemplate] = useState("");
   const [sel, setSel] = useState(rolesData.roles[1]?.id);
+  const [rename, setRename] = useState(null);
   const role = rolesData.roles.find((r) => r.id === sel) || rolesData.roles[0];
-  const setLevel = async (mod, level) => {
-    try { await axios.put(`${API_URL}/roles/${role.id}`, { permissions: { ...role.permissions, [mod]: level } }); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+  const savePerms = async (permissions, msg) => {
+    try { await axios.put(`${API_URL}/roles/${role.id}`, { permissions }); if (msg) toast.success(msg); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
-  const add = async (e) => { e.preventDefault(); try { const r = await axios.post(`${API_URL}/roles`, { company_id: companyId, name: newRole }); toast.success("Rol oluşturuldu."); setNewRole(""); await reload(); setSel(r.data.id); } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); } };
+  const setLevel = (mod, level) => savePerms({ ...role.permissions, [mod]: level });
+  const setAll = (level) => savePerms(Object.fromEntries(rolesData.modules.map((m) => [m.key, level])), `Tüm modüller "${LEVEL_LABEL[level]}" yapıldı.`);
+  const add = async (e) => {
+    e.preventDefault();
+    const tpl = rolesData.roles.find((r) => r.id === template);
+    try { const r = await axios.post(`${API_URL}/roles`, { company_id: companyId, name: newRole, permissions: tpl?.permissions || {} }); toast.success(tpl ? `"${tpl.name}" şablonundan rol oluşturuldu.` : "Rol oluşturuldu."); setNewRole(""); setTemplate(""); await reload(); setSel(r.data.id); } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); }
+  };
+  const doRename = async (e) => {
+    e.preventDefault();
+    try { await axios.put(`${API_URL}/roles/${role.id}`, { name: rename }); toast.success("Rol adı güncellendi."); setRename(null); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+  };
   const del = async () => { if (!window.confirm(`${role.name} rolü silinsin mi?`)) return; try { await axios.delete(`${API_URL}/roles/${role.id}`); toast.success("Rol silindi."); setSel(rolesData.roles[0].id); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
       <div className="space-y-2">
-        {rolesData.roles.map((r) => <button key={r.id} onClick={() => setSel(r.id)} className={`w-full text-left px-3 py-2 rounded-xl border flex justify-between ${r.id === role?.id ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-slate-50"}`} data-testid={`role-btn-${r.code}`}><span className="font-semibold">{r.name}</span><span className="opacity-60">{r.user_count} kul.</span></button>)}
-        <form onSubmit={add} className="flex gap-1 pt-2"><input value={newRole} onChange={(e) => setNewRole(e.target.value)} placeholder="Yeni rol adı" className="flex-1 border rounded-lg p-2" data-testid="new-role-input" /><button className="px-2 bg-emerald-600 text-white rounded-lg" data-testid="new-role-add"><Plus className="w-4 h-4" /></button></form>
+        {rolesData.roles.map((r) => <button key={r.id} onClick={() => { setSel(r.id); setRename(null); }} className={`w-full text-left px-3 py-2 rounded-xl border flex justify-between ${r.id === role?.id ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-slate-50"}`} data-testid={`role-btn-${r.code}`}><span className="font-semibold">{r.name}{!r.is_system && <span className="ml-1 text-[9px] opacity-60">özel</span>}</span><span className="opacity-60">{r.user_count} kul.</span></button>)}
+        <form onSubmit={add} className="space-y-1.5 pt-2 border-t" data-testid="new-role-form">
+          <div className="font-semibold text-slate-700">Yeni rol oluştur</div>
+          <input value={newRole} onChange={(e) => setNewRole(e.target.value)} placeholder="Rol adı (örn. Saha Satış, Depo Şefi)" className="w-full border rounded-lg p-2" required data-testid="new-role-input" />
+          <select value={template} onChange={(e) => setTemplate(e.target.value)} className="w-full border rounded-lg p-2 bg-white" data-testid="new-role-template"><option value="">Yetki şablonu: boş (hepsi Yok)</option>{rolesData.roles.map((r) => <option key={r.id} value={r.id}>Şablon: {r.name} yetkilerini kopyala</option>)}</select>
+          <button className="w-full flex items-center justify-center gap-1 px-2 py-2 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="new-role-add"><Plus className="w-4 h-4" /> Rolü Oluştur</button>
+        </form>
       </div>
       <div className="md:col-span-3 bg-white border rounded-xl p-3" data-testid="role-matrix">
-        <div className="flex items-center justify-between mb-2"><div className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Shield className="w-4 h-4 text-indigo-600" /> {role?.name} — modül yetkileri {role?.is_system && <span className="text-[10px] font-normal text-slate-400">(sistem rolü)</span>}</div>{!role?.is_system && <button onClick={del} className="text-rose-600 flex items-center gap-1" data-testid="role-delete"><Trash2 className="w-3.5 h-3.5" /> Rolü sil</button>}</div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          {rename !== null ? (
+            <form onSubmit={doRename} className="flex items-center gap-1"><input value={rename} onChange={(e) => setRename(e.target.value)} className="border rounded-lg p-1.5 text-sm font-bold" autoFocus data-testid="role-rename-input" /><button className="px-2 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid="role-rename-save">Kaydet</button><button type="button" onClick={() => setRename(null)} className="px-2 py-1.5 border rounded-lg">İptal</button></form>
+          ) : (
+            <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Shield className="w-4 h-4 text-indigo-600" /> {role?.name} — modül yetkileri {role?.is_system ? <span className="text-[10px] font-normal text-slate-400">(sistem rolü)</span> : <button onClick={() => setRename(role.name)} className="text-[10px] font-normal text-indigo-600 hover:underline" data-testid="role-rename-btn">adı değiştir</button>}</div>
+          )}
+          <div className="flex items-center gap-1.5">
+            {role?.code !== "admin" && <>
+              <span className="text-[10px] text-slate-400">Hızlı:</span>
+              {rolesData.levels.map((l) => <button key={l} onClick={() => setAll(l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${LEVEL_CLS[l]}`} data-testid={`perm-all-${l}`}>Tümü {LEVEL_LABEL[l]}</button>)}
+            </>}
+            {!role?.is_system && <button onClick={del} className="text-rose-600 flex items-center gap-1 ml-2" data-testid="role-delete"><Trash2 className="w-3.5 h-3.5" /> Rolü sil</button>}
+          </div>
+        </div>
         {role?.code === "admin" && <div className="text-[11px] text-slate-500 mb-2">Yönetici tüm modüllerde tam yetkilidir; değiştirilemez.</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {rolesData.modules.map((m) => (

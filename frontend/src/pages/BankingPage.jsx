@@ -77,11 +77,12 @@ export default function BankingPage() {
       setTransactions(txRes.data);
       setContacts(cRes.data);
       setPartnerSummary(psRes.data);
-      if (accRes.data.length >= 2) {
+      const manual = accRes.data.filter((a) => !a.is_integrated);
+      if (manual.length >= 2) {
         setVirmanForm(prev => ({
           ...prev,
-          source_account_id: accRes.data[0].id || accRes.data[0]._id,
-          target_account_id: accRes.data[1].id || accRes.data[1]._id
+          source_account_id: manual[0].id || manual[0]._id,
+          target_account_id: manual[1].id || manual[1]._id
         }));
       }
     } catch (err) {
@@ -229,10 +230,11 @@ export default function BankingPage() {
                   }`}>
                     {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
                   </div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
                     {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
                   </span>
                 </div>
+                {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" title="Bu hesap banka API'sine bağlı; manuel işlem yapılamaz, hareketler bankadan çekilir" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider} · manuel işlem kapalı</div>}
 
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
@@ -308,7 +310,7 @@ export default function BankingPage() {
                         {tx.category || tx.type}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700">{tx.description} {tx.source === 'bank_sync' && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{tx.is_simulated ? 'SİMÜLE' : 'BANKA'}</span>}</td>
+                    <td className="px-4 py-2.5 text-slate-700">{tx.description} {tx.source === 'bank_sync' && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{tx.is_simulated ? 'SİMÜLE' : 'BANKA'}</span>}{tx.source === 'bank_sync' && tx.match_status === 'matched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" data-testid={`tx-matched-${tx.id}`}>EŞLEŞTİ{tx.contact_name ? `: ${tx.contact_name}` : tx.target_account_name ? ` → ${tx.target_account_name}` : ''}</span>}{tx.source === 'bank_sync' && tx.match_status === 'unmatched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}{tx.source === 'bank_match' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}</td>
                     <td className={`px-4 py-2.5 text-right font-bold ${
                       tx.type === 'inflow' ? 'text-emerald-600' : tx.type === 'outflow' ? 'text-rose-600' : 'text-indigo-600'
                     }`}>
@@ -342,7 +344,7 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-source-select"
                 >
-                  {accounts.map(a => (
+                  {accounts.filter(a => !a.is_integrated).map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
                       {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
                     </option>
@@ -358,7 +360,7 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-target-select"
                 >
-                  {accounts.map(a => (
+                  {accounts.filter(a => !a.is_integrated).map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
                       {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
                     </option>

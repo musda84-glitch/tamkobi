@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -26,7 +27,9 @@ import { QuickPayModal } from "../components/QuickPayModal";
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
   const [employees, setEmployees] = useState([]);
-  const [tab, setTab] = useState("payroll");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") || "payroll";
+  const setTab = (t) => setSearchParams({ tab: t }, { replace: true });
   const [payrolls, setPayrolls] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [loading, setLoading] = useState(true);

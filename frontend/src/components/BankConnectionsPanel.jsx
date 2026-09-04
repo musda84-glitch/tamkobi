@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2 } from "lucide-react";
+import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { BankMatchRow } from "./BankMatchRow";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -26,23 +27,24 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [busy, setBusy] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
-  const [matchSel, setMatchSel] = useState({});
   const [rules, setRules] = useState([]);
   const [showRules, setShowRules] = useState(false);
-  const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "" });
+  const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "", target_account_id: "" });
+  const [invoices, setInvoices] = useState([]);
+  const [matched, setMatched] = useState([]);
+  const [showMatched, setShowMatched] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [p, c, u, r] = await Promise.all([
+      const [p, c, u, r, inv, m] = await Promise.all([
         axios.get(`${API_URL}/banking/providers`),
         axios.get(`${API_URL}/banking/connections?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/transactions/unmatched?company_id=${companyId}`),
-        axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`)
+        axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`),
+        axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] }))
       ]);
-      setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data);
-      const init = {};
-      u.data.forEach((t) => { if (t.suggested_contact_id) init[t.id] = t.suggested_contact_id; });
-      setMatchSel(init);
+      setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data);
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -80,11 +82,18 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     try { await axios.delete(`${API_URL}/banking/connections/${id}`); toast.success("Bağlantı kaldırıldı."); load(); } catch { toast.error("Silinemedi."); }
   };
 
-  const match = async (tx) => {
+  const toggleAutoMatch = async (c) => {
     try {
-      await axios.post(`${API_URL}/banking/transactions/${tx.id}/match`, { contact_id: matchSel[tx.id] || null });
-      toast.success("Hareket eşleştirildi ve kural olarak öğrenildi."); load(); onSynced?.();
-    } catch (err) { toast.error(err.response?.data?.detail || "Eşleştirilemedi."); }
+      await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: !c.auto_match });
+      toast.success(!c.auto_match ? "Otomatik işleme AKTİF: yeni hareketler öğrenilen kurallarla anında işlenecek." : "Otomatik işleme PASİF: hareketler manuel eşleştirme bekleyecek.");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+  };
+
+  const unmatch = async (tx) => {
+    if (!window.confirm("Eşleşme geri alınsın mı? Cari/fatura/kasa etkileri iptal edilir.")) return;
+    try { await axios.post(`${API_URL}/banking/transactions/${tx.id}/unmatch`); toast.success("Eşleşme geri alındı."); load(); onSynced?.(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Geri alınamadı."); }
   };
 
   const autoMatch = async (useSuggestions) => {
@@ -98,8 +107,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const addRule = async (e) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/banking/match-rules`, { company_id: companyId, ...newRule, contact_id: newRule.contact_id || null, category: newRule.category || null });
-      toast.success("Kural eklendi."); setNewRule({ pattern: "", contact_id: "", category: "" }); load();
+      await axios.post(`${API_URL}/banking/match-rules`, { company_id: companyId, ...newRule, contact_id: newRule.contact_id || null, category: newRule.category || null, target_account_id: newRule.target_account_id || null });
+      toast.success("Kural eklendi."); setNewRule({ pattern: "", contact_id: "", category: "", target_account_id: "" }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kural eklenemedi."); }
   };
 
@@ -129,7 +138,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {connections.map((c) => (
-          <div key={c.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm" data-testid={`bank-conn-card-${c.provider}`}>
+          <div key={c.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm" data-testid={`bank-conn-card-${c.id}`}>
             <div className="flex items-start justify-between">
               <div>
                 <div className="font-bold text-slate-900 text-sm">{c.provider_name}</div>
@@ -146,10 +155,15 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               {c.client_id ? <span>Client: <b className="font-mono">{c.client_id}</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
             {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
+            <button type="button" onClick={() => toggleAutoMatch(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_match ? "bg-violet-50 border-violet-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-match-toggle-${c.id}`} aria-pressed={!!c.auto_match}>
+              <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— öğrenilen cari/kasa kurallarıyla yeni hareketleri anında işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>
+              <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
+            </button>
+            <div className="text-[10px] text-slate-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Bu hesaba manuel gelir/gider/virman girişi kapalıdır; hareketler bankadan gelir.</div>
             <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.provider}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
-              <button onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.provider}`}>Bağlantıyı Test Et</button>
-              <button onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.provider}`}><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.id}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
+              <button onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.id}`}>Bağlantıyı Test Et</button>
+              <button onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.id}`}><Trash2 className="w-4 h-4" /></button>
             </div>
           </div>
         ))}
@@ -168,8 +182,29 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </button>
             <button onClick={() => autoMatch(true)} disabled={!!busy || !unmatched.length} className="px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg text-[11px] font-semibold hover:bg-violet-50 disabled:opacity-50" title="Kurallar + isim benzerliği önerilerini de uygula" data-testid="auto-match-suggestions-btn">+ Önerileri de Uygula</button>
             <button onClick={() => setShowRules(!showRules)} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid="toggle-rules-btn"><Settings2 className="w-3.5 h-3.5" /> Kurallar ({rules.length})</button>
+            <button onClick={() => setShowMatched(!showMatched)} className={`flex items-center gap-1 px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50 ${showMatched ? "bg-slate-900 text-white border-slate-900" : ""}`} data-testid="toggle-matched-btn"><CheckCircle2 className="w-3.5 h-3.5" /> Eşleşenler ({matched.length})</button>
           </div>
         </div>
+        {showMatched && (
+          <div className="border-b border-slate-100 max-h-72 overflow-auto" data-testid="matched-list">
+            <table className="w-full text-left text-xs text-slate-600">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Açıklama</th><th className="px-4 py-2">Eşleşme</th><th className="px-4 py-2">Yol</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2"></th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {matched.length === 0 && <tr><td colSpan={6} className="px-4 py-4 text-center text-slate-400">Henüz eşleştirilmiş hareket yok.</td></tr>}
+                {matched.map((t) => (
+                  <tr key={t.id} data-testid={`matched-tx-${t.id}`}>
+                    <td className="px-4 py-1.5 font-mono text-slate-500">{t.date}</td>
+                    <td className="px-4 py-1.5">{t.description}</td>
+                    <td className="px-4 py-1.5 font-semibold text-slate-800">{t.contact_name || t.target_account_name || t.category}{t.related_invoice_number ? <span className="text-slate-400 font-normal"> · {t.related_invoice_number}</span> : ""}{t.target_account_name ? <span className="text-indigo-600 font-normal"> (virman)</span> : ""}</td>
+                    <td className="px-4 py-1.5"><span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.matched_via === "auto" ? "bg-violet-100 text-violet-700" : t.matched_via === "rule" ? "bg-indigo-100 text-indigo-700" : t.matched_via === "suggestion" ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"}`}>{t.matched_via === "auto" ? "OTOMATİK" : t.matched_via === "rule" ? "KURAL" : t.matched_via === "suggestion" ? "ÖNERİ" : "MANUEL"}</span></td>
+                    <td className={`px-4 py-1.5 text-right font-bold ${t.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{t.type === "inflow" ? "+" : "-"}{fmt(t.amount)} ₺</td>
+                    <td className="px-4 py-1.5"><button onClick={() => unmatch(t)} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-rose-600" data-testid={`unmatch-btn-${t.id}`}><Undo2 className="w-3 h-3" /> Geri al</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {showRules && (
           <div className="px-5 py-3 bg-violet-50/40 border-b border-violet-100 space-y-2 text-xs" data-testid="match-rules-panel">
             <p className="text-[11px] text-slate-500">Her manuel eşleştirme otomatik kural olarak öğrenilir. İsterseniz anahtar kelime → cari/kategori kuralı da ekleyebilirsiniz.</p>
@@ -177,12 +212,13 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
               <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
+              <select value={newRule.target_account_id} onChange={(e) => setNewRule({ ...newRule, target_account_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-target-select"><option value="">Kasa/Hesap virman (ops.)</option>{accounts.filter((a) => !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
               <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>
             <div className="flex flex-wrap gap-1.5">
               {rules.map((r) => (
                 <span key={r.id} className="inline-flex items-center gap-1.5 bg-white border border-violet-200 rounded-md px-2 py-1 text-[11px]" data-testid={`rule-chip-${r.id}`}>
-                  <b className="font-mono text-violet-800">"{r.pattern}"</b> → {r.contact_name || r.category || "—"} <span className="text-slate-400">({r.hits}x)</span>
+                  <b className="font-mono text-violet-800">"{r.pattern}"</b> → {[r.contact_name, r.target_account_name ? `${r.target_account_name} (virman)` : null, r.category].filter(Boolean).join(" · ") || "—"} <span className="text-slate-400">({r.hits}x)</span>
                   <button onClick={() => deleteRule(r.id)} className="text-slate-300 hover:text-rose-600"><X className="w-3 h-3" /></button>
                 </span>
               ))}
@@ -193,25 +229,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold">
-              <tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Hesap</th><th className="px-4 py-2">Açıklama</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Cari Eşleştir</th><th className="px-4 py-2"></th></tr>
+              <tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Hesap</th><th className="px-4 py-2">Açıklama</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Eşleştirme (Cari / Fatura / Kasa / Kategori)</th><th className="px-4 py-2"></th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {unmatched.length === 0 && <tr><td colSpan={6} className="px-4 py-5 text-center text-slate-400">Eşleştirme bekleyen hareket yok.</td></tr>}
-              {unmatched.map((t) => (
-                <tr key={t.id} data-testid={`unmatched-tx-${t.id}`}>
-                  <td className="px-4 py-2 font-mono text-slate-500">{t.date}</td>
-                  <td className="px-4 py-2 font-semibold text-slate-900">{t.account_name}</td>
-                  <td className="px-4 py-2">{t.description} {t.is_simulated && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded font-bold">SİMÜLE</span>}</td>
-                  <td className={`px-4 py-2 text-right font-bold ${t.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{t.type === "inflow" ? "+" : "-"}{fmt(t.amount)} ₺</td>
-                  <td className="px-4 py-2">
-                    <select value={matchSel[t.id] || ""} onChange={(e) => setMatchSel({ ...matchSel, [t.id]: e.target.value })} className="bg-slate-50 border border-slate-200 rounded-lg p-1.5 w-44" data-testid={`match-contact-select-${t.id}`}>
-                      <option value="">Cari seçilmedi (sadece onayla)</option>
-                      {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{t.suggested_contact_id === c.id ? " ★ önerilen" : ""}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-2"><button onClick={() => match(t)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700" data-testid={`match-btn-${t.id}`}>Eşleştir</button></td>
-                </tr>
-              ))}
+              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} onDone={() => { load(); onSynced?.(); }} />)}
             </tbody>
           </table>
         </div>
@@ -230,7 +252,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 {provider?.docs && <a href={provider.docs} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 hover:underline">Geliştirici portalı: {provider.docs}</a>}
               </div>
               <div><label className="block font-semibold mb-1">Bağlanacak Hesap (NexusHesap)</label>
-                <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} data-testid="conn-account-select">{accounts.filter((a) => a.type === "bank").map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
+                <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} data-testid="conn-account-select">{accounts.filter((a) => a.type === "bank" && !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
+                <p className="text-[10px] text-amber-700 mt-1">Bağlanan hesaba manuel işlem kapatılır; hareketler yalnızca bankadan çekilir.</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setForm({ ...form, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${form.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="conn-mode-sandbox">Sandbox / Test</button>

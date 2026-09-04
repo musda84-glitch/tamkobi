@@ -30,6 +30,7 @@ from seed_data import seed_all_data, seed_partners
 from ai_service import get_financial_ai_advice, extract_invoice_from_text
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
+import bank_guard
 import httpx
 from urllib.parse import quote
 import comm_service
@@ -37,6 +38,7 @@ import cargo_providers
 import rbac
 import expenses
 import finance
+import attendance
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1468,6 +1470,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
     if account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
+        await bank_guard.assert_manual_allowed(db, account_id)
         is_sales = inv.get("invoice_type") == "sales"
         
         await db.bank_accounts.update_one(
@@ -1627,6 +1630,7 @@ async def pay_installment(inst_id: str, req: Dict[str, Any]):
             acc = await db.bank_accounts.find_one({"_id": req.get("account_id")})
             if not acc:
                 raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+            await bank_guard.assert_manual_allowed(db, acc["_id"])
             tx = BankTransaction(company_id=inst["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
                                  amount=amount, description=f"{inst.get('contact_name')} • Açık bakiye {inst['label']}", contact_id=inst["contact_id"], contact_name=inst.get("contact_name"))
             await db.bank_transactions.insert_one(tx.to_mongo())
@@ -1765,7 +1769,12 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
 @api_router.get("/banking/accounts")
 async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
     accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(100)
-    return clean_docs(accounts)
+    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(100)}
+    out = []
+    for a in clean_docs(accounts):
+        conn = conns.get(a["id"])
+        out.append({**a, "is_integrated": bool(conn), "integration_provider": conn.get("provider_name") if conn else None, "connection_id": conn["_id"] if conn else None})
+    return out
 
 @api_router.post("/banking/accounts")
 async def create_bank_account(account: BankAccount):
@@ -1783,6 +1792,7 @@ async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01
 
 @api_router.post("/banking/transactions")
 async def create_bank_transaction(tx: BankTransaction):
+    await bank_guard.assert_manual_allowed(db, tx.account_id)
     doc = tx.to_mongo()
     await db.bank_transactions.insert_one(doc)
 
@@ -1817,8 +1827,8 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
 def _assert_editable_tx(tx: Dict[str, Any]):
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
-    if tx.get("source") in ("bank_sync", "partner"):
-        raise HTTPException(status_code=400, detail="Banka entegrasyonundan / ortaklar hesabından gelen hareketler düzenlenemez veya silinemez.")
+    if tx.get("source") in ("bank_sync", "partner", "bank_match"):
+        raise HTTPException(status_code=400, detail="Banka entegrasyonundan / ortaklar hesabından gelen hareketler düzenlenemez veya silinemez. Banka eşleşmesini geri almak için Eşleşenler listesini kullanın.")
 
 @api_router.put("/banking/transactions/{tx_id}")
 async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
@@ -1861,6 +1871,8 @@ async def perform_virman(req: Dict[str, Any]):
 
     if not source_acc or not target_acc:
         raise HTTPException(status_code=404, detail="Kaynak veya hedef hesap bulunamadı.")
+    await bank_guard.assert_manual_allowed(db, source_id)
+    await bank_guard.assert_manual_allowed(db, target_id)
 
     await db.bank_accounts.update_one({"_id": source_id}, {"$inc": {"current_balance": -amount}})
     await db.bank_accounts.update_one({"_id": target_id}, {"$inc": {"current_balance": amount}})
@@ -2110,7 +2122,7 @@ async def create_bank_connection(conn: BankConnection):
 
 @api_router.put("/banking/connections/{conn_id}")
 async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"client_id", "client_secret", "api_key", "customer_number", "bank_account_number", "base_url", "mode", "auto_sync", "linked_account_id"}}
+    allowed = {k: v for k, v in updated.items() if k in {"client_id", "client_secret", "api_key", "customer_number", "bank_account_number", "base_url", "mode", "auto_sync", "auto_match", "linked_account_id"}}
     if allowed.get("client_secret", None) and allowed["client_secret"].startswith("••••"):
         allowed.pop("client_secret")
     if allowed.get("api_key", None) and allowed["api_key"].startswith("••••"):
@@ -2174,6 +2186,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         raise HTTPException(status_code=502, detail=msg)
 
     inserted, skipped, balance_delta = 0, 0, 0.0
+    new_txs = []
     for t in result["transactions"]:
         exists = await db.bank_transactions.find_one({"account_id": acc["_id"], "external_id": t["external_id"]})
         if exists:
@@ -2193,17 +2206,22 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
             suggested_contact_name=suggestion.get("name") if suggestion else None,
             date=t["date"],
         )
-        await db.bank_transactions.insert_one(tx.to_mongo())
+        tx_doc = tx.to_mongo()
+        await db.bank_transactions.insert_one(tx_doc)
+        new_txs.append(tx_doc)
         inserted += 1
     if balance_delta:
         await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": balance_delta}})
+    auto_matched = 0
+    if doc.get("auto_match") and new_txs:
+        auto_matched, _ = await _auto_match_by_rules(doc["company_id"], new_txs, via="auto")
     now = datetime.now(timezone.utc).isoformat()
     await db.bank_connections.update_one({"_id": conn_id}, {
         "$set": {"status": "simulated" if result["simulated"] else "connected", "last_synced_at": now, "last_error": None},
-        "$inc": {"synced_count": inserted}
+        "$inc": {"synced_count": inserted, "auto_matched_count": auto_matched}
     })
-    return {"status": "success", "simulated": result["simulated"], "inserted": inserted, "skipped": skipped, "balance_delta": balance_delta,
-            "message": f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı)." + (" [SİMÜLE VERİ]" if result["simulated"] else "")}
+    return {"status": "success", "simulated": result["simulated"], "inserted": inserted, "skipped": skipped, "auto_matched": auto_matched, "balance_delta": balance_delta,
+            "message": f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı)." + (f" {auto_matched} hareket öğrenilen kurallarla otomatik işlendi." if auto_matched else "") + (" [SİMÜLE VERİ]" if result["simulated"] else "")}
 
 @api_router.post("/banking/sync-all")
 async def sync_all_connections(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -2240,19 +2258,19 @@ async def _find_rule(company_id: str, description: str):
             return r
     return None
 
-async def _learn_rule(company_id: str, description: str, contact_id: Optional[str], contact_name: Optional[str], category: Optional[str]):
+async def _learn_rule(company_id: str, description: str, contact_id: Optional[str], contact_name: Optional[str], category: Optional[str], target_account_id: Optional[str] = None, target_account_name: Optional[str] = None):
     pattern = _match_pattern(description)
-    if not pattern or not (contact_id or category):
+    if not pattern or not (contact_id or category or target_account_id):
         return
     await db.bank_match_rules.update_one(
         {"company_id": company_id, "pattern": pattern},
-        {"$set": {"contact_id": contact_id, "contact_name": contact_name, "category": category, "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"$set": {"contact_id": contact_id, "contact_name": contact_name, "category": category, "target_account_id": target_account_id, "target_account_name": target_account_name, "updated_at": datetime.now(timezone.utc).isoformat()},
          "$inc": {"hits": 1},
          "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "pattern": pattern, "created_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True)
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True) -> dict:
-    update = {"match_status": "matched"}
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual") -> dict:
+    update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat()}
     if category:
         update["category"] = category
     amount = tx.get("amount", 0)
@@ -2265,6 +2283,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         payment_status = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid"
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"paid_amount": new_paid, "payment_status": payment_status}})
         update["related_invoice_id"] = invoice_id
+        update["related_invoice_number"] = inv.get("invoice_number")
         contact_id = contact_id or inv.get("contact_id")
     contact_name = None
     if contact_id:
@@ -2275,10 +2294,67 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         contact_name = contact.get("name")
         update["contact_id"] = contact_id
         update["contact_name"] = contact_name
+    target_name = None
+    if target_account_id:
+        if target_account_id == tx.get("account_id"):
+            raise HTTPException(status_code=400, detail="Hedef hesap, hareketin kendi hesabı olamaz.")
+        tacc = await db.bank_accounts.find_one({"_id": target_account_id})
+        if not tacc:
+            raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+        if await bank_guard.get_connection_for_account(db, target_account_id):
+            raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
+        target_name = tacc.get("account_name")
+        counter_amount = amount if not is_inflow else -amount
+        await db.bank_accounts.update_one({"_id": target_account_id}, {"$inc": {"current_balance": counter_amount}})
+        await db.bank_transactions.insert_one({
+            "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": target_account_id, "account_name": target_name,
+            "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
+            "description": f"{tx.get('account_name')} {'→' if not is_inflow else '←'} {target_name}: {tx.get('description')}", "source": "bank_match",
+            "related_bank_tx_id": tx["_id"], "date": tx.get("date"), "created_at": datetime.now(timezone.utc).isoformat()})
+        update["target_account_id"] = target_account_id
+        update["target_account_name"] = target_name
+        if not category:
+            update["category"] = "Hesaplar Arası Virman"
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
-        await _learn_rule(tx["company_id"], tx.get("description", ""), contact_id, contact_name, category)
+        await _learn_rule(tx["company_id"], tx.get("description", ""), contact_id, contact_name, category, target_account_id, target_name)
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+
+async def _unmatch(tx: dict) -> dict:
+    amount = tx.get("amount", 0)
+    is_inflow = tx.get("type") == "inflow"
+    if tx.get("contact_id"):
+        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": amount if is_inflow else -amount}})
+    if tx.get("related_invoice_id"):
+        inv = await db.invoices.find_one({"_id": tx["related_invoice_id"]})
+        if inv:
+            new_paid = round(max(0.0, inv.get("paid_amount", 0) - amount), 2)
+            ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
+            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
+    if tx.get("target_account_id"):
+        counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
+        if counter:
+            await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
+            await db.bank_transactions.delete_one({"_id": counter["_id"]})
+    await db.bank_transactions.update_one({"_id": tx["_id"]}, {
+        "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": ""}})
+    return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+
+async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule"):
+    matched, details = 0, []
+    for tx in txs:
+        rule = await _find_rule(company_id, tx.get("description", ""))
+        if not rule:
+            continue
+        try:
+            await _apply_match(tx, rule.get("contact_id"), None, rule.get("category"), learn=False, target_account_id=rule.get("target_account_id"), via=via)
+        except HTTPException:
+            continue
+        await db.bank_match_rules.update_one({"_id": rule["_id"]}, {"$inc": {"hits": 1}})
+        matched += 1
+        details.append({"tx_id": tx["_id"], "description": tx.get("description"), "contact_name": rule.get("contact_name"), "target_account_name": rule.get("target_account_name"), "via": via})
+    return matched, details
 
 @api_router.post("/banking/transactions/{tx_id}/match")
 async def match_bank_transaction(tx_id: str, req: Dict[str, Any]):
@@ -2287,21 +2363,36 @@ async def match_bank_transaction(tx_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     if tx.get("match_status") == "matched":
         raise HTTPException(status_code=400, detail="Bu hareket zaten eşleştirilmiş.")
-    return await _apply_match(tx, req.get("contact_id"), req.get("invoice_id"), req.get("category"), learn=bool(req.get("learn", True)))
+    return await _apply_match(tx, req.get("contact_id") or None, req.get("invoice_id") or None, req.get("category") or None, learn=bool(req.get("learn", True)), target_account_id=req.get("target_account_id") or None)
+
+@api_router.post("/banking/transactions/{tx_id}/unmatch")
+async def unmatch_bank_transaction(tx_id: str):
+    tx = await db.bank_transactions.find_one({"_id": tx_id})
+    if not tx or tx.get("source") != "bank_sync":
+        raise HTTPException(status_code=404, detail="Banka hareketi bulunamadı.")
+    if tx.get("match_status") != "matched":
+        raise HTTPException(status_code=400, detail="Bu hareket eşleştirilmemiş.")
+    return await _unmatch(tx)
+
+@api_router.get("/banking/transactions/matched")
+async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 100):
+    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "matched"}).sort("matched_at", -1).to_list(limit)
+    return clean_docs(txs)
 
 @api_router.post("/banking/transactions/auto-match")
-async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = False):
-    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}).to_list(1000)
-    matched, skipped, details = 0, 0, []
+async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = False, account_id: Optional[str] = None):
+    q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
+    if account_id:
+        q["account_id"] = account_id
+    txs = await db.bank_transactions.find(q).to_list(1000)
+    matched, details = await _auto_match_by_rules(company_id, txs)
+    done = {d["tx_id"] for d in details}
+    skipped = 0
     for tx in txs:
-        rule = await _find_rule(company_id, tx.get("description", ""))
-        if rule:
-            await _apply_match(tx, rule.get("contact_id"), None, rule.get("category"), learn=False)
-            await db.bank_match_rules.update_one({"_id": rule["_id"]}, {"$inc": {"hits": 1}})
-            matched += 1
-            details.append({"tx_id": tx["_id"], "description": tx.get("description"), "contact_name": rule.get("contact_name"), "via": "rule"})
-        elif use_suggestions and tx.get("suggested_contact_id"):
-            await _apply_match(tx, tx["suggested_contact_id"], None, None, learn=True)
+        if tx["_id"] in done:
+            continue
+        if use_suggestions and tx.get("suggested_contact_id"):
+            await _apply_match(tx, tx["suggested_contact_id"], None, None, learn=True, via="suggestion")
             matched += 1
             details.append({"tx_id": tx["_id"], "description": tx.get("description"), "contact_name": tx.get("suggested_contact_name"), "via": "suggestion"})
         else:
@@ -2324,7 +2415,12 @@ async def create_match_rule(req: Dict[str, Any]):
     if req.get("contact_id"):
         c = await db.contacts.find_one({"_id": req["contact_id"]})
         contact_name = c.get("name") if c else None
-    doc = {"pattern": pattern, "contact_id": req.get("contact_id"), "contact_name": contact_name, "category": req.get("category"),
+    target_name = None
+    if req.get("target_account_id"):
+        a = await db.bank_accounts.find_one({"_id": req["target_account_id"]})
+        target_name = a.get("account_name") if a else None
+    doc = {"pattern": pattern, "contact_id": req.get("contact_id") or None, "contact_name": contact_name, "category": req.get("category") or None,
+           "target_account_id": req.get("target_account_id") or None, "target_account_name": target_name,
            "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.bank_match_rules.update_one(
         {"company_id": company_id, "pattern": pattern},
@@ -2881,6 +2977,7 @@ async def create_bonus(req: Dict[str, Any]):
         acc = await db.bank_accounts.find_one({"_id": account_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+        await bank_guard.assert_manual_allowed(db, account_id)
         await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
         await db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
                                                "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
@@ -3019,22 +3116,15 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
     rows = await db.attendance.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
     emps = await db.employees.find({"company_id": company_id}).to_list(200)
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    today_s = attendance._today(attendance.merge_schedule(company))
     summary = []
     for e in emps:
         mine = [r for r in rows if r["employee_id"] == e["_id"]]
-        summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], "days_present": sum(1 for r in mine if r.get("status") == "present"),
-                        "days_absent": sum(1 for r in mine if r.get("status") == "absent"), "days_leave": sum(1 for r in mine if r.get("status") == "leave"),
-                        "total_hours": round(sum(r.get("hours", 0) for r in mine), 2), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in mine), 2),
-                        "today": next((r for r in mine if r["date"] == datetime.now(timezone.utc).strftime("%Y-%m-%d")), None)})
-    return {"month": month, "records": clean_docs(rows), "summary": summary}
-
-def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    import math
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
+        summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], **attendance.summarize(mine),
+                        "schedule": attendance.merge_schedule(company, e), "has_override": bool(e.get("work_schedule")),
+                        "today": clean_doc(next((r for r in mine if r["date"] == today_s), None) or {}) or None})
+    return {"month": month, "records": clean_docs(rows), "summary": summary, "schedule": attendance.merge_schedule(company)}
 
 @api_router.get("/geocode")
 async def geocode(q: str):
@@ -3074,73 +3164,33 @@ async def set_company_location(company_id: str, req: Dict[str, Any]):
 async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"_id": company_id}) or {}
     emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = attendance._today(attendance.merge_schedule(company, emp))
     rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) if emp else None
     return {"location": company.get("location"), "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None, "today": clean_doc(rec) if rec else None}
 
 @api_router.post("/personnel/attendance/geo")
-async def geo_attendance(req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    action = req.get("action")
-    if action not in ("check_in", "check_out"):
-        raise HTTPException(status_code=400, detail="action check_in veya check_out olmalı.")
-    company_id = req.get("company_id") or user.get("active_company_id") or "comp_nexus_main_01"
-    company = await db.companies.find_one({"_id": company_id}) or {}
-    loc = company.get("location")
-    if not loc:
-        raise HTTPException(status_code=400, detail="Firma konumu tanımlı değil. Yönetici Personel → Konumla Giriş kartından firma konumunu sabitlemeli.")
-    emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
-    if not emp:
-        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
-    try:
-        lat, lng = float(req["latitude"]), float(req["longitude"])
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Telefon konumu alınamadı.")
-    dist = _haversine_m(lat, lng, loc["latitude"], loc["longitude"])
-    radius = float(loc.get("radius_m") or 300)
-    acc = float(req.get("accuracy_m") or 0)
-    if dist > radius:
-        raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). {'Giriş' if action == 'check_in' else 'Çıkış'} yapılamadı.")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
-    if action == "check_in" and existing.get("check_in"):
-        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_in']} saatinde giriş yapılmış.")
-    if action == "check_out" and not existing.get("check_in"):
-        raise HTTPException(status_code=400, detail="Önce giriş yapmalısınız.")
-    if action == "check_out" and existing.get("check_out"):
-        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
-    rec = await upsert_attendance({"employee_id": emp["_id"], "action": action, "note": f"Konumla {'giriş' if action == 'check_in' else 'çıkış'} ({int(dist)} m, ±{int(acc)} m)"})
-    await db.attendance.update_one({"employee_id": emp["_id"], "date": today}, {"$set": {f"geo_{action}": {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": acc, "at": datetime.now(timezone.utc).isoformat()}}})
-    return {"status": "success", "distance_m": round(dist), "record": rec, "message": f"{'Giriş' if action == 'check_in' else 'Çıkış'} kaydedildi · firma konumuna {int(dist)} m"}
+async def geo_attendance(req: Dict[str, Any], request: Request):
+    """Eski konumlu giriş/çıkış rotası — self-servis puantaj endpoint'ine delege eder."""
+    res = await attendance.self_attendance(req, request)
+    return {**res, "distance_m": (res["record"].get(f"geo_{req.get('action')}") or {}).get("distance_m")}
 
 @api_router.post("/personnel/attendance")
 async def upsert_attendance(req: Dict[str, Any]):
     emp = await db.employees.find_one({"_id": req.get("employee_id")})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
-    date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    sched = attendance.merge_schedule(await db.companies.find_one({"_id": emp["company_id"]}) or {}, emp)
+    date = req.get("date") or attendance._today(sched)
     action = req.get("action")
-    now_hm = datetime.now(timezone.utc).astimezone().strftime("%H:%M")
-    rec = {"company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "date": date, "status": req.get("status") or existing.get("status") or "present",
-           "check_in": req.get("check_in") or existing.get("check_in"), "check_out": req.get("check_out") or existing.get("check_out"), "note": req.get("note", existing.get("note", ""))}
+    now_hm = attendance.now_hm(sched)
+    patch: Dict[str, Any] = {}
+    for k in ("status", "check_in", "check_out", "note"):
+        if req.get(k) is not None:
+            patch[k] = req[k]
     if action in ("check_in", "check_out"):
-        rec["status"] = "present"
-    if action == "check_in":
-        rec["check_in"] = now_hm
-    if action == "check_out":
-        rec["check_out"] = now_hm
-    if rec.get("check_in") and rec.get("check_out"):
-        h1, m1 = map(int, rec["check_in"].split(":")); h2, m2 = map(int, rec["check_out"].split(":"))
-        hours = max(0.0, ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60 - float(req.get("break_hours", 1)))
-        rec["hours"] = round(hours, 2)
-        rec["overtime_hours"] = round(max(0.0, hours - float(req.get("daily_hours", 8))), 2)
-    else:
-        rec["hours"] = existing.get("hours", 0); rec["overtime_hours"] = existing.get("overtime_hours", 0)
-    if rec["status"] in ("absent", "leave"):
-        rec.update({"check_in": None, "check_out": None, "hours": 0, "overtime_hours": 0})
-    rec["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.attendance.update_one({"employee_id": emp["_id"], "date": date}, {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4())}}, upsert=True)
-    return clean_doc(await db.attendance.find_one({"employee_id": emp["_id"], "date": date}))
+        patch["status"] = "present"
+        patch[action] = now_hm
+    return await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
 
 # ----------------- MALİ MÜŞAVİR PANELİ -----------------
 @api_router.get("/accountant/summary")
@@ -4096,6 +4146,7 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
     if account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
+        await bank_guard.assert_manual_allowed(db, account_id)
         await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
         await db.bank_transactions.insert_one({
             "_id": str(uuid.uuid4()),
@@ -4258,10 +4309,12 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 rbac.init(db, _mail_account, get_current_user)
 expenses.init(db)
 finance.init(db)
+attendance.init(db, get_current_user)
 app.include_router(api_router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
 app.include_router(finance.router)
+app.include_router(attendance.router)
 
 @app.get("/")
 async def root():
