@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -21,6 +21,7 @@ import {
   ClipboardList
 } from "lucide-react";
 import { StockCountPanel } from "../components/StockCountPanel";
+import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { Factory } from "lucide-react";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
@@ -35,6 +36,7 @@ export default function StockBarcodePage() {
   const [products, setProducts] = useState([]);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [stockF, setStockF] = useState(STOCK_FILTER_DEFAULTS);
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
   const loadCategories = useCallback(() => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {}), [activeCompany]);
@@ -162,11 +164,13 @@ export default function StockBarcodePage() {
     }
   };
 
-  const filtered = products.filter(p =>
+  const filtered = useMemo(() => applyStockFilters(products.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.barcode.includes(searchTerm)
-  );
+    (p.barcode || "").includes(searchTerm)
+  ), stockF), [products, searchTerm, stockF]);
+  const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
+  const criticalCount = useMemo(() => products.filter((p) => p.track_stock !== false && p.stock_quantity <= (p.min_stock_alert ?? 0)).length, [products]);
 
   return (
     <div className="space-y-6" data-testid="stock-page">
@@ -214,27 +218,7 @@ export default function StockBarcodePage() {
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-        <div className="flex items-center gap-2 text-xs overflow-x-auto">
-          <button onClick={() => setFilterCategory("all")} className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap ${filterCategory === "all" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid="stock-filter-all">Tüm Kategoriler</button>
-          {categories.map((c) => (
-            <button key={c.name} onClick={() => setFilterCategory(c.name)} className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap ${filterCategory === c.name ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`stock-filter-${c.name}`}>{c.name} <span className={filterCategory === c.name ? "text-slate-300" : "text-slate-400"}>({c.count})</span></button>
-          ))}
-        </div>
-
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Ürün adı, SKU veya barkod ile ara..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 pr-4 py-1.5 bg-white border border-slate-200 rounded-xl text-xs w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            data-testid="stock-search-input"
-          />
-        </div>
-      </div>
+      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} />
 
       {/* Products Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
