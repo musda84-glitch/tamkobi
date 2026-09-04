@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
@@ -11,7 +11,7 @@ import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -102,6 +102,32 @@ const ModuleOrder = () => {
   );
 };
 
+const UcBox = ({ title, sub, items, base, testId, companyId, call }) => {
+  const [val, setVal] = useState("");
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid={testId}>
+      <div><div className="text-sm font-bold text-slate-900">{title}</div><div className="text-xs text-slate-500">{sub}</div></div>
+      <form onSubmit={(e) => { e.preventDefault(); if (!val.trim()) return; call(() => axios.post(`${API_URL}${base}`, { company_id: companyId, name: val.trim() }), "Eklendi."); setVal(""); }} className="flex gap-2"><input value={val} onChange={(e) => setVal(e.target.value)} placeholder="Yeni ekle… (Enter)" className="flex-1 bg-slate-50 border rounded-lg p-2 text-xs" data-testid={`${testId}-input`} /><button type="submit" className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-semibold" data-testid={`${testId}-add`}>Ekle</button></form>
+      <div className="flex flex-wrap gap-1.5">{items.map((u) => (
+        <span key={u.name} className="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs" data-testid={`${testId}-item-${u.name}`}><b>{u.name}</b><span className="text-slate-400">({u.count})</span>
+          {base === "/products/units" && <button type="button" onClick={() => { const n = window.prompt("Yeni ad:", u.name); if (n && n.trim() && n !== u.name) call(() => axios.put(`${API_URL}${base}/${encodeURIComponent(u.name)}?company_id=${companyId}`, { name: n.trim() }), "Yeniden adlandırıldı (ürünler güncellendi)."); }} className="text-slate-400 hover:text-slate-900" title="Yeniden adlandır"><Pencil className="w-3 h-3" /></button>}
+          <button type="button" onClick={() => { if (window.confirm(`${u.name} silinsin mi?`)) call(() => axios.delete(`${API_URL}${base}/${encodeURIComponent(u.name)}?company_id=${companyId}`), "Silindi."); }} className="text-slate-400 hover:text-rose-600" title="Sil" data-testid={`${testId}-del-${u.name}`}><Trash2 className="w-3 h-3" /></button></span>))}</div>
+    </div>
+  );
+};
+
+const UnitsCategories = ({ companyId }) => {
+  const [units, setUnits] = useState([]);
+  const [cats, setCats] = useState([]);
+  const load = () => { axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => setUnits(r.data)).catch(() => {}); axios.get(`${API_URL}/products/categories?company_id=${companyId}`).then((r) => setCats(r.data)).catch(() => {}); };
+  useEffect(() => { load(); }, [companyId]);
+  const call = async (fn, ok) => { try { await fn(); toast.success(ok); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  return (<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <UcBox title="Birimler" sub="Adet, Kg, Mt… Stok kartında listelenir; kullanılan birim silinemez, yeniden adlandırılabilir." items={units} base="/products/units" testId="units-box" companyId={companyId} call={call} />
+    <UcBox title="Kategoriler" sub="Stok kartından girilen kategoriler otomatik kaydedilir; burada yönetin." items={cats} base="/products/categories" testId="categories-box" companyId={companyId} call={call} />
+  </div>);
+};
+
 export default function SettingsPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -135,6 +161,7 @@ export default function SettingsPage() {
             </div>
           )}
           {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
+          {tab === "units" && <UnitsCategories companyId={companyId} />}
           {tab === "modules" && <ModuleOrder />}
         </div>
       </div>

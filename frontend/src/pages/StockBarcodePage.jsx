@@ -36,6 +36,7 @@ export default function StockBarcodePage() {
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [categories, setCategories] = useState([]);
+  const [units, setUnits] = useState([]);
   const loadCategories = () => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {});
   const [loading, setLoading] = useState(true);
 
@@ -95,6 +96,7 @@ export default function StockBarcodePage() {
       setLoading(true);
       const res = await axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&category=${encodeURIComponent(filterCategory)}`);
       loadCategories();
+      axios.get(`${API_URL}/products/units?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setUnits(r.data)).catch(() => {});
       setProducts(res.data);
     } catch (err) {
       toast.error("Ürünler yüklenemedi.");
@@ -210,6 +212,7 @@ export default function StockBarcodePage() {
           <button key={k} onClick={() => setPageTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${pageTab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`stock-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
+      <datalist id="product-units-list">{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
@@ -568,17 +571,7 @@ export default function StockBarcodePage() {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Birim</label>
-                  <select
-                    value={newProduct.unit}
-                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  >
-                    <option value="Adet">Adet</option>
-                    <option value="Kg">Kilogram (Kg)</option>
-                    <option value="Metre">Metre</option>
-                    <option value="Paket">Paket</option>
-                    <option value="Koli">Koli</option>
-                  </select>
+                  <input list="product-units-list" value={newProduct.unit} onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" placeholder="Adet" data-testid="new-product-unit" />
                 </div>
               </div>
 

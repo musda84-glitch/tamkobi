@@ -92,3 +92,52 @@ P2: server.py router'lara bölme, gerçek auth zorunluluğu, raporlama, yetkilen
 5. E-ticaret modülünü en gelişmiş sistemlere göre güncelleme (araştırma)
 6. Personel modülünü Netesnaf ile birebir yapma
 Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, pazaryeri/kargo/e-fatura sağlayıcı bağlantıları hâlâ SİMÜLE; aktif şirket başlığı "MATEK DEKORASYON" görünürken listeler comp_nexus_main_01 sorguluyor (bilinen tutarsızlık).
+
+
+## Faz 9 (Haziran 2026) — Tamamlanan (iteration 10/11 ile doğrulandı, bulgular düzeltildi)
+- **Raporlar** `/reports` (`GET /reports/{sales|purchases|aging|stock|cashflow|vat|profit}`; cari/ürün/ay gruplama, tarih presetleri, Excel(CSV)/PDF).
+- **B2B müşteri portalı** `/portal/:token` (public; `POST /contacts/{id}/b2b-access`, `GET/POST /public/b2b/{token}[/orders]`): özel indirimli fiyat, sepet (localStorage), sipariş → Siparişler modülü + bildirim, sipariş/kargo takip, ekstre, taksitler. Cari kartında "B2B Portal" butonu.
+- **Kargo kataloğu**: Navlungo, Geliver, Kolay Kargo, BasitKargo, Kargom Sende + firmalar (`GET /integrations/cargo/catalog`, `POST/DELETE /integrations/cargo`, db.cargo_configs).
+- **Atölye performans** paneli (`GET /production/work-orders/performance`).
+- **Siparişler**: toplu seçim (onayla / fatura kes / kargo etiketleri), satırda "Faturala ▾" ile E-Fatura/E-Arşiv/Kağıt seçimi, `DELETE /orders/{id}`, sipariş→fatura cari eşlemesi (customer_name → cari, yoksa oluşturur).
+- **Birimler & Kategoriler** ayarı (Firma Ayarları → Birimler & Kategoriler; `/products/units` CRUD + yeniden adlandırma; stok formlarında datalist).
+
+## TALİMAT DENETİMİ (kullanıcının tüm istekleri — durum)
+| İstek | Durum |
+|---|---|
+| Fatura sağ tık ile kesim türü seçimi | ✅ |
+| Banka hesabına tıkla → hareketler | ✅ |
+| Barkod yazdırma (OVOCRM gibi, resimli, QR, 100x30, etiketler) | ✅ |
+| Gönderilen teklif/keşifler modülden gizlensin | ✅ |
+| Ayarlar sol menü | ✅ |
+| Taksit modülü (satış/alış fatura + teklif) | ✅ |
+| SMS log daralt / mesaj aşağı | ✅ |
+| Ödeme seçiminde ortaklar + POS | ✅ |
+| Yazdırmada şablon seçme | ✅ |
+| GİB'den VKN ile cari çağırma | ✅ (SİMÜLE) |
+| Satır + genel iskonto | ✅ |
+| Menü adı "Faturalar" | ✅ |
+| Durumları Türkçeleştir | ✅ (ana ekranlar) |
+| Sipariş onayında kargo entegrasyondan | ✅ |
+| Cari: teklif düzenle, fatura düzenle, ödeme sil/düzenle, keşif detayı, butonları kaldır | ✅ |
+| Ekstre paylaşım + yazdır + ödemeler | ✅ |
+| Cariye vade uygula / bakiyeyi taksitlendir / taksitler sekmesi / fatura sağ tık | ✅ |
+| Teklif onayı (mail/SMS/WhatsApp) | ✅ |
+| Üretim & reçete + stok kartından üretim emri | ✅ |
+| Kategori filtresi (sadece filtre) | ✅ |
+| Gelişmiş sayım depo sayfasında | ✅ |
+| Atölye tablet ekranı | ✅ |
+| Cari filtreleri (borçlu/alacaklı/vadesi geçen/taksit) | ✅ |
+| Raporlar, B2B portal, kargo pazaryerleri, atölye performans | ✅ |
+| Birimler çoğalt/sil/düzenle (Firmam) | ✅ |
+| Sipariş satırında fatura kes + onayla + tür seçimi | ✅ |
+| **Personel modülünü Netesnaf gibi yap** | ⏳ Bekliyor |
+| **E-ticaret modülünü en gelişmiş sisteme göre güncelle** (+ **ShopPHP** pazaryeri) | ⏳ Bekliyor |
+| **Sipariş kargo verisi pazaryerinden otomatik gelsin** | ⏳ Bekliyor (gerçek pazaryeri API gerektirir) |
+| **B2B ayarları Firma Ayarları içinde (özellikler, giriş yöntemi)** | ⏳ Bekliyor |
+| **Kasaları silme/düzenleme** | ⏳ Bekliyor |
+| **AI ile PDF içeri/dışarı aktarma (OVOCRM gibi)** | ⏳ Bekliyor |
+| **Personel kartı + detay + personelden kullanıcı açma** | ⏳ Bekliyor |
+| **OVOCRM kullanıcı modülü ve ayarları (roller, yetkiler)** | ⏳ Bekliyor |
+| **Diğer yazılımlardaki kolaylaştırıcı özellikler** | ⏳ Kapsam netleştirilecek |
+| Sağlayıcı canlı bağlantıları (WhatsApp, banka, e-fatura, pazaryeri, kargo) | SİMÜLE — kullanıcı API anahtarı gerekir |

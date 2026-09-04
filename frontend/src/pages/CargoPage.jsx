@@ -26,6 +26,13 @@ export default function CargoPage() {
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(null);
 
+  const [catalog, setCatalog] = useState([]);
+  const [addProv, setAddProv] = useState(null);
+  const [creds, setCreds] = useState({});
+  const loadCatalog = () => axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCatalog(r.data)).catch(() => {});
+  useEffect(() => { loadCatalog(); }, [activeCompany]);
+  const addProvider = async () => { try { const r = await axios.post(`${API_URL}/integrations/cargo`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01", carrier_code: addProv.carrier_code, ...creds }); toast.success(r.data.message); setAddProv(null); setCreds({}); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Eklenemedi."); } };
+  const removeProvider = async (car) => { if (!window.confirm(`${car.carrier_name} kaldırılsın mı?`)) return; try { await axios.delete(`${API_URL}/integrations/cargo/${car.id}`); toast.success("Kaldırıldı."); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Kaldırılamadı."); } };
   useEffect(() => {
     loadCargoData();
   }, [activeCompany]);
@@ -68,8 +75,27 @@ export default function CargoPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Kargo Entegrasyonları</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Yurtiçi, Aras, MNG, PTT Kargo API Bağlantıları & Barkodlu Kargo Fişi</p>
+          <p className="text-xs sm:text-sm text-slate-500">Kargo firmaları + kargo pazaryerleri (Navlungo, Geliver, Kolay Kargo, BasitKargo) API bağlantıları & barkodlu kargo fişi</p>
         </div>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="cargo-catalog">
+        <div className="flex items-center justify-between"><div><div className="text-sm font-bold text-slate-900">Sağlayıcı Ekle</div><div className="text-xs text-slate-500">Kargo pazaryerleri tüm firmaları tek API ile kapsar; anahtar girilene kadar SİMÜLE çalışır.</div></div></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+          {catalog.map((c) => (
+            <button key={c.carrier_code} onClick={() => { if (!c.installed) { setAddProv(c); setCreds({}); } }} disabled={c.installed} className={`text-left rounded-xl border-2 p-2.5 text-xs transition ${c.installed ? "border-emerald-200 bg-emerald-50/50 opacity-70" : c.kind === "marketplace" ? "border-violet-200 hover:border-violet-500 bg-violet-50/30" : "border-slate-200 hover:border-slate-400"}`} data-testid={`cargo-catalog-${c.carrier_code}`}>
+              <div className="font-bold text-slate-900 leading-tight">{c.carrier_name.replace(" (Kargo Pazaryeri)", "").replace(" (Pazaryeri)", "").replace(" API", "")}</div>
+              <div className={`text-[10px] font-semibold mt-1 ${c.kind === "marketplace" ? "text-violet-700" : "text-slate-400"}`}>{c.installed ? "✓ Ekli" : c.kind === "marketplace" ? "Kargo Pazaryeri" : "Kargo Firması"}</div>
+              {c.desc && <div className="text-[10px] text-slate-500 mt-1 leading-tight">{c.desc}</div>}
+            </button>
+          ))}
+        </div>
+        {addProv && (
+          <div className="border-t pt-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-end text-xs" data-testid="cargo-add-form">
+            <div className="md:col-span-4 font-semibold text-slate-800">{addProv.carrier_name} — API bilgileri (isteğe bağlı; boş bırakılırsa simüle)</div>
+            {addProv.fields.map((f) => <div key={f}><label className="block font-semibold mb-1 capitalize">{({ api_key: "API Key", api_secret: "API Secret", customer_number: "Müşteri No", api_username: "API Kullanıcı", api_password: "API Şifre" })[f] || f}</label><input type={f.includes("password") || f.includes("secret") ? "password" : "text"} value={creds[f] || ""} onChange={(e) => setCreds({ ...creds, [f]: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid={`cargo-cred-${f}`} /></div>)}
+            <div className="flex gap-2"><button onClick={addProvider} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="cargo-add-submit">Ekle</button><button onClick={() => setAddProv(null)} className="px-3 py-2 border rounded-lg">İptal</button></div>
+          </div>
+        )}
       </div>
 
       {/* Cargo Carriers Cards */}

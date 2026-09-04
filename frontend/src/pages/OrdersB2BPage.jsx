@@ -37,6 +37,25 @@ export default function OrdersB2BPage() {
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
+  const [selected, setSelected] = useState([]);
+  const [bulkLabels, setBulkLabels] = useState(null);
+  const toggleSel = (id) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const bulk = async (action) => {
+    const list = orders.filter((o) => selected.includes(o.id));
+    if (!list.length) { toast.error("Sipariş seçin."); return; }
+    if (action === "labels") { setBulkLabels(list); return; }
+    let ok = 0, fail = 0;
+    for (const o of list) {
+      try {
+        if (action === "invoice") { if (o.is_invoiced || o.invoice_id) continue; await axios.post(`${API_URL}/orders/${o.id}/convert-to-invoice`); }
+        else if (action === "approve") { if (o.order_status !== "pending") continue; await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "yurtici" }); }
+        ok++;
+      } catch { fail++; }
+    }
+    if (!ok && !fail) toast.info(action === "invoice" ? "Seçili siparişlerin tümü zaten faturalanmış." : "Seçili siparişlerde onaylanacak (beklemede) sipariş yok.");
+    else toast[fail ? "error" : "success"](`${ok} sipariş işlendi${fail ? `, ${fail} hata` : ""}.${action === "approve" ? " Onay pazaryeri entegrasyonuna iletildi (SİMÜLE)." : ""}`);
+    setSelected([]); loadData();
+  };
   const [returnReason, setReturnReason] = useState("");
   const approve = (ord) => setApproveOrder(ord);
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
@@ -75,9 +94,11 @@ export default function OrdersB2BPage() {
     }
   };
 
-  const handleConvertToInvoice = async (orderId) => {
+  const [invChooser, setInvChooser] = useState(null);
+  const handleConvertToInvoice = async (orderId, eType) => {
+    setInvChooser(null);
     try {
-      const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`);
+      const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`, eType ? { e_type: eType } : {});
       toast.success(res.data.message);
       loadData();
     } catch (err) {
@@ -198,6 +219,23 @@ export default function OrdersB2BPage() {
           onClose={() => setNotifyOrder(null)}
         />
       )}
+      {selected.length > 0 && (
+        <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="orders-bulk-bar">
+          <span className="font-bold">{selected.length} sipariş seçildi</span>
+          <button onClick={() => bulk("approve")} className="px-3 py-1.5 bg-emerald-600 rounded-lg font-semibold" data-testid="bulk-approve-btn">Toplu Onayla (entegrasyona yansır)</button>
+          <button onClick={() => bulk("invoice")} className="px-3 py-1.5 bg-blue-600 rounded-lg font-semibold" data-testid="bulk-invoice-btn">Toplu Fatura Kes</button>
+          <button onClick={() => bulk("labels")} className="px-3 py-1.5 bg-amber-500 rounded-lg font-semibold" data-testid="bulk-labels-btn">Kargo Etiketlerini Yazdır</button>
+          <button onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="bulk-clear-btn">Seçimi Kaldır</button>
+        </div>
+      )}
+      {bulkLabels && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:static print:bg-white print:p-0" onClick={() => setBulkLabels(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-4 space-y-3 print:shadow-none" onClick={(e) => e.stopPropagation()} data-testid="bulk-labels-modal">
+            <div className="flex justify-between items-center no-print"><b className="text-sm">{bulkLabels.length} kargo etiketi</b><div className="flex gap-2"><button onClick={() => window.print()} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="bulk-labels-print">Yazdır</button><button onClick={() => setBulkLabels(null)} className="px-3 py-1.5 border rounded-lg text-xs">Kapat</button></div></div>
+            <div id="print-area" className="grid grid-cols-2 gap-3">{bulkLabels.map((o) => <div key={o.id} className="border-2 border-dashed rounded-xl p-3 text-xs space-y-1 break-inside-avoid"><div className="flex justify-between"><b className="text-sm">{activeCompany?.name}</b><span className="font-mono">{o.order_number}</span></div><div className="text-[10px] text-slate-500">GÖNDERİCİ: {activeCompany?.address} {activeCompany?.city} • {activeCompany?.phone}</div><div className="border-t pt-1"><div className="text-[10px] text-slate-500">ALICI</div><div className="font-bold text-sm">{o.customer_name}</div><div>{o.shipping_address}</div><div className="font-bold">{o.city}</div><div>{o.customer_phone}</div></div><div className="flex justify-between border-t pt-1"><span>{(o.items || []).reduce((s, i) => s + i.quantity, 0)} parça • {o.cargo_carrier || "Kargo seçilmedi"}</span><span className="font-mono font-bold">{o.cargo_tracking_number || "—"}</span></div></div>)}</div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -234,7 +272,8 @@ export default function OrdersB2BPage() {
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
+              <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
                   <th className="px-4 py-3">Sipariş No & Kanal</th>
                   <th className="px-4 py-3">Müşteri / Alıcı</th>
@@ -246,7 +285,8 @@ export default function OrdersB2BPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {orders.filter((o) => !customerFilter || o.customer_name === customerFilter).map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className="hover:bg-slate-50/70 transition" data-testid={`order-row-${ord.order_number}`}>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                    <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium">
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded">
@@ -286,15 +326,24 @@ export default function OrdersB2BPage() {
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
                         {!ord.is_invoiced ? (
+                          <div className="relative inline-block">
+                          {invChooser === ord.id && (
+                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-52 text-left" data-testid={`inv-type-chooser-${ord.order_number}`} onMouseLeave={() => setInvChooser(null)}>
+                              <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Nasıl kesilsin?</div>
+                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => <button key={k} onClick={() => handleConvertToInvoice(ord.id || ord._id, k)} className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50" data-testid={`inv-type-${k}-${ord.order_number}`}><div className="text-xs font-semibold text-slate-800">{l}</div><div className="text-[10px] text-slate-400">{sub}</div></button>)}
+                              {ord.order_status === "pending" && <button onClick={() => { setInvChooser(null); setApproveOrder(ord); }} className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-emerald-50 border-t mt-1 text-xs font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>Önce Onayla + Kargo</button>}
+                            </div>
+                          )}
                           <button
-                            onClick={() => handleConvertToInvoice(ord.id || ord._id)}
+                            onClick={() => setInvChooser(invChooser === ord.id ? null : ord.id)}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm"
                             title="Tek Tıkla E-Faturaya Dönüştür"
                             data-testid={`convert-inv-btn-${ord.order_number}`}
                           >
                             <FileText className="w-3.5 h-3.5" />
-                            <span>Faturala</span>
+                            <span>Faturala ▾</span>
                           </button>
+                          </div>
                         ) : (
                           <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
                             Faturalandı

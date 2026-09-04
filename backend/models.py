@@ -72,6 +72,9 @@ class Contact(BaseDocument):
     is_e_invoice_user: bool = False
     payment_term_days: int = 0
     late_fee_rate: float = 0.0
+    b2b_token: Optional[str] = None
+    b2b_discount: float = 0.0
+    b2b_enabled: bool = False
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     location_url: Optional[str] = None

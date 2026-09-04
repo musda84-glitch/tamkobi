@@ -30,7 +30,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
       <div className="grid grid-cols-3 gap-2">
         <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
-        <F label="Birim"><select value={f.unit} onChange={(e) => set("unit", e.target.value)} className={inputCls}>{["Adet", "Kg", "Metre", "Litre", "Paket", "Koli"].map((u) => <option key={u}>{u}</option>)}</select></F>
+        <F label="Birim"><input list="product-units-list" value={f.unit} onChange={(e) => set("unit", e.target.value)} className={inputCls} data-testid="edit-unit-input" /></F>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <F label="Alış (₺)"><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} /></F>

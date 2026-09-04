@@ -18,6 +18,10 @@ export default function ShopFloorPage() {
   const [finishing, setFinishing] = useState(null);
   const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
   const [showDone, setShowDone] = useState(false);
+  const [perf, setPerf] = useState(null);
+  const [showPerf, setShowPerf] = useState(false);
+  const loadPerf = () => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {});
+  useEffect(() => { loadPerf(); }, [companyId, wos.length]);
 
   const load = async () => {
     try {
@@ -76,6 +80,17 @@ export default function ShopFloorPage() {
       </div>
       {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin. Seçim bu cihazda hatırlanır.</div>}
       <div className="grid grid-cols-3 gap-3 text-center">{[["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"], ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"], ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"]].map(([l, v, c]) => <div key={l} className="bg-white border rounded-2xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-3xl font-black ${c}`}>{v}</div></div>)}</div>
+      <div className="bg-white border rounded-2xl p-3" data-testid="shopfloor-performance">
+        <button onClick={() => setShowPerf(!showPerf)} className="w-full flex items-center justify-between text-sm font-bold text-slate-800" data-testid="shopfloor-perf-toggle"><span>Bugünkü Performans — operatör / istasyon ({perf?.total_done || 0} adım tamamlandı)</span><span className="text-xs text-slate-400">{showPerf ? "Gizle" : "Göster"}</span></button>
+        {showPerf && perf && (
+          <div className="grid md:grid-cols-2 gap-3 mt-3 text-xs">
+            {[["Operatörler", perf.operators], ["İstasyonlar", perf.stations]].map(([t, list]) => (
+              <div key={t}><div className="font-semibold text-slate-500 mb-1">{t}</div>
+                <table className="w-full"><thead className="text-slate-400 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Ad</th><th className="text-right py-1">Adım</th><th className="text-right py-1">Üretim</th><th className="text-right py-1">Fire %</th><th className="text-right py-1">Ort. dk</th><th className="text-right py-1">Hedef Aşımı</th></tr></thead>
+                  <tbody className="divide-y">{list.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Bugün tamamlanan adım yok.</td></tr>}{list.map((r) => <tr key={r.name} data-testid={`perf-row-${r.name}`}><td className="py-1 font-semibold">{r.name}</td><td className="py-1 text-right">{r.done}</td><td className="py-1 text-right font-bold">{r.produced}</td><td className={`py-1 text-right font-semibold ${r.scrap_rate > 5 ? "text-rose-600" : "text-slate-600"}`}>%{r.scrap_rate}</td><td className="py-1 text-right">{r.avg_min ?? "-"}</td><td className={`py-1 text-right ${r.over_target ? "text-rose-600 font-bold" : ""}`}>{r.over_target}</td></tr>)}</tbody></table></div>))}
+          </div>
+        )}
+      </div>
       {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{mine.map((w) => <Card key={w.id} w={w} />)}</div></div>}
       <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
         {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
