@@ -18,8 +18,6 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
       setCarrier((cur) => cur || (list.find((c) => c.status === "connected" && c.is_active) || list[0])?.carrier_code || "");
     }).catch(() => setCarriers([]));
   }, [companyId]);
-  const selected = carriers?.find((c) => c.carrier_code === carrier);
-  const live = selected?.status === "connected" && selected?.is_active;
   const submit = async () => {
     if (!carrier) { toast.error("Kargo firması seçin."); return; }
     setBusy(true);
@@ -28,7 +26,7 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
       let msg = "Sipariş onaylandı.";
       if (createShipment && !order.cargo_tracking_number) {
         const r = await axios.post(`${API_URL}/cargo/create-shipment`, { carrier_code: carrier, order_id: order.id, customer_name: order.customer_name, address: order.shipping_address, city: order.city, company_id: companyId });
-        msg += ` Kargo kaydı oluşturuldu — Takip No: ${r.data.tracking_number}${live ? "" : " (SİMÜLE)"}`;
+        msg += ` ${r.data.message || `Kargo kaydı oluşturuldu — Takip No: ${r.data.tracking_number}`}`;
       }
       toast.success(msg); onDone?.(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } finally { setBusy(false); }

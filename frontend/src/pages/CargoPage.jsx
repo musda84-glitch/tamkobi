@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { CargoConfigModal } from "../components/CargoConfigModal";
 import { toast } from "sonner";
 import {
   Truck,
@@ -32,6 +33,7 @@ export default function CargoPage() {
   const loadCatalog = useCallback(() => axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCatalog(r.data)).catch(() => {}), [activeCompany]);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
   const addProvider = async () => { try { const r = await axios.post(`${API_URL}/integrations/cargo`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01", carrier_code: addProv.carrier_code, ...creds }); toast.success(r.data.message); setAddProv(null); setCreds({}); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Eklenemedi."); } };
+  const refreshShipment = async (shp) => { try { const r = await axios.post(`${API_URL}/cargo/shipments/${shp.id || shp._id}/refresh`); toast.success(`Güncellendi: ${r.data.tracking_number}${r.data.provider_status ? " · " + r.data.provider_status : ""}`); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } };
   const removeProvider = async (car) => { if (!window.confirm(`${car.carrier_name} kaldırılsın mı?`)) return; try { await axios.delete(`${API_URL}/integrations/cargo/${car.id}`); toast.success("Kaldırıldı."); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Kaldırılamadı."); } };
   const loadCargoData = useCallback(async () => {
     try {
@@ -49,22 +51,6 @@ export default function CargoPage() {
     }
   }, [activeCompany]);
   useEffect(() => { loadCargoData(); }, [loadCargoData]);
-
-  const handleSaveConfig = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.put(`${API_URL}/integrations/cargo/${showConfigModal.id || showConfigModal._id}`, {
-        ...showConfigModal,
-        is_active: true,
-        status: "connected"
-      });
-      toast.success(`${showConfigModal.carrier_name} entegrasyonu başarıyla kaydedildi.`);
-      setShowConfigModal(null);
-      loadCargoData();
-    } catch (err) {
-      toast.error("Kargo ayarları kaydedilemedi.");
-    }
-  };
 
   return (
     <div className="space-y-6" data-testid="cargo-page">
@@ -118,7 +104,7 @@ export default function CargoPage() {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{car.carrier_name}</h3>
-                  <div className="text-xs text-slate-500">Müşteri No: {car.customer_number || '-'}</div>
+                  <div className="text-xs text-slate-500">{car.carrier_code === "geliver" ? `Gönderici: ${car.sender_address_id ? car.sender_address_id.slice(0, 8) + "…" : "seçilmedi"}${car.test_mode === false ? " · CANLI" : " · TEST"}` : `Müşteri No: ${car.customer_number || '-'}`}</div>
                 </div>
               </div>
 
@@ -165,7 +151,7 @@ export default function CargoPage() {
                   <tr key={shp.id || shp._id} className="hover:bg-slate-50/70 transition">
                     <td className="px-4 py-2.5">
                       <div className="font-bold text-slate-900">{shp.carrier_name}</div>
-                      <div className="font-mono text-indigo-600 text-[11px] font-semibold">{shp.tracking_number}</div>
+                      <div className="font-mono text-indigo-600 text-[11px] font-semibold">{shp.tracking_url ? <a href={shp.tracking_url} target="_blank" rel="noreferrer" className="underline">{shp.tracking_number}</a> : shp.tracking_number}{shp.is_live && <span className={`ml-1 text-[9px] px-1 rounded ${shp.test_mode ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{shp.test_mode ? "TEST" : "CANLI"}</span>}</div>
                     </td>
                     <td className="px-4 py-2.5 font-medium text-slate-800">{shp.customer_name}</td>
                     <td className="px-4 py-2.5 text-slate-600">{shp.city}</td>
@@ -183,6 +169,8 @@ export default function CargoPage() {
                       >
                         <Printer className="w-3.5 h-3.5" /> Etiket Yazdır
                       </button>
+                      {shp.label_url && <a href={shp.label_url} target="_blank" rel="noreferrer" className="ml-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-semibold" data-testid={`cargo-label-url-${shp.tracking_number}`}>Sağlayıcı Etiketi</a>}
+                      {shp.is_live && <button onClick={() => refreshShipment(shp)} className="ml-1 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold" data-testid={`cargo-refresh-${shp.tracking_number}`}>Güncelle</button>}
                     </td>
                   </tr>
                 ))
@@ -231,66 +219,7 @@ export default function CargoPage() {
         </div>
       )}
 
-      {/* CARRIER CONFIG MODAL */}
-      {showConfigModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-base font-bold text-slate-900">{showConfigModal.carrier_name} API Ayarları</h3>
-              <button onClick={() => setShowConfigModal(null)} className="text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleSaveConfig} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Müşteri / Anlaşma Numarası</label>
-                <input
-                  type="text"
-                  value={showConfigModal.customer_number || ""}
-                  onChange={(e) => setShowConfigModal({ ...showConfigModal, customer_number: e.target.value })}
-                  placeholder="Örn: YK-9948210"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
-                  data-testid="cargo-cust-num-input"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">API Kullanıcı Adı</label>
-                <input
-                  type="text"
-                  value={showConfigModal.api_username || ""}
-                  onChange={(e) => setShowConfigModal({ ...showConfigModal, api_username: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">API Şifresi</label>
-                <input
-                  type="password"
-                  value={showConfigModal.api_password || ""}
-                  onChange={(e) => setShowConfigModal({ ...showConfigModal, api_password: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowConfigModal(null)}
-                  className="px-3 py-1.5 border rounded-lg text-xs"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
-                  data-testid="save-cargo-config-btn"
-                >
-                  Kaydet & Bağlan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {showConfigModal && <CargoConfigModal config={showConfigModal} catalogItem={catalog.find((c) => c.carrier_code === showConfigModal.carrier_code)} onClose={() => setShowConfigModal(null)} onSaved={() => { setShowConfigModal(null); loadCargoData(); }} />}
     </div>
   );
 }

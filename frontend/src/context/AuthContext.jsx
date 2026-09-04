@@ -35,7 +35,9 @@ export const AuthProvider = ({ children }) => {
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
   ];
-  const menuItems = [...BASE_MENU].sort((a, b) => { const ia = moduleOrder.indexOf(a.path), ib = moduleOrder.indexOf(b.path); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
+  const perms = user?.permissions;
+  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
+  const menuItems = BASE_MENU.filter((m) => can(m.path)).sort((a, b) => { const ia = moduleOrder.indexOf(a.path), ib = moduleOrder.indexOf(b.path); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
 
   const persistOrder = async (order) => {
     setModuleOrder(order);
@@ -123,10 +125,11 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {}
     setUser(null);
     toast.info("Oturum kapatıldı.");
+    window.location.href = "/login";
   };
 
   return (
-    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder }}>
+    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can }}>
       {children}
     </AuthContext.Provider>
   );

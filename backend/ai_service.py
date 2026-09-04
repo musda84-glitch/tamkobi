@@ -47,3 +47,39 @@ Görevin:
 2. **Tahsilat Yönetimi:** Bekleyen {company_context.get('total_receivables', 0):,.2f} TL alacağınız için vadesi geçmiş müşterilere otomatik SMS/E-posta bakiye hatırlatması göndermeniz tavsiye edilir.
 3. **Stok & Tedarik:** {company_context.get('low_stock_count', 0)} adet ürün kritik stok sınırının altında. Pazar yeri satışlarının kesintiye uğramaması için acil sipariş açılmalıdır.
 4. **Vergi & KDV Planlaması:** Bu ayki satış ve gider dengeniz göz önüne alındığında tahmini KDV yükünüz optimize edilebilir durumdadır."""
+
+
+INVOICE_SYSTEM = """Sen bir Türk ön muhasebe asistanısın. Sana bir TEDARİKÇİ FATURASININ (alış faturası) PDF'inden çıkarılmış ham metin verilecek.
+Görevin faturayı aşağıdaki JSON şemasına birebir uyan TEK bir JSON nesnesi olarak döndürmek. Açıklama, markdown veya kod bloğu YAZMA; sadece JSON.
+Şema:
+{"supplier": {"name": str, "tax_number": str|null, "tax_office": str|null, "address": str|null, "phone": str|null, "email": str|null},
+ "invoice_number": str|null, "issue_date": "YYYY-MM-DD"|null, "due_date": "YYYY-MM-DD"|null, "currency": "TRY"|"USD"|"EUR",
+ "items": [{"name": str, "quantity": number, "unit": str, "unit_price": number, "vat_rate": integer, "discount_rate": number, "total": number}],
+ "subtotal": number, "vat_total": number, "grand_total": number, "notes": str|null, "confidence": number 0-1}
+Kurallar: Sayılar Türkçe formatta olabilir (1.234,56) → ondalık nokta ile number'a çevir. total = quantity*unit_price*(1-discount_rate/100) (KDV hariç).
+KDV oranı yoksa 20 kullan. Birim yoksa "Adet". Tarihleri ISO'ya çevir. Bulamadığın alanlara null yaz. Fatura kalemi yoksa toplamdan tek kalem üret."""
+
+
+async def extract_invoice_from_text(text: str) -> dict:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
+    chat = LlmChat(api_key=api_key, session_id=f"inv-extract-{abs(hash(text[:200]))}", system_message=INVOICE_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    raw = await chat.send_message(UserMessage(text=f"FATURA METNİ:\n\n{text[:20000]}"))
+    raw = str(raw).strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        raw = raw[raw.find("{"):]
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("AI yanıtı JSON içermiyor.")
+    data = json.loads(raw[start:end + 1])
+    items = []
+    for it in data.get("items") or []:
+        q = float(it.get("quantity") or 1)
+        p = float(it.get("unit_price") or 0)
+        d = float(it.get("discount_rate") or 0)
+        items.append({"name": str(it.get("name") or "Kalem")[:200], "quantity": q, "unit": it.get("unit") or "Adet", "unit_price": p, "vat_rate": int(it.get("vat_rate") if it.get("vat_rate") is not None else 20),
+                      "discount_rate": d, "total": round(float(it.get("total") or q * p * (1 - d / 100)), 2)})
+    data["items"] = items
+    return data

@@ -31,6 +31,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { SearchSelect } from "../components/SearchSelect";
+import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 
 export default function InvoicesPage() {
   const { activeCompany } = useAuth();
@@ -43,6 +44,7 @@ export default function InvoicesPage() {
 
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
+  const [showAiImport, setShowAiImport] = useState(false);
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -216,6 +218,8 @@ export default function InvoicesPage() {
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Ön Muhasebe & E-Dönüşüm</h1>
           <p className="text-xs sm:text-sm text-slate-500">Satış, Alış, E-Fatura, E-Arşiv ve GİB Portal Entegrasyonu</p>
         </div>
+        <div className="flex gap-2 self-start">
+        <button onClick={() => setShowAiImport(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>PDF'den Aktar (AI)</span></button>
         <button
           onClick={() => setShowNewModal(true)}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition self-start sm:self-auto"
@@ -224,7 +228,9 @@ export default function InvoicesPage() {
           <Plus className="w-4 h-4" />
           <span>Yeni Fatura Kes</span>
         </button>
+        </div>
       </div>
+      {showAiImport && <AiInvoiceImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} onClose={() => setShowAiImport(false)} onDone={() => loadData()} />}
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">

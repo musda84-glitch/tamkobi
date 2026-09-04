@@ -71,6 +71,14 @@ export default function ProjectsPage() {
 
   const openForm = (kind) => { setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [] }); setItems([{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]); };
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });
+  const [newContact, setNewContact] = useState(null);
+  const createContact = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await axios.post(`${API_URL}/contacts`, { company_id: companyId, type: "customer", name: newContact.name, tax_number_or_id: newContact.tax || "", phone: newContact.phone || "", email: newContact.email || "", address: newContact.address || "", city: "İstanbul", category: "Genel" });
+      setContacts((cs) => [...cs, r.data]); setContact(r.data.id, r.data); setNewContact(null); toast.success("Yeni cari oluşturuldu.");
+    } catch (err) { toast.error(err.response?.data?.detail || "Cari oluşturulamadı."); }
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -183,11 +191,24 @@ export default function ProjectsPage() {
           <form onSubmit={save} className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" data-testid={`${form.kind}-form`}>
             <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? "Yeni Teklif" : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Cari</label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
+              <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
               {form.kind === "quote" && <div><label className="block font-semibold mb-1">Başlık</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Fiyat Teklifi" data-testid="pf-title" /></div>}
               {form.kind === "project" && <div><label className="block font-semibold mb-1">Proje Adı</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} required data-testid="pf-name" /></div>}
               {form.kind === "survey" && <div><label className="block font-semibold mb-1">Keşif Tarihi</label><input type="date" value={form.survey_date} onChange={(e) => setForm({ ...form, survey_date: e.target.value })} className={inputCls} /></div>}
             </div>
+            {newContact && (
+              <div className="border border-emerald-200 bg-emerald-50/50 rounded-xl p-3 space-y-2" data-testid="pf-new-contact-form">
+                <div className="font-bold text-emerald-800">Yeni Cari</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} placeholder="Ünvan / Ad Soyad *" className={`${inputCls} col-span-2`} data-testid="pf-nc-name" />
+                  <input value={newContact.tax} onChange={(e) => setNewContact({ ...newContact, tax: e.target.value })} placeholder="VKN / TCKN" className={inputCls} data-testid="pf-nc-tax" />
+                  <input value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} placeholder="Telefon" className={inputCls} data-testid="pf-nc-phone" />
+                  <input value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} placeholder="E-posta" className={inputCls} />
+                  <input value={newContact.address} onChange={(e) => setNewContact({ ...newContact, address: e.target.value })} placeholder="Adres" className={inputCls} />
+                </div>
+                <div className="flex justify-end gap-2"><button type="button" onClick={() => setNewContact(null)} className="px-3 py-1.5 border rounded-lg bg-white">İptal</button><button type="button" onClick={createContact} disabled={!newContact.name.trim()} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-nc-save">Cariyi Kaydet & Seç</button></div>
+              </div>
+            )}
             {form.kind === "quote" && <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={form.valid_until} onChange={(e) => setForm({ ...form, valid_until: e.target.value })} className={inputCls} /></div></div>}
             {form.kind === "project" && <div className="grid grid-cols-3 gap-2"><div><label className="block font-semibold mb-1">Bütçe (₺)</label><input type="number" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={inputCls} data-testid="pf-budget" /></div><div><label className="block font-semibold mb-1">Başlangıç</label><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Bitiş</label><input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className={inputCls} /></div></div>}
             {form.kind !== "quote" && <div className="space-y-1.5">

@@ -1,0 +1,138 @@
+import React, { useCallback, useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2 } from "lucide-react";
+import { API_URL, useAuth } from "../context/AuthContext";
+
+const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
+const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-sky-700", edit: "bg-emerald-100 text-emerald-700" };
+
+const UsersTab = ({ companyId, roles, reload, data }) => {
+  const { user: me } = useAuth();
+  const [inv, setInv] = useState({ name: "", email: "", role: "sales" });
+  const [busy, setBusy] = useState(false);
+  const [pwdFor, setPwdFor] = useState(null);
+  const [pwd, setPwd] = useState("");
+  const invite = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/users/invite`, { ...inv, company_id: companyId, base_url: window.location.origin, invited_by: me?.id });
+      toast[r.data.mail.status === "sent" ? "success" : "info"](r.data.mail.detail);
+      setInv({ name: "", email: "", role: "sales" }); reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Davet gönderilemedi."); } finally { setBusy(false); }
+  };
+  const patch = async (u, body, ok) => { try { await axios.put(`${API_URL}/users/${u.id}`, body); toast.success(ok); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } };
+  const del = async (u) => { if (!window.confirm(`${u.name} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/users/${u.id}`); toast.success("Kullanıcı silindi."); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const copy = async (link) => { try { await navigator.clipboard.writeText(link); toast.success("Davet linki kopyalandı."); } catch { window.prompt("Davet linki (kopyalayın):", link); } };
+  return (
+    <div className="space-y-5">
+      <form onSubmit={invite} className="bg-slate-50 border rounded-xl p-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-end text-xs" data-testid="user-invite-form">
+        <div className="md:col-span-5 font-bold text-slate-800 flex items-center gap-1.5"><UserPlus className="w-4 h-4 text-emerald-600" /> Yeni kullanıcı davet et (e-posta ile link gönderilir)</div>
+        <div><label className="block font-semibold mb-1">Ad Soyad</label><input value={inv.name} onChange={(e) => setInv({ ...inv, name: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-name" /></div>
+        <div className="md:col-span-2"><label className="block font-semibold mb-1">E-posta</label><input type="email" required value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-email" /></div>
+        <div><label className="block font-semibold mb-1">Rol</label><select value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
+        <button disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center justify-center gap-1" data-testid="invite-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Davet Gönder</button>
+      </form>
+      {data.invites.length > 0 && (
+        <div className="space-y-1.5" data-testid="pending-invites">
+          <div className="text-xs font-bold text-slate-700">Bekleyen davetler ({data.invites.length})</div>
+          {data.invites.map((i) => (
+            <div key={i.id} className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid={`invite-row-${i.email}`}>
+              <span className="font-semibold text-slate-800">{i.name || "-"}</span><span className="text-slate-500">{i.email}</span><span className="px-1.5 py-0.5 rounded bg-white border text-[10px]">{roles.find((r) => r.code === i.role)?.name || i.role}</span>
+              <span className={`text-[10px] ${i.mail?.status === "sent" ? "text-emerald-700" : "text-amber-700"}`}>{i.mail?.status === "sent" ? "E-posta gönderildi" : "E-posta gönderilmedi — linki iletin"}</span>
+              <button onClick={() => copy(i.link)} className="ml-auto p-1 rounded hover:bg-white" title="Linki kopyala" data-testid={`invite-copy-${i.email}`}><Copy className="w-3.5 h-3.5" /></button>
+              <button onClick={async () => { await axios.delete(`${API_URL}/users/invite/${i.id}`); reload(); }} className="p-1 rounded hover:bg-white text-rose-600" title="İptal" data-testid={`invite-cancel-${i.email}`}><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <table className="w-full text-xs" data-testid="users-table">
+        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">Kullanıcı</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
+        <tbody className="divide-y">
+          {data.users.map((u) => (
+            <tr key={u.id} data-testid={`user-row-${u.email}`}>
+              <td className="py-2"><div className="font-semibold text-slate-900">{u.name}</div><div className="text-slate-500">{u.email}</div></td>
+              <td><select value={u.role} onChange={(e) => patch(u, { role: e.target.value }, "Rol güncellendi.")} className="border rounded-lg p-1.5 bg-white" data-testid={`user-role-${u.email}`}>{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></td>
+              <td><button onClick={() => patch(u, { is_active: !u.is_active }, u.is_active ? "Kullanıcı pasife alındı." : "Kullanıcı aktif.")} className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`} data-testid={`user-active-${u.email}`}>{u.is_active ? "Aktif" : "Pasif"}</button></td>
+              <td className="text-slate-500">{u.last_login_at ? new Date(u.last_login_at).toLocaleString("tr-TR") : "-"}</td>
+              <td className="text-right whitespace-nowrap">
+                {pwdFor === u.id ? (
+                  <span className="inline-flex gap-1"><input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Yeni şifre" className="border rounded-lg p-1 w-28" data-testid={`user-pwd-input-${u.email}`} /><button onClick={() => { patch(u, { password: pwd }, "Şifre değiştirildi."); setPwdFor(null); setPwd(""); }} className="px-2 bg-slate-900 text-white rounded-lg" data-testid={`user-pwd-save-${u.email}`}>Kaydet</button></span>
+                ) : <button onClick={() => setPwdFor(u.id)} className="p-1.5 rounded hover:bg-slate-100" title="Şifre belirle" data-testid={`user-pwd-${u.email}`}><KeyRound className="w-3.5 h-3.5" /></button>}
+                <button onClick={() => del(u)} className="p-1.5 rounded hover:bg-rose-50 text-rose-600" title="Sil" data-testid={`user-del-${u.email}`}><Trash2 className="w-3.5 h-3.5" /></button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const RolesTab = ({ companyId, rolesData, reload }) => {
+  const [newRole, setNewRole] = useState("");
+  const [sel, setSel] = useState(rolesData.roles[1]?.id);
+  const role = rolesData.roles.find((r) => r.id === sel) || rolesData.roles[0];
+  const setLevel = async (mod, level) => {
+    try { await axios.put(`${API_URL}/roles/${role.id}`, { permissions: { ...role.permissions, [mod]: level } }); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+  };
+  const add = async (e) => { e.preventDefault(); try { const r = await axios.post(`${API_URL}/roles`, { company_id: companyId, name: newRole }); toast.success("Rol oluşturuldu."); setNewRole(""); await reload(); setSel(r.data.id); } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); } };
+  const del = async () => { if (!window.confirm(`${role.name} rolü silinsin mi?`)) return; try { await axios.delete(`${API_URL}/roles/${role.id}`); toast.success("Rol silindi."); setSel(rolesData.roles[0].id); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+      <div className="space-y-2">
+        {rolesData.roles.map((r) => <button key={r.id} onClick={() => setSel(r.id)} className={`w-full text-left px-3 py-2 rounded-xl border flex justify-between ${r.id === role?.id ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-slate-50"}`} data-testid={`role-btn-${r.code}`}><span className="font-semibold">{r.name}</span><span className="opacity-60">{r.user_count} kul.</span></button>)}
+        <form onSubmit={add} className="flex gap-1 pt-2"><input value={newRole} onChange={(e) => setNewRole(e.target.value)} placeholder="Yeni rol adı" className="flex-1 border rounded-lg p-2" data-testid="new-role-input" /><button className="px-2 bg-emerald-600 text-white rounded-lg" data-testid="new-role-add"><Plus className="w-4 h-4" /></button></form>
+      </div>
+      <div className="md:col-span-3 bg-white border rounded-xl p-3" data-testid="role-matrix">
+        <div className="flex items-center justify-between mb-2"><div className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Shield className="w-4 h-4 text-indigo-600" /> {role?.name} — modül yetkileri {role?.is_system && <span className="text-[10px] font-normal text-slate-400">(sistem rolü)</span>}</div>{!role?.is_system && <button onClick={del} className="text-rose-600 flex items-center gap-1" data-testid="role-delete"><Trash2 className="w-3.5 h-3.5" /> Rolü sil</button>}</div>
+        {role?.code === "admin" && <div className="text-[11px] text-slate-500 mb-2">Yönetici tüm modüllerde tam yetkilidir; değiştirilemez.</div>}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          {rolesData.modules.map((m) => (
+            <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
+              <span className="font-semibold text-slate-700">{m.label}</span>
+              <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LogTab = ({ companyId, users }) => {
+  const [uid, setUid] = useState("");
+  const [rows, setRows] = useState([]);
+  useEffect(() => { axios.get(`${API_URL}/activity-logs?company_id=${companyId}${uid ? `&user_id=${uid}` : ""}&limit=150`).then((r) => setRows(r.data)).catch(() => {}); }, [companyId, uid]);
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex items-center gap-2"><Activity className="w-4 h-4 text-indigo-600" /><span className="font-bold">İşlem günlüğü</span><select value={uid} onChange={(e) => setUid(e.target.value)} className="ml-auto border rounded-lg p-1.5" data-testid="log-user-filter"><option value="">Tüm kullanıcılar</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+      <div className="max-h-[420px] overflow-auto border rounded-xl" data-testid="activity-log">
+        <table className="w-full"><tbody className="divide-y">
+          {rows.length === 0 && <tr><td className="p-4 text-center text-slate-400">Kayıt yok.</td></tr>}
+          {rows.map((r) => <tr key={r.id} className="hover:bg-slate-50"><td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">{new Date(r.created_at).toLocaleString("tr-TR")}</td><td className="px-3 font-semibold">{r.user_name}</td><td className="px-3"><span className={`px-1.5 rounded text-[10px] font-bold ${r.method === "DELETE" ? "bg-rose-100 text-rose-700" : r.method === "POST" ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}`}>{r.method}</span></td><td className="px-3 font-mono text-slate-600">{r.path}</td><td className="px-3 text-slate-400">{r.module}</td></tr>)}
+        </tbody></table>
+      </div>
+    </div>
+  );
+};
+
+export const UsersRolesPanel = ({ companyId }) => {
+  const [tab, setTab] = useState("users");
+  const [data, setData] = useState(null);
+  const [rolesData, setRolesData] = useState(null);
+  const reload = useCallback(async () => {
+    const [u, r] = await Promise.all([axios.get(`${API_URL}/users?company_id=${companyId}`), axios.get(`${API_URL}/roles?company_id=${companyId}`)]);
+    setData(u.data); setRolesData(r.data);
+  }, [companyId]);
+  useEffect(() => { reload().catch(() => toast.error("Kullanıcılar yüklenemedi.")); }, [reload]);
+  if (!data || !rolesData) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
+  return (
+    <div className="space-y-4" data-testid="users-roles-panel">
+      <div className="flex gap-1 border-b">{[["users", "Kullanıcılar", data.users.length], ["roles", "Roller & Yetkiler", rolesData.roles.length], ["log", "İşlem Günlüğü"]].map(([k, l, n]) => <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500"}`} data-testid={`ur-tab-${k}`}>{l}{n !== undefined && <span className="ml-1 text-[10px] bg-slate-100 px-1.5 rounded-full">{n}</span>}</button>)}</div>
+      {tab === "users" && <UsersTab companyId={companyId} roles={rolesData.roles} data={data} reload={reload} />}
+      {tab === "roles" && <RolesTab companyId={companyId} rolesData={rolesData} reload={reload} />}
+      {tab === "log" && <LogTab companyId={companyId} users={data.users} />}
+    </div>
+  );
+};

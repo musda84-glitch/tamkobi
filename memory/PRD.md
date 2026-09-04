@@ -136,9 +136,9 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 | **Sipariş kargo verisi pazaryerinden otomatik gelsin** | ⏳ Bekliyor (gerçek pazaryeri API gerektirir) |
 | **B2B ayarları Firma Ayarları içinde (özellikler, giriş yöntemi)** | ✅ Firma Ayarları → B2B Portal (`GET/PUT /companies/{id}/b2b-settings`; özellik anahtarları, giriş yöntemi seçimi [link aktif; PIN/şifre "yakında"], varsayılan indirim, min sipariş, müşteri erişim listesi). Self-test (curl + ekran); test agent koşulmadı. |
 | **Kasaları silme/düzenleme** | ⏳ Bekliyor |
-| **AI ile PDF içeri/dışarı aktarma (OVOCRM gibi)** | ⏳ Bekliyor |
-| **Personel kartı + detay + personelden kullanıcı açma** | ⏳ Bekliyor |
-| **OVOCRM kullanıcı modülü ve ayarları (roller, yetkiler)** | ⏳ Bekliyor |
+| **AI ile PDF içeri/dışarı aktarma (OVOCRM gibi)** | ✅ PDF→alış faturası (it13); listelerde tek tık Excel/PDF dışa aktarma ⏳ |
+| **Personel kartı + detay + personelden kullanıcı açma** | ✅ (it13) |
+| **OVOCRM kullanıcı modülü ve ayarları (roller, yetkiler)** | ✅ (it13) — UI'da view/edit ayrımı sadece menü+backend 403; sayfa içi butonlar henüz gizlenmiyor |
 | **Diğer yazılımlardaki kolaylaştırıcı özellikler** | ⏳ Kapsam netleştirilecek |
 | Sağlayıcı canlı bağlantıları (WhatsApp, banka, e-fatura, pazaryeri, kargo) | SİMÜLE — kullanıcı API anahtarı gerekir |
 
@@ -151,7 +151,15 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - Siparişler: onay butonu başlığı "Onayla".
 - Kullanıcı Geliver API örneği paylaştı (`POST https://api.geliver.io/api/v1/shipments`, Bearer token, senderAddressID, recipientAddress, order) → gerçek Geliver kargo entegrasyonu istiyor olabilir; **integration_expert + kullanıcıdan Bearer token/senderAddressID gerekir**.
 
-## SIRADAKİ FAZ (kullanıcı onayladı, henüz başlanmadı)
+## İterasyon 13 (Haziran 2026) — 4 özellik (test agent iteration_13: backend 32/33 → bulgu düzeltildi, frontend %92 → 3 bulgu düzeltildi)
+- **Geliver canlı kargo** (`cargo_providers.py`): katalogda geliver fields api_key+sender_address_id, `test_mode` (varsayılan açık); `POST /integrations/cargo/{id}/test` (adresleri getirir), `POST /cargo/create-shipment` geliver+token varsa canlı (shipment → offers.cheapest → accept-offer → tracking/label), `POST /cargo/shipments/{id}/refresh`; token şifreli, listede maskeli; `CargoConfigModal.jsx`. Kullanıcı token'ı henüz girmedi (dummy ile 400 doğrulandı).
+- **Kullanıcılar & Roller** (`rbac.py`): db.roles (6 sistem rolü + özel), modül yetki matrisi none/view/edit, `PermissionAndAuditMiddleware` (admin olmayan token'lı kullanıcıda edit yoksa 403 + db.activity_logs), davet (`/users/invite` → SMTP varsa mail, `/davet/:token`), `/login`, `/auth/me` → role_name+permissions, menü filtresi + access-denied, `UsersRolesPanel.jsx`. Ayarlar sekmesi "Kullanıcılar & Roller".
+- **Personel Kartı** (`EmployeeCardModal.jsx`, `GET /personnel/employees/{id}/card`, `POST .../create-user`, `DELETE /files/{id}`): özet, belgeler (object storage), maaş geçmişi, izin bakiyesi, puantaj, sistem kullanıcısı (davet/şifre; çift kullanıcı engeli).
+- **AI PDF Aktarım** (`ai_service.extract_invoice_from_text` Claude Sonnet 4.6, pypdf): `POST /ai/invoice-extract` (PDF → JSON taslak, cari/ürün eşleme, PDF object storage), `POST /ai/invoice-extract/confirm` → taslak alış faturası (+ yeni tedarikçi). `AiInvoiceImportModal.jsx`, Faturalar'da "PDF'den Aktar (AI)". Taranmış (metinsiz) PDF desteklenmez.
+- Teklif/Proje/Keşif formunda "+ Yeni cari aç" (inline cari oluştur & seç).
+- Lint: `npx eslint -c /app/memory/eslint.hooks.config.mjs src` → 0 hook uyarısı.
+
+## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).
 3. **AI PDF Aktarım** — tedarikçi PDF faturasını yükle → LLM (Emergent key, `integration_expert` ile OpenAI/Gemini playbook) satırları/cari/tutarları çıkarır → taslak alış faturası; tüm listelerde tek tık Excel/PDF (Raporlar'daki CSV/print yaklaşımı yeniden kullanılabilir).

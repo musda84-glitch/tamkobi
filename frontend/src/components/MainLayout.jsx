@@ -46,7 +46,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);
 
-  if (location.pathname.startsWith("/teklif/") || location.pathname.startsWith("/portal/")) return <>{children}</>;
+  if (["/teklif/", "/portal/", "/davet/", "/login"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
 
   const roleLabels = {
     admin: "Yönetici",
@@ -160,7 +161,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             </div>
             <div className="min-w-0">
               <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
-              <p className="text-[10px] text-emerald-400 truncate">{roleLabels[user?.role] || "Kullanıcı"}</p>
+              <p className="text-[10px] text-emerald-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
             </div>
           </div>
           <button
@@ -236,7 +237,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
         {/* Page View Body */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {children}
+          {denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : children}
         </main>
       </div>
     </div>

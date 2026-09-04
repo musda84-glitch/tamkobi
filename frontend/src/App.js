@@ -25,6 +25,8 @@ import ShopFloorPage from "./pages/ShopFloorPage";
 import ReportsPage from "./pages/ReportsPage";
 import B2BPortalPage from "./pages/B2BPortalPage";
 import AccountantPage from "./pages/AccountantPage";
+import InviteAcceptPage from "./pages/InviteAcceptPage";
+import LoginPage from "./pages/LoginPage";
 
 export default function App() {
   return (
@@ -54,6 +56,8 @@ export default function App() {
             <Route path="/atolye" element={<ShopFloorPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/portal/:token" element={<B2BPortalPage />} />
+            <Route path="/davet/:token" element={<InviteAcceptPage />} />
+            <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </MainLayout>

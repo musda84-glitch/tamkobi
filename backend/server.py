@@ -26,12 +26,14 @@ from auth_utils import (
     create_refresh_token, get_user_from_token
 )
 from seed_data import seed_all_data, seed_partners
-from ai_service import get_financial_ai_advice
+from ai_service import get_financial_ai_advice, extract_invoice_from_text
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
 import httpx
 from urllib.parse import quote
 import comm_service
+import cargo_providers
+import rbac
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -54,6 +56,7 @@ app.add_middleware(
 )
 
 api_router = APIRouter(prefix="/api")
+app.add_middleware(rbac.PermissionAndAuditMiddleware)
 
 def clean_doc(doc: dict) -> dict:
     if not doc:
@@ -143,8 +146,12 @@ async def login(req: LoginRequest, request: Request, response: Response):
         )
         raise HTTPException(status_code=401, detail="E-posta adresi veya şifre hatalı.")
 
+    if user.get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Hesabınız pasif durumda. Yöneticinizle iletişime geçin.")
     # Reset failed attempts on success
     await db.login_attempts.delete_one({"identifier": identifier})
+    await db.users.update_one({"_id": user["_id"]}, {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}})
+    role_doc = await rbac.role_for(user)
 
     user_id = str(user.get("_id", user.get("id")))
     token = create_access_token(user_id, email, user.get("role", "admin"))
@@ -169,6 +176,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "company_ids": user.get("company_ids", []),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
+            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}),
         },
         "companies": clean_docs(companies)
     }
@@ -625,6 +633,7 @@ async def register(req: RegisterRequest, response: Response):
 async def get_me(user: dict = Depends(get_current_user)):
     user_id = str(user.get("_id", user.get("id")))
     companies = await db.companies.find({}).to_list(100)
+    role_doc = await rbac.role_for(user)
     return {
         "user": {
             "id": user_id,
@@ -633,6 +642,7 @@ async def get_me(user: dict = Depends(get_current_user)):
             "role": user.get("role", "admin"),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
+            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}),
         },
         "companies": clean_docs(companies)
     }
@@ -3110,7 +3120,7 @@ async def sync_ecommerce_channel(channel_id: str):
 # ----------------- KARGO ENTEGRASYONLARI -----------------
 CARGO_CATALOG = [
     {"carrier_code": "navlungo", "carrier_name": "Navlungo (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Tüm kargo firmalarını tek panelden karşılaştır, indirimli gönder", "fields": ["api_key"]},
-    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket", "fields": ["api_key"]},
+    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket — CANLI API (api.geliver.io)", "fields": ["api_key", "sender_address_id"], "live": True},
     {"carrier_code": "kolaykargo", "carrier_name": "Kolay Kargo (Pazaryeri)", "kind": "marketplace", "desc": "Sözleşmesiz indirimli kargo, Trendyol/Hepsiburada uyumlu", "fields": ["api_key"]},
     {"carrier_code": "basitkargo", "carrier_name": "BasitKargo (Pazaryeri)", "kind": "marketplace", "desc": "Toplu gönderi, kapıdan alım", "fields": ["api_key", "api_secret"]},
     {"carrier_code": "kargomsende", "carrier_name": "Kargom Sende (Pazaryeri)", "kind": "marketplace", "desc": "Çoklu kargo karşılaştırma", "fields": ["api_key"]},
@@ -3141,13 +3151,42 @@ async def add_cargo_integration(req: Dict[str, Any]):
     creds = {k: req.get(k) for k in cat["fields"]}
     has_key = any(creds.values())
     doc = {"_id": f"cargo_{cat['carrier_code']}_{uuid.uuid4().hex[:4]}", "company_id": company_id, "carrier_code": cat["carrier_code"], "carrier_name": cat["carrier_name"], "kind": cat["kind"], "is_active": True,
-           "auto_create_barcode": True, "status": "connected" if has_key else "not_configured", "created_at": datetime.now(timezone.utc).isoformat(), **{k: (comm_service.encrypt(v) if v and k in ("api_password", "api_secret", "api_key") and hasattr(comm_service, "encrypt") else v) for k, v in creds.items()}}
+           "auto_create_barcode": True, "test_mode": bool(req.get("test_mode", True)), "status": "connected" if has_key else "not_configured", "created_at": datetime.now(timezone.utc).isoformat(), **{k: (comm_service.encrypt(v) if v and k in ("api_password", "api_secret", "api_key") and hasattr(comm_service, "encrypt") else v) for k, v in creds.items()}}
     await db.cargo_configs.insert_one(doc)
     out = clean_doc(doc)
     for k in ("api_password", "api_secret", "api_key"):
         if out.get(k):
             out[k] = "••••••••"
     return {**out, "message": f"{cat['carrier_name']} eklendi" + ("." if has_key else " — API anahtarı girilene kadar gönderiler SİMÜLE çalışır.")}
+
+@api_router.post("/integrations/cargo/{carrier_id}/test")
+async def test_cargo_integration(carrier_id: str):
+    cfg = await db.cargo_configs.find_one({"_id": carrier_id})
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Kargo entegrasyonu bulunamadı.")
+    if cfg.get("carrier_code") != "geliver":
+        return {"ok": True, "simulated": True, "message": f"{cfg.get('carrier_name')} için canlı API bağlantısı henüz yok; gönderiler SİMÜLE oluşturulur."}
+    r = await cargo_providers.geliver_test(cfg)
+    await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": {"status": "connected", "is_active": True, "last_test_at": datetime.now(timezone.utc).isoformat(), "sender_addresses": r["addresses"]}})
+    return {**r, "simulated": False}
+
+@api_router.post("/cargo/shipments/{shipment_id}/refresh")
+async def refresh_cargo_shipment(shipment_id: str):
+    sh = await db.cargo_shipments.find_one({"_id": shipment_id})
+    if not sh:
+        raise HTTPException(status_code=404, detail="Gönderi bulunamadı.")
+    if not sh.get("provider_shipment_id"):
+        raise HTTPException(status_code=400, detail="Bu gönderi simüle; sağlayıcıdan güncellenemez.")
+    cfg = await db.cargo_configs.find_one({"company_id": sh["company_id"], "carrier_code": sh["carrier_code"]})
+    if not cfg:
+        raise HTTPException(status_code=400, detail="Kargo entegrasyonu kaldırılmış.")
+    info = await cargo_providers.geliver_get_shipment(cfg, sh["provider_shipment_id"])
+    upd = {k: v for k, v in {"tracking_number": info.get("tracking_number"), "barcode": info.get("barcode"), "label_url": info.get("label_url"), "tracking_url": info.get("tracking_url"), "provider_status": info.get("status")}.items() if v}
+    upd["last_refreshed_at"] = datetime.now(timezone.utc).isoformat()
+    await db.cargo_shipments.update_one({"_id": shipment_id}, {"$set": upd})
+    if sh.get("order_id") and upd.get("tracking_number"):
+        await db.orders.update_one({"_id": sh["order_id"]}, {"$set": {"cargo_tracking_number": upd["tracking_number"], "cargo_label_url": upd.get("label_url"), "cargo_tracking_url": upd.get("tracking_url")}})
+    return clean_doc(await db.cargo_shipments.find_one({"_id": shipment_id}))
 
 @api_router.delete("/integrations/cargo/{carrier_id}")
 async def delete_cargo_integration(carrier_id: str):
@@ -3186,13 +3225,20 @@ async def work_order_performance(company_id: Optional[str] = "comp_nexus_main_01
 @api_router.get("/integrations/cargo")
 async def list_cargo_integrations(company_id: Optional[str] = "comp_nexus_main_01"):
     configs = await db.cargo_configs.find({"company_id": company_id}).to_list(100)
-    return clean_docs(configs)
+    return [cargo_providers.mask_config(c) for c in clean_docs(configs)]
 
 @api_router.put("/integrations/cargo/{carrier_id}")
 async def update_cargo_integration(carrier_id: str, data: Dict[str, Any]):
-    await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": data})
-    res = await db.cargo_configs.find_one({"_id": carrier_id})
-    return clean_doc(res)
+    allowed = {k: v for k, v in data.items() if k in {"api_key", "api_secret", "api_password", "api_username", "customer_number", "sender_address_id", "test_mode", "is_active", "status", "auto_create_barcode", "default_weight", "default_length", "default_width", "default_height"}}
+    upd = cargo_providers.encrypt_secrets(allowed)
+    cur = await db.cargo_configs.find_one({"_id": carrier_id})
+    if not cur:
+        raise HTTPException(status_code=404, detail="Kargo entegrasyonu bulunamadı.")
+    merged = {**cur, **upd}
+    upd["status"] = "connected" if any(merged.get(k) for k in cargo_providers.SECRET_FIELDS) else "not_configured"
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": upd})
+    return cargo_providers.mask_config(clean_doc(await db.cargo_configs.find_one({"_id": carrier_id})))
 
 @api_router.post("/cargo/create-shipment")
 async def create_cargo_shipment(req: Dict[str, Any]):
@@ -3203,46 +3249,34 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     city = req.get("city", "İstanbul")
     company_id = req.get("company_id", "comp_nexus_main_01")
 
-    tracking_num = f"{carrier_code.upper()[:2]}-{str(uuid.uuid4().int)[:10]}"
-    barcode = f"869{str(uuid.uuid4().int)[:10]}"
+    order = await db.orders.find_one({"_id": order_id}) if order_id else None
+    if order and order.get("cargo_tracking_number") and not req.get("force"):
+        raise HTTPException(status_code=400, detail=f"Bu sipariş için zaten kargo kaydı var: {order['cargo_tracking_number']}")
+    cfg = await db.cargo_configs.find_one({"company_id": company_id, "carrier_code": carrier_code})
+    cat = next((c for c in CARGO_CATALOG if c["carrier_code"] == carrier_code), {})
+    live = bool(cfg) and carrier_code == "geliver" and cargo_providers.has_live_credentials(cfg)
+    extra: Dict[str, Any] = {}
+    if live:
+        src = {**(order or {}), "customer_name": customer_name, "shipping_address": address, "city": city, "customer_phone": req.get("customer_phone") or (order or {}).get("customer_phone"), "order_number": (order or {}).get("order_number") or req.get("order_number", ""), "total_amount": (order or {}).get("total_amount") or req.get("total_amount", 0), "items": (order or {}).get("items", [])}
+        g = await cargo_providers.geliver_create_shipment(cfg, src, req)
+        tracking_num = g.get("tracking_number") or f"GLV-{(g.get('geliver_id') or uuid.uuid4().hex)[:10].upper()}"
+        barcode = g.get("barcode") or tracking_num
+        extra = {"is_live": True, "test_mode": g.get("test"), "provider_shipment_id": g.get("geliver_id"), "label_url": g.get("label_url"), "tracking_url": g.get("tracking_url"), "offer_accepted": g.get("accepted"), "provider_service": g.get("provider"), "price": g.get("price"), "provider_status": (g.get("raw") or {}).get("status")}
+        status_ = "created"
+    else:
+        tracking_num = f"{carrier_code.upper()[:2]}-{str(uuid.uuid4().int)[:10]}"
+        barcode = f"869{str(uuid.uuid4().int)[:10]}"
+        extra = {"is_live": False}
+        status_ = "in_transit"
 
-    carrier_names = {
-        "yurtici": "Yurtiçi Kargo",
-        "aras": "Aras Kargo",
-        "mng": "MNG Kargo",
-        "surat": "Sürat Kargo",
-        "ptt": "PTT Kargo"
-    }
-
-    shipment = CargoShipment(
-        id=f"shp_{uuid.uuid4().hex[:8]}",
-        company_id=company_id,
-        carrier_code=carrier_code,
-        carrier_name=carrier_names.get(carrier_code, "Kargo"),
-        tracking_number=tracking_num,
-        barcode=barcode,
-        order_id=order_id,
-        customer_name=customer_name,
-        address=address,
-        city=city,
-        status="in_transit",
-        estimated_delivery=(datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d")
-    )
-
-    await db.cargo_shipments.insert_one(shipment.to_mongo())
-
+    shipment = CargoShipment(id=f"shp_{uuid.uuid4().hex[:8]}", company_id=company_id, carrier_code=carrier_code, carrier_name=(cfg or {}).get("carrier_name") or cat.get("carrier_name", "Kargo"), tracking_number=tracking_num, barcode=barcode,
+                             order_id=order_id, customer_name=customer_name, customer_phone=req.get("customer_phone") or (order or {}).get("customer_phone"), address=address, city=city, status=status_,
+                             estimated_delivery=(datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d"))
+    doc = {**shipment.to_mongo(), **extra}
+    await db.cargo_shipments.insert_one(doc)
     if order_id:
-        await db.orders.update_one(
-            {"_id": order_id},
-            {"$set": {
-                "order_status": "shipped",
-                "cargo_carrier": carrier_code,
-                "cargo_tracking_number": tracking_num,
-                "cargo_barcode": barcode
-            }}
-        )
-
-    return clean_doc(shipment.to_mongo())
+        await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "shipped", "cargo_carrier": carrier_code, "cargo_tracking_number": tracking_num, "cargo_barcode": barcode, "cargo_label_url": extra.get("label_url"), "cargo_tracking_url": extra.get("tracking_url"), "cargo_shipment_id": doc["_id"]}})
+    return {**clean_doc(doc), "message": ("Geliver üzerinden gönderi oluşturuldu" + (" (TEST modu)" if extra.get("test_mode") else "") + (f" — teklif kabul edildi, takip: {tracking_num}" if extra.get("offer_accepted") else " — teklif henüz hazır değil, 'Güncelle' ile takip numarasını çekin.")) if live else "Kargo kaydı oluşturuldu (SİMÜLE)."}
 
 @api_router.get("/cargo/shipments")
 async def list_cargo_shipments(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -3699,6 +3733,63 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
     res = await db.employees.find_one({"_id": emp_id})
     return clean_doc(res)
 
+@api_router.get("/personnel/employees/{emp_id}/card")
+async def employee_card(emp_id: str):
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    payrolls = clean_docs(await db.payrolls.find({"employee_id": emp_id}).sort("period", -1).to_list(60))
+    leaves = clean_docs(await db.leave_requests.find({"employee_id": emp_id}).sort("start_date", -1).to_list(200))
+    bonuses = clean_docs(await db.bonus_payments.find({"employee_id": emp_id}).sort("created_at", -1).to_list(200))
+    att = await db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
+    docs = clean_docs(await db.files.find({"entity": "employee", "entity_id": emp_id, "is_deleted": False}).sort("created_at", -1).to_list(200))
+    user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
+    invite = await db.user_invites.find_one({"employee_id": emp_id, "accepted_at": None})
+    used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
+    return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
+            "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
+            "attendance": {"month": month, "days_present": sum(1 for r in att if r.get("status") == "present"), "days_absent": sum(1 for r in att if r.get("status") == "absent"), "days_leave": sum(1 for r in att if r.get("status") == "leave"), "total_hours": round(sum(r.get("hours", 0) for r in att), 1), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in att), 1)},
+            "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
+            "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
+            "pending_invite": clean_doc(invite) if invite else None,
+            "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)}}
+
+@api_router.delete("/files/{file_id}")
+async def delete_file_record(file_id: str):
+    r = await db.files.update_one({"_id": file_id}, {"$set": {"is_deleted": True}})
+    if not r.matched_count:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    return {"status": "success"}
+
+@api_router.post("/personnel/employees/{emp_id}/create-user")
+async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Request):
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    email = (req.get("email") or emp.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Personelin geçerli bir e-posta adresi olmalı.")
+    if await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]}):
+        raise HTTPException(status_code=400, detail="Bu personelin zaten bir sistem kullanıcısı var.")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
+    role = req.get("role") or "sales"
+    await rbac.ensure_roles(emp["company_id"])
+    if not await db.roles.find_one({"company_id": emp["company_id"], "code": role}):
+        raise HTTPException(status_code=400, detail="Geçersiz rol.")
+    if req.get("password"):
+        if len(req["password"]) < 6:
+            raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+        user_id = f"usr_{uuid.uuid4().hex[:8]}"
+        await db.users.insert_one({"_id": user_id, "email": email, "password_hash": hash_password(req["password"]), "name": emp["full_name"], "role": role, "company_ids": [emp["company_id"]], "active_company_id": emp["company_id"],
+                                   "is_active": True, "employee_id": emp_id, "phone": emp.get("phone"), "preferences": {}, "created_at": datetime.now(timezone.utc).isoformat()})
+        await db.employees.update_one({"_id": emp_id}, {"$set": {"user_id": user_id, "email": email}})
+        return {"status": "success", "mode": "password", "user_id": user_id, "message": f"{emp['full_name']} için sistem kullanıcısı oluşturuldu ({email})."}
+    inv = await rbac.invite_user({"company_id": emp["company_id"], "email": email, "name": emp["full_name"], "role": role, "employee_id": emp_id, "base_url": req.get("base_url"), "invited_by": req.get("invited_by")}, request)
+    await db.employees.update_one({"_id": emp_id}, {"$set": {"email": email}})
+    return {"status": "success", "mode": "invite", "invite": inv, "message": inv["mail"]["detail"]}
+
 @api_router.get("/personnel/payrolls")
 async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):
     query = {"company_id": company_id}
@@ -3777,6 +3868,78 @@ class AIChatRequest(BaseModel):
     message: str
     company_id: Optional[str] = "comp_nexus_main_01"
 
+@api_router.post("/ai/invoice-extract")
+async def ai_invoice_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+    if file.content_type not in ("application/pdf", "text/plain"):
+        raise HTTPException(status_code=400, detail="Sadece PDF (veya düz metin) yükleyebilirsiniz.")
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    if file.content_type == "application/pdf":
+        from pypdf import PdfReader
+        import io
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages[:10])
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
+    else:
+        text = data.decode("utf-8", "ignore")
+    if len(text.strip()) < 30:
+        raise HTTPException(status_code=400, detail="PDF'de okunabilir metin bulunamadı (taranmış görüntü olabilir). Metin tabanlı e-Arşiv/e-Fatura PDF'i yükleyin.")
+    try:
+        parsed = await extract_invoice_from_text(text)
+    except Exception as e:
+        logger.error(f"AI invoice extract failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+    sup = parsed.get("supplier") or {}
+    match = None
+    if sup.get("tax_number"):
+        match = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": str(sup["tax_number"]).strip()})
+    if not match and sup.get("name"):
+        import re as _re
+        match = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": _re.escape(sup["name"][:25]), "$options": "i"}})
+    file_url = None
+    try:
+        path = f"{APP_NAME}/purchase_invoice/{company_id}/{uuid.uuid4()}.pdf"
+        r = put_object(path, data, "application/pdf")
+        file_url = f"/api/files/{r['path']}"
+        await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": r["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data), "entity": "purchase_invoice", "entity_id": "", "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    except Exception as e:
+        logger.error(f"PDF store failed: {e}")
+    products = {p.get("name", "").lower(): p for p in await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "unit": 1}).to_list(2000)}
+    for it in parsed["items"]:
+        hit = products.get((it.get("name") or "").lower())
+        if hit:
+            it["product_id"] = hit["_id"]; it["matched_product"] = hit.get("name")
+    return {"draft": parsed, "matched_contact": clean_doc(match) if match else None, "file_url": file_url, "text_preview": text[:1200], "filename": file.filename}
+
+@api_router.post("/ai/invoice-extract/confirm")
+async def ai_invoice_confirm(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    d = req.get("draft") or {}
+    sup = d.get("supplier") or {}
+    contact_id = req.get("contact_id")
+    if not contact_id:
+        if not sup.get("name"):
+            raise HTTPException(status_code=400, detail="Tedarikçi adı gerekli.")
+        c = Contact(company_id=company_id, name=sup["name"], type="supplier", tax_number_or_id=str(sup.get("tax_number") or ""), tax_office=sup.get("tax_office") or "", email=sup.get("email") or "", phone=sup.get("phone") or "", address=sup.get("address") or "", city=req.get("city") or "İstanbul", district="", credit_limit=0, category="Tedarikçi", is_e_invoice_user=True, notes="AI PDF aktarımından oluşturuldu")
+        cd = c.to_mongo(); await db.contacts.insert_one(cd); contact_id = cd["_id"]; contact_name = c.name
+    else:
+        cc = await db.contacts.find_one({"_id": contact_id})
+        if not cc:
+            raise HTTPException(status_code=404, detail="Cari bulunamadı.")
+        contact_name = cc["name"]
+    items = [InvoiceItem(product_id=it.get("product_id"), name=it["name"], quantity=float(it["quantity"]), unit=it.get("unit") or "Adet", unit_price=float(it["unit_price"]), vat_rate=int(it.get("vat_rate", 20)), discount_rate=float(it.get("discount_rate") or 0), total=float(it["total"])) for it in d.get("items", []) if it.get("name")]
+    if not items:
+        raise HTTPException(status_code=400, detail="En az bir fatura kalemi gerekli.")
+    inv = Invoice(company_id=company_id, invoice_type="purchase", e_type="paper", contact_id=contact_id, contact_name=contact_name, contact_tax_id=str(sup.get("tax_number") or ""), issue_date=d.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                  due_date=d.get("due_date"), items=items, currency=d.get("currency") or "TRY", status="draft", notes=(f"Tedarikçi fatura no: {d.get('invoice_number')}. " if d.get("invoice_number") else "") + "AI PDF aktarımı ile oluşturuldu." + (f" Belge: {req.get('file_url')}" if req.get("file_url") else ""), source_channel="ai_pdf")
+    created = await create_invoice(inv)
+    if req.get("file_url"):
+        await db.invoices.update_one({"_id": created["id"]}, {"$set": {"attachment_url": req["file_url"], "supplier_invoice_number": d.get("invoice_number")}})
+    return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak alış faturası oluşturuldu: {created['invoice_number']}"}
+
 @api_router.post("/ai/financial-advisor")
 async def ask_financial_ai(req: AIChatRequest):
     company = await db.companies.find_one({"_id": req.company_id})
@@ -3842,7 +4005,9 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
     }
 
 # Include router
+rbac.init(db, _mail_account, get_current_user)
 app.include_router(api_router)
+app.include_router(rbac.router)
 
 @app.get("/")
 async def root():

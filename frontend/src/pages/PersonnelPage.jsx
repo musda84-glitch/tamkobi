@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
+import { EmployeeCardModal } from "../components/EmployeeCardModal";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -30,6 +31,7 @@ export default function PersonnelPage() {
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [cardEmp, setCardEmp] = useState(null);
   const [showPayrollModal, setShowPayrollModal] = useState(false);
   const [payPayrollItem, setPayPayrollItem] = useState(null);
   const [selectedBankId, setSelectedBankId] = useState("");
@@ -192,6 +194,7 @@ export default function PersonnelPage() {
               <span className="text-slate-400">Net Maaş:</span>
               <span className="text-sm font-bold text-slate-900">{emp.salary?.toLocaleString('tr-TR')} ₺</span>
             </div>
+            <button onClick={() => setCardEmp(emp)} className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold" data-testid={`employee-card-btn-${emp.tc_kimlik}`}>Personel Kartı</button>
           </div>
         ))}
       </div>
@@ -417,6 +420,7 @@ export default function PersonnelPage() {
           </div>
         </div>
       )}
+      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
     </div>
   );
 }
