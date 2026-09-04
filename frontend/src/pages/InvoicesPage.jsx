@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -32,6 +32,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { SearchSelect } from "../components/SearchSelect";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
+import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 
 export default function InvoicesPage() {
   const { activeCompany } = useAuth();
@@ -45,10 +46,13 @@ export default function InvoicesPage() {
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
   const [showAiImport, setShowAiImport] = useState(false);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const contactFilter = searchParams.get("contact_id") || "";
+  const visibleInvoices = useMemo(() => applyInvoiceFilters(invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter), filters), [invoices, contactFilter, filters]);
+  const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.grand_total) || 0), 0), [visibleInvoices]);
   const [printInv, setPrintInv] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
@@ -254,6 +258,8 @@ export default function InvoicesPage() {
         ))}
       </div>
 
+      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} />
+
       {/* Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         {contactFilter && (
@@ -279,14 +285,14 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {invoices.length === 0 ? (
+              {visibleInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                    Kayıtlı fatura bulunamadı.
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="inv-empty">
+                    {invoices.length === 0 ? "Kayıtlı fatura bulunamadı." : "Filtreye uyan fatura yok."}
                   </td>
                 </tr>
               ) : (
-                invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter).map((inv) => (
+                visibleInvoices.map((inv) => (
                   <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => openCtx(e, inv)} className={`hover:bg-slate-50/70 transition cursor-context-menu ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={`invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
