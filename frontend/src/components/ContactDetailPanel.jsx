@@ -10,6 +10,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu } from "./InvoiceContextMenu";
+import { useEscape } from "../utils/useEscape";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
@@ -28,6 +29,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const navigate = useNavigate();
   const { activeCompany } = useAuth();
 
+  useEscape(onClose);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const load = useCallback(async () => {
@@ -100,8 +102,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const { contact: c, summary: s } = data;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
-      <div className="bg-white w-full max-w-6xl h-full shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
+      <div className="bg-white w-full max-w-6xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
         <div className="px-6 py-4 border-b flex items-start justify-between gap-3">
           <div>
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${c.type === "customer" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{c.type === "customer" ? "Müşteri" : c.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi"}</span>
@@ -119,7 +121,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <button onClick={() => setTermsOpen(true)} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" title="Vade günü ve vade farkı uygula" data-testid="detail-terms-btn"><CalendarClock className="w-3.5 h-3.5 text-slate-500" /> Vade Uygula{c.payment_term_days ? <span className="ml-1 text-[10px] bg-slate-900 text-white rounded-full px-1.5">{c.payment_term_days}g</span> : null}</button>
             <button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="flex items-center gap-1 px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg text-xs font-semibold hover:bg-violet-50 disabled:opacity-40" title="Açık bakiyeyi taksitlendir (Taksitler modülüne bağlı)" data-testid="detail-balance-installments-btn"><Layers className="w-3.5 h-3.5" /> Bakiyeyi Taksitlendir</button>
             <button onClick={() => onMessage?.(c)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold" data-testid="detail-message-btn"><MessageSquare className="w-3.5 h-3.5" /> Mesaj</button>
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="close-contact-detail-btn"><X className="w-5 h-5" /></button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 flex items-center gap-1" title="Kapat (Esc)" data-testid="close-contact-detail-btn"><kbd className="text-[9px] border rounded px-1 text-slate-400">ESC</kbd><X className="w-5 h-5" /></button>
           </div>
         </div>
 
@@ -147,7 +149,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"}`} title="Sağ tık: fatura kes / yazdır / tahsilat" data-testid={`detail-inv-${inv.invoice_number}`}>
                     <td className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>
                     <td className="py-2 text-slate-500">{inv.issue_date}</td>
-                    <td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>
+                    <td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>
                     <td className="py-2 text-right font-bold">{fmt(inv.grand_total)} ₺</td>
                     <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>
                     <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>
