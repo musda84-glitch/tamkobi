@@ -17,6 +17,7 @@ export const AuthProvider = ({ children }) => {
   const BASE_MENU = [
     { label: "Genel Bakış", path: "/" },
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
+    { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
     { label: "Cari Hesaplar", path: "/contacts" },
     { label: "Taksitler", path: "/installments", badge: "Vade" },
     { label: "Raporlar", path: "/reports", badge: "Excel" },
@@ -37,7 +38,14 @@ export const AuthProvider = ({ children }) => {
   ];
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
-  const menuItems = BASE_MENU.filter((m) => can(m.path)).sort((a, b) => { const ia = moduleOrder.indexOf(a.path), ib = moduleOrder.indexOf(b.path); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
+  const rank = (path) => {
+    const i = moduleOrder.indexOf(path);
+    if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
+    const bi = BASE_MENU.findIndex((m) => m.path === path);
+    for (let k = bi - 1; k >= 0; k--) { const j = moduleOrder.indexOf(BASE_MENU[k].path); if (j !== -1) return j + 0.5 + bi / 1000; }
+    return -0.5 + bi / 1000;
+  };
+  const menuItems = BASE_MENU.filter((m) => can(m.path)).sort((a, b) => rank(a.path) - rank(b.path));
 
   const persistOrder = async (order) => {
     setModuleOrder(order);

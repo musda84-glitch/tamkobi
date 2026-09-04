@@ -3,6 +3,7 @@ load_dotenv()
 
 import os
 import uuid
+import re
 import logging
 from datetime import datetime, timezone, timedelta, date
 from calendar import monthrange
@@ -1885,7 +1886,7 @@ async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main
 
 PARTNER_TX_LABELS = {"capital_in": "Ortak Sermaye Girişi", "withdrawal": "Ortak Para Çekişi", "profit_share": "Ortak Kâr Payı Ödemesi"}
 
-async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type: str, amount: float, partner_name: str, description: str, date: str):
+async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type: str, amount: float, partner_name: str, description: str, date: str, partner_tx_id: Optional[str] = None):
     acc = await db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
@@ -1902,10 +1903,56 @@ async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type:
         "currency": acc.get("currency", "TRY"),
         "description": f"{partner_name}: {description}",
         "source": "partner",
+        "partner_tx_id": partner_tx_id,
         "date": date,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     return acc.get("account_name")
+
+async def _reverse_partner_tx(tx: dict):
+    """Undo balance + bank movement effects of a capital_in / withdrawal partner transaction."""
+    amount = float(tx.get("amount", 0))
+    if tx["type"] == "capital_in":
+        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"balance": -amount, "total_capital_in": -amount}})
+    elif tx["type"] == "withdrawal":
+        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"balance": amount, "total_withdrawn": -amount}})
+    elif tx["type"] == "profit_share":
+        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"total_profit_share": -amount, **({"balance": amount} if tx.get("is_paid") else {})}})
+    if tx.get("account_id") and (tx["type"] != "profit_share" or tx.get("is_paid")):
+        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"]}) or await db.bank_transactions.find_one({"source": "partner", "account_id": tx["account_id"], "amount": amount, "date": tx.get("date"), "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"}})
+        if bt:
+            inflow = bt.get("type") == "inflow"
+            await db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": -amount if inflow else amount}})
+            await db.bank_transactions.delete_one({"_id": bt["_id"]})
+
+@api_router.put("/banking/partners/transactions/{tx_id}")
+async def update_partner_transaction(tx_id: str, req: Dict[str, Any]):
+    tx = await db.partner_transactions.find_one({"_id": tx_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+    if tx["type"] == "profit_share":
+        raise HTTPException(status_code=400, detail="Kâr payı kayıtları düzenlenemez; silip yeniden dağıtın.")
+    amount = float(req.get("amount", tx["amount"]))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    date = req.get("date") or tx.get("date")
+    description = req.get("description") if req.get("description") is not None else tx.get("description")
+    account_id = req.get("account_id") or tx.get("account_id")
+    await _reverse_partner_tx(tx)
+    account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
+    inc = {"balance": amount, "total_capital_in": amount} if tx["type"] == "capital_in" else {"balance": -amount, "total_withdrawn": amount}
+    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": inc})
+    await db.partner_transactions.update_one({"_id": tx_id}, {"$set": {"amount": amount, "date": date, "description": description, "account_id": account_id, "account_name": account_name, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return clean_doc(await db.partner_transactions.find_one({"_id": tx_id}))
+
+@api_router.delete("/banking/partners/transactions/{tx_id}")
+async def delete_partner_transaction(tx_id: str):
+    tx = await db.partner_transactions.find_one({"_id": tx_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+    await _reverse_partner_tx(tx)
+    await db.partner_transactions.delete_one({"_id": tx_id})
+    return {"status": "success", "message": "Hareket silindi; ortak ve hesap bakiyeleri geri alındı."}
 
 @api_router.post("/banking/partners/transactions")
 async def create_partner_transaction(req: Dict[str, Any]):
@@ -1920,14 +1967,14 @@ async def create_partner_transaction(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
     date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     description = req.get("description") or PARTNER_TX_LABELS[tx_type]
-    account_name = await _post_partner_cash_movement(partner["company_id"], req.get("account_id"), tx_type, amount, partner["name"], description, date)
+    tx = PartnerTransaction(company_id=partner["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type=tx_type,
+                            amount=amount, account_id=req.get("account_id"), description=description, date=date)
+    doc = tx.to_mongo()
+    account_name = await _post_partner_cash_movement(partner["company_id"], req.get("account_id"), tx_type, amount, partner["name"], description, date, partner_tx_id=doc["_id"])
+    doc["account_name"] = account_name
 
     inc = {"balance": amount, "total_capital_in": amount} if tx_type == "capital_in" else {"balance": -amount, "total_withdrawn": amount}
     await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
-
-    tx = PartnerTransaction(company_id=partner["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type=tx_type,
-                            amount=amount, account_id=req.get("account_id"), account_name=account_name, description=description, date=date)
-    doc = tx.to_mongo()
     await db.partner_transactions.insert_one(doc)
     return clean_doc(doc)
 

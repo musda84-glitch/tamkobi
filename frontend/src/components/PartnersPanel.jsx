@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Users, Plus, ArrowDownRight, ArrowUpRight, PieChart, X, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { PartnerTxTable } from "./PartnerTxTable";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
@@ -131,23 +132,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">Ortak Hareketleri</div>
-        <table className="w-full text-left text-xs text-slate-600">
-          <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold">
-            <tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Ortak</th><th className="px-4 py-2">İşlem</th><th className="px-4 py-2">Hesap / Açıklama</th><th className="px-4 py-2 text-right">Tutar</th></tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {txs.length === 0 && <tr><td colSpan={5} className="px-4 py-5 text-center text-slate-400">Hareket yok.</td></tr>}
-            {txs.map((t) => (
-              <tr key={t.id} data-testid={`partner-tx-row-${t.id}`}>
-                <td className="px-4 py-2 font-mono text-slate-500">{t.date}</td>
-                <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
-                <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${t.type === "capital_in" ? "bg-emerald-50 text-emerald-700" : t.type === "withdrawal" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"}`}>{TX_LABEL[t.type]}{t.type === "profit_share" && !t.is_paid ? " (Tahakkuk)" : ""}</span></td>
-                <td className="px-4 py-2 text-slate-600">{t.account_name ? `${t.account_name} • ` : ""}{t.description}</td>
-                <td className={`px-4 py-2 text-right font-bold ${t.type === "capital_in" ? "text-emerald-600" : "text-rose-600"}`}>{t.type === "capital_in" ? "+" : "-"}{fmt(t.amount)} ₺</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <PartnerTxTable txs={txs} accounts={accounts} onChanged={() => { load(); onCashChanged?.(); }} />
       </div>
 
       {modal === "add" && (

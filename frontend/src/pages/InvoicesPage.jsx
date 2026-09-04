@@ -36,13 +36,13 @@ import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
 
-export default function InvoicesPage() {
+export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
-  const [filterType, setFilterType] = useState("all");
+  const [filterType, setFilterType] = useState(initialType);
   const [loading, setLoading] = useState(true);
 
   // Modals
@@ -239,8 +239,8 @@ export default function InvoicesPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Ön Muhasebe & E-Dönüşüm</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Satış, Alış, E-Fatura, E-Arşiv ve GİB Portal Entegrasyonu</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">{lockType ? "İrsaliyeler" : "Ön Muhasebe & E-Dönüşüm"}</h1>
+          <p className="text-xs sm:text-sm text-slate-500">{lockType ? "Sevk irsaliyeleri, e-İrsaliye ve faturaya dönüştürme" : "Satış, Alış, E-Fatura, E-Arşiv ve GİB Portal Entegrasyonu"}</p>
         </div>
         <div className="flex gap-2 self-start">
         <button onClick={() => setShowAiImport(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>PDF'den Aktar (AI)</span></button>
@@ -257,7 +257,7 @@ export default function InvoicesPage() {
       {showAiImport && <AiInvoiceImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} onClose={() => setShowAiImport(false)} onDone={() => loadData()} />}
 
       {/* Filter Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
+      {!lockType && <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
         {[
           { id: "all", label: "Tüm Faturalar" },
           { id: "sales", label: "Satış Faturaları" },
@@ -277,9 +277,9 @@ export default function InvoicesPage() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </div>}
 
-      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} />
+      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} hidePay={filterType === "dispatch"} />
 
       {/* Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">

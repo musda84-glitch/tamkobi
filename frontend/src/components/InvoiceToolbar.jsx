@@ -37,7 +37,7 @@ export const applyInvoiceFilters = (invoices, f) => {
 
 export const DEFAULT_FILTERS = { q: "", pay: "all", etype: "all", from: "", to: "", preset: "", min: "", max: "", sort: "date_desc" };
 
-export const InvoiceToolbar = ({ f, setF, count, total }) => {
+export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const setPreset = (p) => { const [from, to] = presetRange(p); setF((s) => ({ ...s, preset: p, from, to })); };
   const active = Object.keys(DEFAULT_FILTERS).filter((k) => k !== "sort" && f[k] !== DEFAULT_FILTERS[k]).length;
@@ -50,9 +50,9 @@ export const InvoiceToolbar = ({ f, setF, count, total }) => {
           <input value={f.q} onChange={(e) => set("q", e.target.value)} placeholder="Fatura no, cari, VKN veya not ara…" className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none" data-testid="inv-search" />
           {f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="inv-search-clear"><X className="w-3.5 h-3.5" /></button>}
         </div>
-        <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-0.5" data-testid="inv-pay-filter">
+        {!hidePay && <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-0.5" data-testid="inv-pay-filter">
           {PAY.map(([k, l]) => <button key={k} onClick={() => set("pay", k)} className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition ${f.pay === k ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-800"}`} data-testid={`inv-pay-${k}`}>{l}</button>)}
-        </div>
+        </div>}
         <select value={f.etype} onChange={(e) => set("etype", e.target.value)} className={sel} data-testid="inv-etype-filter">{ETYPE.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <div className="flex items-center gap-1 text-xs text-slate-600"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={sel} data-testid="inv-sort">{SORT_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
       </div>
