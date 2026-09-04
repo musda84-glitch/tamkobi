@@ -194,6 +194,23 @@ async def update_company(company_id: str, req: Dict[str, Any]):
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
+B2B_DEFAULTS = {"enabled": True, "login_method": "link", "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
+
+@api_router.get("/companies/{company_id}/b2b-settings")
+async def get_b2b_settings(company_id: str):
+    c = await db.companies.find_one({"_id": company_id}) or {}
+    settings = {**B2B_DEFAULTS, **(c.get("b2b_settings") or {})}
+    customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone")} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
+    return {"settings": settings, "customers": customers, "active_count": sum(1 for x in customers if x["b2b_enabled"])}
+
+@api_router.put("/companies/{company_id}/b2b-settings")
+async def put_b2b_settings(company_id: str, req: Dict[str, Any]):
+    allowed = {k: req[k] for k in B2B_DEFAULTS if k in req}
+    await db.companies.update_one({"_id": company_id}, {"$set": {"b2b_settings": {**B2B_DEFAULTS, **allowed}}})
+    if req.get("apply_discount_to_all") and "default_discount" in allowed:
+        await db.contacts.update_many({"company_id": company_id, "b2b_enabled": True}, {"$set": {"b2b_discount": float(allowed["default_discount"])}})
+    return {"status": "success", "settings": {**B2B_DEFAULTS, **allowed}}
+
 EINVOICE_PROVIDERS = {
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
@@ -753,7 +770,10 @@ async def _b2b_contact(token: str) -> Dict[str, Any]:
 async def b2b_portal(token: str):
     c = await _b2b_contact(token)
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    disc = float(c.get("b2b_discount", 0) or 0)
+    bs = {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}
+    if not bs.get("enabled", True):
+        raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
+    disc = float(c.get("b2b_discount", 0) or bs.get("default_discount", 0) or 0)
     prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}).to_list(5000)
     products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
@@ -761,7 +781,8 @@ async def b2b_portal(token: str):
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
-            "products": products, "orders": orders, "invoices": invoices, "installments": insts}
+            "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
+            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -778,6 +799,12 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     total = round(sum(i.total for i in items), 2)
+    _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    if not _bs.get("allow_orders", True):
+        raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
+    if float(_bs.get("min_order_amount", 0) or 0) > total:
+        raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     count = await db.orders.count_documents({"company_id": c["company_id"]}) + 1
     order = Order(company_id=c["company_id"], order_number=f"B2B-{datetime.now().strftime('%Y')}-{str(count).zfill(4)}", channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
     doc = order.to_mongo()

@@ -134,10 +134,15 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 | **Personel modülünü Netesnaf gibi yap** | ⏳ Bekliyor |
 | **E-ticaret modülünü en gelişmiş sisteme göre güncelle** (+ **ShopPHP** pazaryeri) | ⏳ Bekliyor |
 | **Sipariş kargo verisi pazaryerinden otomatik gelsin** | ⏳ Bekliyor (gerçek pazaryeri API gerektirir) |
-| **B2B ayarları Firma Ayarları içinde (özellikler, giriş yöntemi)** | ⏳ Bekliyor |
+| **B2B ayarları Firma Ayarları içinde (özellikler, giriş yöntemi)** | ✅ Firma Ayarları → B2B Portal (`GET/PUT /companies/{id}/b2b-settings`; özellik anahtarları, giriş yöntemi seçimi [link aktif; PIN/şifre "yakında"], varsayılan indirim, min sipariş, müşteri erişim listesi). Self-test (curl + ekran); test agent koşulmadı. |
 | **Kasaları silme/düzenleme** | ⏳ Bekliyor |
 | **AI ile PDF içeri/dışarı aktarma (OVOCRM gibi)** | ⏳ Bekliyor |
 | **Personel kartı + detay + personelden kullanıcı açma** | ⏳ Bekliyor |
 | **OVOCRM kullanıcı modülü ve ayarları (roller, yetkiler)** | ⏳ Bekliyor |
 | **Diğer yazılımlardaki kolaylaştırıcı özellikler** | ⏳ Kapsam netleştirilecek |
 | Sağlayıcı canlı bağlantıları (WhatsApp, banka, e-fatura, pazaryeri, kargo) | SİMÜLE — kullanıcı API anahtarı gerekir |
+
+## SIRADAKİ FAZ (kullanıcı onayladı, henüz başlanmadı)
+1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
+2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).
+3. **AI PDF Aktarım** — tedarikçi PDF faturasını yükle → LLM (Emergent key, `integration_expert` ile OpenAI/Gemini playbook) satırları/cari/tutarları çıkarır → taslak alış faturası; tüm listelerde tek tık Excel/PDF (Raporlar'daki CSV/print yaklaşımı yeniden kullanılabilir).

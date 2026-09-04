@@ -11,7 +11,7 @@ import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -128,6 +128,51 @@ const UnitsCategories = ({ companyId }) => {
   </div>);
 };
 
+const B2BSettings = ({ companyId }) => {
+  const [d, setD] = useState(null);
+  const [q, setQ] = useState("");
+  const load = () => axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => setD(r.data)).catch(() => toast.error("B2B ayarları yüklenemedi."));
+  useEffect(() => { load(); }, [companyId]);
+  if (!d) return null;
+  const st = d.settings;
+  const set = (k, v) => setD({ ...d, settings: { ...st, [k]: v } });
+  const save = async (applyAll) => { try { await axios.put(`${API_URL}/companies/${companyId}/b2b-settings`, { ...st, apply_discount_to_all: applyAll }); toast.success(applyAll ? "Kaydedildi, indirim tüm B2B müşterilerine uygulandı." : "B2B ayarları kaydedildi."); load(); } catch { toast.error("Kaydedilemedi."); } };
+  const toggleCustomer = async (c, enabled) => { try { const r = await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled, base_url: window.location.origin, discount: c.b2b_discount || st.default_discount }); if (enabled) { await navigator.clipboard?.writeText(r.data.link).catch(() => {}); toast.success("Portal linki kopyalandı."); } else toast.success("B2B erişimi kapatıldı."); load(); } catch { toast.error("İşlem başarısız."); } };
+  const setDisc = async (c, v) => { try { await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled: c.b2b_enabled, discount: Number(v) || 0 }); load(); } catch { toast.error("Güncellenemedi."); } };
+  const Tg = ({ k, l, sub }) => <label className="flex items-start gap-2 bg-slate-50 border rounded-xl p-2.5 cursor-pointer"><input type="checkbox" checked={!!st[k]} onChange={(e) => set(k, e.target.checked)} className="mt-0.5 rounded" data-testid={`b2b-set-${k}`} /><span><span className="block font-semibold text-slate-800">{l}</span>{sub && <span className="block text-[10px] text-slate-500">{sub}</span>}</span></label>;
+  const list = d.customers.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="space-y-4 text-xs" data-testid="b2b-settings">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between"><div><div className="text-sm font-bold text-slate-900">B2B Portal Özellikleri</div><div className="text-slate-500">Müşterileriniz /portal/… linkiyle girer; {d.active_count} müşteri aktif.</div></div><span className={`px-2 py-1 rounded-lg font-bold ${st.enabled ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{st.enabled ? "AÇIK" : "KAPALI"}</span></div>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+          <Tg k="enabled" l="Portal açık" sub="Kapatılırsa tüm linkler devre dışı kalır" />
+          <Tg k="allow_orders" l="Sipariş alımı" sub="Sepet ve sipariş gönderme" />
+          <Tg k="show_prices" l="Fiyatları göster" sub="Kapalıysa yalnızca katalog" />
+          <Tg k="show_stock" l="Stok durumunu göster" />
+          <Tg k="show_statement" l="Hesap ekstresi sekmesi" />
+          <Tg k="show_installments" l="Taksitler sekmesi" />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+          <div><label className="block font-semibold mb-1">Giriş yöntemi</label><select value={st.login_method} onChange={(e) => set("login_method", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="b2b-set-login"><option value="link">Kişiye özel güvenli link (şifresiz)</option><option value="link_pin">Link + telefon son 4 hane (yakında)</option><option value="password">E-posta + şifre (yakında)</option></select></div>
+          <div><label className="block font-semibold mb-1">Varsayılan B2B indirimi %</label><input type="number" min="0" max="90" step="0.5" value={st.default_discount} onChange={(e) => set("default_discount", Number(e.target.value))} className="w-full bg-slate-50 border rounded-lg p-2 font-bold" data-testid="b2b-set-discount" /></div>
+          <div><label className="block font-semibold mb-1">Minimum sipariş (₺)</label><input type="number" min="0" value={st.min_order_amount} onChange={(e) => set("min_order_amount", Number(e.target.value))} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="b2b-set-min" /></div>
+          <div><label className="block font-semibold mb-1">Karşılama notu</label><input value={st.welcome_note || ""} onChange={(e) => set("welcome_note", e.target.value)} placeholder="Hoş geldiniz…" className="w-full bg-slate-50 border rounded-lg p-2" /></div>
+        </div>
+        <div className="flex justify-end gap-2 border-t pt-3"><button onClick={() => save(true)} className="px-3 py-2 border rounded-lg font-semibold" data-testid="b2b-save-apply">Kaydet + İndirimi Tüm Müşterilere Uygula</button><button onClick={() => save(false)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="b2b-save">Kaydet</button></div>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between gap-2"><div className="text-sm font-bold text-slate-900">Müşteri Erişimleri</div><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Müşteri ara…" className="bg-slate-50 border rounded-lg p-2 w-56" data-testid="b2b-customer-search" /></div>
+        <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">Müşteri</th><th className="text-left py-2">İletişim</th><th className="text-right py-2">İndirim %</th><th className="text-left py-2">Portal</th><th className="text-right py-2">İşlem</th></tr></thead>
+          <tbody className="divide-y divide-slate-100">{list.map((c) => (
+            <tr key={c.id} data-testid={`b2b-cust-${c.id}`}><td className="py-2 font-semibold text-slate-900">{c.name}</td><td className="py-2 text-slate-500">{c.email || c.phone || "—"}</td><td className="py-2 text-right"><input type="number" min="0" max="90" defaultValue={c.b2b_discount || 0} onBlur={(e) => Number(e.target.value) !== (c.b2b_discount || 0) && setDisc(c, e.target.value)} className="w-16 bg-slate-50 border rounded p-1 text-right" data-testid={`b2b-cust-disc-${c.id}`} /></td>
+              <td className="py-2">{c.b2b_enabled ? <a href={`${window.location.origin}/portal/${c.b2b_token}`} target="_blank" rel="noreferrer" className="text-emerald-700 font-semibold underline">Aktif • linki aç</a> : <span className="text-slate-400">Kapalı</span>}</td>
+              <td className="py-2 text-right">{c.b2b_enabled ? <button onClick={() => toggleCustomer(c, false)} className="px-2 py-1 border border-rose-200 text-rose-600 rounded-lg font-semibold" data-testid={`b2b-cust-off-${c.id}`}>Kapat</button> : <button onClick={() => toggleCustomer(c, true)} className="px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`b2b-cust-on-${c.id}`}>Erişim Ver + Link</button>}</td></tr>))}</tbody></table>
+      </div>
+    </div>
+  );
+};
+
 export default function SettingsPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -162,6 +207,7 @@ export default function SettingsPage() {
           )}
           {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
           {tab === "units" && <UnitsCategories companyId={companyId} />}
+          {tab === "b2b" && <B2BSettings companyId={companyId} />}
           {tab === "modules" && <ModuleOrder />}
         </div>
       </div>
