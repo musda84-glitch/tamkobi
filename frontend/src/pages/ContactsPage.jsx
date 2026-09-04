@@ -23,6 +23,7 @@ import {
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
 import { ContactDetailPanel } from "../components/ContactDetailPanel";
+import { ContactRow } from "../components/ContactRow";
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
@@ -172,98 +173,11 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* Contacts List Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Contacts List (horizontal rows) */}
+      <div className="space-y-2" data-testid="contacts-list">
+        {filtered.length === 0 && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
         {filtered.map((contact) => (
-          <div
-            key={contact.id || contact._id}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition space-y-3 flex flex-col justify-between"
-            data-testid={`contact-card-${contact.tax_number_or_id}`}
-          >
-            <div className="space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                    contact.type === 'customer' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
-                  }`}>
-                    {contact.type === 'customer' ? 'Müşteri' : 'Tedarikçi'}
-                  </span>
-                  <h3 className="text-sm font-bold text-slate-900 mt-1 cursor-pointer hover:text-emerald-700 hover:underline" onClick={() => setSearchParams({ contact_id: contact.id })} data-testid={`contact-name-${contact.tax_number_or_id}`}>{contact.name}</h3>
-                  <div className="text-xs text-slate-500">{contact.company_title || contact.category}</div>
-                  {(flags[contact.id]?.overdue_count > 0 || flags[contact.id]?.installment_due_count > 0) && (
-                    <div className="flex flex-wrap gap-1 mt-1" data-testid={`contact-flags-${contact.tax_number_or_id}`}>
-                      {flags[contact.id]?.overdue_count > 0 && <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-semibold">Vadesi geçti: {(flags[contact.id].overdue_amount).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</span>}
-                      {flags[contact.id]?.installment_due_count > 0 && <span className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 px-1.5 py-0.5 rounded font-semibold">{flags[contact.id].installment_due_count} taksit yaklaşıyor{flags[contact.id].installment_overdue_count ? ` (${flags[contact.id].installment_overdue_count} gecikmiş)` : ""}</span>}
-                    </div>
-                  )}
-                </div>
-                {contact.is_e_invoice_user && (
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono font-medium" title="E-Fatura Mükellefi">
-                    E-Fatura
-                  </span>
-                )}
-              </div>
-
-              <div className="text-xs text-slate-600 space-y-1 pt-1 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Building className="w-3.5 h-3.5 text-slate-400" />
-                  <span>VKN/TCKN: {contact.tax_number_or_id} ({contact.tax_office || 'V.D.'})</span>
-                </div>
-                {contact.phone && (
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{contact.phone}</span>
-                  </div>
-                )}
-                {contact.email && (
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{contact.email}</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                  {mapsLink(contact) ? (
-                    <a href={mapsLink(contact)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold hover:underline flex items-center gap-1" data-testid={`location-link-${contact.tax_number_or_id}`}><Navigation className="w-3 h-3" /> Konuma Git</a>
-                  ) : (
-                    <span className="text-slate-400">Konum eklenmedi</span>
-                  )}
-                  <button onClick={() => setLocationContact(contact)} className="ml-auto text-[10px] text-slate-500 hover:text-rose-600 font-semibold" data-testid={`location-btn-${contact.tax_number_or_id}`}>{mapsLink(contact) ? "Düzenle" : "+ Konum Ekle"}</button>
-                </div>
-              </div>
-            </div>
-
-            {/* Balance & Action */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Cari Bakiye</span>
-                <div className={`text-base font-bold ${
-                  contact.balance > 0 ? 'text-emerald-600' : contact.balance < 0 ? 'text-rose-600' : 'text-slate-700'
-                }`}>
-                  {contact.balance > 0 ? `+${contact.balance.toLocaleString('tr-TR')} ₺ (Alacak)` : contact.balance < 0 ? `${contact.balance.toLocaleString('tr-TR')} ₺ (Borç)` : '0.00 ₺'}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setMessageContact(contact)}
-                className="p-1.5 text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 rounded-lg transition"
-                title="SMS / E-posta Gönder"
-                data-testid={`message-btn-${contact.tax_number_or_id}`}
-              >
-                <MessageSquare className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => openStatement(contact)}
-                className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition"
-                data-testid={`statement-btn-${contact.tax_number_or_id}`}
-              >
-                <span>Ekstre</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              </div>
-            </div>
-          </div>
+          <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
         ))}
       </div>
 
