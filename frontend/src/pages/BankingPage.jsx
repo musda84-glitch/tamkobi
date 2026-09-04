@@ -35,6 +35,7 @@ export default function BankingPage() {
   const [partnerSummary, setPartnerSummary] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Modals
@@ -136,6 +137,10 @@ export default function BankingPage() {
   };
 
   const totalLiquidity = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
+  const visibleTx = selectedAccountId ? transactions.filter(tx => tx.account_id === selectedAccountId || tx.target_account_id === selectedAccountId) : transactions;
+  const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
+  const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
 
   return (
     <div className="space-y-6" data-testid="banking-page">
@@ -204,12 +209,17 @@ export default function BankingPage() {
           const isBank = acc.type === 'bank';
           const isCash = acc.type === 'cash_box';
           const isPos = acc.type === 'pos';
+          const accId = acc.id || acc._id;
+          const isSelected = selectedAccountId === accId;
 
           return (
-            <div
-              key={acc.id || acc._id}
-              className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between"
-              data-testid={`bank-card-${acc.account_name}`}
+            <button
+              type="button"
+              key={accId}
+              onClick={() => setSelectedAccountId(isSelected ? null : accId)}
+              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : 'border-slate-200/90'}`}
+              title="Hesap hareketlerini görmek için tıklayın"
+              data-testid={`bank-card-${accId}`}
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -232,25 +242,39 @@ export default function BankingPage() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100">
-                <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
-                <div className="text-xl font-bold text-slate-900 tracking-tight">
-                  {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+              <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
+                  <div className="text-xl font-bold text-slate-900 tracking-tight">
+                    {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                  </div>
                 </div>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{isSelected ? 'Hareketler ↓' : 'Hareketleri Gör'}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
 
       {/* Transactions History */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5" data-testid="transactions-panel">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-slate-500" />
-            <h2 className="text-base font-bold text-slate-900">Son Finansal Hareketler</h2>
+            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name} Hareketleri` : 'Son Finansal Hareketler'}</h2>
+            {selectedAccount && (
+              <button onClick={() => setSelectedAccountId(null)} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> Tüm Hesaplar</button>
+            )}
           </div>
-          <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri</span>
+          {selectedAccount ? (
+            <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
+              <span className="text-slate-500">{visibleTx.length} hareket</span>
+              <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+            </div>
+          ) : (
+            <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
+          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -265,12 +289,12 @@ export default function BankingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {transactions.length === 0 ? (
+              {visibleTx.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400">Henüz finansal hareket kaydı bulunmuyor.</td>
+                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400">{selectedAccount ? 'Bu hesaba ait hareket bulunmuyor.' : 'Henüz finansal hareket kaydı bulunmuyor.'}</td>
                 </tr>
               ) : (
-                transactions.map((tx) => (
+                visibleTx.map((tx) => (
                   <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition">
                     <td className="px-4 py-2.5 text-slate-500 font-mono">{tx.date}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{tx.account_name}</td>

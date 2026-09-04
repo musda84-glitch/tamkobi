@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, MessageSquare, Mail, Send, Loader2, Paperclip } from "lucide-react";
@@ -42,11 +42,12 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
     } finally { setSending(false); }
   };
 
+  useEffect(() => { const esc = (e) => e.key === "Escape" && onClose(); document.addEventListener("keydown", esc); return () => document.removeEventListener("keydown", esc); }, [onClose]);
   const smsCount = Math.ceil(message.length / (/[çğıöşüÇĞİÖŞÜ]/.test(message) ? 70 : 160)) || 1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="quick-message-modal">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()} data-testid="quick-message-modal">
         <div className="flex items-center justify-between border-b pb-2">
           <div>
             <h3 className="text-base font-bold text-slate-900">Mesaj Gönder</h3>

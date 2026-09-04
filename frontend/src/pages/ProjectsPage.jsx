@@ -5,6 +5,8 @@ import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Pri
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
+import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
 import { MapPin, LocateFixed } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 
@@ -55,6 +57,8 @@ export default function ProjectsPage() {
   const [form, setForm] = useState(null);
   const [items, setItems] = useState([]);
   const [printDoc, setPrintDoc] = useState(null);
+  const [planQuote, setPlanQuote] = useState(null);
+  const [approvalQuote, setApprovalQuote] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
@@ -82,7 +86,13 @@ export default function ProjectsPage() {
   const setStatus = (coll, id, status) => act(() => axios.put(`${API_URL}/${coll}/${id}`, { status }), "Durum güncellendi.");
   const del = (coll, id) => act(() => axios.delete(`${API_URL}/${coll}/${id}`), "Silindi.");
 
-  const TABS = [["quotes", "Teklifler", FileSignature, quotes.length], ["projects", "Projeler", Briefcase, projects.length], ["surveys", "Keşifler", Ruler, surveys.length]];
+  const [showArchived, setShowArchived] = useState(false);
+  const activeQuotes = quotes.filter((q) => q.status === "draft" || (q.status === "sent" && (!q.approval || q.approval.status === "pending")));
+  const activeSurveys = surveys.filter((s) => s.status === "planned");
+  const visibleQuotes = showArchived ? quotes : activeQuotes;
+  const visibleSurveys = showArchived ? surveys : activeSurveys;
+  const hiddenCount = tab === "quotes" ? quotes.length - activeQuotes.length : tab === "surveys" ? surveys.length - activeSurveys.length : 0;
+  const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, projects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
   const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
 
   return (
@@ -91,22 +101,32 @@ export default function ProjectsPage() {
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Teklif / Proje / Keşif</h1><p className="text-xs sm:text-sm text-slate-500">Keşif → Teklif → Fatura akışı, görsel ekleme ve yazdırma</p></div>
         <button onClick={() => openForm(kind)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold" data-testid={`new-${kind}-btn`}><Plus className="w-4 h-4" /> {kind === "quote" ? "Yeni Teklif" : kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</button>
       </div>
-      <div className="flex items-center gap-1 border-b border-slate-200">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}</div>
+      <div className="flex items-center gap-1 border-b border-slate-200">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
+        {tab !== "projects" && (
+          <label className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500 pb-1 cursor-pointer" data-testid="show-archived-toggle">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="rounded" />
+            {tab === "quotes" ? "Gönderilen / sonuçlanan teklifleri göster" : "Yapılan keşifleri göster"} ({hiddenCount})
+          </label>
+        )}
+      </div>
+      {tab !== "projects" && !showArchived && hiddenCount > 0 && <p className="text-[11px] text-slate-400 -mt-3" data-testid="archived-hint">{hiddenCount} kayıt gizlendi — gönderilen teklifler ve yapılan keşifler ilgili carinin müşteri panelinde görünür.</p>}
 
       {tab === "quotes" && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden"><table className="w-full text-left text-xs">
           <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Teklif</th><th className="px-4 py-2">Cari</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2"></th></tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {quotes.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Henüz teklif yok.</td></tr>}
-            {quotes.map((q) => (
+            {visibleQuotes.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">{quotes.length ? "Bekleyen (taslak) teklif yok." : "Henüz teklif yok."}</td></tr>}
+            {visibleQuotes.map((q) => (
               <tr key={q.id} data-testid={`quote-row-${q.quote_number}`}>
                 <td className="px-4 py-2"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500">{q.title} • {q.issue_date}{q.valid_until && ` → ${q.valid_until}`}</div></td>
                 <td className="px-4 py-2 font-semibold">{q.contact_name || "—"}</td>
                 <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
                 <td className="px-4 py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td>
-                <td className="px-4 py-2"><Badge s={q.status} />{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700 mt-0.5">{q.invoice_number}</div>}</td>
+                <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
                 <td className="px-4 py-2"><div className="flex justify-end gap-1">
                   <button onClick={() => setPrintDoc({ type: "quote", doc: q })} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır" data-testid={`print-quote-${q.quote_number}`}><Printer className="w-4 h-4" /></button>
+                  <button onClick={() => setApprovalQuote(q)} className={`px-2 py-1 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`} title="Mail / SMS / WhatsApp ile onaya gönder" data-testid={`approval-quote-${q.quote_number}`}>{q.approval ? "Onay Durumu" : "Onaya Gönder"}</button>
+                  <button onClick={() => setPlanQuote(q)} className={`px-2 py-1 border rounded-lg font-semibold ${q.payment_plan ? "border-violet-300 text-violet-700 bg-violet-50" : "text-slate-600"}`} title="Taksit / Ödeme planı" data-testid={`plan-quote-${q.quote_number}`}>{q.payment_plan ? `${q.payment_plan.rows.length} Taksit` : "Ödeme Planı"}</button>
                   {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`send-quote-${q.quote_number}`}>Gönderildi</button>}
                   {!q.invoice_id && <button onClick={() => act(() => axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}), "Fatura oluşturuldu.")} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`convert-quote-${q.quote_number}`}><FileText className="w-3 h-3" /> Faturaya Çevir</button>}
                   {!q.invoice_id && <button onClick={() => setStatus("quotes", q.id, "rejected")} className="px-2 py-1 border rounded-lg text-rose-600" title="Reddedildi" data-testid={`reject-quote-${q.quote_number}`}>Red</button>}
@@ -140,8 +160,8 @@ export default function ProjectsPage() {
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden"><table className="w-full text-left text-xs">
           <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Keşif</th><th className="px-4 py-2">Cari / Adres</th><th className="px-4 py-2">Ölçüler</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2"></th></tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {surveys.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Henüz keşif yok.</td></tr>}
-            {surveys.map((s) => (
+            {visibleSurveys.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">{surveys.length ? "Planlanan keşif yok." : "Henüz keşif yok."}</td></tr>}
+            {visibleSurveys.map((s) => (
               <tr key={s.id} data-testid={`survey-row-${s.survey_number}`}>
                 <td className="px-4 py-2"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date} {s.assigned_to && `• ${s.assigned_to}`}</div></td>
                 <td className="px-4 py-2"><div className="font-semibold">{s.contact_name || "—"}</div><div className="text-slate-500">{s.address} {s.location_url && <a href={s.location_url} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold">• Konum</a>}</div>{s.notes && <div className="text-slate-400 italic">{s.notes}</div>}</td>
@@ -184,6 +204,8 @@ export default function ProjectsPage() {
           </form>
         </div>
       )}
+      {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
+      {planQuote && <InstallmentPlanModal doc={planQuote} kind="quote" companyId={companyId} onClose={() => setPlanQuote(null)} onChanged={load} />}
       {printDoc && <PrintDocument docType={printDoc.type} doc={printDoc.doc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={companyId} docType="quote" onClose={() => setEditTpl(false)} />}
     </div>

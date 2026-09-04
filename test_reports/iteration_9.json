@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 9 short regression of NexusHesap. BACKEND (new suite /app/backend/tests/test_iteration9.py, 19/19 passed): POST /api/production/recipes without 'code' now returns 200 with auto code 'BOM-*' and persists (Recipe.code is Optional in models.py) — iteration-8 defect FIXED; clean_doc() now pops _id so no endpoint leaks Mongo _id (verified /contacts, /invoices, /production/work-orders, /products, /production/recipes, /production/orders, /quotes and /contacts/{id}/overview payload) — iteration-6..8 defect FIXED; POST /production/work-orders/{id}/finish now returns 400 'Üretilen + fire (4) planlanan miktarı (2) aşamaz.' when produced+scrap > planned_quantity and 400 for negative qty, while produced+scrap == planned passes; finishing the LAST step without update_cost keeps the finished product's purchase_price (850.0 unchanged) while stock_quantity increases by produced qty — FIXED; GET /api/contacts/flags returns a contact_id -> {overdue_amount, overdue_count, installment_due_amount, installment_due_count, installment_overdue_count} map, cnt_01 has installment_due_count 1 with amount > 0, and the days param widens the horizon monotonically. FRONTEND (Playwright, preview URL): /contacts fin-filter bar renders with all 6 buttons + counts (Tümü 4 / Borçlular 1 / Alacaklılar 3 / Vadesi Geçenler 1 / Taksit Ödemesi Gelenler (7 gün) 1 / Bakiyesi Sıfır 0); each filter narrows the cards correctly (debtors -> only the balance>0 card which displays '(Alacak)', creditors -> 3 cards all '(Borç)'), flag badge 'contact-flags-*' shows '1 taksit yaklaşıyor (1 gecikmiş)' on cnt_01, type filter (Tedarikçiler) combines with fin filters (2 -> 2), Escape closes statement-modal with 0 residual overlays and the modal reopens afterwards. /contacts?contact_id=cnt_01: detail panel renders with no page/console error (iteration-8 TDZ crash stays fixed), detail-tab-installments -> detail-installments shows '7 bekleyen • 1 vadesi geçen • Kalan 110.243,22 ₺' with 2 groups (ALACAK NX202600000011 0/4 with Tahsil Et, BORÇ AÇIK BAKİYE 0/3 with Öde); Faturalar/Ödemeler/Teklifler tabs render, invoice right-click menu shows 4 items and closes on Escape. /atolye: operator select + start -> finish flow works on a freshly created 2-step order; finishing with produced 2 + fire 2 (>plan 2) shows the red error toast, then produced 2/fire 0 succeeds with toast 'Montaj tamamlandı. Sıradaki adım: Kalite Kontrol (QC).' and step 2 becomes Hazır. All test data cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/production/orders/{order_id}", "issue": "Endpoint does not exist (404) — only /cancel and /complete are exposed, so a production order (and its work orders) created by mistake or by a test can never be removed via API. Test data had to be deleted directly in Mongo (see /app/backend/tests/cleanup_iteration9.py)."},
+      {"endpoint": "POST /api/production/work-orders/{id}/finish", "issue": "Scrap is still not reconciled with material consumption: finishing with produced 1 + scrap 1 on a plan of 2 consumes raw materials only for the produced 1, so the scrapped unit's materials stay in stock (business rule to confirm)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ContactDetailPanel installments tab counter", "issue": "The 'Taksitler (n)' tab badge shows (0) until the tab is opened, because `insts` is only fetched inside the tab==='installments' effect. cnt_01 really has 7 pending installments but the closed tab advertises 0 — misleading; prefetch the count (or reuse /contacts/flags) on panel load.", "selector": "[data-testid=\"detail-tab-installments\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/contacts fin filter bar", "issues": ["Terminology is inverted between filter and card: the 'Borçlular' filter selects balance>0 contacts whose cards read '+22.400 ₺ (Alacak)', and 'Alacaklılar' selects balance<0 cards that read '(Borç)'. Even if intentional (contact vs. company perspective) it reads as a bug to users — align the wording or add a tooltip."]},
+      {"screen": "Üst bar / aktif şirket", "issues": ["Active company still displays 'MATEK DEKORASYON' while every list queries comp_nexus_main_01 (pre-existing since iteration 6)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9.py",
+    "/app/backend/tests/cleanup_iteration9.py",
+    "/app/test_reports/pytest/pytest_it9.xml"
+  ],
+  "action_items": [
+    "Prefetch installment count so the 'Taksitler (n)' tab badge is not 0 before the tab is opened.",
+    "Add DELETE /api/production/orders/{order_id} (cascade work_orders) or document that cancel is the only removal path.",
+    "Decide/document whether scrap quantity should consume raw materials in complete_production_order.",
+    "Optional: reword the Borçlular / Alacaklılar fin filters (or the card Alacak/Borç labels) so both use the same perspective."
+  ],
+  "critical_code_review_comments": [
+    "ContactsPage.jsx line 114 recomputes all 6 FIN_FILTERS counts on every render by filtering the contacts array 6 times — memoize with useMemo([contacts, flags]).",
+    "ContactDetailPanel.jsx openEditPay still references the late-destructured `c` (const { contact: c } = data at line 96); it only works because the handler runs after render. Move the destructuring above all handlers to avoid another TDZ regression.",
+    "server.py is still 3523 lines; the production/work-order block is a natural router extraction.",
+    "finish_work_order swallows HTTPException from complete_production_order into a message string; the work order is already marked done, so a stock failure leaves the order out of sync with no retry path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9.py (new)",
+    "/app/backend/tests/cleanup_iteration9.py (new)"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% of the requested flows (1 medium UI issue: stale installments tab counter)"},
+  "seed_data_creation": "Temporary only, fully reverted: 1 TEST_it9_recipe (deleted via API), production orders URT-2026-14445 (pytest) and URT-2026-30194 (UI atölye test) + their 4 work orders deleted from Mongo, prod_01 stock/purchase_price restored to 143.0/850.0 and prod_raw_01/02/03 to 450/520/380. Dev's URT-2026-10259 'Tablet test' (planned) and URT-2026-22671 (completed, pre-existing) left untouched. Leftover cnt_01 'AÇIK BAKİYE' 3-row installment plan from iteration 7 is still in the DB (used by the flags/installments assertions).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "/app/memory/test_credentials.md present (admin@nexus.com / admin123). Preview app serves API/UI without a login gate, so no auth/bcrypt/lockout flow was exercised this iteration (playbook auth checks not applicable to this build).",
+  "context_for_next_testing_agent": "Run backend suite with `pytest tests/test_iteration9.py -p no:randomly -n 0` from /app/backend; it creates a production order from rec_01 and then needs `python tests/cleanup_iteration9.py <order_id>` because there is no DELETE endpoint for production orders (the in-test DELETE tolerates 404). All 4 iteration-8 backend defects (Recipe.code 422, Mongo _id leak, finish qty validation, forced update_cost) are verified fixed. Frontend fin filters use data-testid contact-fin-filter-{all|debtors|creditors|overdue|installments|clear}, cards contact-card-*, badges contact-flags-{vkn}, installment groups detail-inst-group-{invoice_number}, and /atolye finish modal uses wo-finish-modal / wo-finish-produced / wo-finish-scrap / wo-finish-confirm (NOT wo-finish-submit).",
+  "rca_of_the_issue": "Installments tab counter: ContactDetailPanel keeps installments in local state `insts` populated only by the effect guarded by tab === 'installments', while the tab label computes `insts.filter(i => i.status !== 'paid').length`, so the badge is 0 until the user clicks the tab (verified: label '(0)' before, '(7)' after)."
+}

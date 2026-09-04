@@ -23,12 +23,16 @@ import {
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
 import { ContactDetailPanel } from "../components/ContactDetailPanel";
+import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
+import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
 
 export default function ContactsPage() {
   const { activeCompany } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [filterType, setFilterType] = useState("all");
+  const [flags, setFlags] = useState({});
+  const [finFilter, setFinFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [messageContact, setMessageContact] = useState(null);
@@ -40,6 +44,7 @@ export default function ContactsPage() {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedContactStatement, setSelectedContactStatement] = useState(null);
+  useEscape(React.useCallback(() => setSelectedContactStatement(null), []));
   const [statementData, setStatementData] = useState(null);
 
   const [newContact, setNewContact] = useState({
@@ -67,6 +72,7 @@ export default function ContactsPage() {
     try {
       setLoading(true);
       const res = await axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`);
+      axios.get(`${API_URL}/contacts/flags?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`).then((r) => setFlags(r.data)).catch(() => {});
       setContacts(res.data);
     } catch (err) {
       toast.error("Cari listesi yüklenemedi.");
@@ -104,7 +110,9 @@ export default function ContactsPage() {
     }
   };
 
-  const filtered = contacts.filter(c =>
+  const finMatch = (c) => { const f = flags[c.id] || {}; switch (finFilter) { case "debtors": return (c.balance || 0) > 0; case "creditors": return (c.balance || 0) < 0; case "overdue": return f.overdue_count > 0 || f.installment_overdue_count > 0; case "installments": return f.installment_due_count > 0; case "clear": return !(c.balance || 0); default: return true; } };
+  const FIN_FILTERS = [["all", "Tümü", contacts.length], ["debtors", "Bize Borçlu (Alacağımız var)", contacts.filter((c) => (c.balance || 0) > 0).length], ["creditors", "Bize Alacaklı (Borcumuz var)", contacts.filter((c) => (c.balance || 0) < 0).length], ["overdue", "Vadesi Geçenler", contacts.filter((c) => (flags[c.id]?.overdue_count || 0) > 0 || (flags[c.id]?.installment_overdue_count || 0) > 0).length], ["installments", "Taksit Ödemesi Gelenler (7 gün)", contacts.filter((c) => (flags[c.id]?.installment_due_count || 0) > 0).length], ["clear", "Bakiyesi Sıfır", contacts.filter((c) => !(c.balance || 0)).length]];
+  const filtered = contacts.filter((c) => finMatch(c)).filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.company_title && c.company_title.toLowerCase().includes(searchTerm.toLowerCase())) ||
     c.tax_number_or_id.includes(searchTerm)
@@ -148,6 +156,11 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-1.5 flex-wrap text-xs" data-testid="contact-fin-filters">
+          {FIN_FILTERS.map(([k, l, n]) => (
+            <button key={k} onClick={() => setFinFilter(k)} className={`px-2.5 py-1.5 rounded-lg font-medium transition border ${finFilter === k ? (k === "overdue" ? "bg-rose-600 border-rose-600 text-white" : k === "installments" ? "bg-violet-600 border-violet-600 text-white" : "bg-emerald-600 border-emerald-600 text-white") : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} data-testid={`contact-fin-filter-${k}`}>{l} <span className={finFilter === k ? "opacity-80" : "text-slate-400"}>({n})</span></button>
+          ))}
+        </div>
 
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -180,6 +193,12 @@ export default function ContactsPage() {
                   </span>
                   <h3 className="text-sm font-bold text-slate-900 mt-1 cursor-pointer hover:text-emerald-700 hover:underline" onClick={() => setSearchParams({ contact_id: contact.id })} data-testid={`contact-name-${contact.tax_number_or_id}`}>{contact.name}</h3>
                   <div className="text-xs text-slate-500">{contact.company_title || contact.category}</div>
+                  {(flags[contact.id]?.overdue_count > 0 || flags[contact.id]?.installment_due_count > 0) && (
+                    <div className="flex flex-wrap gap-1 mt-1" data-testid={`contact-flags-${contact.tax_number_or_id}`}>
+                      {flags[contact.id]?.overdue_count > 0 && <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-semibold">Vadesi geçti: {(flags[contact.id].overdue_amount).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</span>}
+                      {flags[contact.id]?.installment_due_count > 0 && <span className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 px-1.5 py-0.5 rounded font-semibold">{flags[contact.id].installment_due_count} taksit yaklaşıyor{flags[contact.id].installment_overdue_count ? ` (${flags[contact.id].installment_overdue_count} gecikmiş)` : ""}</span>}
+                    </div>
+                  )}
                 </div>
                 {contact.is_e_invoice_user && (
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono font-medium" title="E-Fatura Mükellefi">
@@ -411,30 +430,29 @@ export default function ContactsPage() {
               </button>
             </div>
 
-            <div className="space-y-4 text-xs">
-              <h4 className="font-bold text-slate-800">İşlem & Fatura Geçmişi</h4>
-              <table className="w-full text-left">
+            <StatementShareBar contact={selectedContactStatement} rows={buildStatementRows(statementData)} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between"><h4 className="font-bold text-slate-800">Hesap Hareketleri (Fatura & Ödeme)</h4><div className="flex items-center gap-2 text-[10px] font-semibold"><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" /> Fatura (Borç)</span><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Tahsilat / Ödeme</span></div></div>
+              <table className="w-full text-left" data-testid="statement-table">
                 <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold">
                   <tr>
                     <th className="py-2 px-3">Tarih</th>
                     <th className="py-2 px-3">Belge / Açıklama</th>
                     <th className="py-2 px-3 text-right">Borç (₺)</th>
                     <th className="py-2 px-3 text-right">Alacak (₺)</th>
+                    <th className="py-2 px-3 text-right">Bakiye (₺)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {statementData.invoices?.map((inv, idx) => (
-                    <tr key={idx}>
-                      <td className="py-2 px-3 text-slate-500">{inv.issue_date}</td>
-                      <td className="py-2 px-3 font-semibold text-slate-800">
-                        {inv.invoice_number} ({inv.invoice_type === 'sales' ? 'Satış Faturası' : 'Alış Faturası'})
-                      </td>
-                      <td className="py-2 px-3 text-right font-medium text-slate-900">
-                        {inv.invoice_type === 'sales' ? `${inv.grand_total?.toLocaleString('tr-TR')} ₺` : '-'}
-                      </td>
-                      <td className="py-2 px-3 text-right font-medium text-slate-900">
-                        {inv.invoice_type === 'purchase' ? `${inv.grand_total?.toLocaleString('tr-TR')} ₺` : '-'}
-                      </td>
+                  {buildStatementRows(statementData).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
+                  {buildStatementRows(statementData).map((r, idx) => (
+                    <tr key={idx} className={r.kind === "payment" ? "bg-emerald-50/50" : ""} data-testid={`statement-row-${r.kind}-${idx}`}>
+                      <td className="py-2 px-3 text-slate-500 font-mono">{r.date}</td>
+                      <td className="py-2 px-3 font-semibold text-slate-800"><span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${r.kind === "payment" ? "bg-emerald-500" : "bg-rose-500"}`} />{r.doc}</td>
+                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? `${r.debit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? `${r.credit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{r.balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   ))}
                 </tbody>

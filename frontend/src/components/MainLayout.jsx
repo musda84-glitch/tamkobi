@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { NotificationBell } from "./NotificationBell";
 import {
   LayoutDashboard,
   FileText,
@@ -28,7 +29,9 @@ import {
   MailOpen,
   Briefcase,
   Settings,
-  Calculator
+  Calculator,
+  CalendarClock,
+  MonitorPlay
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
@@ -37,10 +40,12 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator };
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay };
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);
+
+  if (location.pathname.startsWith("/teklif/")) return <>{children}</>;
 
   const roleLabels = {
     admin: "Yönetici",
@@ -189,6 +194,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
           {/* Quick Actions & Search */}
           <div className="flex items-center gap-2.5">
+            <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             <Link
               to="/stock?scan=true"
               className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"

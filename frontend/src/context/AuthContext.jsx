@@ -16,8 +16,9 @@ export const AuthProvider = ({ children }) => {
 
   const BASE_MENU = [
     { label: "Genel Bakış", path: "/" },
-    { label: "Ön Muhasebe & E-Fatura", path: "/invoices", badge: "GİB" },
+    { label: "Faturalar", path: "/invoices", badge: "GİB" },
     { label: "Cari Hesaplar", path: "/contacts" },
+    { label: "Taksitler", path: "/installments", badge: "Vade" },
     { label: "Banka & Kasa & POS", path: "/banking" },
     { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
     { label: "Teklif / Proje / Keşif", path: "/projects", badge: "Yeni" },
@@ -26,6 +27,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Siparişler", path: "/orders", badge: "B2B" },
     { label: "Depo & Transfer", path: "/warehouses" },
     { label: "Üretim & Reçete (BOM)", path: "/production" },
+    { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
     { label: "Personel & Bordro", path: "/personnel" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
     { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },

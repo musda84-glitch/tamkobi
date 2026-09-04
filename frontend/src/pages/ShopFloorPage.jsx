@@ -1,0 +1,102 @@
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package } from "lucide-react";
+import { API_URL, useAuth } from "../context/AuthContext";
+
+const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
+
+export default function ShopFloorPage() {
+  const { activeCompany } = useAuth();
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const [wos, setWos] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [stations, setStations] = useState([]);
+  const [operator, setOperator] = useState(() => localStorage.getItem("nx_operator") || "");
+  const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
+  const [kiosk, setKiosk] = useState(false);
+  const [finishing, setFinishing] = useState(null);
+  const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
+  const [showDone, setShowDone] = useState(false);
+
+  const load = async () => {
+    try {
+      const [w, e, s] = await Promise.all([axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`)]);
+      setWos(w.data); setEmployees(e.data); setStations(s.data);
+    } catch { /* keep last */ }
+  };
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [companyId, station]);
+  useEffect(() => { localStorage.setItem("nx_operator", operator); localStorage.setItem("nx_station", station); }, [operator, station]);
+
+  const act = async (w, action, body) => {
+    if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
+    try { const r = await axios.post(`${API_URL}/production/work-orders/${w.id}/${action}`, { operator_name: operator, ...(body || {}) }); toast.success(r.data.message); setFinishing(null); load(); }
+    catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
+  };
+  const openFinish = (w) => { setFinishing(w); setFin({ produced_qty: w.planned_quantity, scrap_qty: 0, notes: "" }); };
+  const active = wos.filter((w) => w.status !== "done" && w.status !== "waiting");
+  const waiting = wos.filter((w) => w.status === "waiting");
+  const done = wos.filter((w) => w.status === "done");
+  const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
+
+  const Card = ({ w }) => { const [l, c] = STATUS[w.status] || STATUS.waiting; return (
+    <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${w.status === "in_progress" ? "border-amber-400 shadow-lg shadow-amber-100" : w.status === "ready" ? "border-blue-200" : "border-slate-200"}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
+      <div className="flex justify-between items-start gap-2">
+        <div className="min-w-0"><div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div><div className="font-bold text-slate-900 text-base leading-tight truncate">{w.step_name}</div><div className="text-sm text-slate-600 flex items-center gap-1 truncate"><Package className="w-3.5 h-3.5" /> {w.product_name}</div></div>
+        <span className={`shrink-0 px-2 py-1 rounded-lg text-xs font-bold ${c}`}>{l}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+        <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {w.station}</span>
+        <span className="font-bold text-slate-900 text-sm">{w.planned_quantity} {w.unit}</span>
+        {w.duration_min > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Hedef {w.duration_min} dk</span>}
+        {w.elapsed_min != null && <span className={`flex items-center gap-1 font-semibold ${w.duration_min && w.elapsed_min > w.duration_min ? "text-rose-600" : "text-amber-700"}`}><Clock className="w-3.5 h-3.5" /> {w.elapsed_min} dk geçti</span>}
+        {(w.operator_name || w.assigned_name) && <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> {w.operator_name || w.assigned_name}</span>}
+        {w.planned_date && <span>Plan: {w.planned_date}</span>}
+      </div>
+      {w.notes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
+      <div className="grid grid-cols-2 gap-2">
+        {w.status === "ready" && <button onClick={() => act(w, "start")} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base" data-testid={`wo-start-${w.order_code}-${w.step_no}`}><Play className="w-5 h-5" /> Başla</button>}
+        {w.status === "in_progress" && <><button onClick={() => act(w, "pause")} className="flex items-center justify-center gap-2 py-3 bg-orange-100 hover:bg-orange-200 text-orange-800 rounded-xl font-bold" data-testid={`wo-pause-${w.order_code}-${w.step_no}`}><Pause className="w-5 h-5" /> Duraklat</button><button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold" data-testid={`wo-finish-${w.order_code}-${w.step_no}`}><CheckCircle2 className="w-5 h-5" /> Bitir</button></>}
+        {w.status === "paused" && <><button onClick={() => act(w, "start")} className="flex items-center justify-center gap-2 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid={`wo-resume-${w.order_code}-${w.step_no}`}><Play className="w-5 h-5" /> Devam</button><button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl font-bold"><CheckCircle2 className="w-5 h-5" /> Bitir</button></>}
+        {w.status === "waiting" && <div className="col-span-2 text-center text-xs text-slate-400 py-2">Önceki adım tamamlanınca açılır</div>}
+        {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}
+      </div>
+    </div>); };
+
+  return (
+    <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-5"} data-testid="shopfloor-page">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <select value={operator} onChange={(e) => setOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
+          <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+          <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
+          <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
+        </div>
+      </div>
+      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin. Seçim bu cihazda hatırlanır.</div>}
+      <div className="grid grid-cols-3 gap-3 text-center">{[["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"], ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"], ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"]].map(([l, v, c]) => <div key={l} className="bg-white border rounded-2xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-3xl font-black ${c}`}>{v}</div></div>)}</div>
+      {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{mine.map((w) => <Card key={w.id} w={w} />)}</div></div>}
+      <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
+        {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{active.filter((w) => !mine.includes(w)).map((w) => <Card key={w.id} w={w} />)}</div></div>
+      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 opacity-70">{waiting.map((w) => <Card key={w.id} w={w} />)}</div></div>}
+      <div><button onClick={() => setShowDone(!showDone)} className="text-xs font-semibold text-slate-500 hover:text-slate-900" data-testid="shopfloor-toggle-done">{showDone ? "Tamamlananları gizle" : `Tamamlananları göster (${done.length})`}</button>{showDone && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-2">{done.slice(0, 30).map((w) => <Card key={w.id} w={w} />)}</div>}</div>
+      {finishing && (
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setFinishing(null)}>
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()} data-testid="wo-finish-modal">
+            <h3 className="font-bold text-slate-900 text-lg">{finishing.step_name} — Bitir</h3>
+            <p className="text-sm text-slate-500">{finishing.order_code} • {finishing.product_name} • Plan {finishing.planned_quantity} {finishing.unit}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="block text-xs font-semibold mb-1">Üretilen ({finishing.unit})</label><input type="number" min="0" step="any" value={fin.produced_qty} onChange={(e) => setFin({ ...fin, produced_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" /></div>
+              <div><label className="block text-xs font-semibold mb-1">Fire / Hatalı</label><input type="number" min="0" step="any" value={fin.scrap_qty} onChange={(e) => setFin({ ...fin, scrap_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center text-rose-600" data-testid="wo-finish-scrap" /></div>
+            </div>
+            <input value={fin.notes} onChange={(e) => setFin({ ...fin, notes: e.target.value })} placeholder="Not (isteğe bağlı)" className="w-full border rounded-xl p-3" data-testid="wo-finish-notes" />
+            {finishing.step_no === finishing.step_count && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir.</p>}
+            <div className="flex gap-2"><button onClick={() => setFinishing(null)} className="flex-1 py-3 border-2 rounded-xl font-semibold">İptal</button><button onClick={() => act(finishing, "finish", { produced_qty: Number(fin.produced_qty), scrap_qty: Number(fin.scrap_qty), notes: fin.notes })} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid="wo-finish-confirm">Tamamla</button></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

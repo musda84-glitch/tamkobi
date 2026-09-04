@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { MessageSquare, Settings, Send, Loader2, Wallet, CheckCircle2, AlertCircle, FlaskConical } from "lucide-react";
+import { contextTr } from "../utils/labels";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -84,15 +85,15 @@ export const SmsCenter = ({ companyId, contacts }) => {
         <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">SMS Gönderim Geçmişi <span className="text-slate-400 font-medium text-xs">({logs.length})</span></div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Alıcı</th><th className="px-4 py-2">Mesaj</th><th className="px-4 py-2">Kaynak</th><th className="px-4 py-2">Durum</th></tr></thead>
+            <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-3 py-2 w-20">Tarih</th><th className="px-4 py-2">Alıcı</th><th className="px-4 py-2">Mesaj</th><th className="px-4 py-2">Kaynak</th><th className="px-4 py-2">Durum</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">Henüz SMS gönderilmedi.</td></tr>}
               {logs.map((l) => (
                 <tr key={l.id} data-testid={`sms-log-${l.id}`}>
-                  <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{new Date(l.created_at).toLocaleString("tr-TR")}</td>
-                  <td className="px-4 py-2"><div className="font-semibold text-slate-900">{l.contact_name || "—"}</div><div className="font-mono text-slate-500">{l.to}</div></td>
-                  <td className="px-4 py-2 max-w-xs truncate" title={l.message}>{l.message}</td>
-                  <td className="px-4 py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{l.context}</span></td>
+                  <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap w-20 text-[10px] leading-tight align-top"><div>{new Date(l.created_at).toLocaleDateString("tr-TR")}</div><div className="text-slate-400">{new Date(l.created_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</div></td>
+                  <td className="px-4 py-2 align-top whitespace-nowrap"><div className="font-semibold text-slate-900">{l.contact_name || "—"}</div><div className="font-mono text-slate-500">{l.to}</div></td>
+                  <td className="px-4 py-2 whitespace-pre-wrap break-words align-top leading-relaxed" style={{ maxWidth: 360 }}>{l.message}</td>
+                  <td className="px-4 py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold">{contextTr(l.context)}</span></td>
                   <td className="px-4 py-2">
                     {l.status === "sent" && <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Gönderildi</span>}
                     {l.status === "simulated" && <span className="inline-flex items-center gap-1 text-amber-700 font-semibold"><FlaskConical className="w-3 h-3" /> Simüle</span>}

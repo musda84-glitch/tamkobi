@@ -19,6 +19,9 @@ import AIAssistantPage from "./pages/AIAssistantPage";
 import CommunicationPage from "./pages/CommunicationPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import InstallmentsPage from "./pages/InstallmentsPage";
+import QuoteApprovalPage from "./pages/QuoteApprovalPage";
+import ShopFloorPage from "./pages/ShopFloorPage";
 import AccountantPage from "./pages/AccountantPage";
 
 export default function App() {
@@ -44,6 +47,9 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />
+            <Route path="/installments" element={<InstallmentsPage />} />
+            <Route path="/teklif/:token" element={<QuoteApprovalPage />} />
+            <Route path="/atolye" element={<ShopFloorPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </MainLayout>

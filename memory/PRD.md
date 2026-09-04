@@ -72,3 +72,23 @@ P2: server.py router'lara bölme, gerçek auth zorunluluğu, raporlama, yetkilen
 
 ## Test Kimlikleri
 /app/memory/test_credentials.md
+
+
+## Faz 6–8 (Haziran 2026) — Tamamlanan (test agent iteration 6/7/8/9 ile doğrulandı)
+- Faturalar: satır sağ tık / ⋮ bağlam menüsü (E-Fatura / E-Arşiv / Kağıt olarak kes, görüntüle, yazdır, bildirim, tahsilat, taksitlendir); işlem sütunu sabit 6 slot; cari filtre çipi; GİB'den VKN ile cari çağırma (SİMÜLE, `GET /gib/lookup`); satır + genel iskonto (% / ₺); kesilmiş faturada yalnızca vade/not düzenlenebilir.
+- Taksit modülü: `db.installments`; fatura taksitleri, teklif ödeme planı (faturaya dönüşürken taşınır), açık bakiye taksitlendirme (`/contacts/{id}/installments`), `/installments` sayfası (özet, filtreler, hatırlatma), ödeme kasa/banka/POS/ortak ile (`partner_id`).
+- Cari kartı: Vade Uygula (`payment_term_days`, `late_fee_rate`, yaşlandırma `GET /contacts/{id}/aging`), ödeme düzenle/sil (bank_sync/partner kilitli — `PUT/DELETE /banking/transactions/{id}`), teklif düzenle, keşif detayı, Taksitler sekmesi, fatura satırında sağ tık; ekstre paylaşımı (Yazdır/PDF, mail, SMS, WhatsApp, kopyala) ve fatura+ödeme birleşik ekstre.
+- Cari listesi finansal filtreler: bize borçlu / bize alacaklı / vadesi geçen / 7 gün içinde taksit ödemesi gelen / bakiyesi sıfır (`GET /contacts/flags`).
+- Teklif onay sistemi: `POST /quotes/{id}/send-approval` (sms/email/whatsapp), public `/teklif/:token` sayfası (`GET/POST /public/quotes/{token}`), bildirimler (`/notifications`, zil).
+- Üretim & Reçete yenilendi: BOM (fire %, işçilik, genel gider, birim maliyet), ihtiyaç/eksik analizi, kısmi tamamlama (fire hammadde tüketir), `DELETE /production/orders/{id}`; stok kartından "Üretim Emri Ver"; kategoriler (`/products/categories`, sadece filtre).
+- Atölye / tablet ekranı `/atolye`: reçete adımları → iş emirleri (`/production/work-orders` start/pause/finish/assign), operatör seçimi (localStorage), istasyon filtresi, kiosk modu, son adım bitince stok işlenir.
+- Diğer: barkod etiketi (jsbarcode + QR, 5 boyut, etiketler/ek satır), yazdırma şablonu seçimi (classic/modern/minimal/bold), banka hesabına tıkla → hareket filtresi, sipariş onayında kargo firması entegrasyon listesinden, Türkçe durum etiketleri (`utils/labels.js`), Ayarlar sol menü, SMS log düzeni, "Faturalar" menü adı, "Taksitler" ve "Üretim Ekranı (Atölye)" menüleri.
+
+## Bekleyen büyük istekler (kullanıcı sırası: 1→2→3→4→5)
+1. Raporlar modülü (OVOCRM gibi: satış/alış, cari yaşlandırma, stok, nakit akışı, KDV, kârlılık; tarih filtresi; Excel/PDF)
+2. B2B müşteri portalı (OVOCRM gibi: müşteri girişi, özel fiyat listesi, sepet, sipariş, sipariş takibi, ekstre)
+3. Üretim iş emirleri — TEMEL TAMAMLANDI (Faz 8); geliştirme: personel bazlı performans raporu, barkodla iş emri açma
+4. Kargo pazaryerleri (Navlungo, Geliver, Kolay Kargo, BasitKargo) entegrasyon kartları + API ayarları
+5. E-ticaret modülünü en gelişmiş sistemlere göre güncelleme (araştırma)
+6. Personel modülünü Netesnaf ile birebir yapma
+Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, pazaryeri/kargo/e-fatura sağlayıcı bağlantıları hâlâ SİMÜLE; aktif şirket başlığı "MATEK DEKORASYON" görünürken listeler comp_nexus_main_01 sorguluyor (bilinen tutarsızlık).

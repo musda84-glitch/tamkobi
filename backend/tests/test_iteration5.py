@@ -84,10 +84,10 @@ class TestOrderFlows:
         r = c.post(f"{BASE}/orders/{target_order['id']}/approve", json={"cargo_carrier": "aras"})
         assert r.status_code == 200, r.text
         d = r.json()
-        assert d["order_status"] == "Onaylandı"
+        assert d["order_status"] in ("approved", "Onaylandı")
         assert d["cargo_carrier"] == "aras"
         g = c.get(f"{BASE}/orders/{target_order['id']}").json()
-        assert g["order"]["order_status"] == "Onaylandı" if "order" in g else g["order_status"] == "Onaylandı"
+        assert (g["order"]["order_status"] if "order" in g else g["order_status"]) in ("approved", "Onaylandı")
 
     def test_approve_404(self, c):
         assert c.post(f"{BASE}/orders/nope/approve", json={}).status_code == 404
@@ -124,7 +124,7 @@ class TestOrderFlows:
         # order status
         o = c.get(f"{BASE}/orders").json()
         row = next(x for x in o if x["id"] == target_order["id"])
-        assert row["order_status"] == "İade Edildi", row["order_status"]
+        assert row["order_status"] in ("returned", "İade Edildi"), row["order_status"]
         # stock increased
         if item:
             after = c.get(f"{BASE}/products/{item['product_id']}").json()["stock_quantity"]

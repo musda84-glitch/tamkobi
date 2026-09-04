@@ -70,6 +70,8 @@ class Contact(BaseDocument):
     credit_limit: float = 0.0
     category: Optional[str] = "Genel"
     is_e_invoice_user: bool = False
+    payment_term_days: int = 0
+    late_fee_rate: float = 0.0
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     location_url: Optional[str] = None
@@ -95,7 +97,7 @@ class Product(BaseDocument):
     company_id: str
     name: str
     sku: str
-    barcode: str
+    barcode: Optional[str] = ""
     type: str = "product"  # "product", "service", "raw_material", "finished_good"
     category: str = "Genel"
     unit: str = "Adet"  # Adet, Kg, Metre, Litre, Paket, Koli
@@ -151,6 +153,7 @@ class InvoiceItem(BaseModel):
     unit_price: float
     vat_rate: int = 20
     discount_percent: float = 0.0
+    discount_rate: float = 0.0
     total: float
 
 class Invoice(BaseDocument):
@@ -167,6 +170,8 @@ class Invoice(BaseDocument):
     subtotal: float = 0.0
     vat_total: float = 0.0
     discount_total: float = 0.0
+    general_discount_rate: float = 0.0
+    general_discount_amount: float = 0.0
     grand_total: float = 0.0
     currency: str = "TRY"
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
@@ -394,19 +399,23 @@ class RecipeItem(BaseModel):
     quantity: float
     unit: str
     cost_per_unit: float = 0.0
+    wastage_percent: float = 0.0
 
 class Recipe(BaseDocument):
     company_id: str
     name: str
-    code: str
+    code: Optional[str] = ""
     finished_product_id: str
     finished_product_name: str
     target_quantity: float = 1.0
     unit: str = "Adet"
     materials: List[RecipeItem] = []
+    steps: List[Dict[str, Any]] = []  # [{no, name, station, duration_min}]
     labor_cost: float = 0.0
     overhead_cost: float = 0.0
     total_estimated_cost: float = 0.0
+    unit_cost: float = 0.0
+    is_active: bool = True
     notes: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -423,7 +432,11 @@ class ProductionOrder(BaseDocument):
     status: str = "planned"  # planned, in_production, completed, cancelled
     total_cost: float = 0.0
     start_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    planned_date: Optional[str] = None
     end_date: Optional[str] = None
+    source: str = "manual"  # manual, stock_card, order
+    notes: Optional[str] = None
+    shortages: List[Dict[str, Any]] = []
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Personel & Bordro

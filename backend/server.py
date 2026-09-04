@@ -4,7 +4,8 @@ load_dotenv()
 import os
 import uuid
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
+from calendar import monthrange
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Query, Form
@@ -58,11 +59,7 @@ def clean_doc(doc: dict) -> dict:
     if not doc:
         return doc
     if "_id" in doc:
-        _id_val = str(doc["_id"])
-        doc["id"] = _id_val
-        doc["_id"] = _id_val
-    elif "id" in doc and "_id" not in doc:
-        doc["_id"] = str(doc["id"])
+        doc["id"] = str(doc.pop("_id"))
     return doc
 
 def clean_docs(docs: list) -> list:
@@ -123,7 +120,8 @@ class RegisterRequest(BaseModel):
 @api_router.post("/auth/login")
 async def login(req: LoginRequest, request: Request, response: Response):
     email = req.email.strip().lower()
-    client_ip = request.client.host if request.client else "unknown"
+    fwd = request.headers.get("x-forwarded-for", "")
+    client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
     identifier = f"{client_ip}:{email}"
 
     # Check brute force lockout
@@ -233,7 +231,7 @@ async def save_einvoice_settings(req: Dict[str, Any]):
     return await get_einvoice_settings(company_id)
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
-                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": ""}
+                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic"}
 
 @api_router.get("/companies/{company_id}/print-templates")
 async def get_print_templates(company_id: str):
@@ -317,6 +315,124 @@ async def create_quote(req: Dict[str, Any]):
     await db.quotes.insert_one(doc)
     return clean_doc(doc)
 
+@api_router.post("/quotes/{quote_id}/send-approval")
+async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
+    if not channels:
+        raise HTTPException(status_code=400, detail="En az bir kanal seçin (SMS / E-posta / WhatsApp).")
+    contact = await db.contacts.find_one({"_id": q.get("contact_id")}) if q.get("contact_id") else None
+    company = await db.companies.find_one({"_id": q["company_id"]}) or {}
+    phone = req.get("phone") or (contact or {}).get("phone")
+    email = req.get("email") or (contact or {}).get("email")
+    approval = q.get("approval") or {}
+    token = approval.get("token") or uuid.uuid4().hex
+    base = (req.get("base_url") or "").rstrip("/")
+    link = f"{base}/teklif/{token}"
+    total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
+    if link not in message:
+        message = f"{message}\n{link}"
+    results: Dict[str, Any] = {}
+    if "sms" in channels:
+        if not phone:
+            results["sms"] = {"status": "failed", "detail": "Carinin telefon numarası yok."}
+        else:
+            try:
+                r = await _send_sms_to(q["company_id"], [{"phone": phone, "contact_id": q.get("contact_id"), "contact_name": q.get("contact_name")}], message, "quote_approval", quote_id)
+                results["sms"] = {"status": "sent" if not r.get("simulated") else "simulated", "detail": r.get("message")}
+            except HTTPException as e:
+                results["sms"] = {"status": "failed", "detail": e.detail}
+    if "email" in channels:
+        if not email:
+            results["email"] = {"status": "failed", "detail": "Carinin e-posta adresi yok."}
+        else:
+            try:
+                a = await _mail_account(q["company_id"])
+                subject = f"{q.get('quote_number')} - {q.get('title') or 'Fiyat Teklifi'} onayınızı bekliyor"
+                html = f"<p>{message.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Teklifi Görüntüle & Onayla</a></p>"
+                await comm_service.smtp_send(a, [email], subject, message, html=html)
+                await db.mail_logs.insert_one(MailLog(company_id=q["company_id"], from_email=a["email"], to=[email], subject=subject, body=message, contact_id=q.get("contact_id"), contact_name=q.get("contact_name"), context="quote_approval", ref_id=quote_id).to_mongo())
+                results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
+            except HTTPException as e:
+                results["email"] = {"status": "failed", "detail": e.detail}
+            except Exception as e:
+                results["email"] = {"status": "failed", "detail": f"SMTP hatası: {_err_text(e)}"}
+    if "whatsapp" in channels:
+        if not phone:
+            results["whatsapp"] = {"status": "failed", "detail": "Carinin telefon numarası yok."}
+        else:
+            try:
+                r = await wa_send({"company_id": q["company_id"], "phone": phone, "message": message, "contact_id": q.get("contact_id"), "contact_name": q.get("contact_name")})
+                results["whatsapp"] = {"status": r.get("status"), "detail": r.get("message_info"), "wa_link": r.get("wa_link")}
+            except HTTPException as e:
+                results["whatsapp"] = {"status": "failed", "detail": e.detail}
+    now = datetime.now(timezone.utc).isoformat()
+    approval.update({"token": token, "link": link, "status": approval.get("status") if approval.get("status") in ("accepted", "rejected") else "pending", "sent_at": now, "channels": channels, "results": results, "sent_count": approval.get("sent_count", 0) + 1})
+    upd = {"approval": approval}
+    if q.get("status") == "draft":
+        upd["status"] = "sent"
+    await db.quotes.update_one({"_id": quote_id}, {"$set": upd})
+    any_ok = any(v.get("status") in ("sent", "simulated") for v in results.values())
+    return {"status": "success" if any_ok else "failed", "link": link, "results": results, "message": "Onay linki gönderildi." if any_ok else "Hiçbir kanaldan gönderilemedi."}
+
+def _public_quote_view(q: Dict[str, Any], company: Dict[str, Any]) -> Dict[str, Any]:
+    ap = q.get("approval") or {}
+    return {"quote_number": q.get("quote_number"), "title": q.get("title"), "contact_name": q.get("contact_name"), "issue_date": q.get("issue_date"), "valid_until": q.get("valid_until"),
+            "items": q.get("items", []), "subtotal": q.get("subtotal"), "vat_total": q.get("vat_total"), "grand_total": q.get("grand_total"), "notes": q.get("notes"), "terms": q.get("terms"),
+            "payment_plan": q.get("payment_plan"), "images": q.get("images", []), "status": q.get("status"),
+            "approval": {"status": ap.get("status", "pending"), "responded_at": ap.get("responded_at"), "responder_name": ap.get("responder_name"), "note": ap.get("note")},
+            "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "address": company.get("address"), "city": company.get("city"), "logo_url": company.get("logo_url"), "tax_number": company.get("tax_number")},
+            "is_expired": bool(q.get("valid_until")) and q.get("valid_until") < datetime.now(timezone.utc).strftime("%Y-%m-%d")}
+
+@api_router.get("/public/quotes/{token}")
+async def public_quote(token: str):
+    q = await db.quotes.find_one({"approval.token": token})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
+    company = await db.companies.find_one({"_id": q["company_id"]}) or {}
+    await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"approval.view_count": 1}})
+    return _public_quote_view(q, company)
+
+@api_router.post("/public/quotes/{token}/respond")
+async def public_quote_respond(token: str, req: Dict[str, Any], request: Request):
+    q = await db.quotes.find_one({"approval.token": token})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
+    ap = q.get("approval") or {}
+    if ap.get("status") in ("accepted", "rejected"):
+        raise HTTPException(status_code=400, detail="Bu teklif için karar zaten verilmiş.")
+    decision = req.get("decision")
+    if decision not in ("accepted", "rejected"):
+        raise HTTPException(status_code=400, detail="Karar 'accepted' veya 'rejected' olmalı.")
+    name = (req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Ad soyad zorunludur.")
+    now = datetime.now(timezone.utc).isoformat()
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else None)
+    ap.update({"status": decision, "responded_at": now, "responder_name": name, "note": (req.get("note") or "").strip(), "ip": ip, "user_agent": request.headers.get("user-agent", "")[:200]})
+    await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval": ap, "status": decision}})
+    await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": q["company_id"], "type": "quote_response", "title": f"{q.get('quote_number')} {'ONAYLANDI' if decision == 'accepted' else 'REDDEDİLDİ'}",
+                                       "message": f"{q.get('contact_name')} ({name}) teklifi {'onayladı' if decision == 'accepted' else 'reddetti'}." + (f" Not: {ap['note']}" if ap.get("note") else ""),
+                                       "ref_type": "quote", "ref_id": q["_id"], "is_read": False, "created_at": now})
+    company = await db.companies.find_one({"_id": q["company_id"]}) or {}
+    return {"status": "success", "message": "Teşekkürler, teklifi onayladınız. Firmamız en kısa sürede sizinle iletişime geçecek." if decision == "accepted" else "Geri bildiriminiz için teşekkürler. Teklif reddedildi olarak kaydedildi.", "quote": _public_quote_view({**q, "approval": ap, "status": decision}, company)}
+
+@api_router.get("/notifications")
+async def list_notifications(company_id: Optional[str] = "comp_nexus_main_01", unread_only: bool = False):
+    query: Dict[str, Any] = {"company_id": company_id}
+    if unread_only:
+        query["is_read"] = False
+    return clean_docs(await db.notifications.find(query).sort("created_at", -1).to_list(50))
+
+@api_router.post("/notifications/{notif_id}/read")
+async def read_notification(notif_id: str):
+    await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
+    return {"status": "success"}
+
 @api_router.get("/quotes/{quote_id}")
 async def get_quote(quote_id: str):
     q = await db.quotes.find_one({"_id": quote_id})
@@ -357,6 +473,8 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
            "quote_id": quote_id, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(inv)
+    if q.get("payment_plan"):
+        await _create_invoice_installments(inv, q["payment_plan"].get("config", {}))
     if q.get("contact_id"):
         await db.contacts.update_one({"_id": q["contact_id"]}, {"$inc": {"balance": q["grand_total"]}})
     await db.quotes.update_one({"_id": quote_id}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
@@ -611,6 +729,91 @@ async def get_contact_statement(contact_id: str):
         "payments": clean_docs(payments)
     }
 
+@api_router.get("/contacts/flags")
+async def contact_flags(company_id: Optional[str] = "comp_nexus_main_01", days: int = 7):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    horizon = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
+    flags: Dict[str, Dict[str, Any]] = {}
+    def f(cid):
+        return flags.setdefault(cid, {"overdue_amount": 0.0, "overdue_count": 0, "installment_due_amount": 0.0, "installment_due_count": 0, "installment_overdue_count": 0})
+    async for i in db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"contact_id": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1}):
+        due = i.get("due_date") or i.get("issue_date")
+        if i.get("contact_id") and due and due < today:
+            x = f(i["contact_id"]); x["overdue_amount"] = round(x["overdue_amount"] + i.get("grand_total", 0) - i.get("paid_amount", 0), 2); x["overdue_count"] += 1
+    async for it in db.installments.find({"company_id": company_id, "status": {"$ne": "paid"}}, {"contact_id": 1, "amount": 1, "paid_amount": 1, "due_date": 1}):
+        if not it.get("contact_id"):
+            continue
+        x = f(it["contact_id"])
+        if it.get("due_date", "") <= horizon:
+            x["installment_due_amount"] = round(x["installment_due_amount"] + it.get("amount", 0) - it.get("paid_amount", 0), 2); x["installment_due_count"] += 1
+        if it.get("due_date", "") < today:
+            x["installment_overdue_count"] += 1
+    return flags
+
+@api_router.get("/contacts/{contact_id}/aging")
+async def contact_aging(contact_id: str):
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    today = date.fromisoformat(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    rate = float(c.get("late_fee_rate", 0) or 0)
+    rows = []
+    for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500):
+        remaining = round(i.get("grand_total", 0) - i.get("paid_amount", 0), 2)
+        due = i.get("due_date") or i.get("issue_date")
+        overdue = (today - date.fromisoformat(due)).days if due else 0
+        fee = round(remaining * rate / 100 / 30 * overdue, 2) if overdue > 0 and rate else 0.0
+        rows.append({"invoice_id": i["_id"], "invoice_number": i.get("invoice_number"), "invoice_type": i.get("invoice_type"), "issue_date": i.get("issue_date"), "due_date": due, "remaining": remaining, "overdue_days": max(0, overdue), "late_fee": fee})
+    return {"payment_term_days": c.get("payment_term_days", 0), "late_fee_rate": rate, "rows": rows,
+            "total_remaining": round(sum(r["remaining"] for r in rows), 2), "total_overdue": round(sum(r["remaining"] for r in rows if r["overdue_days"] > 0), 2), "total_late_fee": round(sum(r["late_fee"] for r in rows), 2)}
+
+@api_router.post("/contacts/{contact_id}/apply-terms")
+async def apply_contact_terms(contact_id: str, req: Dict[str, Any]):
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    days = int(req.get("payment_term_days", 0) or 0)
+    rate = float(req.get("late_fee_rate", 0) or 0)
+    await db.contacts.update_one({"_id": contact_id}, {"$set": {"payment_term_days": days, "late_fee_rate": rate}})
+    updated = 0
+    if req.get("apply_to_open_invoices"):
+        for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}}).to_list(500):
+            new_due = (date.fromisoformat(i.get("issue_date")) + timedelta(days=days)).isoformat()
+            await db.invoices.update_one({"_id": i["_id"]}, {"$set": {"due_date": new_due}})
+            updated += 1
+    return {"status": "success", "updated_invoices": updated, "message": f"Vade {days} gün olarak kaydedildi" + (f", {updated} açık faturanın vadesi güncellendi." if updated else ".")}
+
+@api_router.get("/contacts/{contact_id}/installments")
+async def list_contact_balance_installments(contact_id: str):
+    rows = await db.installments.find({"contact_id": contact_id, "invoice_id": None}).sort("no", 1).to_list(200)
+    return [_decorate_installment(r) for r in rows]
+
+@api_router.post("/contacts/{contact_id}/installments")
+async def create_contact_balance_installments(contact_id: str, req: Dict[str, Any]):
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
+        raise HTTPException(status_code=400, detail="Ödemesi başlamış bakiye taksit planı yeniden oluşturulamaz.")
+    total = float(req.get("total") or abs(c.get("balance", 0)))
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="Taksitlendirilecek bakiye yok.")
+    await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
+    rows = _build_plan(total, req)
+    now = datetime.now(timezone.utc).isoformat()
+    direction = "receivable" if c.get("balance", 0) >= 0 else "payable"
+    docs = [{"_id": str(uuid.uuid4()), "company_id": c["company_id"], "invoice_id": None, "invoice_number": "AÇIK BAKİYE", "invoice_type": "balance", "direction": direction,
+             "contact_id": contact_id, "contact_name": c.get("name"), "no": r["no"], "label": r["label"], "total_count": len(rows), "due_date": r["due_date"], "amount": r["amount"], "paid_amount": 0, "status": "pending", "created_at": now} for r in rows]
+    await db.installments.insert_many(docs)
+    return [_decorate_installment(d) for d in docs]
+
+@api_router.delete("/contacts/{contact_id}/installments")
+async def delete_contact_balance_installments(contact_id: str):
+    if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
+        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
+    await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
+    return {"status": "success"}
+
 @api_router.get("/contacts/{contact_id}/overview")
 async def get_contact_overview(contact_id: str):
     contact = await db.contacts.find_one({"_id": contact_id})
@@ -636,6 +839,33 @@ async def get_contact_overview(contact_id: str):
     }
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
+@api_router.get("/products/categories")
+async def list_product_categories(company_id: Optional[str] = "comp_nexus_main_01"):
+    used = [c for c in await db.products.distinct("category", {"company_id": company_id}) if c]
+    saved = [c["name"] for c in await db.product_categories.find({"company_id": company_id}).to_list(500)]
+    counts = {c: await db.products.count_documents({"company_id": company_id, "category": c}) for c in set(used + saved)}
+    return sorted([{"name": c, "count": counts.get(c, 0)} for c in counts], key=lambda x: (-x["count"], x["name"]))
+
+@api_router.post("/products/categories")
+async def add_product_category(req: Dict[str, Any]):
+    name = (req.get("name") or "").strip()
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    if not name:
+        raise HTTPException(status_code=400, detail="Kategori adı boş olamaz.")
+    await db.product_categories.update_one({"company_id": company_id, "name": name}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name, "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {"status": "success", "name": name}
+
+@api_router.delete("/products/categories/{name}")
+async def delete_product_category(name: str, company_id: Optional[str] = "comp_nexus_main_01"):
+    if await db.products.count_documents({"company_id": company_id, "category": name}):
+        raise HTTPException(status_code=400, detail="Bu kategoride ürün var; önce ürünlerin kategorisini değiştirin.")
+    await db.product_categories.delete_one({"company_id": company_id, "name": name})
+    return {"status": "success"}
+
+async def _remember_category(company_id: str, name: Optional[str]):
+    if name and name.strip():
+        await db.product_categories.update_one({"company_id": company_id, "name": name.strip()}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name.strip(), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+
 @api_router.get("/products")
 async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False):
     query = {"company_id": company_id}
@@ -657,11 +887,15 @@ async def create_product(product: Product):
         product.barcode = f"868{str(uuid.uuid4().int)[:10]}"
     doc = product.to_mongo()
     await db.products.insert_one(doc)
+    await _remember_category(product.company_id, product.category)
     return clean_doc(doc)
 
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, updated: Dict[str, Any]):
     await db.products.update_one({"_id": product_id}, {"$set": updated})
+    if updated.get("category"):
+        cur = await db.products.find_one({"_id": product_id}, {"company_id": 1})
+        await _remember_category((cur or {}).get("company_id", "comp_nexus_main_01"), updated["category"])
     res = await db.products.find_one({"_id": product_id})
     return clean_doc(res)
 
@@ -852,11 +1086,19 @@ async def create_invoice(invoice: Invoice):
         count = await db.invoices.count_documents({"company_id": invoice.company_id}) + 1
         invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
 
-    subtotal = sum(item.total for item in invoice.items)
-    vat_total = sum(item.total * (item.vat_rate / 100) for item in invoice.items)
-    invoice.subtotal = subtotal
-    invoice.vat_total = vat_total
-    invoice.grand_total = subtotal + vat_total
+    if not invoice.due_date and invoice.contact_id:
+        _c = await db.contacts.find_one({"_id": invoice.contact_id})
+        if _c and _c.get("payment_term_days"):
+            invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_c["payment_term_days"]))).isoformat()
+    items_sum = sum(item.total for item in invoice.items)
+    gd = invoice.general_discount_amount or (items_sum * invoice.general_discount_rate / 100)
+    gd = round(min(max(gd, 0), items_sum), 2)
+    factor = (items_sum - gd) / items_sum if items_sum else 1
+    invoice.discount_total = gd
+    invoice.general_discount_amount = gd
+    invoice.subtotal = round(items_sum - gd, 2)
+    invoice.vat_total = round(sum(item.total * factor * (item.vat_rate / 100) for item in invoice.items), 2)
+    invoice.grand_total = round(invoice.subtotal + invoice.vat_total, 2)
 
     if invoice.status in ["approved", "sent_to_gib"]:
         balance_change = invoice.grand_total if invoice.invoice_type == "sales" else -invoice.grand_total
@@ -877,18 +1119,43 @@ async def create_invoice(invoice: Invoice):
     await db.invoices.insert_one(doc)
     return clean_doc(doc)
 
+@api_router.get("/gib/lookup")
+async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_01"):
+    tid = "".join(ch for ch in tax_id if ch.isdigit())
+    if len(tid) not in (10, 11):
+        raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
+    local = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
+    settings = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    live = settings.get("status") == "configured"
+    # Gerçek entegratör bağlı değilse GİB mükellef sorgusu SİMÜLE edilir (VKN'ler mükellef kabul edilir)
+    is_efatura = local.get("is_e_invoice_user") if local else len(tid) == 10
+    return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": bool(is_efatura), "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
+            "alias": f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None, "source": settings.get("provider") if live else "simulated",
+            "local_contact": clean_doc(local) if local else None,
+            "message": ("Cari kayıtlarınızda bulundu." if local else "GİB e-Fatura mükellef listesinde " + ("kayıtlı (e-Fatura kesilmeli)." if is_efatura else "kayıtlı değil (e-Arşiv kesilmeli).")) + ("" if live else " [SİMÜLE — entegratör bağlanınca gerçek sorgu yapılır]")}
+
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if inv.get("status") != "draft":
-        raise HTTPException(status_code=400, detail="Sadece taslak faturalar düzenlenebilir.")
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name"}}
-    if "items" in allowed:
-        subtotal = sum(float(i.get("total", 0)) for i in allowed["items"])
-        vat_total = sum(float(i.get("total", 0)) * float(i.get("vat_rate", 20)) / 100 for i in allowed["items"])
-        allowed.update({"subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "grand_total": round(subtotal + vat_total, 2)})
+        allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
+        if not allowed or set(req.keys()) - {"due_date", "notes"}:
+            raise HTTPException(status_code=400, detail="Kesilmiş faturada sadece vade ve not düzenlenebilir.")
+        await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
+        return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "general_discount_rate", "general_discount_amount"}}
+    if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
+        items = allowed.get("items", inv.get("items", []))
+        items_sum = sum(float(i.get("total", 0)) for i in items)
+        gd_rate = float(allowed.get("general_discount_rate", inv.get("general_discount_rate", 0)) or 0)
+        gd_amt = float(allowed.get("general_discount_amount", inv.get("general_discount_amount", 0)) or 0) if "general_discount_rate" not in allowed else 0
+        gd = round(min(max(gd_amt or items_sum * gd_rate / 100, 0), items_sum), 2)
+        factor = (items_sum - gd) / items_sum if items_sum else 1
+        subtotal = items_sum - gd
+        vat_total = sum(float(i.get("total", 0)) * factor * float(i.get("vat_rate", 20)) / 100 for i in items)
+        allowed.update({"discount_total": gd, "general_discount_amount": gd, "subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "grand_total": round(subtotal + vat_total, 2)})
         if inv.get("contact_id") and inv.get("invoice_type") == "sales":
             await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["grand_total"] - inv.get("grand_total", 0)}})
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
@@ -903,6 +1170,9 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
 
+    if inv.get("e_type") == "paper":
+        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})
+        return {"status": "success", "message": "Kağıt fatura olarak kesildi. Matbu belgeyi yazdırabilirsiniz.", "tracking_id": None}
     tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     await db.invoices.update_one(
         {"_id": invoice_id},
@@ -935,6 +1205,21 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         {"$set": {"paid_amount": new_paid, "payment_status": payment_status}}
     )
 
+    if req.get("partner_id"):
+        partner = await db.partners.find_one({"_id": req["partner_id"]})
+        if not partner:
+            raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+        is_sales = inv.get("invoice_type") == "sales"
+        tx_type = "withdrawal" if is_sales else "capital_in"
+        inc = {"balance": -amount, "total_withdrawn": amount} if is_sales else {"balance": amount, "total_capital_in": amount}
+        await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+        description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
+        ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=amount,
+                                 account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        await db.partner_transactions.insert_one(ptx.to_mongo())
+        await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -amount if is_sales else amount}})
+        return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
+
     if account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
@@ -966,6 +1251,163 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
 
     return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status}
+
+# ----------------- TAKSİT MODÜLÜ -----------------
+def _add_interval(d: date, interval: str, n: int, interval_days: int = 30) -> date:
+    if interval == "week":
+        return d + timedelta(weeks=n)
+    if interval == "days":
+        return d + timedelta(days=interval_days * n)
+    m = d.month - 1 + n
+    y, m = d.year + m // 12, m % 12 + 1
+    return date(y, m, min(d.day, monthrange(y, m)[1]))
+
+def _build_plan(total: float, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    count = max(1, int(cfg.get("count", 1)))
+    down = round(float(cfg.get("down_payment", 0) or 0), 2)
+    interval = cfg.get("interval", "month")
+    interval_days = int(cfg.get("interval_days", 30) or 30)
+    first = date.fromisoformat(cfg.get("first_due_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    remaining = round(total - down, 2)
+    if remaining < 0:
+        raise HTTPException(status_code=400, detail="Peşinat toplam tutardan büyük olamaz.")
+    rows = []
+    if down > 0:
+        rows.append({"no": 0, "label": "Peşinat", "due_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "amount": down})
+    per = round(remaining / count, 2) if count else 0
+    for i in range(count):
+        amt = per if i < count - 1 else round(remaining - per * (count - 1), 2)
+        rows.append({"no": i + 1, "label": f"{i + 1}. Taksit", "due_date": _add_interval(first, interval, i, interval_days).isoformat(), "amount": amt})
+    return rows
+
+def _decorate_installment(d: Dict[str, Any]) -> Dict[str, Any]:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    d = clean_doc(d)
+    d["is_overdue"] = d.get("status") != "paid" and d.get("due_date", "") < today
+    d["days_left"] = (date.fromisoformat(d["due_date"]) - date.fromisoformat(today)).days if d.get("due_date") else None
+    return d
+
+async def _create_invoice_installments(inv: Dict[str, Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = _build_plan(inv.get("grand_total", 0) - inv.get("paid_amount", 0), cfg)
+    now = datetime.now(timezone.utc).isoformat()
+    docs = [{"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_id": inv["_id"], "invoice_number": inv.get("invoice_number"), "invoice_type": inv.get("invoice_type"),
+             "direction": "receivable" if inv.get("invoice_type") == "sales" else "payable", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
+             "no": r["no"], "label": r["label"], "total_count": len(rows), "due_date": r["due_date"], "amount": r["amount"], "paid_amount": 0, "status": "pending", "created_at": now} for r in rows]
+    if docs:
+        await db.installments.insert_many(docs)
+    await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"installment_plan": {"count": len(rows), "paid_count": 0, "config": cfg, "created_at": now}}})
+    return [_decorate_installment(d) for d in docs]
+
+@api_router.post("/installments/preview")
+async def preview_installments(req: Dict[str, Any]):
+    return _build_plan(float(req.get("total", 0)), req)
+
+@api_router.get("/invoices/{invoice_id}/installments")
+async def list_invoice_installments(invoice_id: str):
+    rows = await db.installments.find({"invoice_id": invoice_id}).sort("no", 1).to_list(200)
+    return [_decorate_installment(r) for r in rows]
+
+@api_router.post("/invoices/{invoice_id}/installments")
+async def create_invoice_installments(invoice_id: str, req: Dict[str, Any]):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
+        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan yeniden oluşturulamaz.")
+    await db.installments.delete_many({"invoice_id": invoice_id})
+    return await _create_invoice_installments(inv, req)
+
+@api_router.delete("/invoices/{invoice_id}/installments")
+async def delete_invoice_installments(invoice_id: str):
+    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
+        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
+    await db.installments.delete_many({"invoice_id": invoice_id})
+    await db.invoices.update_one({"_id": invoice_id}, {"$unset": {"installment_plan": ""}})
+    return {"status": "success"}
+
+@api_router.get("/installments")
+async def list_installments(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, contact_id: Optional[str] = None, direction: Optional[str] = None):
+    query: Dict[str, Any] = {"company_id": company_id}
+    if contact_id:
+        query["contact_id"] = contact_id
+    if direction:
+        query["direction"] = direction
+    rows = [_decorate_installment(r) for r in await db.installments.find(query).sort("due_date", 1).to_list(2000)]
+    if status == "paid":
+        rows = [r for r in rows if r["status"] == "paid"]
+    elif status == "overdue":
+        rows = [r for r in rows if r["is_overdue"]]
+    elif status == "pending":
+        rows = [r for r in rows if r["status"] != "paid"]
+    return rows
+
+@api_router.get("/installments/summary")
+async def installments_summary(company_id: Optional[str] = "comp_nexus_main_01"):
+    rows = [_decorate_installment(r) for r in await db.installments.find({"company_id": company_id}).to_list(5000)]
+    today = datetime.now(timezone.utc)
+    month = today.strftime("%Y-%m")
+    def s(f): return round(sum(r["amount"] - r.get("paid_amount", 0) for r in rows if f(r)), 2)
+    return {"total_count": len(rows),
+            "overdue": {"count": sum(1 for r in rows if r["is_overdue"]), "amount": s(lambda r: r["is_overdue"])},
+            "this_month": {"count": sum(1 for r in rows if r["status"] != "paid" and r["due_date"].startswith(month)), "amount": s(lambda r: r["status"] != "paid" and r["due_date"].startswith(month))},
+            "pending_receivable": s(lambda r: r["status"] != "paid" and r["direction"] == "receivable"),
+            "pending_payable": s(lambda r: r["status"] != "paid" and r["direction"] == "payable"),
+            "paid_total": round(sum(r.get("paid_amount", 0) for r in rows), 2)}
+
+@api_router.post("/installments/{inst_id}/pay")
+async def pay_installment(inst_id: str, req: Dict[str, Any]):
+    inst = await db.installments.find_one({"_id": inst_id})
+    if not inst:
+        raise HTTPException(status_code=404, detail="Taksit bulunamadı.")
+    if inst.get("status") == "paid":
+        raise HTTPException(status_code=400, detail="Bu taksit zaten ödenmiş.")
+    remaining = round(inst["amount"] - inst.get("paid_amount", 0), 2)
+    amount = round(float(req.get("amount") or remaining), 2)
+    if amount <= 0 or amount > remaining + 0.01:
+        raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
+    if inst.get("invoice_id"):
+        result = await record_invoice_payment(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id")})
+    else:
+        is_recv = inst.get("direction") == "receivable"
+        if req.get("partner_id"):
+            partner = await db.partners.find_one({"_id": req["partner_id"]})
+            if not partner:
+                raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+            inc = {"balance": -amount, "total_withdrawn": amount} if is_recv else {"balance": amount, "total_capital_in": amount}
+            await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+            ptx = PartnerTransaction(company_id=inst["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type="withdrawal" if is_recv else "capital_in", amount=amount, account_id=None, account_name="Ortaklar Hesabı",
+                                     description=f"{inst.get('contact_name')} bakiye {inst['label']} ortak tarafından {'tahsil edildi' if is_recv else 'ödendi'}", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+            await db.partner_transactions.insert_one(ptx.to_mongo())
+        else:
+            acc = await db.bank_accounts.find_one({"_id": req.get("account_id")})
+            if not acc:
+                raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+            tx = BankTransaction(company_id=inst["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
+                                 amount=amount, description=f"{inst.get('contact_name')} • Açık bakiye {inst['label']}", contact_id=inst["contact_id"], contact_name=inst.get("contact_name"))
+            await db.bank_transactions.insert_one(tx.to_mongo())
+            await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": amount if is_recv else -amount}})
+        await db.contacts.update_one({"_id": inst["contact_id"]}, {"$inc": {"balance": -amount if is_recv else amount}})
+        result = {"status": "success", "kind": "balance"}
+    new_paid = round(inst.get("paid_amount", 0) + amount, 2)
+    status = "paid" if new_paid >= inst["amount"] - 0.01 else "partial"
+    await db.installments.update_one({"_id": inst_id}, {"$set": {"paid_amount": new_paid, "status": status, "paid_at": datetime.now(timezone.utc).isoformat() if status == "paid" else None, "account_id": req.get("account_id")}})
+    if inst.get("invoice_id"):
+        paid_count = await db.installments.count_documents({"invoice_id": inst["invoice_id"], "status": "paid"})
+        await db.invoices.update_one({"_id": inst["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
+    return {"status": "success", "installment_status": status, "invoice_payment": result, "message": f"{inst['label']} için {amount:,.2f} ₺ {'tahsil edildi' if inst.get('direction') == 'receivable' else 'ödendi'}."}
+
+@api_router.post("/quotes/{quote_id}/payment-plan")
+async def set_quote_payment_plan(quote_id: str, req: Dict[str, Any]):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    if req.get("remove"):
+        await db.quotes.update_one({"_id": quote_id}, {"$unset": {"payment_plan": ""}})
+        return {"status": "success", "payment_plan": None}
+    rows = _build_plan(q.get("grand_total", 0), req)
+    plan = {"config": {k: req.get(k) for k in ("count", "down_payment", "interval", "interval_days", "first_due_date")}, "rows": rows}
+    await db.quotes.update_one({"_id": quote_id}, {"$set": {"payment_plan": plan}})
+    return {"status": "success", "payment_plan": plan}
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
 @api_router.get("/banking/accounts")
@@ -1000,6 +1442,59 @@ async def create_bank_transaction(tx: BankTransaction):
         await db.contacts.update_one({"_id": tx.contact_id}, {"$inc": {"balance": c_change}})
 
     return clean_doc(doc)
+
+async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
+    """sign=-1 geri alır, sign=+1 uygular."""
+    amt = float(tx.get("amount", 0)) * sign
+    if tx.get("type") == "transfer":
+        await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": -amt}})
+        if tx.get("target_account_id"):
+            await db.bank_accounts.update_one({"_id": tx["target_account_id"]}, {"$inc": {"current_balance": amt}})
+        return
+    change = amt if tx.get("type") == "inflow" else -amt
+    await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+    if tx.get("contact_id"):
+        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -change}})
+    if tx.get("related_invoice_id"):
+        inv = await db.invoices.find_one({"_id": tx["related_invoice_id"]})
+        if inv:
+            new_paid = round(max(0.0, inv.get("paid_amount", 0) + amt), 2)
+            ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
+            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
+
+def _assert_editable_tx(tx: Dict[str, Any]):
+    if not tx:
+        raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+    if tx.get("source") in ("bank_sync", "partner"):
+        raise HTTPException(status_code=400, detail="Banka entegrasyonundan / ortaklar hesabından gelen hareketler düzenlenemez veya silinemez.")
+
+@api_router.put("/banking/transactions/{tx_id}")
+async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
+    tx = await db.bank_transactions.find_one({"_id": tx_id})
+    _assert_editable_tx(tx)
+    allowed = {k: v for k, v in req.items() if k in {"amount", "date", "description", "category", "account_id", "type"}}
+    if "amount" in allowed:
+        allowed["amount"] = float(allowed["amount"])
+        if allowed["amount"] <= 0:
+            raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
+    if "account_id" in allowed and allowed["account_id"] != tx.get("account_id"):
+        acc = await db.bank_accounts.find_one({"_id": allowed["account_id"]})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+        allowed["account_name"] = acc.get("account_name")
+    await _reverse_tx_effects(tx, -1)
+    new_tx = {**tx, **allowed}
+    await _reverse_tx_effects(new_tx, +1)
+    await db.bank_transactions.update_one({"_id": tx_id}, {"$set": allowed})
+    return clean_doc(await db.bank_transactions.find_one({"_id": tx_id}))
+
+@api_router.delete("/banking/transactions/{tx_id}")
+async def delete_bank_transaction(tx_id: str):
+    tx = await db.bank_transactions.find_one({"_id": tx_id})
+    _assert_editable_tx(tx)
+    await _reverse_tx_effects(tx, -1)
+    await db.bank_transactions.delete_one({"_id": tx_id})
+    return {"status": "success", "message": "Hareket silindi, bakiyeler geri alındı."}
 
 @api_router.post("/banking/virman")
 async def perform_virman(req: Dict[str, Any]):
@@ -2570,73 +3065,303 @@ async def create_warehouse_transfer(transfer: WarehouseTransfer):
     return clean_doc(doc)
 
 # ----------------- ÜRETİM & REÇETE (BOM) -----------------
+def _recipe_costs(recipe: Dict[str, Any]) -> Dict[str, Any]:
+    mat = sum(float(m.get("cost_per_unit", 0)) * float(m.get("quantity", 0)) * (1 + float(m.get("wastage_percent", 0)) / 100) for m in recipe.get("materials", []))
+    total = round(mat + float(recipe.get("labor_cost", 0)) + float(recipe.get("overhead_cost", 0)), 2)
+    tq = float(recipe.get("target_quantity", 1) or 1)
+    return {"material_cost": round(mat, 2), "total_estimated_cost": total, "unit_cost": round(total / tq, 2)}
+
+async def _fill_material_costs(materials: List[Dict[str, Any]]):
+    for m in materials:
+        if not m.get("cost_per_unit"):
+            p = await db.products.find_one({"_id": m.get("product_id")})
+            if p:
+                m["cost_per_unit"] = float(p.get("purchase_price", 0) or 0)
+                m.setdefault("unit", p.get("unit", "Adet"))
+                m.setdefault("product_name", p.get("name"))
+
+async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[str, Any]]:
+    rows = []
+    factor = quantity / float(recipe.get("target_quantity", 1) or 1)
+    for m in recipe.get("materials", []):
+        p = await db.products.find_one({"_id": m.get("product_id")}) or {}
+        needed = round(float(m.get("quantity", 0)) * factor * (1 + float(m.get("wastage_percent", 0)) / 100), 3)
+        stock = float(p.get("stock_quantity", 0) or 0)
+        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": m.get("unit") or p.get("unit"), "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * float(m.get("cost_per_unit", 0)), 2)})
+    return rows
+
 @api_router.get("/production/recipes")
-async def list_recipes(company_id: Optional[str] = "comp_nexus_main_01"):
-    recipes = await db.recipes.find({"company_id": company_id}).to_list(100)
-    return clean_docs(recipes)
+async def list_recipes(company_id: Optional[str] = "comp_nexus_main_01", product_id: Optional[str] = None):
+    q: Dict[str, Any] = {"company_id": company_id}
+    if product_id:
+        q["finished_product_id"] = product_id
+    out = []
+    for r in await db.recipes.find(q).sort("created_at", -1).to_list(300):
+        r.update(_recipe_costs(r))
+        out.append(clean_doc(r))
+    return out
 
 @api_router.post("/production/recipes")
 async def create_recipe(recipe: Recipe):
     if not recipe.code:
         recipe.code = f"BOM-{str(uuid.uuid4().int)[:6]}"
-    mat_cost = sum(m.cost_per_unit * m.quantity for m in recipe.materials)
-    recipe.total_estimated_cost = mat_cost + recipe.labor_cost + recipe.overhead_cost
-
     doc = recipe.to_mongo()
+    await _fill_material_costs(doc["materials"])
+    doc.update(_recipe_costs(doc))
     await db.recipes.insert_one(doc)
+    await db.products.update_one({"_id": recipe.finished_product_id}, {"$set": {"has_recipe": True}})
     return clean_doc(doc)
+
+@api_router.put("/production/recipes/{recipe_id}")
+async def update_recipe(recipe_id: str, req: Dict[str, Any]):
+    r = await db.recipes.find_one({"_id": recipe_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active"}}
+    merged = {**r, **allowed}
+    await _fill_material_costs(merged.get("materials", []))
+    merged.update(_recipe_costs(merged))
+    merged.pop("_id", None)
+    await db.recipes.update_one({"_id": recipe_id}, {"$set": merged})
+    return clean_doc(await db.recipes.find_one({"_id": recipe_id}))
+
+@api_router.delete("/production/recipes/{recipe_id}")
+async def delete_recipe(recipe_id: str):
+    r = await db.recipes.find_one({"_id": recipe_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    await db.recipes.delete_one({"_id": recipe_id})
+    if not await db.recipes.count_documents({"finished_product_id": r.get("finished_product_id")}):
+        await db.products.update_one({"_id": r.get("finished_product_id")}, {"$set": {"has_recipe": False}})
+    return {"status": "success"}
+
+@api_router.get("/production/requirements")
+async def production_requirements(recipe_id: str, quantity: float = 1):
+    r = await db.recipes.find_one({"_id": recipe_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    rows = await _requirements(r, quantity)
+    costs = _recipe_costs(r)
+    return {"rows": rows, "total_material_cost": round(sum(x["cost"] for x in rows), 2), "estimated_total_cost": round(costs["unit_cost"] * quantity, 2), "has_shortage": any(x["shortage"] > 0 for x in rows), "unit_cost": costs["unit_cost"]}
 
 @api_router.get("/production/orders")
-async def list_production_orders(company_id: Optional[str] = "comp_nexus_main_01"):
-    orders = await db.production_orders.find({"company_id": company_id}).sort("created_at", -1).to_list(100)
-    return clean_docs(orders)
+async def list_production_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, product_id: Optional[str] = None):
+    q: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        q["status"] = status
+    if product_id:
+        q["finished_product_id"] = product_id
+    return clean_docs(await db.production_orders.find(q).sort("created_at", -1).to_list(300))
 
 @api_router.post("/production/orders")
-async def create_production_order(p_order: ProductionOrder):
-    if not p_order.order_code:
-        p_order.order_code = f"URT-{datetime.now().strftime('%Y')}-{str(uuid.uuid4().int)[:5]}"
-    doc = p_order.to_mongo()
+async def create_production_order(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    recipe = None
+    if req.get("recipe_id"):
+        recipe = await db.recipes.find_one({"_id": req["recipe_id"]})
+    elif req.get("finished_product_id") or req.get("product_id"):
+        recipe = await db.recipes.find_one({"company_id": company_id, "finished_product_id": req.get("finished_product_id") or req.get("product_id"), "is_active": {"$ne": False}})
+    if not recipe:
+        raise HTTPException(status_code=400, detail="Bu ürün için reçete bulunamadı. Önce Üretim → Reçeteler bölümünden reçete oluşturun.")
+    qty = float(req.get("planned_quantity") or 1)
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalı.")
+    rows = await _requirements(recipe, qty)
+    shortages = [x for x in rows if x["shortage"] > 0]
+    if shortages and req.get("strict"):
+        raise HTTPException(status_code=400, detail="Yetersiz hammadde: " + ", ".join(f"{x['product_name']} ({x['shortage']} {x['unit']})" for x in shortages))
+    costs = _recipe_costs(recipe)
+    order = ProductionOrder(company_id=company_id, order_code=f"URT-{datetime.now().strftime('%Y')}-{str(uuid.uuid4().int)[:5]}", recipe_id=recipe["_id"], recipe_name=recipe.get("name"),
+                            finished_product_id=recipe["finished_product_id"], finished_product_name=recipe.get("finished_product_name"), planned_quantity=qty,
+                            target_warehouse_id=req.get("target_warehouse_id", "main_warehouse"), status="planned", total_cost=round(costs["unit_cost"] * qty, 2),
+                            planned_date=req.get("planned_date"), source=req.get("source", "manual"), notes=req.get("notes"), shortages=shortages)
+    doc = order.to_mongo()
     await db.production_orders.insert_one(doc)
-    return clean_doc(doc)
+    await _generate_work_orders(doc, recipe)
+    return {**clean_doc(doc), "requirements": rows, "message": f"{order.order_code} üretim emri oluşturuldu." + (f" ⚠ {len(shortages)} hammaddede eksik var." if shortages else "")}
+
+# ---- İş Emirleri (atölye / tablet ekranı)
+async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
+    if await db.work_orders.count_documents({"order_id": order["_id"]}):
+        return
+    steps = recipe.get("steps") or [{"no": 1, "name": "Üretim", "station": "Genel", "duration_min": 0}]
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for idx, st in enumerate(sorted(steps, key=lambda x: x.get("no", 0))):
+        docs.append({"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_code": order.get("order_code"), "product_name": order.get("finished_product_name"),
+                     "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
+                     "step_no": idx + 1, "step_count": len(steps), "step_name": st.get("name", f"Adım {idx + 1}"), "station": st.get("station") or "Genel", "duration_min": st.get("duration_min", 0),
+                     "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
+                     "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
+    await db.work_orders.insert_many(docs)
+
+@api_router.get("/production/work-orders")
+async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, station: Optional[str] = None, assigned_to: Optional[str] = None, order_id: Optional[str] = None):
+    q: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        q["status"] = {"$in": status.split(",")}
+    if station:
+        q["station"] = station
+    if assigned_to:
+        q["assigned_to"] = assigned_to
+    if order_id:
+        q["order_id"] = order_id
+    rows = clean_docs(await db.work_orders.find(q).sort([("planned_date", 1), ("order_code", 1), ("step_no", 1)]).to_list(1000))
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        if r.get("started_at") and r["status"] in ("in_progress", "paused"):
+            r["elapsed_min"] = round(((datetime.fromisoformat(r["started_at"]) if r["status"] == "in_progress" else datetime.fromisoformat(r.get("paused_at") or r["started_at"])) - datetime.fromisoformat(r["started_at"])).total_seconds() / 60 - r.get("paused_seconds", 0) / 60, 1)
+            if r["status"] == "in_progress":
+                r["elapsed_min"] = round((now - datetime.fromisoformat(r["started_at"])).total_seconds() / 60 - r.get("paused_seconds", 0) / 60, 1)
+    return rows
+
+@api_router.get("/production/work-orders/stations")
+async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
+    return sorted([s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s])
+
+@api_router.post("/production/orders/{order_id}/generate-work-orders")
+async def generate_work_orders_for_order(order_id: str):
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    recipe = await db.recipes.find_one({"_id": o.get("recipe_id")}) or {}
+    await _generate_work_orders(o, recipe)
+    return {"status": "success", "count": await db.work_orders.count_documents({"order_id": order_id})}
+
+async def _wo(wo_id: str) -> Dict[str, Any]:
+    w = await db.work_orders.find_one({"_id": wo_id})
+    if not w:
+        raise HTTPException(status_code=404, detail="İş emri bulunamadı.")
+    return w
+
+def _log(w: Dict[str, Any], action: str, who: Optional[str], extra: str = "") -> Dict[str, Any]:
+    return {"at": datetime.now(timezone.utc).isoformat(), "action": action, "by": who or w.get("operator_name"), "note": extra}
+
+@api_router.put("/production/work-orders/{wo_id}/assign")
+async def assign_work_order(wo_id: str, req: Dict[str, Any]):
+    w = await _wo(wo_id)
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", req.get("assigned_name"))}})
+    return {"status": "success"}
+
+@api_router.post("/production/work-orders/{wo_id}/start")
+async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    w = await _wo(wo_id)
+    if w["status"] not in ("ready", "paused"):
+        raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (önceki adım bitmemiş veya adım kapanmış).")
+    who = req.get("operator_name") or w.get("assigned_name")
+    upd: Dict[str, Any] = {"status": "in_progress", "operator_name": who}
+    if w["status"] == "ready":
+        upd["started_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        upd["paused_seconds"] = w.get("paused_seconds", 0) + (datetime.now(timezone.utc) - datetime.fromisoformat(w["paused_at"])).total_seconds()
+        upd["paused_at"] = None
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, "start" if w["status"] == "ready" else "resume", who)}})
+    await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
+    return {"status": "success", "message": f"{w['step_name']} başlatıldı."}
+
+@api_router.post("/production/work-orders/{wo_id}/pause")
+async def pause_work_order(wo_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    w = await _wo(wo_id)
+    if w["status"] != "in_progress":
+        raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat()}, "$push": {"logs": _log(w, "pause", req.get("operator_name"), req.get("reason", ""))}})
+    return {"status": "success", "message": "Adım duraklatıldı."}
+
+@api_router.post("/production/work-orders/{wo_id}/finish")
+async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    w = await _wo(wo_id)
+    if w["status"] not in ("in_progress", "paused"):
+        raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
+    produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else w.get("planned_quantity", 0))
+    scrap = float(req.get("scrap_qty") or 0)
+    if produced < 0 or scrap < 0:
+        raise HTTPException(status_code=400, detail="Miktar negatif olamaz.")
+    planned_q = float(w.get("planned_quantity", 0) or 0)
+    if planned_q and produced + scrap > planned_q + 1e-9:
+        raise HTTPException(status_code=400, detail=f"Üretilen + fire ({produced + scrap:g}) planlanan miktarı ({planned_q:g}) aşamaz.")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"status": "done", "finished_at": now, "produced_qty": produced, "scrap_qty": scrap, "finish_note": req.get("notes", "")}, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire")}})
+    nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
+    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı."}
+    if nxt:
+        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": {"status": "ready"}})
+        result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
+    else:
+        o = await db.production_orders.find_one({"_id": w["order_id"]})
+        if o and o.get("status") == "in_production" and produced > 0:
+            remaining = float(o.get("planned_quantity", 0)) - float(o.get("completed_quantity", 0))
+            try:
+                r = await complete_production_order(w["order_id"], {"quantity": min(produced, remaining), "scrap_qty": scrap, "update_cost": bool(req.get("update_cost", False))})
+                result["message"] += " " + r["message"]
+                result["order_completed"] = r["finished"]
+            except HTTPException as e:
+                result["message"] += f" (Stok işlenemedi: {e.detail})"
+    return result
+
+@api_router.delete("/production/orders/{order_id}")
+async def delete_production_order(order_id: str):
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    if o.get("status") == "completed" or float(o.get("completed_quantity", 0) or 0) > 0:
+        raise HTTPException(status_code=400, detail="Üretimi yapılmış (stok işlenmiş) emir silinemez; iptal edin.")
+    await db.work_orders.delete_many({"order_id": order_id})
+    await db.production_orders.delete_one({"_id": order_id})
+    return {"status": "success", "message": "Üretim emri ve iş emirleri silindi."}
+
+@api_router.post("/production/orders/{order_id}/start")
+async def start_production_order(order_id: str):
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    if o.get("status") != "planned":
+        raise HTTPException(status_code=400, detail="Sadece planlanan emirler başlatılabilir.")
+    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
+    return {"status": "success", "message": "Üretim başlatıldı."}
+
+@api_router.post("/production/orders/{order_id}/cancel")
+async def cancel_production_order(order_id: str):
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    if o.get("status") == "completed":
+        raise HTTPException(status_code=400, detail="Tamamlanmış emir iptal edilemez.")
+    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "cancelled"}})
+    return {"status": "success", "message": "Üretim emri iptal edildi."}
 
 @api_router.post("/production/orders/{order_id}/complete")
-async def complete_production_order(order_id: str):
+async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
+    req = req or {}
     p_order = await db.production_orders.find_one({"_id": order_id})
     if not p_order:
         raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
-
-    if p_order.get("status") == "completed":
-        return {"status": "info", "message": "Bu üretim emri zaten tamamlanmış."}
-
+    if p_order.get("status") in ("completed", "cancelled"):
+        raise HTTPException(status_code=400, detail="Bu üretim emri zaten kapanmış.")
+    if p_order.get("status") != "in_production":
+        raise HTTPException(status_code=400, detail="Önce üretimi başlatın (Başlat).")
+    planned = float(p_order.get("planned_quantity", 1.0))
+    done_before = float(p_order.get("completed_quantity", 0))
+    qty = float(req.get("quantity") or (planned - done_before))
+    if qty <= 0 or qty > planned - done_before + 1e-9:
+        raise HTTPException(status_code=400, detail=f"Miktar 0 ile {planned - done_before} arasında olmalı.")
     recipe = await db.recipes.find_one({"_id": p_order.get("recipe_id")})
-    planned_qty = p_order.get("planned_quantity", 1.0)
-
+    consumed = []
+    consume_qty = qty + float(req.get("scrap_qty") or 0)
     if recipe:
-        for mat in recipe.get("materials", []):
-            needed_qty = mat.get("quantity", 1.0) * planned_qty
-            await db.products.update_one(
-                {"_id": mat.get("product_id")},
-                {"$inc": {"stock_quantity": -needed_qty}}
-            )
-
-    await db.products.update_one(
-        {"_id": p_order.get("finished_product_id")},
-        {"$inc": {"stock_quantity": planned_qty}}
-    )
-
-    await db.production_orders.update_one(
-        {"_id": order_id},
-        {"$set": {
-            "status": "completed",
-            "completed_quantity": planned_qty,
-            "end_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        }}
-    )
-
-    return {
-        "status": "success",
-        "message": f"{planned_qty} adet '{p_order.get('finished_product_name')}' üretimi tamamlandı! Hammaddeler düşüldü ve mamul stoğu güncellendi."
-    }
+        for row in await _requirements(recipe, consume_qty):
+            await db.products.update_one({"_id": row["product_id"]}, {"$inc": {"stock_quantity": -row["needed"]}})
+            consumed.append({"product_name": row["product_name"], "quantity": row["needed"], "unit": row["unit"]})
+        unit_cost = _recipe_costs(recipe)["unit_cost"]
+        if unit_cost and req.get("update_cost", False):
+            await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$set": {"purchase_price": unit_cost}})
+    await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$inc": {"stock_quantity": qty}})
+    new_done = round(done_before + qty, 3)
+    finished = new_done >= planned - 1e-9
+    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "completed" if finished else "in_production", "completed_quantity": new_done, "end_date": datetime.now(timezone.utc).strftime("%Y-%m-%d") if finished else None, "shortages": []}})
+    return {"status": "success", "finished": finished, "consumed": consumed, "message": f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi." + ("" if finished else f" Kalan: {planned - new_done:g}")}
 
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/employees")

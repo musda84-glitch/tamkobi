@@ -1,16 +1,22 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
 import { ReceiptPrint } from "./ReceiptPrint";
+import { QuoteEditModal } from "./QuoteEditModal";
+import { SurveyDetailModal } from "./SurveyDetailModal";
+import { ContactTermsModal } from "./ContactTermsModal";
+import { InvoiceContextMenu } from "./InvoiceContextMenu";
+import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
+import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
@@ -31,6 +37,28 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const convertQuote = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const convertSurvey = async (sv) => { try { const r = await axios.post(`${API_URL}/surveys/${sv.id}/convert-to-quote`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const [editInv, setEditInv] = useState(null);
+  const [editQuote, setEditQuote] = useState(null);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [invCtx, setInvCtx] = useState(null);
+  const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
+  const [balancePlan, setBalancePlan] = useState(false);
+  const [insts, setInsts] = useState([]);
+  const loadInsts = () => axios.get(`${API_URL}/installments?company_id=${data?.contact?.company_id}&contact_id=${contactId}`).then((r) => setInsts(r.data)).catch(() => {});
+  useEffect(() => { if (data?.contact) loadInsts(); }, [data?.contact?.id]);
+  useEffect(() => { if (tab === "installments" && data?.contact) { loadInsts(); axios.get(`${API_URL}/banking/accounts?company_id=${data.contact.company_id}`).then((r) => setAccounts(r.data)).catch(() => {}); } }, [tab, contactId, data?.contact?.id]);
+  const [surveyDetail, setSurveyDetail] = useState(null);
+  const [editPay, setEditPay] = useState(null);
+  const isLockedTx = (p) => p.source === "bank_sync" || p.source === "partner";
+  const deletePay = async (p) => {
+    if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${p.type === "inflow" ? "tahsilat" : "ödeme"} silinsin mi? Bakiyeler geri alınır.`)) return;
+    try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const savePayEdit = async (e) => {
+    e.preventDefault();
+    try { await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id }); toast.success("Ödeme güncellendi."); setEditPay(null); load(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+  };
+  const openEditPay = async (p) => { try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p }); } catch { toast.error("Hesaplar yüklenemedi."); } };
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -46,7 +74,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [waMsg, setWaMsg] = useState("");
   const [waPhone, setWaPhone] = useState("");
   const saveInvoiceEdit = async () => {
-    try { await axios.put(`${API_URL}/invoices/${editInv.id}`, { e_type: editInv.e_type, due_date: editInv.due_date, notes: editInv.notes, items: editInv.items }); toast.success("Fatura güncellendi."); setEditInv(null); load(); }
+    try { await axios.put(`${API_URL}/invoices/${editInv.id}`, editInv.status === "draft" ? { e_type: editInv.e_type, due_date: editInv.due_date, notes: editInv.notes, items: editInv.items } : { due_date: editInv.due_date, notes: editInv.notes }); toast.success("Fatura güncellendi."); setEditInv(null); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
   const sendWa = async (openLink) => {
@@ -84,8 +112,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={openPay} className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold" data-testid="detail-collect-btn"><Wallet className="w-3.5 h-3.5" /> Tahsilat Yap</button>
-            <button onClick={() => navigate(`/invoices?contact_id=${c.id}`)} className="px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" data-testid="detail-goto-invoices-btn">Fatura Modülü</button>
-            <button onClick={() => navigate(`/orders?customer=${encodeURIComponent(c.name)}`)} className="px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" data-testid="detail-goto-orders-btn">Sipariş Modülü</button>
+            <button onClick={() => setTermsOpen(true)} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" title="Vade günü ve vade farkı uygula" data-testid="detail-terms-btn"><CalendarClock className="w-3.5 h-3.5 text-slate-500" /> Vade Uygula{c.payment_term_days ? <span className="ml-1 text-[10px] bg-slate-900 text-white rounded-full px-1.5">{c.payment_term_days}g</span> : null}</button>
+            <button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="flex items-center gap-1 px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg text-xs font-semibold hover:bg-violet-50 disabled:opacity-40" title="Açık bakiyeyi taksitlendir (Taksitler modülüne bağlı)" data-testid="detail-balance-installments-btn"><Layers className="w-3.5 h-3.5" /> Bakiyeyi Taksitlendir</button>
             <button onClick={() => onMessage?.(c)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold" data-testid="detail-message-btn"><MessageSquare className="w-3.5 h-3.5" /> Mesaj</button>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="close-contact-detail-btn"><X className="w-5 h-5" /></button>
           </div>
@@ -100,7 +128,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         <div className="flex items-center gap-1 px-6 border-b">
           {TABS.map(([k, l, Icon]) => (
             <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
-              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "surveys" ? (data.surveys || []).length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
+              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
             </button>
           ))}
         </div>
@@ -112,25 +140,37 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
                 {data.invoices.map((inv) => (
-                  <tr key={inv.id} data-testid={`detail-inv-${inv.invoice_number}`}>
-                    <td className="py-2 font-mono font-semibold text-slate-900">{inv.status === "draft" ? <button onClick={() => setEditInv({ ...inv })} className="text-emerald-700 hover:underline" title="Taslağı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button> : <button onClick={() => setPrintDoc(inv)} className="hover:underline" data-testid={`detail-inv-open-${inv.invoice_number}`}>{inv.invoice_number}</button>}</td>
+                  <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"}`} title="Sağ tık: fatura kes / yazdır / tahsilat" data-testid={`detail-inv-${inv.invoice_number}`}>
+                    <td className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>
                     <td className="py-2 text-slate-500">{inv.issue_date}</td>
-                    <td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type}</span> <span className="text-slate-400">{inv.e_type === "e_invoice" ? "e-Fatura" : inv.e_type === "e_archive" ? "e-Arşiv" : inv.e_type}</span></td>
+                    <td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>
                     <td className="py-2 text-right font-bold">{fmt(inv.grand_total)} ₺</td>
                     <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>
                     <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>
-                    <td className="py-2 text-right"><button onClick={() => setPrintDoc(inv)} className="inline-flex items-center px-2 py-1 border rounded-md text-[10px] font-semibold mr-1" data-testid={`detail-inv-print-${inv.invoice_number}`}>Yazdır</button>{inv.status === "draft" && <span className="inline-flex items-center gap-1"><select defaultValue={inv.e_type} id={`etype-${inv.id}`} className="bg-white border border-slate-200 rounded-md p-1 text-[10px]" data-testid={`detail-etype-${inv.invoice_number}`}><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select><button onClick={() => sendToGib(inv, document.getElementById(`etype-${inv.id}`).value)} disabled={busy === inv.id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold disabled:opacity-50" data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />} Kes</button></span>}</td>
+                    <td className="py-2 text-right"><button onClick={() => setEditInv({ ...inv })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold mr-1 hover:bg-slate-50" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc(inv)} className="inline-flex items-center px-2 py-1 border rounded-md text-[10px] font-semibold mr-1" data-testid={`detail-inv-print-${inv.invoice_number}`}>Yazdır</button>{inv.status === "draft" && <span className="inline-flex items-center gap-1"><select defaultValue={inv.e_type} id={`etype-${inv.id}`} className="bg-white border border-slate-200 rounded-md p-1 text-[10px]" data-testid={`detail-etype-${inv.invoice_number}`}><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select><button onClick={() => sendToGib(inv, document.getElementById(`etype-${inv.id}`).value)} disabled={busy === inv.id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold disabled:opacity-50" data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />} Kes</button></span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {tab === "installments" && (
+            <div className="space-y-3" data-testid="detail-installments">
+              <div className="flex items-center justify-between text-xs"><span className="text-slate-500">{insts.filter((i) => i.status !== "paid").length} bekleyen • {insts.filter((i) => i.is_overdue).length} vadesi geçen • Kalan <b className="text-slate-900">{fmt(insts.filter((i) => i.status !== "paid").reduce((s, i) => s + i.amount - (i.paid_amount || 0), 0))} ₺</b></span><button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg font-semibold hover:bg-violet-50 disabled:opacity-40" data-testid="detail-inst-new-plan">+ Bakiyeyi Taksitlendir</button></div>
+              {insts.length === 0 && <div className="text-center text-xs text-slate-400 py-8">Bu cariye ait taksit yok. Faturaya sağ tıklayıp "Taksitlendir" veya "Bakiyeyi Taksitlendir" ile plan oluşturun.</div>}
+              {Object.entries(insts.reduce((acc, r) => { const k = r.invoice_id || "bal"; (acc[k] = acc[k] || []).push(r); return acc; }, {})).map(([k, list]) => (
+                <div key={k} className="border border-slate-200 rounded-xl p-3 space-y-2" data-testid={`detail-inst-group-${list[0].invoice_number}`}>
+                  <div className="flex items-center gap-2 text-xs"><span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${list[0].direction === "receivable" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{list[0].direction === "receivable" ? "ALACAK" : "BORÇ"}</span><span className="font-mono font-bold">{list[0].invoice_number}</span><span className="text-slate-400">{list.filter((r) => r.status === "paid").length}/{list[0].total_count} ödendi</span></div>
+                  <InstallmentRows rows={list} accounts={accounts} companyId={c.company_id} onPaid={() => { loadInsts(); load(); }} />
+                </div>
+              ))}
+            </div>
           )}
           {tab === "payments" && (
             <table className="w-full text-left">
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Tarih</th><th className="py-2">Hesap</th><th className="py-2">Açıklama</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.payments.length === 0 && <tr><td colSpan={4} className="py-6 text-center text-slate-400">Ödeme hareketi yok.</td></tr>}
-                {data.payments.map((p) => <tr key={p.id}><td className="py-2 font-mono text-slate-500">{p.date}</td><td className="py-2 font-semibold">{p.account_name}</td><td className="py-2 text-slate-600">{p.category} • {p.description}</td><td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td><td className="py-2 text-right"><button onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz Yazdır</button></td></tr>)}
+                {data.payments.map((p) => <tr key={p.id} data-testid={`detail-pay-${p.id}`}><td className="py-2 font-mono text-slate-500">{p.date}</td><td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title="Banka entegrasyonu / ortaklar hesabından geldi — düzenlenemez"><Lock className="w-2.5 h-2.5" /> {p.source === "partner" ? "Ortak" : "Banka"}</span>}</td><td className="py-2 text-slate-600">{p.category} • {p.description}</td><td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>{!isLockedTx(p) && <><button onClick={() => openEditPay(p)} className="p-1 border rounded-md text-slate-600 hover:bg-slate-50" title="Düzenle" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /></button><button onClick={() => deletePay(p)} className="p-1 border border-rose-200 rounded-md text-rose-600 hover:bg-rose-50" title="Sil" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /></button></>}</div></td></tr>)}
               </tbody>
             </table>
           )}
@@ -139,7 +179,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Sipariş</th><th className="py-2">Kanal</th><th className="py-2">Durum</th><th className="py-2">Kargo</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.orders.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Sipariş yok.</td></tr>}
-                {data.orders.map((o) => <tr key={o.id}><td className="py-2 font-mono font-semibold">{o.order_number}</td><td className="py-2 uppercase text-slate-500">{o.channel}</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold">{o.order_status}</span></td><td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td><td className="py-2 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button><button onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button></div></td></tr>)}
+                {data.orders.map((o) => <tr key={o.id}><td className="py-2 font-mono font-semibold">{o.order_number}</td><td className="py-2 text-slate-500">{channelTr(o.channel)}</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold">{statusTr(o.order_status)}</span></td><td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td><td className="py-2 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button><button onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button></div></td></tr>)}
               </tbody>
             </table>
           )}
@@ -148,7 +188,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Teklif</th><th className="py-2">Başlık</th><th className="py-2">Tarih</th><th className="py-2 text-right">Tutar</th><th className="py-2">Durum</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {(data.quotes || []).length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Teklif yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Teklif oluştur</button></td></tr>}
-                {(data.quotes || []).map((q) => <tr key={q.id} data-testid={`detail-quote-${q.quote_number}`}><td className="py-2 font-mono font-semibold">{q.quote_number}</td><td className="py-2">{q.title}</td><td className="py-2 text-slate-500">{q.issue_date}</td><td className="py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{q.status}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setPrintDoc({ ...q, _docType: "quote" })} className="px-2 py-1 border rounded-md text-[10px] font-semibold">Yazdır</button>{!q.invoice_id && <button onClick={() => convertQuote(q)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-convert-${q.quote_number}`}>Faturaya Çevir</button>}</div></td></tr>)}
+                {(data.quotes || []).map((q) => <tr key={q.id} data-testid={`detail-quote-${q.quote_number}`}><td className="py-2 font-mono font-semibold"><button onClick={() => setEditQuote(q)} className="hover:underline text-emerald-700" data-testid={`detail-quote-open-${q.quote_number}`}>{q.quote_number}</button></td><td className="py-2">{q.title}</td><td className="py-2 text-slate-500">{q.issue_date}</td><td className="py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td><td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${q.status === "accepted" ? "bg-emerald-50 text-emerald-700" : q.status === "rejected" ? "bg-rose-50 text-rose-700" : q.status === "sent" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{statusTr(q.status)}{q.approval?.status === "pending" && q.status === "sent" ? " • Onay bekliyor" : ""}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setEditQuote(q)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-quote-edit-${q.quote_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc({ ...q, _docType: "quote" })} className="px-2 py-1 border rounded-md text-[10px] font-semibold">Yazdır</button>{!q.invoice_id && <button onClick={() => convertQuote(q)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-convert-${q.quote_number}`}>Faturaya Çevir</button>}</div></td></tr>)}
               </tbody>
             </table>
           )}
@@ -157,7 +197,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Keşif</th><th className="py-2">Tarih</th><th className="py-2">Adres</th><th className="py-2">Durum</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {(data.surveys || []).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Keşif yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Keşif planla</button></td></tr>}
-                {(data.surveys || []).map((sv) => <tr key={sv.id} data-testid={`detail-survey-${sv.survey_number}`}><td className="py-2 font-mono font-semibold">{sv.survey_number}</td><td className="py-2 text-slate-500">{sv.survey_date}</td><td className="py-2">{sv.address} {sv.location_url && <a href={sv.location_url} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold">• Konum</a>}</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{sv.status}</span></td><td className="py-2 text-right">{!sv.quote_id && <button onClick={() => convertSurvey(sv)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold">Teklife Çevir</button>}</td></tr>)}
+                {(data.surveys || []).map((sv) => <tr key={sv.id} data-testid={`detail-survey-${sv.survey_number}`}><td className="py-2 font-mono font-semibold"><button onClick={() => setSurveyDetail(sv)} className="hover:underline" data-testid={`detail-survey-open-${sv.survey_number}`}>{sv.survey_number}</button></td><td className="py-2 text-slate-500">{sv.survey_date}</td><td className="py-2">{sv.address} {sv.location_url && <a href={sv.location_url} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold">• Konum</a>}</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold">{statusTr(sv.status)}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setSurveyDetail(sv)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-survey-view-${sv.survey_number}`}><Eye className="w-3 h-3" /> Detay</button>{!sv.quote_id && <button onClick={() => convertSurvey(sv)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold">Teklife Çevir</button>}</div></td></tr>)}
               </tbody>
             </table>
           )}
@@ -169,7 +209,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <div className="flex justify-end gap-2"><button onClick={() => sendWa(false)} className="px-3 py-1.5 border rounded-lg font-semibold" data-testid="detail-wa-log-btn">Görüşme Kaydet</button><button onClick={() => sendWa(true)} className="px-3 py-1.5 bg-green-600 text-white rounded-lg font-semibold" data-testid="detail-wa-send-btn">WhatsApp'ta Gönder</button></div>
               </div>
               {data.communications.filter((m) => m.channel === "whatsapp").length === 0 && <div className="py-4 text-center text-slate-400">WhatsApp görüşmesi yok.</div>}
-              {data.communications.filter((m) => m.channel === "whatsapp").map((m) => <div key={m.id} className={`max-w-[80%] rounded-2xl px-3 py-2 ${m.direction === "inbound" ? "bg-slate-100 mr-auto" : "bg-green-100 ml-auto"}`} data-testid={`detail-wa-msg-${m.id}`}><p className="text-slate-800">{m.message}</p><div className="text-[10px] text-slate-400 text-right">{new Date(m.created_at).toLocaleString("tr-TR")} • {m.status}</div></div>)}
+              {data.communications.filter((m) => m.channel === "whatsapp").map((m) => <div key={m.id} className={`max-w-[80%] rounded-2xl px-3 py-2 ${m.direction === "inbound" ? "bg-slate-100 mr-auto" : "bg-green-100 ml-auto"}`} data-testid={`detail-wa-msg-${m.id}`}><p className="text-slate-800">{m.message}</p><div className="text-[10px] text-slate-400 text-right">{new Date(m.created_at).toLocaleString("tr-TR")} • {statusTr(m.status)}</div></div>)}
             </div>
           )}
           {tab === "comm" && (
@@ -178,7 +218,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {data.communications.map((m) => (
                 <div key={m.id} className="border border-slate-200 rounded-xl p-3 flex gap-3">
                   <div className={`p-1.5 rounded-lg h-fit ${m.channel === "sms" ? "bg-indigo-50 text-indigo-600" : m.channel === "whatsapp" ? "bg-green-50 text-green-600" : "bg-emerald-50 text-emerald-600"}`}>{m.channel === "sms" ? <MessageSquare className="w-4 h-4" /> : m.channel === "whatsapp" ? <Phone className="w-4 h-4" /> : <Mail className="w-4 h-4" />}</div>
-                  <div className="flex-1"><div className="flex justify-between"><b>{m.channel === "sms" ? `SMS → ${m.to}` : m.channel === "whatsapp" ? `WhatsApp ${m.direction === "inbound" ? "← " : "→ "}${m.to}` : m.subject}</b><span className="text-slate-400">{new Date(m.created_at).toLocaleString("tr-TR")}</span></div><p className="text-slate-600 mt-1">{m.message || m.body}</p><span className={`text-[10px] font-semibold ${m.status === "failed" ? "text-rose-600" : "text-emerald-600"}`}>{m.status}</span></div>
+                  <div className="flex-1"><div className="flex justify-between"><b>{m.channel === "sms" ? `SMS → ${m.to}` : m.channel === "whatsapp" ? `WhatsApp ${m.direction === "inbound" ? "← " : "→ "}${m.to}` : m.subject}</b><span className="text-slate-400">{new Date(m.created_at).toLocaleString("tr-TR")}</span></div><p className="text-slate-600 mt-1">{m.message || m.body}</p><span className={`text-[10px] font-semibold ${m.status === "failed" ? "text-rose-600" : "text-emerald-600"}`}>{statusTr(m.status)}</span></div>
                 </div>
               ))}
             </div>
@@ -187,6 +227,23 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} />
+        {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
+        {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
+        {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}
+        {surveyDetail && <SurveyDetailModal survey={surveyDetail} onClose={() => setSurveyDetail(null)} onChanged={load} />}
+        {editPay && (
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditPay(null)}>
+            <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.type === "inflow" ? "Tahsilat" : "Ödeme"} Düzenle</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div><label className="block font-semibold mb-1">Tarih</label><input type="date" value={editPay.date} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
+              <div><label className="block font-semibold mb-1">Kasa / Banka</label><select value={editPay.account_id} onChange={(e) => setEditPay({ ...editPay, account_id: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-account">{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}</select></div>
+              <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="0.01" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
+              <div><label className="block font-semibold mb-1">Açıklama</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
+              <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setEditPay(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pay-edit-save">Kaydet</button></div>
+            </form>
+          </div>
+        )}
         {payForm && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPayForm(null)}>
             <form onSubmit={savePay} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal">
@@ -202,15 +259,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {editInv && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditInv(null)}>
             <div className="bg-white rounded-2xl max-w-2xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
-              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Taslak Fatura Düzenle — {editInv.invoice_number}</h3><button onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3><button onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              {editInv.status !== "draft" && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex items-center gap-1" data-testid="edit-inv-locked-note"><Lock className="w-3 h-3" /> Kesilmiş fatura: kalemler ve belge türü değiştirilemez; yalnızca vade ve not düzenlenebilir.</div>}
               <div className="grid grid-cols-3 gap-2">
-                <div><label className="block font-semibold mb-1">Belge Türü</label><select value={editInv.e_type} onChange={(e) => setEditInv({ ...editInv, e_type: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="edit-inv-etype"><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select></div>
+                <div><label className="block font-semibold mb-1">Belge Türü</label><select disabled={editInv.status !== "draft"} value={editInv.e_type} onChange={(e) => setEditInv({ ...editInv, e_type: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="edit-inv-etype"><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select></div>
                 <div><label className="block font-semibold mb-1">Vade</label><input type="date" value={editInv.due_date || ""} onChange={(e) => setEditInv({ ...editInv, due_date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
                 <div><label className="block font-semibold mb-1">Not</label><input value={editInv.notes || ""} onChange={(e) => setEditInv({ ...editInv, notes: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
               </div>
               <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Kalem</th><th className="py-1 w-20">Miktar</th><th className="py-1 w-28">Birim Fiyat</th><th className="py-1 w-16">KDV</th><th className="py-1 text-right">Tutar</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">{editInv.items.map((it, i) => { const upd = (k, v) => { const items = editInv.items.map((x, idx) => idx === i ? { ...x, [k]: v } : x); items[i].total = Number(items[i].quantity || 0) * Number(items[i].unit_price || 0) * (1 - Number(items[i].discount_rate || 0) / 100); setEditInv({ ...editInv, items }); }; return (
-                  <tr key={i}><td className="py-1"><input value={it.name} onChange={(e) => upd("name", e.target.value)} className="w-full bg-slate-50 border rounded p-1" data-testid={`edit-inv-item-name-${i}`} /></td><td className="py-1"><input type="number" value={it.quantity} onChange={(e) => upd("quantity", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-center" data-testid={`edit-inv-item-qty-${i}`} /></td><td className="py-1"><input type="number" value={it.unit_price} onChange={(e) => upd("unit_price", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-right" /></td><td className="py-1"><select value={it.vat_rate ?? 20} onChange={(e) => upd("vat_rate", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></td><td className="py-1 text-right font-bold">{fmt(it.total)} ₺</td></tr>); })}</tbody></table>
+                  <tr key={i}><td className="py-1"><input disabled={editInv.status !== "draft"} value={it.name} onChange={(e) => upd("name", e.target.value)} className="w-full bg-slate-50 border rounded p-1 disabled:opacity-60" data-testid={`edit-inv-item-name-${i}`} /></td><td className="py-1"><input disabled={editInv.status !== "draft"} type="number" value={it.quantity} onChange={(e) => upd("quantity", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-center disabled:opacity-60" data-testid={`edit-inv-item-qty-${i}`} /></td><td className="py-1"><input disabled={editInv.status !== "draft"} type="number" value={it.unit_price} onChange={(e) => upd("unit_price", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-right disabled:opacity-60" /></td><td className="py-1"><select disabled={editInv.status !== "draft"} value={it.vat_rate ?? 20} onChange={(e) => upd("vat_rate", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 disabled:opacity-60">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></td><td className="py-1 text-right font-bold">{fmt(it.total)} ₺</td></tr>); })}</tbody></table>
               <div className="flex justify-between items-center border-t pt-2"><span className="font-bold">Genel Toplam: {fmt(editInv.items.reduce((s, it) => s + Number(it.total || 0) * (1 + Number(it.vat_rate ?? 20) / 100), 0))} ₺</span><div className="flex gap-2"><button onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button></div></div>
             </div>
           </div>
@@ -218,7 +276,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {orderDetail && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setOrderDetail(null)}>
             <div className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
-              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {orderDetail.channel?.toUpperCase()} • <b>{orderDetail.order_status}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{statusTr(orderDetail.order_status)}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
               {orderDetail.cargo_tracking_number && <div className="text-slate-600"><b>Kargo:</b> {orderDetail.cargo_carrier} • <span className="font-mono">{orderDetail.cargo_tracking_number}</span></div>}
               <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Ürün</th><th className="py-1 text-right">Adet</th><th className="py-1 text-right">Birim</th><th className="py-1 text-right">Toplam</th></tr></thead>

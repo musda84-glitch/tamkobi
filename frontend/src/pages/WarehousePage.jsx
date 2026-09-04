@@ -3,6 +3,7 @@ import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { StockCountPanel } from "../components/StockCountPanel";
 import {
   Building2,
   ArrowRightLeft,
@@ -19,6 +20,7 @@ import {
 export default function WarehousePage() {
   const { activeCompany } = useAuth();
   const [warehouses, setWarehouses] = useState([]);
+  const [showCount, setShowCount] = useState(false);
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get("tab") || "warehouses");
   const [transfers, setTransfers] = useState([]);
@@ -122,6 +124,9 @@ export default function WarehousePage() {
           <p className="text-xs sm:text-sm text-slate-500">Çoklu Depo / Şube Yönetimi, Stok Transferi ve Sevk İrsaliyeleri</p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button onClick={() => setShowCount(!showCount)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition ${showCount ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"}`} data-testid="toggle-stock-count-btn">
+            <span>Gelişmiş Stok Sayımı</span>
+          </button>
           <button
             onClick={() => setShowTransferModal(true)}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-indigo-600/20 transition"
@@ -140,6 +145,7 @@ export default function WarehousePage() {
           </button>
         </div>
       </div>
+      {showCount && <div data-testid="warehouse-stock-count"><StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={warehouses} /></div>}
 
       <div className="flex items-center gap-1 border-b border-slate-200">
         {[["warehouses", "Depolar & Transferler", Building2], ["count", "Stok Sayımı (Stoklar sayfasına taşındı)", ClipboardList]].map(([k, l, Icon]) => (

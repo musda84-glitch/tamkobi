@@ -28,7 +28,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         <F label="Barkod (EAN-13)"><div className="flex gap-1"><input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-barcode-input" /><button type="button" onClick={genBarcode} className="px-2 border rounded-lg hover:bg-slate-50" title="Yeni barkod üret" data-testid="regen-barcode-btn"><RefreshCw className="w-3.5 h-3.5" /></button></div></F>
       </div>
       <div className="grid grid-cols-3 gap-2">
-        <F label="Kategori"><input value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} /></F>
+        <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
         <F label="Birim"><select value={f.unit} onChange={(e) => set("unit", e.target.value)} className={inputCls}>{["Adet", "Kg", "Metre", "Litre", "Paket", "Koli"].map((u) => <option key={u}>{u}</option>)}</select></F>
       </div>

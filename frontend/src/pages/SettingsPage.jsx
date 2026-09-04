@@ -113,21 +113,31 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6" data-testid="settings-page">
       <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>
-      <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`settings-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>)}</div>
-      {tab === "company" && <CompanyForm companyId={companyId} />}
-      {tab === "print" && <PrintSettings companyId={companyId} />}
-      {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
-      {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}
-      {tab === "mail" && <MailClient companyId={companyId} />}
-      {tab === "bank" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} />}
-      {tab === "channels" && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
-          <a href="/ecommerce" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-ecommerce"><ShoppingCart className="w-6 h-6 text-orange-500" /><div><div className="text-sm font-bold">E-Ticaret Entegrasyonları</div><div className="text-xs text-slate-500">Trendyol, Hepsiburada, N11… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
-          <a href="/cargo" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-cargo"><Truck className="w-6 h-6 text-blue-500" /><div><div className="text-sm font-bold">Kargo Entegrasyonları</div><div className="text-xs text-slate-500">Yurtiçi, Aras, MNG, Sürat… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
+          {TABS.map(([k, l, Icon]) => (
+            <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
+              <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
+            </button>
+          ))}
+        </nav>
+        <div className="flex-1 min-w-0 space-y-6">
+          {tab === "company" && <CompanyForm companyId={companyId} />}
+          {tab === "print" && <PrintSettings companyId={companyId} />}
+          {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
+          {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}
+          {tab === "mail" && <MailClient companyId={companyId} />}
+          {tab === "bank" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} />}
+          {tab === "channels" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
+              <a href="/ecommerce" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-ecommerce"><ShoppingCart className="w-6 h-6 text-orange-500" /><div><div className="text-sm font-bold">E-Ticaret Entegrasyonları</div><div className="text-xs text-slate-500">Trendyol, Hepsiburada, N11… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
+              <a href="/cargo" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-cargo"><Truck className="w-6 h-6 text-blue-500" /><div><div className="text-sm font-bold">Kargo Entegrasyonları</div><div className="text-xs text-slate-500">Yurtiçi, Aras, MNG, Sürat… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
+            </div>
+          )}
+          {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
+          {tab === "modules" && <ModuleOrder />}
         </div>
-      )}
-      {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
-      {tab === "modules" && <ModuleOrder />}
+      </div>
     </div>
   );
 }

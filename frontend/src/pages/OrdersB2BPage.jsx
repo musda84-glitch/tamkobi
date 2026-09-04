@@ -24,6 +24,8 @@ import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument"
 import { useSearchParams } from "react-router-dom";
 import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon } from "lucide-react";
 import { CargoLabel } from "../components/CargoLabel";
+import { ApproveOrderModal } from "../components/ApproveOrderModal";
+import { channelTr } from "../utils/labels";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -34,8 +36,9 @@ export default function OrdersB2BPage() {
   const [labelOrder, setLabelOrder] = useState(null);
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
+  const [approveOrder, setApproveOrder] = useState(null);
   const [returnReason, setReturnReason] = useState("");
-  const approve = async (ord) => { try { const carrier = window.prompt("Kargo firması seçin (yurtici / aras / mng / surat / ptt / trendyol_express / hepsijet):", ord.cargo_carrier || "yurtici"); if (carrier === null) return; await axios.post(`${API_URL}/orders/${ord.id}/approve`, { cargo_carrier: carrier }); toast.success("Sipariş onaylandı."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
+  const approve = (ord) => setApproveOrder(ord);
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
   const [editTpl, setEditTpl] = useState(false);
@@ -173,6 +176,7 @@ export default function OrdersB2BPage() {
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
+      {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
           <h3 className="text-sm font-bold">İade — {returnOrder.order_number}</h3><p className="text-slate-500">Tüm kalemler iade alınır, stok geri eklenir ve iade kaydı oluşturulur.</p>
@@ -246,7 +250,7 @@ export default function OrdersB2BPage() {
                     <td className="px-4 py-3 font-medium">
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded">
-                        {ord.channel}
+                        {channelTr(ord.channel)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -299,7 +303,7 @@ export default function OrdersB2BPage() {
 
                         {!ord.cargo_tracking_number ? (
                           <button
-                            onClick={() => handleCreateCargoForOrder(ord)}
+                            onClick={() => setApproveOrder(ord)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"
                             title="Kargo Fişi Oluştur"
                             data-testid={`create-cargo-btn-${ord.order_number}`}

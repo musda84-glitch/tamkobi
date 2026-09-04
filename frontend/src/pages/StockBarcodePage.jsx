@@ -21,6 +21,8 @@ import {
   ClipboardList
 } from "lucide-react";
 import { StockCountPanel } from "../components/StockCountPanel";
+import { ProductionOrderModal } from "../components/ProductionOrderModal";
+import { Factory } from "lucide-react";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -33,6 +35,8 @@ export default function StockBarcodePage() {
   const [products, setProducts] = useState([]);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [categories, setCategories] = useState([]);
+  const loadCategories = () => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {});
   const [loading, setLoading] = useState(true);
 
   // Modals & Scanner state
@@ -42,6 +46,7 @@ export default function StockBarcodePage() {
   const [scannedBarcode, setScannedBarcode] = useState("");
   const [scanResultProduct, setScanResultProduct] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
+  const [produceProduct, setProduceProduct] = useState(null);
   const [detailTab, setDetailTab] = useState("images");
   const [withVariants, setWithVariants] = useState(false);
 
@@ -88,7 +93,8 @@ export default function StockBarcodePage() {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&category=${filterCategory}`);
+      const res = await axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&category=${encodeURIComponent(filterCategory)}`);
+      loadCategories();
       setProducts(res.data);
     } catch (err) {
       toast.error("Ürünler yüklenemedi.");
@@ -204,22 +210,16 @@ export default function StockBarcodePage() {
           <button key={k} onClick={() => setPageTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${pageTab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`stock-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
+      <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
+      {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div className="flex items-center gap-2 text-xs overflow-x-auto">
-          {["all", "Elektronik", "Bilgisayar & Aksesuar", "Aksesuar", "Elektronik Komponent"].map(cat => (
-            <button
-              key={cat}
-              onClick={() => setFilterCategory(cat)}
-              className={`px-3 py-1.5 rounded-lg font-medium transition ${
-                filterCategory === cat ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-              }`}
-              data-testid={`stock-filter-${cat}`}
-            >
-              {cat === 'all' ? 'Tüm Kategoriler' : cat}
-            </button>
+          <button onClick={() => setFilterCategory("all")} className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap ${filterCategory === "all" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid="stock-filter-all">Tüm Kategoriler</button>
+          {categories.map((c) => (
+            <button key={c.name} onClick={() => setFilterCategory(c.name)} className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap ${filterCategory === c.name ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`stock-filter-${c.name}`}>{c.name} <span className={filterCategory === c.name ? "text-slate-300" : "text-slate-400"}>({c.count})</span></button>
           ))}
         </div>
 
@@ -330,6 +330,11 @@ export default function StockBarcodePage() {
                         >
                           <Layers className="w-4 h-4" />
                         </button>
+                        {prod.type !== "service" && prod.type !== "raw_material" && (
+                          <button onClick={() => setProduceProduct(prod)} className={`p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
+                            <Factory className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => setPrintBarcodeProduct(prod)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -555,6 +560,7 @@ export default function StockBarcodePage() {
                   <label className="block font-semibold text-slate-700 mb-1">Kategori</label>
                   <input
                     type="text"
+                    list="product-categories-list"
                     value={newProduct.category}
                     onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"

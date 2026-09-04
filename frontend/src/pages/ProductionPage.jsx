@@ -1,290 +1,109 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
-import {
-  Factory,
-  Plus,
-  Play,
-  CheckCircle2,
-  Clock,
-  Layers,
-  Sparkles,
-  AlertCircle,
-  X,
-  FileSpreadsheet
-} from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, AlertTriangle, Clock, Package, MonitorPlay } from "lucide-react";
+import { API_URL, useAuth } from "../context/AuthContext";
+import { RecipeModal } from "../components/RecipeModal";
+import { ProductionOrderModal } from "../components/ProductionOrderModal";
+
+const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
 
 export default function ProductionPage() {
   const { activeCompany } = useAuth();
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [wos, setWos] = useState([]);
+  const tab = params.get("tab") || "orders";
   const [recipes, setRecipes] = useState([]);
-  const [productionOrders, setProductionOrders] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [recipeModal, setRecipeModal] = useState(null);
+  const [orderModal, setOrderModal] = useState(false);
+  const [completeQty, setCompleteQty] = useState({});
+  const [filter, setFilter] = useState("open");
 
-  // Modals
-  const [showRecipeModal, setShowRecipeModal] = useState(false);
-  const [showOrderModal, setShowOrderModal] = useState(false);
-
-  // New Production Order Form
-  const [orderForm, setOrderForm] = useState({
-    recipe_id: "",
-    planned_quantity: 10,
-    target_warehouse_id: "wh_main"
-  });
-
-  useEffect(() => {
-    loadProductionData();
-  }, [activeCompany]);
-
-  const loadProductionData = async () => {
+  const load = async () => {
     try {
-      setLoading(true);
-      const [recRes, ordRes, prodRes] = await Promise.all([
-        axios.get(`${API_URL}/production/recipes?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/production/orders?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
-      ]);
-      setRecipes(recRes.data);
-      setProductionOrders(ordRes.data);
-      setProducts(prodRes.data);
-      if (recRes.data.length > 0) {
-        setOrderForm(prev => ({ ...prev, recipe_id: recRes.data[0].id || recRes.data[0]._id }));
-      }
-    } catch (err) {
-      toast.error("Üretim verileri yüklenemedi.");
-    } finally {
-      setLoading(false);
-    }
+      const [r, o, p, w] = await Promise.all([axios.get(`${API_URL}/production/recipes?company_id=${companyId}`), axios.get(`${API_URL}/production/orders?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders?company_id=${companyId}`)]);
+      setRecipes(r.data); setOrders(o.data); setProducts(p.data); setWos(w.data);
+    } catch { toast.error("Üretim verileri yüklenemedi."); }
   };
+  useEffect(() => { load(); }, [companyId]);
+  useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products]);
 
-  const handleCreateProductionOrder = async (e) => {
-    e.preventDefault();
-    const r = recipes.find(rec => (rec.id === orderForm.recipe_id || rec._id === orderForm.recipe_id));
-    if (!r) {
-      toast.error("Lütfen bir reçete seçin.");
-      return;
-    }
-    try {
-      await axios.post(`${API_URL}/production/orders`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
-        recipe_id: r.id || r._id,
-        recipe_name: r.name,
-        finished_product_id: r.finished_product_id,
-        finished_product_name: r.finished_product_name,
-        planned_quantity: Number(orderForm.planned_quantity),
-        target_warehouse_id: orderForm.target_warehouse_id,
-        total_cost: (r.total_estimated_cost || 0) * Number(orderForm.planned_quantity),
-        status: "in_production"
-      });
-      toast.success("Üretim emri açıldı ve üretime başlandı.");
-      setShowOrderModal(false);
-      loadProductionData();
-    } catch (err) {
-      toast.error("Üretim emri oluşturulamadı.");
-    }
-  };
-
-  const handleCompleteOrder = async (orderId) => {
-    try {
-      const res = await axios.post(`${API_URL}/production/orders/${orderId}/complete`);
-      toast.success(res.data.message);
-      loadProductionData();
-    } catch (err) {
-      toast.error("Üretim tamamlanamadı.");
-    }
-  };
+  const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const visible = orders.filter((o) => filter === "all" ? true : filter === "open" ? ["planned", "in_production"].includes(o.status) : o.status === filter);
+  const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
+  const kpi = [["Açık Emir", orders.filter((o) => ["planned", "in_production"].includes(o.status)).length, "text-amber-600"], ["Üretimde", orders.filter((o) => o.status === "in_production").length, "text-blue-600"], ["Bu Ay Tamamlanan", orders.filter((o) => o.status === "completed" && (o.end_date || "").startsWith(new Date().toISOString().slice(0, 7))).length, "text-emerald-600"], ["Reçete", recipes.length, "text-slate-700"]];
 
   return (
     <div className="space-y-6" data-testid="production-page">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Üretim & Reçete (BOM) Yönetimi</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Ürün Reçeteleri, Hammadde Maliyetleri ve Otomatik Stok Giriş/Çıkış Emirleri</p>
-        </div>
-        <button
-          onClick={() => setShowOrderModal(true)}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition self-start sm:self-auto"
-          data-testid="start-production-order-btn"
-        >
-          <Play className="w-4 h-4" />
-          <span>Yeni Üretim Emri Aç</span>
-        </button>
-      </div>
-
-      {/* Recipes Cards */}
-      <div className="space-y-3">
-        <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-          <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
-          <span>Tanımlı Üretim Reçeteleri (BOM)</span>
-        </h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {recipes.map((rec) => (
-            <div
-              key={rec.id || rec._id}
-              className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3"
-              data-testid={`recipe-card-${rec.code}`}
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
-                    {rec.code}
-                  </span>
-                  <h3 className="font-bold text-slate-900 text-sm mt-1">{rec.name}</h3>
-                  <div className="text-xs text-slate-500 font-semibold mt-0.5">
-                    Mamul: <span className="text-slate-900">{rec.finished_product_name}</span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-400 font-semibold uppercase">Birim Maliyet</div>
-                  <div className="text-base font-bold text-emerald-600">{rec.total_estimated_cost?.toLocaleString('tr-TR')} ₺</div>
-                </div>
-              </div>
-
-              {/* Recipe items */}
-              <div className="space-y-1 pt-2 border-t border-slate-100 text-xs">
-                <span className="font-semibold text-slate-700 text-[11px]">Kullanılan Hammaddeler:</span>
-                {rec.materials?.map((m, idx) => (
-                  <div key={idx} className="flex justify-between text-slate-600">
-                    <span>• {m.product_name}</span>
-                    <span className="font-mono">{m.quantity} {m.unit} x {m.cost_per_unit} ₺</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Üretim & Reçeteler</h1><p className="text-xs sm:text-sm text-slate-500">Reçete (ürün ağacı) tanımla → üretim emri ver → hammadde düşsün, mamul stoğa girsin</p></div>
+        <div className="flex gap-2">
+          <button onClick={() => navigate("/atolye")} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="goto-shopfloor-btn"><MonitorPlay className="w-4 h-4" /> Üretim Ekranı</button>
+          <button onClick={() => setRecipeModal({})} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="new-recipe-btn"><BookOpen className="w-4 h-4" /> Yeni Reçete</button>
+          <button onClick={() => setOrderModal(true)} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700" data-testid="new-production-order-btn"><Plus className="w-4 h-4" /> Üretim Emri Ver</button>
         </div>
       </div>
-
-      {/* Production Orders Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5">
-        <div className="flex items-center justify-between border-b pb-3">
-          <div className="flex items-center gap-2">
-            <Factory className="w-4 h-4 text-emerald-600" />
-            <h2 className="text-base font-bold text-slate-900">Aktif & Geçmiş Üretim Emirleri</h2>
-          </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{kpi.map(([l, v, c]) => <div key={l} className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={`prod-kpi-${l}`}><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-2xl font-bold ${c}`}>{v}</div></div>)}</div>
+      {lowStockWithRecipe.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs flex flex-wrap items-center gap-2" data-testid="low-stock-recipe-alert">
+          <AlertTriangle className="w-4 h-4 text-amber-600" /><span className="font-semibold text-amber-800">Stoğu azalan reçeteli ürünler:</span>
+          {lowStockWithRecipe.map((p) => <button key={p.id} onClick={() => setOrderModal(p)} className="px-2 py-1 bg-white border border-amber-300 rounded-lg font-semibold text-amber-900 hover:bg-amber-100" data-testid={`low-stock-produce-${p.id}`}>{p.name} ({p.stock_quantity} {p.unit}) → Üret</button>)}
         </div>
+      )}
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        {[["orders", "Üretim Emirleri", Factory, orders.length], ["recipes", "Reçeteler", BookOpen, recipes.length]].map(([k, l, Icon, n]) => <button key={k} onClick={() => setParams({ tab: k })} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`production-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
+        {tab === "orders" && <div className="ml-auto flex gap-1 text-[11px]">{[["open", "Açık"], ["completed", "Tamamlanan"], ["cancelled", "İptal"], ["all", "Tümü"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-2 py-1 rounded-lg font-semibold ${filter === k ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`} data-testid={`po-filter-${k}`}>{l}</button>)}</div>}
+      </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
-              <tr>
-                <th className="px-4 py-2.5">Emir No & Tarih</th>
-                <th className="px-4 py-2.5">Üretilen Mamul</th>
-                <th className="px-4 py-2.5 text-center">Planlanan Miktar</th>
-                <th className="px-4 py-2.5 text-right">Toplam Maliyet</th>
-                <th className="px-4 py-2.5">Üretim Durumu</th>
-                <th className="px-4 py-2.5 text-center">İşlem</th>
-              </tr>
-            </thead>
+      {tab === "orders" && (
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+          <table className="w-full text-xs text-left">
+            <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="px-4 py-2">Emir</th><th className="px-4 py-2">Ürün</th><th className="px-4 py-2 text-right">Plan / Üretilen</th><th className="px-4 py-2">Tarih</th><th className="px-4 py-2 text-right">Maliyet</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2 text-right">İşlem</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {productionOrders.map((ord) => (
-                <tr key={ord.id || ord._id} className="hover:bg-slate-50/70 transition" data-testid={`prod-order-row-${ord.order_code}`}>
-                  <td className="px-4 py-2.5">
-                    <div className="font-bold text-slate-900 font-mono">{ord.order_code}</div>
-                    <div className="text-slate-400 text-[11px]">{ord.start_date}</div>
+              {visible.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Üretim emri yok.</td></tr>}
+              {visible.map((o) => { const [l, c, Icon] = STATUS[o.status] || STATUS.planned; const remaining = o.planned_quantity - (o.completed_quantity || 0); return (
+                <tr key={o.id} data-testid={`po-row-${o.order_code}`}>
+                  <td className="px-4 py-2 font-mono font-semibold text-slate-900">{o.order_code}{o.source === "stock_card" && <div className="text-[9px] text-slate-400 font-sans">Stok kartından</div>}{o.notes && <div className="text-[10px] text-slate-400 font-sans truncate max-w-[160px]">{o.notes}</div>}</td>
+                  <td className="px-4 py-2"><div className="font-semibold">{o.finished_product_name}</div><div className="text-[10px] text-slate-400">{o.recipe_name}</div>{o.shortages?.length > 0 && o.status !== "completed" && <div className="text-[10px] text-rose-600 font-semibold flex items-center gap-0.5"><AlertTriangle className="w-3 h-3" /> {o.shortages.length} hammadde eksik</div>}</td>
+                  <td className="px-4 py-2 text-right font-bold">{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span>{(() => { const ws = wos.filter((w) => w.order_id === o.id); if (!ws.length) return null; const d = ws.filter((w) => w.status === "done").length; const cur = ws.find((w) => ["in_progress", "paused", "ready"].includes(w.status)); return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {d}/{ws.length}{cur ? ` • ${cur.step_name}${cur.operator_name ? " (" + cur.operator_name + ")" : ""}` : ""}</div>; })()}</td>
+                  <td className="px-4 py-2 text-slate-500">{o.planned_date || o.start_date}{o.end_date && <div className="text-[10px] text-emerald-600">Bitti: {o.end_date}</div>}</td>
+                  <td className="px-4 py-2 text-right">{fmt(o.total_cost)} ₺</td>
+                  <td className="px-4 py-2"><span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}><Icon className="w-3 h-3" /> {l}</span></td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="flex justify-end items-center gap-1">
+                      {o.status === "planned" && <button onClick={() => act(o.id, "start")} className="px-2 py-1 bg-amber-500 text-white rounded-md font-semibold" data-testid={`po-start-${o.order_code}`}>Başlat</button>}
+                      {o.status === "in_production" && <><input type="number" min="0.001" step="any" value={completeQty[o.id] ?? remaining} onChange={(e) => setCompleteQty({ ...completeQty, [o.id]: e.target.value })} className="w-16 bg-slate-50 border rounded p-1 text-right" title="Tamamlanan miktar" data-testid={`po-complete-qty-${o.order_code}`} /><button onClick={() => act(o.id, "complete", { quantity: Number(completeQty[o.id] ?? remaining), update_cost: true })} className="px-2 py-1 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`po-complete-${o.order_code}`}>Tamamla</button></>}
+                      {o.status === "planned" && <button onClick={async () => { if (!window.confirm("Üretim emri silinsin mi?")) return; try { await axios.delete(`${API_URL}/production/orders/${o.id}`); toast.success("Silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md" title="Sil" data-testid={`po-delete-${o.order_code}`}><Trash2 className="w-4 h-4" /></button>}
+                      {["planned", "in_production"].includes(o.status) && <button onClick={() => act(o.id, "cancel")} className="p-1 text-rose-500 hover:bg-rose-50 rounded-md" title="İptal" data-testid={`po-cancel-${o.order_code}`}><XCircle className="w-4 h-4" /></button>}
+                    </div>
                   </td>
-                  <td className="px-4 py-2.5 font-semibold text-slate-800">{ord.finished_product_name}</td>
-                  <td className="px-4 py-2.5 text-center font-bold text-indigo-700">{ord.planned_quantity} Adet</td>
-                  <td className="px-4 py-2.5 text-right font-bold text-slate-900">
-                    {ord.total_cost?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                      ord.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                    }`}>
-                      {ord.status === 'completed' ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                      {ord.status === 'completed' ? 'Üretim Tamamlandı' : 'Üretimde / Montajda'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-center">
-                    {ord.status !== 'completed' ? (
-                      <button
-                        onClick={() => handleCompleteOrder(ord.id || ord._id)}
-                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm"
-                        data-testid={`complete-order-btn-${ord.order_code}`}
-                      >
-                        Üretimi Bitir & Stoğa Ekle
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-slate-400 font-medium">Bitti ({ord.end_date})</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                </tr>); })}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
 
-      {/* START PRODUCTION ORDER MODAL */}
-      {showOrderModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="start-production-modal">
-            <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-base font-bold text-slate-900">Yeni Üretim Emri Oluştur</h3>
-              <button onClick={() => setShowOrderModal(false)} className="text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateProductionOrder} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Kullanılacak Reçete (BOM)</label>
-                <select
-                  value={orderForm.recipe_id}
-                  onChange={(e) => setOrderForm({ ...orderForm, recipe_id: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  data-testid="production-recipe-select"
-                >
-                  {recipes.map(r => (
-                    <option key={r.id || r._id} value={r.id || r._id}>
-                      {r.name} ({r.finished_product_name})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Üretilecek Miktar (Adet)</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={orderForm.planned_quantity}
-                  onChange={(e) => setOrderForm({ ...orderForm, planned_quantity: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900 text-sm"
-                  data-testid="production-qty-input"
-                />
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-900">
-                <p className="font-semibold text-[11px]">Otomatik Stok Entegrasyonu:</p>
-                <p className="text-[11px] mt-0.5">
-                  Üretim tamamlandığında reçetedeki gerekli hammaddeler (çip, batarya, kasa) stoktan otomatik düşülecek ve bitmiş mamul stoğu artırılacaktır.
-                </p>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowOrderModal(false)}
-                  className="px-3 py-1.5 border rounded-lg text-xs"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
-                  data-testid="confirm-start-production-btn"
-                >
-                  Emri Başlat
-                </button>
-              </div>
-            </form>
-          </div>
+      {tab === "recipes" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {recipes.length === 0 && <div className="col-span-full bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400"><BookOpen className="w-8 h-8 mx-auto mb-2 text-slate-300" />Henüz reçete yok. "Yeni Reçete" ile ürün ağacını tanımlayın.</div>}
+          {recipes.map((r) => { const fp = products.find((p) => p.id === r.finished_product_id); return (
+            <div key={r.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs hover:shadow-md transition" data-testid={`recipe-card-${r.code}`}>
+              <div className="flex justify-between items-start gap-2"><div className="min-w-0"><div className="font-mono text-[10px] text-slate-400">{r.code}</div><div className="font-bold text-slate-900 truncate">{r.name}</div><div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div></div><div className="flex gap-1 shrink-0"><button onClick={() => setRecipeModal({ recipe: r })} className="p-1.5 border rounded-lg hover:bg-slate-50" title="Düzenle" data-testid={`recipe-edit-${r.code}`}><Pencil className="w-3.5 h-3.5" /></button><button onClick={() => delRecipe(r)} className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" title="Sil" data-testid={`recipe-delete-${r.code}`}><Trash2 className="w-3.5 h-3.5" /></button></div></div>
+              <div className="bg-slate-50 rounded-xl p-2 divide-y divide-slate-100">{(r.materials || []).map((m, i) => { const mp = products.find((p) => p.id === m.product_id); const low = mp && mp.stock_quantity < m.quantity; return <div key={i} className="flex justify-between py-1"><span className={low ? "text-rose-600 font-semibold" : "text-slate-700"}>{m.product_name}{m.wastage_percent > 0 && <span className="text-slate-400"> (+%{m.wastage_percent} fire)</span>}</span><span className="font-semibold">{m.quantity} {m.unit}{mp && <span className="text-slate-400 font-normal"> / stok {mp.stock_quantity}</span>}</span></div>; })}</div>
+              <div className="flex justify-between items-center pt-1"><div><div className="text-[10px] uppercase text-slate-400 font-semibold">Birim Maliyet</div><div className="font-black text-emerald-700 text-sm">{fmt(r.unit_cost || r.total_estimated_cost / (r.target_quantity || 1))} ₺</div>{fp?.sale_price > 0 && <div className="text-[10px] text-slate-500">Satış {fmt(fp.sale_price)} ₺</div>}</div><button onClick={() => setOrderModal(fp || { id: r.finished_product_id, name: r.finished_product_name })} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`recipe-produce-${r.code}`}><Factory className="w-3.5 h-3.5" /> Üret</button></div>
+            </div>); })}
         </div>
       )}
+
+      {recipeModal && <RecipeModal companyId={companyId} products={products} recipe={recipeModal.recipe} presetProductId={recipeModal.presetProductId} onClose={() => setRecipeModal(null)} onSaved={load} />}
+      {orderModal && <ProductionOrderModal companyId={companyId} product={orderModal === true ? null : orderModal} recipes={orderModal === true ? recipes.filter((r) => r.is_active !== false) : null} onClose={() => setOrderModal(false)} onCreated={() => { load(); setParams({ tab: "orders" }); }} />}
     </div>
   );
 }

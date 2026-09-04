@@ -18,8 +18,14 @@ import {
   Building2,
   Sparkles,
   QrCode,
-  MessageSquare
+  MessageSquare,
+  MoreVertical,
+  MousePointerClick
 } from "lucide-react";
+import { InvoiceContextMenu, E_TYPE_LABELS } from "../components/InvoiceContextMenu";
+import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+import { GibContactLookup } from "../components/GibContactLookup";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -47,6 +53,12 @@ export default function InvoicesPage() {
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentAccount, setPaymentAccount] = useState("");
+  const [ctxMenu, setCtxMenu] = useState(null);
+  const [installmentInv, setInstallmentInv] = useState(null);
+  const closeCtx = React.useCallback(() => setCtxMenu(null), []);
+  const openCtx = (e, inv) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, inv }); };
+  const openCtxFromButton = (e, inv) => { const r = e.currentTarget.getBoundingClientRect(); setCtxMenu({ x: r.left - 240, y: r.bottom + 4, inv }); };
+  const openPayment = (inv) => { setPaymentModalInvoice(inv); setPaymentAmount(inv.grand_total - (inv.paid_amount || 0)); };
 
   // New Invoice Form
   const [formData, setFormData] = useState({
@@ -59,8 +71,11 @@ export default function InvoicesPage() {
     items: [
       { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20, total: 0 }
     ],
-    notes: "Teşekkür ederiz."
+    notes: "Teşekkür ederiz.",
+    general_discount_rate: 0,
+    general_discount_amount: 0
   });
+  const [gdMode, setGdMode] = useState("percent");
 
   useEffect(() => {
     loadData();
@@ -131,9 +146,14 @@ export default function InvoicesPage() {
   };
 
   const calculateTotals = () => {
-    const subtotal = formData.items.reduce((sum, item) => sum + Number(item.total || 0), 0);
-    const vat = formData.items.reduce((sum, item) => sum + (Number(item.total || 0) * (Number(item.vat_rate || 20) / 100)), 0);
-    return { subtotal, vat, grandTotal: subtotal + vat };
+    const itemsSum = formData.items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+    const lineDiscount = formData.items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0) * (Number(item.discount_rate || 0) / 100), 0);
+    const gdRaw = gdMode === "percent" ? itemsSum * Number(formData.general_discount_rate || 0) / 100 : Number(formData.general_discount_amount || 0);
+    const gd = Math.min(Math.max(gdRaw, 0), itemsSum);
+    const factor = itemsSum ? (itemsSum - gd) / itemsSum : 1;
+    const subtotal = itemsSum - gd;
+    const vat = formData.items.reduce((sum, item) => sum + (Number(item.total || 0) * factor * (Number(item.vat_rate || 20) / 100)), 0);
+    return { itemsSum, lineDiscount, gd, subtotal, vat, grandTotal: subtotal + vat };
   };
 
   const handleCreateInvoice = async (e) => {
@@ -143,9 +163,12 @@ export default function InvoicesPage() {
       return;
     }
     try {
+      const t = calculateTotals();
       const payload = {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...formData,
+        general_discount_amount: t.gd,
+        general_discount_rate: gdMode === "percent" ? Number(formData.general_discount_rate || 0) : 0,
         status: "approved"
       };
       await axios.post(`${API_URL}/invoices`, payload);
@@ -157,13 +180,13 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleSendToGib = async (invId) => {
+  const handleSendToGib = async (invId, eType) => {
     try {
-      const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`);
+      const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, eType ? { e_type: eType } : {});
       toast.success(res.data.message);
       loadData();
     } catch (err) {
-      toast.error("GİB'e gönderim başarısız.");
+      toast.error(err.response?.data?.detail || "Fatura kesilemedi.");
     }
   };
 
@@ -175,7 +198,7 @@ export default function InvoicesPage() {
     try {
       await axios.post(`${API_URL}/invoices/${paymentModalInvoice.id || paymentModalInvoice._id}/record-payment`, {
         amount: Number(paymentAmount),
-        account_id: paymentAccount
+        ...splitPaymentTarget(paymentAccount)
       });
       toast.success("Tahsilat/Ödeme kaydı başarıyla işlendi.");
       setPaymentModalInvoice(null);
@@ -230,6 +253,15 @@ export default function InvoicesPage() {
 
       {/* Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+        {contactFilter && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border-b border-emerald-100 text-xs" data-testid="contact-filter-chip">
+            <span className="text-emerald-800">Cari filtresi: <b>{contacts.find((c) => c.id === contactFilter)?.name || invoices.find((i) => i.contact_id === contactFilter)?.contact_name || contactFilter}</b> ({invoices.filter((i) => i.contact_id === contactFilter).length} fatura)</span>
+            <button onClick={() => navigate("/invoices")} className="ml-auto px-2 py-0.5 rounded-full bg-white border border-emerald-200 text-emerald-700 font-semibold hover:bg-emerald-100" data-testid="clear-contact-filter-btn">Filtreyi Kaldır</button>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50/70 border-b border-slate-100 text-[11px] text-slate-500" data-testid="ctx-hint">
+          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Bir fatura satırına <b>sağ tıklayarak</b> E-Fatura / E-Arşiv / Kağıt olarak kesebilir, yazdırabilir veya tahsilat ekleyebilirsiniz.
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
@@ -252,7 +284,7 @@ export default function InvoicesPage() {
                 </tr>
               ) : (
                 invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter).map((inv) => (
-                  <tr key={inv.id || inv._id || inv.invoice_number} className="hover:bg-slate-50/70 transition" data-testid={`invoice-row-${inv.invoice_number}`}>
+                  <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => openCtx(e, inv)} className={`hover:bg-slate-50/70 transition cursor-context-menu ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={`invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -261,9 +293,10 @@ export default function InvoicesPage() {
                         }`}>
                           {inv.invoice_type === 'sales' ? 'Satış' : 'Alış'}
                         </span>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase">
-                          {inv.e_type === 'e_invoice' ? 'E-Fatura' : inv.e_type === 'e_archive' ? 'E-Arşiv' : inv.e_type === 'paper' ? 'Kağıt' : 'İrsaliye'}
+                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
+                          {E_TYPE_LABELS[inv.e_type] || 'İrsaliye'}
                         </span>
+                        {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -295,8 +328,8 @@ export default function InvoicesPage() {
                         {inv.payment_status === 'paid' ? 'Ödendi' : inv.payment_status === 'partially_paid' ? 'Kısmi Ödendi' : 'Ödenmedi'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
+                    <td className="px-4 py-3 text-center w-[220px] min-w-[220px]">
+                      <div className="grid grid-cols-6 gap-1 justify-items-center items-center">
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -314,7 +347,7 @@ export default function InvoicesPage() {
                         >
                           <MessageSquare className="w-4 h-4" />
                         </button>
-                        {inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && (
+                        {inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && inv.gib_status !== 'Kağıt Fatura (Matbu)' ? (
                           <button
                             onClick={() => handleSendToGib(inv.id || inv._id)}
                             className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
@@ -323,20 +356,18 @@ export default function InvoicesPage() {
                           >
                             <Send className="w-4 h-4" />
                           </button>
-                        )}
-                        {inv.payment_status !== 'paid' && (
+                        ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
+                        <button onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+                        {inv.payment_status !== 'paid' ? (
                           <button
-                            onClick={() => {
-                              setPaymentModalInvoice(inv);
-                              setPaymentAmount(inv.grand_total - (inv.paid_amount || 0));
-                            }}
-                            className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                            onClick={() => openPayment(inv)}
+                            className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
                             title="Tahsilat / Ödeme Ekle"
                             data-testid={`payment-btn-${inv.invoice_number}`}
                           >
                             <DollarSign className="w-4 h-4" />
                           </button>
-                        )}
+                        ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
                       </div>
                     </td>
                   </tr>
@@ -347,6 +378,8 @@ export default function InvoicesPage() {
         </div>
       </div>
 
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onInstallments={setInstallmentInv} />
+      {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
       {notifyInvoice && (() => {
@@ -417,9 +450,12 @@ export default function InvoicesPage() {
                     placeholder="Cari ara ve seç..."
                     getLabel={(c) => c.name}
                     getSub={(c) => `${c.type === 'customer' ? 'Müşteri' : c.type === 'supplier' ? 'Tedarikçi' : 'Müşteri & Tedarikçi'} • VKN ${c.tax_number_or_id}`}
-                    onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "" })}
+                    onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "", e_type: c && formData.invoice_type === "sales" && formData.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type })}
                     testId="inv-contact-select"
                   />
+                </div>
+                <div className="sm:col-span-3">
+                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
               </div>
 
@@ -458,6 +494,9 @@ export default function InvoicesPage() {
                   </button>
                 </div>
 
+                <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
+                  <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Tutar</div><div className="col-span-1"></div>
+                </div>
                 {formData.items.map((item, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
                     <div className="col-span-3">
@@ -534,15 +573,31 @@ export default function InvoicesPage() {
 
               {/* Totals Summary */}
               <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
-                <div className="flex justify-between w-48">
-                  <span>Ara Toplam:</span>
+                <div className="flex justify-between w-80">
+                  <span>Mal / Hizmet Toplamı:</span>
+                  <span className="font-semibold">{totals.itemsSum.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                </div>
+                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{totals.lineDiscount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span></div>}
+                <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
+                  <span>Genel İskonto:</span>
+                  <div className="flex items-center gap-1">
+                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
+                      <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
+                      <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
+                    </div>
+                    <input type="number" min="0" value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(e) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: e.target.value })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
+                    <span className="text-rose-600 font-semibold w-24 text-right">-{totals.gd.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                  </div>
+                </div>
+                <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
+                  <span>Ara Toplam (İskontolu):</span>
                   <span className="font-semibold">{totals.subtotal.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
                 </div>
-                <div className="flex justify-between w-48">
+                <div className="flex justify-between w-80">
                   <span>Toplam KDV:</span>
                   <span className="font-semibold">{totals.vat.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
                 </div>
-                <div className="flex justify-between w-48 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
+                <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
                   <span>Genel Toplam:</span>
                   <span className="text-emerald-700">{totals.grandTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
                 </div>
@@ -694,19 +749,8 @@ export default function InvoicesPage() {
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Hesap / Kasa Seçin</label>
-                <select
-                  value={paymentAccount}
-                  onChange={(e) => setPaymentAccount(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  data-testid="payment-account-select"
-                >
-                  {bankAccounts.map(b => (
-                    <option key={b.id || b._id} value={b.id || b._id}>
-                      {b.bank_name} - {b.account_name} ({b.current_balance?.toLocaleString('tr-TR')} ₺)
-                    </option>
-                  ))}
-                </select>
+                <label className="block font-semibold text-slate-700 mb-1">Kasa / Banka / POS / Ortak Seçin</label>
+                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
