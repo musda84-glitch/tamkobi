@@ -35,6 +35,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
+import { QuickContactForm } from "../components/QuickContactForm";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
@@ -93,6 +94,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     general_discount_amount: 0
   });
   const [gdMode, setGdMode] = useState("percent");
+  const [quickContact, setQuickContact] = useState(false);
   const newParam = searchParams.get("new");
   const newContactParam = searchParams.get("contact_id");
   useEffect(() => {
@@ -440,7 +442,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       {/* NEW INVOICE MODAL */}
       {showNewModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-5 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="new-invoice-modal">
+          <div className="bg-white rounded-2xl max-w-6xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Yeni Fatura Düzenle</h2>
@@ -483,7 +485,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </select>
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Cari Seçin</label>
+                  <label className="flex items-center justify-between font-semibold text-slate-700 mb-1">Cari Seçin <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button></label>
                   <SearchSelect
                     value={formData.contact_id}
                     options={contacts}
@@ -494,6 +496,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     testId="inv-contact-select"
                   />
                 </div>
+                {quickContact && (
+                  <div className="sm:col-span-3">
+                    <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
+                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
+                  </div>
+                )}
                 <div className="sm:col-span-3">
                   <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
