@@ -232,8 +232,8 @@ export default function StockBarcodePage() {
                 <th className="px-4 py-3 text-right">Alış Fiyatı</th>
                 <th className="px-4 py-3 text-right">Satış Fiyatı</th>
                 <th className="px-4 py-3 text-center">Mevcut Stok</th>
-                <th className="px-4 py-3 text-center">B2B / Takip</th>
-                <th className="px-4 py-3 text-center">İşlemler</th>
+                <th className="px-4 py-3 text-center whitespace-nowrap">B2B / Takip</th>
+                <th className="px-4 py-3 text-center w-[230px]">İşlemler</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -291,13 +291,13 @@ export default function StockBarcodePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button onClick={() => toggleFlag(prod, "show_in_b2b")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${prod.show_in_b2b !== false ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="B2B portalında göster/gizle" data-testid={`b2b-toggle-${prod.sku}`}>B2B {prod.show_in_b2b !== false ? "Açık" : "Kapalı"}</button>
-                        <button onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
+                      <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+                        <button onClick={() => toggleFlag(prod, "show_in_b2b")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.show_in_b2b !== false ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="B2B portalında göster/gizle" data-testid={`b2b-toggle-${prod.sku}`}>B2B {prod.show_in_b2b !== false ? "Açık" : "Kapalı"}</button>
+                        <button onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
+                    <td className="px-4 py-3 text-center w-[230px] min-w-[230px]">
+                      <div className="inline-grid grid-cols-[28px_28px_28px_28px_auto] gap-1 items-center justify-items-center">
                         <button
                           onClick={() => openDetail(prod, "images")}
                           className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
@@ -314,11 +314,11 @@ export default function StockBarcodePage() {
                         >
                           <Layers className="w-4 h-4" />
                         </button>
-                        {prod.type !== "service" && prod.type !== "raw_material" && (
+                        {prod.type !== "service" && prod.type !== "raw_material" ? (
                           <button onClick={() => setProduceProduct(prod)} className={`p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
                             <Factory className="w-4 h-4" />
                           </button>
-                        )}
+                        ) : <span className="w-7 h-7 inline-block" aria-hidden="true" />}
                         <button
                           onClick={() => setPrintBarcodeProduct(prod)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -329,7 +329,7 @@ export default function StockBarcodePage() {
                         </button>
                         <button
                           onClick={() => openDetail(prod, "general")}
-                          className="flex items-center gap-1 px-2 py-1 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold"
+                          className="flex items-center gap-1 px-2.5 py-1.5 ml-1 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap"
                           title="Stok Kartını Düzenle"
                           data-testid={`edit-product-btn-${prod.sku}`}
                         >
