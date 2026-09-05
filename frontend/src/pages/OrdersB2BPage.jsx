@@ -355,11 +355,11 @@ export default function OrdersB2BPage() {
                     </td>
                     <td className="px-4 py-3 align-top">
                       {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = products.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
-                        <div className={`${open ? "" : "space-y-0.5"}`} data-testid={`order-items-${ord.order_number}`}>
-                          <div className={open ? "grid grid-cols-1 2xl:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-0.5"}>
+                        <div data-testid={`order-items-${ord.order_number}`}>
+                          <div className={open ? "grid grid-cols-1 2xl:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => (
                             <div key={idx} className={`flex items-center gap-2 ${open ? "bg-slate-50 rounded-lg p-1.5" : ""}`}>
-                              {open && (img(it) ? <img src={img(it)} alt="" className="w-10 h-10 rounded-md object-cover border bg-white shrink-0" /> : <div className="w-10 h-10 rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0"><PackageIcon className="w-4 h-4" /></div>)}
+                              {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
                                 {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
@@ -367,7 +367,6 @@ export default function OrdersB2BPage() {
                             </div>))}
                           </div>
                           {items.length > 2 && <button type="button" onClick={() => setExpandedItems(open ? null : ord.id)} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
-                          {items.length <= 2 && items.length > 0 && !open && <button type="button" onClick={() => setExpandedItems(ord.id)} className="text-[10px] text-slate-400 hover:text-indigo-600" data-testid={`order-items-toggle-${ord.order_number}`}>resimli görünüm</button>}
                         </div>); })()}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
