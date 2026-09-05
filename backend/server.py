@@ -94,6 +94,9 @@ async def startup_event():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
+    attendance.init_notify(_mail_account, comm_service.smtp_send)
+    import asyncio as _asyncio
+    _asyncio.get_event_loop().create_task(attendance.watcher_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -2405,6 +2408,44 @@ async def list_match_rules(company_id: Optional[str] = "comp_nexus_main_01"):
     rules = await db.bank_match_rules.find({"company_id": company_id}).sort("hits", -1).to_list(500)
     return clean_docs(rules)
 
+@api_router.get("/banking/match-rule-suggestions")
+async def match_rule_suggestions(company_id: Optional[str] = "comp_nexus_main_01", min_count: int = 2):
+    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "matched"}).to_list(3000)
+    rules = {r["pattern"] for r in await db.bank_match_rules.find({"company_id": company_id}).to_list(1000)}
+    groups: Dict[str, dict] = {}
+    for t in txs:
+        p = _match_pattern(t.get("description", ""))
+        if not p or p in rules:
+            continue
+        key = (t.get("contact_id") or "", t.get("target_account_id") or "", t.get("category") or "")
+        g = groups.setdefault(p, {"pattern": p, "count": 0, "targets": {}, "sample": t.get("description"), "total": 0.0})
+        g["count"] += 1
+        g["total"] += t.get("amount", 0)
+        g["targets"][key] = g["targets"].get(key, 0) + 1
+    out = []
+    for p, g in groups.items():
+        if g["count"] < min_count:
+            continue
+        (cid, tid, cat), n = max(g["targets"].items(), key=lambda kv: kv[1])
+        if not (cid or tid or cat):
+            continue
+        sample = next(t for t in txs if _match_pattern(t.get("description", "")) == p and (t.get("contact_id") or "") == cid and (t.get("target_account_id") or "") == tid)
+        out.append({"pattern": p, "count": g["count"], "consistent": n == g["count"], "sample_description": g["sample"], "total_amount": round(g["total"], 2),
+                    "contact_id": cid or None, "contact_name": sample.get("contact_name"), "target_account_id": tid or None, "target_account_name": sample.get("target_account_name"), "category": cat or None})
+    out.sort(key=lambda x: -x["count"])
+    return out
+
+@api_router.post("/banking/match-rule-suggestions/accept")
+async def accept_rule_suggestion(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    created = await create_match_rule({"company_id": company_id, "pattern": req.get("pattern"), "contact_id": req.get("contact_id"), "target_account_id": req.get("target_account_id"), "category": req.get("category")})
+    applied = 0
+    if req.get("apply_now", True):
+        txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}).to_list(1000)
+        pattern = created.get("pattern")
+        applied, _ = await _auto_match_by_rules(company_id, [t for t in txs if _match_pattern(t.get("description", "")) == pattern])
+    return {"status": "success", "rule": created, "applied": applied, "message": f"Kural oluşturuldu." + (f" Bekleyen {applied} hareket otomatik işlendi." if applied else "")}
+
 @api_router.post("/banking/match-rules")
 async def create_match_rule(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
@@ -3121,7 +3162,9 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
     summary = []
     for e in emps:
         mine = [r for r in rows if r["employee_id"] == e["_id"]]
+        ot = await attendance.overtime_pay_for_period(company, e, month)
         summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], **attendance.summarize(mine),
+                        "overtime_pay": ot["amount"], "overtime_rate": ot["weekday_rate"], "overtime_method": ot["method"],
                         "schedule": attendance.merge_schedule(company, e), "has_override": bool(e.get("work_schedule")),
                         "today": clean_doc(next((r for r in mine if r["date"] == today_s), None) or {}) or None})
     return {"month": month, "records": clean_docs(rows), "summary": summary, "schedule": attendance.merge_schedule(company)}
@@ -4027,9 +4070,55 @@ async def create_employee(emp: Employee):
     await db.employees.insert_one(doc)
     return clean_doc(doc)
 
+EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "status", "annual_leave_days", "used_leave_days",
+                      "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact"}
+EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate"}
+
 @api_router.put("/personnel/employees/{emp_id}")
 async def update_employee(emp_id: str, data: Dict[str, Any]):
-    await db.employees.update_one({"_id": emp_id}, {"$set": data})
+    if not await db.employees.find_one({"_id": emp_id}):
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    upd: Dict[str, Any] = {}
+    for k, v in data.items():
+        if k not in EMPLOYEE_UPDATABLE:
+            continue
+        if k in EMPLOYEE_NUMERIC:
+            if v in (None, ""):
+                upd[k] = None if k != "salary" else 0.0
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{k} sayısal olmalı.")
+            if v < 0:
+                raise HTTPException(status_code=400, detail=f"{k} negatif olamaz.")
+        if k == "overtime_method" and v not in (None, "", "legal", "fixed"):
+            raise HTTPException(status_code=400, detail="overtime_method 'legal' veya 'fixed' olmalı.")
+        if k == "overtime_method" and v == "":
+            v = None
+        if k in ("annual_leave_days", "used_leave_days") and v is not None:
+            v = int(v)
+        if k == "work_schedule" and v is not None:
+            if not isinstance(v, dict):
+                raise HTTPException(status_code=400, detail="work_schedule nesne olmalı.")
+            ws: Dict[str, Any] = {}
+            for kk in ("start", "end"):
+                if v.get(kk):
+                    ws[kk] = attendance._valid_time(v[kk])
+            for kk in ("break_minutes", "late_tolerance_minutes", "overtime_tolerance_minutes"):
+                if v.get(kk) not in (None, ""):
+                    ws[kk] = max(0, int(v[kk]))
+            if isinstance(v.get("work_days"), list) and v["work_days"]:
+                ws["work_days"] = sorted({int(d) for d in v["work_days"] if 0 <= int(d) <= 6})
+            if v.get("days"):
+                ws["days"] = attendance.clean_days(v["days"])
+            if ws.get("start") and ws.get("end") and attendance._hm(ws["end"]) <= attendance._hm(ws["start"]):
+                raise HTTPException(status_code=400, detail="Mesai bitişi başlangıçtan sonra olmalı.")
+            v = ws or None
+        upd[k] = v
+    if upd:
+        upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.employees.update_one({"_id": emp_id}, {"$set": upd})
     res = await db.employees.find_one({"_id": emp_id})
     return clean_doc(res)
 
@@ -4103,30 +4192,47 @@ async def generate_payroll(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     period = req.get("period", datetime.now().strftime("%Y-%m"))
     employees = await db.employees.find({"company_id": company_id, "status": "active"}).to_list(100)
+    company = await db.companies.find_one({"_id": company_id}) or {}
 
     generated = []
     for emp in employees:
-        net = emp.get("salary", 30000.0)
-        gross = net * 1.40
+        net = float(emp.get("salary", 30000.0) or 0)
+        gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
+        second = float(emp.get("second_salary") or 0)
+        ot = await attendance.overtime_pay_for_period(company, emp, period)
+        existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": str(emp["_id"]), "period": period})
+        if existing and existing.get("status") == "paid":
+            continue
+        bonus = float((existing or {}).get("bonus") or 0)
+        deduction = float((existing or {}).get("deduction") or 0)
+        advance = float((existing or {}).get("advance_payment") or 0)
         payroll_doc = {
-            "_id": f"pay_{uuid.uuid4().hex[:8]}",
+            "_id": existing["_id"] if existing else f"pay_{uuid.uuid4().hex[:8]}",
             "company_id": company_id,
             "employee_id": str(emp.get("_id", emp.get("id"))),
             "employee_name": emp.get("full_name"),
             "period": period,
             "net_salary": net,
             "gross_salary": gross,
-            "bonus": 0.0,
-            "deduction": 0.0,
-            "advance_payment": 0.0,
-            "final_payable": net,
+            "second_salary": second,
+            "overtime_hours": ot["overtime_hours"],
+            "overtime_weekday_hours": ot["weekday_hours"],
+            "overtime_holiday_hours": ot["holiday_hours"],
+            "overtime_pay": ot["amount"],
+            "overtime_rate": {k: ot[k] for k in ("method", "hourly_base", "weekday_rate", "holiday_rate", "multiplier", "holiday_multiplier")},
+            "bonus": bonus,
+            "deduction": deduction,
+            "advance_payment": advance,
+            "final_payable": round(net + ot["amount"] + second + bonus - deduction - advance, 2),
             "status": "pending",
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": (existing or {}).get("created_at") or datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
-        await db.payrolls.insert_one(payroll_doc)
+        await db.payrolls.replace_one({"_id": payroll_doc["_id"]}, payroll_doc, upsert=True)
         generated.append(clean_doc(payroll_doc))
 
-    return {"status": "success", "message": f"{period} dönemi için {len(generated)} personelin bordrosu hesaplandı.", "payrolls": generated}
+    total_ot = round(sum(g["overtime_pay"] for g in generated), 2)
+    return {"status": "success", "message": f"{period} dönemi için {len(generated)} personelin bordrosu hesaplandı." + (f" Toplam {total_ot:,.2f} ₺ fazla mesai ücreti eklendi." if total_ot else ""), "payrolls": generated}
 
 @api_router.post("/personnel/payrolls/{payroll_id}/pay")
 async def pay_payroll(payroll_id: str, req: Dict[str, Any]):

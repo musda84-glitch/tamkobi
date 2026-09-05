@@ -63,35 +63,44 @@ export default function MyAttendancePage() {
   const s = data.summary, t = data.today, sch = data.schedule;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
   return (
-    <div className="max-w-5xl mx-auto space-y-5" data-testid="my-attendance-page">
+    <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div><h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Clock className="w-7 h-7 text-emerald-600" /> Mesaim</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-att-month" />
       </div>
       {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800" data-testid="my-att-no-employee">Giriş/çıkış yapabilmek için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</div>}
       {data.employee && (
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-lg flex flex-col md:flex-row md:items-center gap-5" data-testid="my-att-today">
-          <div className="flex-1 space-y-2">
-            <div className="text-[11px] text-slate-300 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-5" data-testid="my-att-today">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div className="text-center sm:text-left">
+              <div className="text-5xl sm:text-4xl font-black font-mono tracking-tight" data-testid="my-att-clock">{data.now}</div>
+              <div className="text-xs text-slate-300 mt-1">{new Date(data.today_date + "T00:00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" })}{sch.work_days.includes((new Date(data.today_date + "T00:00:00").getDay() + 6) % 7) ? "" : " · tatil günü (çalışma = fazla mesai)"}</div>
+            </div>
+            <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">
               <span className="inline-flex items-center gap-1"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Mesai {sch.start}–{sch.end} · mola {sch.break_minutes} dk</span>
               <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-emerald-400" /> {workDays}</span>
-              {data.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> Firma konumu · {data.location.radius_m} m{sch.require_geo === false ? " (konum zorunlu değil)" : ""}</span> : <span className="text-amber-300">Firma konumu tanımsız — konumsuz giriş</span>}
+              {data.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> Firma konumu · {data.location.radius_m} m{sch.require_geo === false ? " (zorunlu değil)" : ""}</span> : <span className="text-amber-300">Firma konumu tanımsız — konumsuz giriş</span>}
             </div>
-            <div className="flex items-end gap-6">
-              <div><div className="text-[10px] uppercase text-slate-400 font-semibold">Bugün giriş</div><div className="text-2xl font-bold font-mono text-emerald-300" data-testid="my-att-today-in">{t?.check_in || "--:--"}</div></div>
-              <div><div className="text-[10px] uppercase text-slate-400 font-semibold">Çıkış</div><div className="text-2xl font-bold font-mono text-rose-300" data-testid="my-att-today-out">{t?.check_out || "--:--"}</div></div>
-              {t?.hours ? <div><div className="text-[10px] uppercase text-slate-400 font-semibold">Süre</div><div className="text-2xl font-bold">{t.hours} sa{t.overtime_hours ? <span className="text-sm text-indigo-300 ml-1">+{t.overtime_hours} mesai</span> : null}</div></div> : null}
-              {t?.late_minutes ? <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-500/30 text-rose-200">{t.late_minutes} dk geç</span> : null}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
+              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
+            </button>
+            <button onClick={() => act("check_out")} disabled={!!busy || !t?.check_in || !!t?.check_out} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-rose-500 hover:bg-rose-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkout">
+              {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}<span className="text-lg sm:text-base">Çıkış Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">{t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? "çıkış bekleniyor" : "önce giriş yapın"}</span>
+            </button>
+          </div>
+          {(t?.hours || t?.late_minutes) ? (
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
+              {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
+              {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
+              {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
             </div>
-            <div className="text-[11px] text-slate-400">Mesai bitişinden ({sch.end}) sonraki çıkışlar ve tatil günü çalışmaları otomatik <b className="text-indigo-300">fazla mesai</b> olarak yazılır. Saat şu an {data.now}.</div>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in} className="flex items-center gap-2 px-5 py-3 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-sm font-bold" data-testid="my-att-checkin">{busy === "check_in" ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />} Giriş Yap</button>
-            <button onClick={() => act("check_out")} disabled={!!busy || !t?.check_in || !!t?.check_out} className="flex items-center gap-2 px-5 py-3 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-sm font-bold" data-testid="my-att-checkout">{busy === "check_out" ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogOut className="w-5 h-5" />} Çıkış Yap</button>
-          </div>
+          ) : null}
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Mesai bitişinden ({sch.end}) sonraki çıkışlar ve tatil günü çalışmaları otomatik <b className="text-indigo-300">fazla mesai</b> olarak yazılır.</div>
         </div>
       )}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
         <Stat label="Çalışılan gün" value={s.days_present} sub={`${s.days_absent} devamsız · ${s.days_leave} izin`} testId="my-att-stat-days" />
         <Stat label="Toplam saat" value={`${s.total_hours} sa`} sub={`${s.normal_hours} sa normal`} testId="my-att-stat-hours" />
         <Stat label="Fazla mesai" value={`${s.overtime_hours} sa`} sub={s.off_day_count ? `${s.off_day_count} tatil günü çalışma` : "mesai saati dışı"} tone="indigo" testId="my-att-stat-overtime" />

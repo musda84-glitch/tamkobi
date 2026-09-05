@@ -11,7 +11,9 @@ router = APIRouter(prefix="/api")
 _db = None
 _current_user = None
 
-DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul"}
+DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
+                    "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
+OVERTIME_METHODS = {"legal": "Yasal (brüt/225 × katsayı)", "fixed": "Sabit saatlik mesai ücreti"}
 DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
 
 
@@ -56,9 +58,20 @@ def _clean(d: dict) -> dict:
 
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     s = {**DEFAULT_SCHEDULE, **((company or {}).get("work_schedule") or {})}
+    s["days"] = dict(s.get("days") or {})
     if employee and employee.get("work_schedule"):
-        s = {**s, **{k: v for k, v in employee["work_schedule"].items() if v not in (None, "", [])}}
+        ov = employee["work_schedule"]
+        s = {**s, **{k: v for k, v in ov.items() if k != "days" and v not in (None, "", [])}}
+        if ov.get("days"):
+            s["days"] = {**s["days"], **{k: v for k, v in ov["days"].items() if v}}
     return s
+
+
+def day_window(schedule: dict, weekday: int) -> dict:
+    """Haftanın günü için etkin başlangıç/bitiş/mola (gün bazlı override varsa onu kullanır)."""
+    d = (schedule.get("days") or {}).get(str(weekday)) or {}
+    return {"start": d.get("start") or schedule["start"], "end": d.get("end") or schedule["end"],
+            "break_minutes": int(d.get("break_minutes") if d.get("break_minutes") is not None else schedule.get("break_minutes") or 0)}
 
 
 def compute_day(rec: dict, schedule: dict) -> dict:
@@ -70,7 +83,8 @@ def compute_day(rec: dict, schedule: dict) -> dict:
         wd = 0
     out["is_off_day"] = wd not in (schedule.get("work_days") or DEFAULT_SCHEDULE["work_days"])
     ci, co = rec.get("check_in"), rec.get("check_out")
-    start, end = _hm(schedule["start"]), _hm(schedule["end"])
+    win = day_window(schedule, wd)
+    start, end = _hm(win["start"]), _hm(win["end"])
     if ci and not out["is_off_day"]:
         out["late_minutes"] = max(0, _hm(ci) - start - int(schedule.get("late_tolerance_minutes") or 0))
     if not (ci and co):
@@ -78,7 +92,7 @@ def compute_day(rec: dict, schedule: dict) -> dict:
     a, b = _hm(ci), _hm(co)
     if b < a:
         b += 24 * 60
-    worked = max(0, b - a - int(schedule.get("break_minutes") or 0))
+    worked = max(0, b - a - win["break_minutes"])
     if out["is_off_day"]:
         ot = worked
     else:
@@ -91,6 +105,68 @@ def compute_day(rec: dict, schedule: dict) -> dict:
     out["hours"] = round(worked / 60, 2)
     out["overtime_hours"] = round(ot / 60, 2)
     out["normal_hours"] = round(max(0, worked - ot) / 60, 2)
+    out["holiday_overtime_hours"] = out["overtime_hours"] if out["is_off_day"] else 0.0
+    return out
+
+
+def _num(v, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def overtime_rate(schedule: dict, employee: dict) -> dict:
+    """Personelin saatlik fazla mesai ücreti (yasal: brüt/225 × katsayı ya da sabit)."""
+    method = employee.get("overtime_method") or schedule.get("overtime_method") or "legal"
+    mult = _num(schedule.get("overtime_multiplier"), 1.5) or 1.5
+    hmult = _num(schedule.get("holiday_multiplier"), 2.0) or 2.0
+    if method == "fixed":
+        base = _num(employee.get("overtime_hourly_rate"))
+        return {"method": "fixed", "hourly_base": base, "weekday_rate": base, "holiday_rate": round(base * hmult / mult, 2) if mult else base, "multiplier": 1.0, "holiday_multiplier": round(hmult / mult, 2) if mult else 1.0}
+    gross = _num(employee.get("payroll_salary")) or _num(employee.get("salary")) * 1.4
+    divisor = _num(schedule.get("monthly_hours_divisor"), 225) or 225
+    base = round(gross / divisor, 2) if divisor else 0.0
+    return {"method": "legal", "hourly_base": base, "weekday_rate": round(base * mult, 2), "holiday_rate": round(base * hmult, 2), "multiplier": mult, "holiday_multiplier": hmult}
+
+
+async def overtime_pay_for_period(company: dict, employee: dict, period: str) -> dict:
+    schedule = merge_schedule(company, employee)
+    rows = await _db.attendance.find({"employee_id": employee["_id"], "date": {"$regex": f"^{period}"}, "status": "present"}).to_list(100)
+    weekday_h = round(sum(r.get("overtime_hours", 0) for r in rows if not r.get("is_off_day")), 2)
+    holiday_h = round(sum(r.get("overtime_hours", 0) for r in rows if r.get("is_off_day")), 2)
+    rate = overtime_rate(schedule, employee)
+    amount = round(weekday_h * rate["weekday_rate"] + holiday_h * rate["holiday_rate"], 2)
+    return {"period": period, "overtime_hours": round(weekday_h + holiday_h, 2), "weekday_hours": weekday_h, "holiday_hours": holiday_h, "amount": amount, **rate}
+
+
+def _valid_time(v: str) -> str:
+    v = (v or "").strip()
+    try:
+        _hm(v)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Geçersiz saat: {v}")
+    return v
+
+
+def clean_days(days: Any) -> dict:
+    out = {}
+    if not isinstance(days, dict):
+        return out
+    for k, v in days.items():
+        if not isinstance(v, dict) or str(k) not in {"0", "1", "2", "3", "4", "5", "6"}:
+            continue
+        d = {}
+        if v.get("start"):
+            d["start"] = _valid_time(v["start"])
+        if v.get("end"):
+            d["end"] = _valid_time(v["end"])
+        if v.get("break_minutes") not in (None, ""):
+            d["break_minutes"] = max(0, int(v["break_minutes"]))
+        if d.get("start") and d.get("end") and _hm(d["end"]) <= _hm(d["start"]):
+            raise HTTPException(status_code=400, detail=f"{DAY_LABELS[int(k)]}: bitiş başlangıçtan sonra olmalı.")
+        if d:
+            out[str(k)] = d
     return out
 
 
@@ -142,7 +218,7 @@ def summarize(rows: list) -> dict:
 @router.get("/companies/{company_id}/work-schedule")
 async def get_work_schedule(company_id: str):
     company = await _db.companies.find_one({"_id": company_id}) or {}
-    return {"schedule": merge_schedule(company), "day_labels": DAY_LABELS, "defaults": DEFAULT_SCHEDULE}
+    return {"schedule": merge_schedule(company), "day_labels": DAY_LABELS, "defaults": DEFAULT_SCHEDULE, "overtime_methods": OVERTIME_METHODS}
 
 
 @router.put("/companies/{company_id}/work-schedule")
@@ -165,6 +241,19 @@ async def put_work_schedule(company_id: str, req: Dict[str, Any]):
         s["work_days"] = sorted({int(d) for d in wd if 0 <= int(d) <= 6})
     s["count_early_as_overtime"] = bool(req.get("count_early_as_overtime", s["count_early_as_overtime"]))
     s["require_geo"] = bool(req.get("require_geo", s["require_geo"]))
+    if "days" in req:
+        s["days"] = clean_days(req.get("days"))
+    if req.get("overtime_method") in OVERTIME_METHODS:
+        s["overtime_method"] = req["overtime_method"]
+    for k in ("overtime_multiplier", "holiday_multiplier", "monthly_hours_divisor"):
+        if req.get(k) not in (None, ""):
+            v = float(req[k])
+            if v <= 0:
+                raise HTTPException(status_code=400, detail=f"{k} sıfırdan büyük olmalı.")
+            s[k] = v
+    for k in ("notify_missing_checkin", "notify_late_checkin"):
+        if k in req:
+            s[k] = bool(req[k])
     tz = (req.get("timezone") or s["timezone"]).strip()
     try:
         ZoneInfo(tz)
@@ -233,6 +322,9 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     msg = f"{'Giriş' if action == 'check_in' else 'Çıkış'} {now_s} olarak kaydedildi."
     if action == "check_in" and rec.get("late_minutes"):
         msg += f" Mesai başlangıcına göre {rec['late_minutes']} dk geç."
+        if schedule.get("notify_late_checkin", True):
+            await notify_managers(emp["company_id"], "attendance_late", f"Geç giriş: {emp['full_name']}",
+                                  f"{emp['full_name']} bugün {now_s} saatinde giriş yaptı — mesai başlangıcına göre {rec['late_minutes']} dk geç.", dedupe_key=f"late:{emp['_id']}:{today}")
     if action == "check_out":
         if rec.get("overtime_hours"):
             msg += f" Bugün {rec['hours']} sa çalışıldı, {rec['overtime_hours']} sa fazla mesai otomatik yazıldı."
@@ -278,3 +370,104 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], request: Request)
     await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": rec["company_id"], "type": "attendance_dispute", "title": "Puantaj itirazı",
                                         "message": f"{rec.get('employee_name')} {rec.get('date')} kaydına itiraz etti: {note[:120]}", "link": "/personnel?tab=attendance", "is_read": False, "created_at": _now()})
     return _clean(await _db.attendance.find_one({"_id": att_id}))
+
+
+# ---------- Yönetici bildirimleri ----------
+_mail_account_fn = None
+_smtp_send_fn = None
+
+
+def init_notify(mail_account_fn, smtp_send_fn):
+    global _mail_account_fn, _smtp_send_fn
+    _mail_account_fn, _smtp_send_fn = mail_account_fn, smtp_send_fn
+
+
+async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None) -> dict:
+    if dedupe_key:
+        if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}"}):
+            return {"status": "duplicate"}
+        await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
+    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "type": ntype, "title": title, "message": message, "link": link, "is_read": False, "created_at": _now()})
+    mail = {"status": "skipped"}
+    if _mail_account_fn and _smtp_send_fn:
+        try:
+            a = await _mail_account_fn(company_id)
+            admins = await _db.users.find({"role": "admin", "email": {"$exists": True, "$ne": ""}}).to_list(20)
+            to = sorted({u["email"] for u in admins if u.get("email")}) or [a["email"]]
+            await _smtp_send_fn(a, to, f"[NexusHesap] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
+            mail = {"status": "sent", "to": to}
+        except HTTPException as e:
+            mail = {"status": "skipped", "detail": e.detail}
+        except Exception as e:
+            mail = {"status": "failed", "detail": str(e)[:120]}
+    return {"status": "sent", "mail": mail}
+
+
+async def _on_leave_today(emp_id: str, date: str) -> bool:
+    return bool(await _db.leave_requests.find_one({"employee_id": emp_id, "status": "approved", "start_date": {"$lte": date}, "end_date": {"$gte": date}}))
+
+
+async def run_missing_checkin_check(company_id: Optional[str] = None, force: bool = False) -> list:
+    """Mesai başlangıcı + tolerans geçtiyse giriş yapmamış aktif personel için günde bir kez yöneticiye bildirim."""
+    results = []
+    q = {"_id": company_id} if company_id else {}
+    async for company in _db.companies.find(q):
+        base = merge_schedule(company)
+        if not base.get("notify_missing_checkin", True) and not force:
+            continue
+        now = local_now(base)
+        today = now.strftime("%Y-%m-%d")
+        emps = await _db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
+        missing = []
+        for emp in emps:
+            sch = merge_schedule(company, emp)
+            wd = now.weekday()
+            if wd not in (sch.get("work_days") or []):
+                continue
+            win = day_window(sch, wd)
+            deadline = _hm(win["start"]) + int(sch.get("late_tolerance_minutes") or 0)
+            if not force and now.hour * 60 + now.minute < deadline:
+                continue
+            rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+            if rec and (rec.get("check_in") or rec.get("status") in ("leave", "absent")):
+                continue
+            if await _on_leave_today(emp["_id"], today):
+                continue
+            missing.append(emp["full_name"])
+        if missing:
+            names = ", ".join(missing[:8]) + (f" (+{len(missing) - 8})" if len(missing) > 8 else "")
+            r = await notify_managers(company["_id"], "attendance_missing", f"Giriş yapmayan {len(missing)} personel",
+                                      f"{today} · mesai başlangıcı geçti, henüz giriş yapmayanlar: {names}", dedupe_key=f"missing:{today}")
+            results.append({"company_id": company["_id"], "missing": missing, **r})
+    return results
+
+
+async def watcher_loop(interval_s: int = 60):
+    import asyncio
+    while True:
+        try:
+            await run_missing_checkin_check()
+        except Exception:
+            pass
+        await asyncio.sleep(interval_s)
+
+
+@router.post("/personnel/attendance/run-alerts")
+async def run_alerts_now(request: Request, company_id: Optional[str] = "comp_nexus_main_01", force: bool = False):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
+    if not await _db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Firma bulunamadı.")
+    return {"status": "success", "results": await run_missing_checkin_check(company_id, force=force)}
+
+
+@router.get("/personnel/overtime-preview")
+async def overtime_preview(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    period = period or _today(merge_schedule(company))[:7]
+    out = []
+    for emp in await _db.employees.find({"company_id": company_id, "status": "active"}).to_list(300):
+        p = await overtime_pay_for_period(company, emp, period)
+        out.append({"employee_id": emp["_id"], "employee_name": emp["full_name"], "payroll_salary": emp.get("payroll_salary"), "salary": emp.get("salary"), "second_salary": emp.get("second_salary") or 0, **p})
+    return {"period": period, "rows": out, "total": round(sum(r["amount"] for r in out), 2)}

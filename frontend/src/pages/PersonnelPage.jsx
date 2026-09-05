@@ -239,6 +239,7 @@ export default function PersonnelPage() {
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-700 font-medium">
                     {p.net_salary?.toLocaleString('tr-TR')} ₺
+                    {(p.overtime_pay > 0 || p.second_salary > 0) && <div className="text-[10px] font-normal text-slate-500" data-testid={`payroll-breakdown-${p.id || p._id}`}>{p.overtime_pay > 0 && <span className="text-indigo-700">+{p.overtime_pay.toLocaleString('tr-TR')} ₺ mesai ({p.overtime_hours} sa)</span>}{p.overtime_pay > 0 && p.second_salary > 0 && " · "}{p.second_salary > 0 && <span className="text-amber-700">+{p.second_salary.toLocaleString('tr-TR')} ₺ 2. maaş</span>}</div>}
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-500 font-mono">
                     {p.gross_salary?.toLocaleString('tr-TR')} ₺

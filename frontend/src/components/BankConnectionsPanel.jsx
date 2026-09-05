@@ -28,6 +28,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
   const [rules, setRules] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
   const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "", target_account_id: "" });
   const [invoices, setInvoices] = useState([]);
@@ -36,15 +37,16 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const load = useCallback(async () => {
     try {
-      const [p, c, u, r, inv, m] = await Promise.all([
+      const [p, c, u, r, inv, m, sug] = await Promise.all([
         axios.get(`${API_URL}/banking/providers`),
         axios.get(`${API_URL}/banking/connections?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/transactions/unmatched?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`),
         axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).catch(() => ({ data: [] })),
-        axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] }))
+        axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] }))
       ]);
-      setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data);
+      setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data); setSuggestions(sug.data);
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -80,6 +82,13 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const remove = async (id) => {
     try { await axios.delete(`${API_URL}/banking/connections/${id}`); toast.success("Bağlantı kaldırıldı."); load(); } catch { toast.error("Silinemedi."); }
+  };
+
+  const acceptSuggestion = async (sg) => {
+    try {
+      const r = await axios.post(`${API_URL}/banking/match-rule-suggestions/accept`, { company_id: companyId, pattern: sg.pattern, contact_id: sg.contact_id, target_account_id: sg.target_account_id, category: sg.category, apply_now: true });
+      toast.success(r.data.message); load(); onSynced?.();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kural oluşturulamadı."); }
   };
 
   const toggleAutoMatch = async (c) => {
@@ -203,6 +212,19 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {suggestions.length > 0 && (
+          <div className="px-5 py-3 bg-amber-50/60 border-b border-amber-100 text-xs space-y-1.5" data-testid="rule-suggestions">
+            <div className="font-bold text-amber-900 flex items-center gap-1.5"><Wand2 className="w-3.5 h-3.5" /> {suggestions.length} kural önerisi — aynı açıklama kalıbıyla tekrar eden eşleşmeler</div>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((sg) => (
+                <div key={sg.pattern} className="flex items-center gap-2 bg-white border border-amber-200 rounded-xl px-3 py-1.5" data-testid={`rule-suggestion-${sg.pattern.replace(/\s+/g, "-")}`}>
+                  <div><div className="font-mono text-[11px] text-slate-800">"{sg.pattern}"</div><div className="text-[10px] text-slate-500">{sg.count}× → {[sg.contact_name, sg.target_account_name ? `${sg.target_account_name} (virman)` : null, sg.category].filter(Boolean).join(" · ")}{!sg.consistent && <span className="text-rose-600"> · farklı eşleşmeler var</span>}</div></div>
+                  <button onClick={() => acceptSuggestion(sg)} className="px-2.5 py-1 bg-violet-600 text-white rounded-lg text-[11px] font-semibold hover:bg-violet-700 whitespace-nowrap" data-testid={`rule-suggestion-accept-${sg.pattern.replace(/\s+/g, "-")}`}>Kural yap</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {showRules && (

@@ -184,6 +184,14 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - Temizlik: test artığı `2099-01` bordrolar silindi.
 - Açık: `input type=time` tarayıcı locale'inde 12 saat gösterebilir (kozmetik); `server.py` 4300+ satır (modüllere bölme borcu sürüyor).
 
+## İterasyon 18 (Haziran 2026) — test ajanı ✅ 20/20 backend, 6/6 frontend
+- **Fazla mesai ücreti bordroya**: `attendance.overtime_rate` (yasal: bordro brüt/225 × 1,5, tatil × 2; sabit: personel saatlik ücreti), `overtime_pay_for_period`, `GET /personnel/overtime-preview`; `generate_payroll` upsert (mükerrer yok) + `overtime_pay`, `second_salary`, `final_payable = net + mesai + 2. maaş + prim − kesinti − avans`; Puantaj tablosunda "Mesai ₺", bordro satırında breakdown.
+- **Personel ücretleri**: `payroll_salary` (brüt), `salary` (net), `second_salary`, `overtime_method`, `overtime_hourly_rate` — Personel Kartı → "Ücret & Mesai" sekmesi (`EmployeeCompensationForm`). `PUT /personnel/employees/{id}` whitelist + sayısal doğrulama.
+- **Gün gün mesai**: `work_schedule.days{"0".."6": {start,end,break_minutes}}` firma + personel override (`DaySchedule` tablosu), `day_window()`.
+- **Puantaj bildirimi**: `watcher_loop` (60 sn) → mesai başlangıcı+tolerans sonrası giriş yapmayanlar (günde 1 kez, `attendance_alerts` dedupe), geç girişte anlık bildirim; SMTP varsa yöneticilere e-posta; `POST /personnel/attendance/run-alerts` (admin). Ayarlar: `notify_missing_checkin`, `notify_late_checkin`.
+- **Banka kural önerisi**: `GET /banking/match-rule-suggestions` (aynı kalıpla ≥2 eşleşme, kural yoksa), `POST .../accept` (kural + bekleyenleri uygula); BankConnectionsPanel öneri kutusu.
+- **Mobil Mesaim**: büyük saat + 2 sütun büyük Giriş/Çıkış butonları, yatay taşma yok.
+
 ## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).
