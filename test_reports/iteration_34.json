@@ -1,0 +1,18 @@
+{
+  "summary": "Tested new /api/cargo/auto-ship endpoints and /orders AutoShipModal UI. 5/5 backend pytest cases pass (dry_run ShopPHP/Trendyol -> candidates>=1 & live=false & 'kargolanabilir' in message; POST without dry_run & without allow_simulated -> 400 with 'canlı API bağlantısı yok'; b2b channel filter; GET runs list; safe real run on manual channel with allow_simulated=true → created=1, tracking_number present, order.cargo_tracking_number set, order_status=shipped, run entry added; test cleans up order+shipment+run+trash). Frontend: 'Toplu Kargola' button opens auto-ship-modal, preview loads 3 rows (default shopphp+trendyol), amber sim-warning visible (Geliver not live), auto-ship-run disabled initially, becomes enabled after checking auto-ship-allow-sim, unchecking auto-ship-ch-shopphp empties rows and shows auto-ship-empty state, close works. NOT clicked run on real channels as instructed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_cargo_auto_ship.py", "/app/test_reports/pytest/auto_ship.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "cargo_auto_ship: when live=false and dry_run=true, endpoint correctly does not raise; when live=false, dry_run=false, allow_simulated=true → will actually create simulated shipments on the selected channels. Safe because gated by explicit UI checkbox, but consider logging a warning row when carrier is not 'geliver' and live=false (message suffix only added for geliver).",
+    "server.py is 5258 lines — exceeds 700 line guideline; consider splitting into routers (cargo, orders, invoices, etc.)."
+  ],
+  "updated_files": ["/app/backend/tests/test_cargo_auto_ship.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@nexus.com / admin123",
+  "seed_data_creation": "Test created one manual order (QA Kargo Test) with allow_simulated shipment on carrier 'yurtici' — fully cleaned up in test finally block (order + cargo_shipments + cargo_auto_runs + trash via Mongo direct).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auto-ship feature fully working end-to-end. Test file at /app/backend/tests/test_cargo_auto_ship.py handles its own cleanup via Mongo. Run with: REACT_APP_BACKEND_URL=<url> pytest -o addopts='' backend/tests/test_cargo_auto_ship.py"
+}

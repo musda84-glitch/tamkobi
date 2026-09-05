@@ -4272,6 +4272,44 @@ async def update_cargo_integration(carrier_id: str, data: Dict[str, Any]):
     await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": upd})
     return cargo_providers.mask_config(clean_doc(await db.cargo_configs.find_one({"_id": carrier_id})))
 
+@api_router.post("/cargo/auto-ship")
+async def cargo_auto_ship(req: Dict[str, Any]):
+    """Onaylı/hazırlanıyor durumundaki kargosuz siparişleri seçili taşıyıcıda (Geliver vb.) toplu kargola. dry_run=true → yalnızca aday liste."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    carrier_code = req.get("carrier_code", "geliver")
+    channels = [c.lower() for c in (req.get("channels") or ["shopphp", "trendyol"])]
+    statuses = req.get("statuses") or ["approved", "preparing"]
+    q = {"company_id": company_id, "channel": {"$in": channels}, "order_status": {"$in": statuses}, "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}, {"cargo_tracking_number": {"$exists": False}}]}
+    candidates = await db.orders.find(q).sort("order_date", 1).to_list(500)
+    cfg = await db.cargo_configs.find_one({"company_id": company_id, "carrier_code": carrier_code})
+    live = bool(cfg) and carrier_code == "geliver" and cargo_providers.has_live_credentials(cfg)
+    if not live and not req.get("dry_run") and not req.get("allow_simulated"):
+        raise HTTPException(status_code=400, detail="Bu taşıyıcı için canlı API bağlantısı yok; gerçek siparişlere simülasyon takip numarası yazılmaz. Kargo → Geliver ayarlarını yapın ya da 'Simülasyona izin ver' seçin.")
+    summary = {"carrier_code": carrier_code, "live": live, "candidates": len(candidates), "created": 0, "failed": 0, "skipped": 0, "results": []}
+    for o in candidates:
+        row = {"order_id": o["_id"], "order_number": o.get("order_number"), "channel": o.get("channel"), "customer_name": o.get("customer_name"), "city": o.get("city"), "total_amount": o.get("total_amount")}
+        if not (o.get("shipping_address") and o.get("shipping_address") != "-" and o.get("customer_name")):
+            row.update({"status": "skipped", "reason": "Adres/alıcı eksik"}); summary["skipped"] += 1; summary["results"].append(row); continue
+        if req.get("dry_run"):
+            row["status"] = "ready"; summary["results"].append(row); continue
+        try:
+            r = await create_cargo_shipment({"company_id": company_id, "carrier_code": carrier_code, "order_id": o["_id"], "customer_name": o["customer_name"], "address": o["shipping_address"], "city": o.get("city") or "İstanbul", "customer_phone": o.get("customer_phone"),
+                                             "desi": float(req.get("default_desi") or sum(float(i.get("desi") or 0) for i in o.get("items") or []) or 1), "payment_type": "sender_pays", "cod_amount": (o.get("total_amount") if str(o.get("payment_method") or "").lower().startswith("kapıda") else 0)})
+            row.update({"status": "created", "tracking_number": r.get("tracking_number") or (r.get("shipment") or {}).get("tracking_number"), "label_url": (r.get("shipment") or {}).get("label_url") or r.get("label_url")}); summary["created"] += 1
+        except HTTPException as e:
+            row.update({"status": "failed", "reason": e.detail}); summary["failed"] += 1
+        except Exception as e:  # noqa: BLE001 — bir siparişin hatası toplu işi durdurmasın
+            row.update({"status": "failed", "reason": str(e)[:160]}); summary["failed"] += 1
+        summary["results"].append(row)
+    if not req.get("dry_run"):
+        await db.cargo_auto_runs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, **{k: v for k, v in summary.items() if k != "results"}, "results": summary["results"], "created_at": datetime.now(timezone.utc).isoformat()})
+    summary["message"] = (f"{summary['candidates']} kargolanabilir sipariş bulundu." if req.get("dry_run") else f"{summary['created']} kargo oluşturuldu, {summary['failed']} hata, {summary['skipped']} atlandı.") + ("" if live else " (Geliver canlı bağlantısı yok → simülasyon takip no üretildi.)" if carrier_code == "geliver" else "")
+    return summary
+
+@api_router.get("/cargo/auto-ship/runs")
+async def cargo_auto_runs(company_id: Optional[str] = "comp_nexus_main_01"):
+    return clean_docs(await db.cargo_auto_runs.find({"company_id": company_id}).sort("created_at", -1).to_list(20))
+
 @api_router.post("/cargo/create-shipment")
 async def create_cargo_shipment(req: Dict[str, Any]):
     carrier_code = req.get("carrier_code", "yurtici")

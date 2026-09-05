@@ -32,6 +32,7 @@ import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { channelTr, statusTr } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
+import { AutoShipModal } from "../components/AutoShipModal";
 import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
 
 export default function OrdersB2BPage() {
@@ -77,6 +78,7 @@ export default function OrdersB2BPage() {
   const [autoBusy, setAutoBusy] = useState(false);
   const [newOrder, setNewOrder] = useState(false);
   const [aiImport, setAiImport] = useState(false);
+  const [autoShip, setAutoShip] = useState(false);
   const autoContacts = async () => {
     setAutoBusy(true);
     try { const r = await axios.post(`${API_URL}/orders/auto-contacts`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" }); toast.success(r.data.message); loadData(); }
@@ -286,6 +288,7 @@ export default function OrdersB2BPage() {
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <button onClick={() => setNewOrder(true)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="new-order-btn"><Plus className="w-4 h-4" /> Yeni Sipariş</button>
+          <button onClick={() => setAutoShip(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /> Toplu Kargola</button>
           <button onClick={() => setAiImport(true)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /> AI ile Yükle (PDF/Excel)</button>
         {/* Tab Switcher */}
         <div className="flex flex-wrap items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
@@ -310,6 +313,7 @@ export default function OrdersB2BPage() {
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
+      {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
       {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
 
       {activeTab === "orders" ? (<>
