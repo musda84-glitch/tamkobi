@@ -33,6 +33,10 @@ import LoansPage from "./pages/LoansPage";
 import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
+import SystemLoginPage from "./pages/SystemLoginPage";
+import PricingPage from "./pages/PricingPage";
+import SignupPage from "./pages/SignupPage";
+import PaymentResultPage from "./pages/PaymentResultPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -70,7 +74,13 @@ export default function App() {
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/edoc-inbox" element={<EdocInboxPage />} />
+            <Route path="/sistem/giris" element={<SystemLoginPage />} />
             <Route path="/sistem" element={<SystemAdminPage />} />
+            <Route path="/sistem/:section" element={<SystemAdminPage />} />
+            <Route path="/fiyatlar" element={<PricingPage />} />
+            <Route path="/kayit" element={<SignupPage />} />
+            <Route path="/odeme/basarili" element={<PaymentResultPage />} />
+            <Route path="/odeme/iptal" element={<PaymentResultPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

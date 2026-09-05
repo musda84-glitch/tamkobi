@@ -47,6 +47,7 @@ import migration
 import pricing
 import edocs
 import saas
+import saas_billing
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -108,6 +109,7 @@ async def startup_event():
     import asyncio as _asyncio
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
+    _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -677,8 +679,9 @@ async def register(req: RegisterRequest, response: Response):
     }
 
 @api_router.get("/auth/me")
-async def get_me(user: dict = Depends(get_current_user)):
+async def get_me(request: Request, user: dict = Depends(get_current_user)):
     user_id = str(user.get("_id", user.get("id")))
+    authenticated = bool(request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer "))
     companies = await db.companies.find({}).to_list(100)
     role_doc = await rbac.role_for(user)
     return {
@@ -692,6 +695,7 @@ async def get_me(user: dict = Depends(get_current_user)):
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
         },
+        "authenticated": authenticated,
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
@@ -5216,6 +5220,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
+saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5265,6 +5270,7 @@ app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
+app.include_router(saas_billing.router)
 
 @app.get("/")
 async def root():

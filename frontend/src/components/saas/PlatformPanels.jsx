@@ -1,0 +1,78 @@
+import React, { useCallback, useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { Save, Loader2, Send, Mail, MessageCircle, Bell, CreditCard } from "lucide-react";
+import { API_URL } from "../../context/AuthContext";
+import { fmtTL, fmtDate, StatCard, Toggle, inputCls } from "./saasUi";
+
+const PAY_STYLE = { paid: "bg-emerald-50 text-emerald-700", pending: "bg-amber-50 text-amber-700", expired: "bg-slate-100 text-slate-500", failed: "bg-rose-50 text-rose-700" };
+const PAY_LABEL = { paid: "Ödendi", pending: "Bekliyor", expired: "Süresi geçti", failed: "Başarısız" };
+
+export const PaymentsPanel = () => {
+  const [d, setD] = useState(null);
+  useEffect(() => { axios.get(`${API_URL}/system/payments`).then((r) => setD(r.data)).catch(() => toast.error("Ödemeler alınamadı.")); }, []);
+  if (!d) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
+  return (
+    <div className="space-y-4 text-xs" data-testid="saas-payments">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3"><StatCard label="Tahsil Edilen" value={fmtTL(d.total_paid)} accent="text-emerald-700" testId="pay-total" /><StatCard label="Başarılı Ödeme" value={d.paid_count} testId="pay-count" /><StatCard label="Toplam Deneme" value={d.items.length} testId="pay-attempts" /></div>
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
+        <table className="w-full min-w-[760px]"><thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Şirket</th><th className="px-3 py-2.5 text-left">Paket</th><th className="px-3 py-2.5 text-left">Dönem</th><th className="px-3 py-2.5 text-right">Tutar</th><th className="px-3 py-2.5 text-left">Durum</th><th className="px-3 py-2.5 text-left">Stripe Oturumu</th></tr></thead>
+          <tbody className="divide-y divide-slate-100">{d.items.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Henüz ödeme yok.</td></tr>}
+            {d.items.map((t) => <tr key={t.id} data-testid={`pay-row-${t.id}`}><td className="px-3 py-2">{fmtDate(t.created_at)}</td><td className="px-3 py-2 font-semibold text-slate-800">{t.company_name}</td><td className="px-3 py-2">{t.plan_name}</td><td className="px-3 py-2">{t.period === "yearly" ? "Yıllık" : "Aylık"}</td><td className="px-3 py-2 text-right font-bold">{Number(t.amount).toLocaleString("tr-TR")} {String(t.currency).toUpperCase()}</td><td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${PAY_STYLE[t.payment_status] || PAY_STYLE.expired}`}>{PAY_LABEL[t.payment_status] || t.payment_status}</span>{t.applied && <span className="ml-1 text-[9px] text-emerald-600">lisans aktif</span>}</td><td className="px-3 py-2 font-mono text-[10px] text-slate-400">{t.session_id?.slice(0, 22)}…</td></tr>)}</tbody></table>
+      </div>
+      <p className="text-[10px] text-slate-400 flex items-center gap-1"><CreditCard className="w-3 h-3" /> Ödemeler Stripe Checkout ile alınır; ödeme onaylanınca paket otomatik aktive edilir ve süre dönem kadar uzatılır.</p>
+    </div>
+  );
+};
+
+export const RemindersPanel = () => {
+  const [log, setLog] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => axios.get(`${API_URL}/system/reminders`).then((r) => setLog(r.data)).catch(() => toast.error("Hatırlatma günlüğü alınamadı.")), []);
+  useEffect(() => { load(); }, [load]);
+  const run = async () => { setBusy(true); try { const r = await axios.post(`${API_URL}/system/reminders/run`); toast.success(`${r.data.count} hatırlatma gönderildi.`); load(); } catch (e) { toast.error(e.response?.data?.detail || "Çalıştırılamadı."); } finally { setBusy(false); } };
+  return (
+    <div className="space-y-4 text-xs" data-testid="saas-reminders">
+      <div className="flex items-center justify-between"><p className="text-slate-500">Deneme/lisans bitişinden önce belirlenen günlerde (varsayılan 7 ve 1 gün) ve bittiğinde; uygulama içi bildirim + e-posta + WhatsApp. Saatlik otomatik çalışır.</p><button onClick={run} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="reminders-run">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Şimdi Çalıştır</button></div>
+      <div className="bg-white border border-slate-200 rounded-2xl divide-y">
+        {!log ? <div className="p-6 text-slate-400">Yükleniyor…</div> : log.length === 0 ? <div className="p-8 text-center text-slate-400">Henüz hatırlatma gönderilmedi.</div> : log.map((r) => (
+          <div key={r.id} className="p-3 flex flex-wrap items-center gap-3" data-testid={`reminder-row-${r.id}`}>
+            <div className="flex-1 min-w-[220px]"><b className="text-slate-900">{r.company_name}</b> · {r.plan_name} · <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${r.kind === "expired" ? "bg-rose-50 text-rose-700" : "bg-sky-50 text-sky-700"}`}>{r.kind === "expired" ? "Süresi doldu" : `${r.kind.slice(1)} gün kala`}</span><div className="text-[10px] text-slate-500">Bitiş {fmtDate(r.period_end)} · gönderim {fmtDate(r.created_at)}</div></div>
+            <div className="flex items-center gap-3 text-[10px]"><span className="flex items-center gap-1 text-emerald-700"><Bell className="w-3 h-3" /> bildirim</span><span className={`flex items-center gap-1 ${r.result?.email?.length ? "text-emerald-700" : "text-slate-400"}`} title={r.result?.email_error || ""}><Mail className="w-3 h-3" /> {r.result?.email?.length ? `${r.result.email.length} e-posta` : r.result?.email_error ? "e-posta hatası" : "e-posta yok"}</span><span className={`flex items-center gap-1 ${r.result?.whatsapp?.length ? "text-emerald-700" : "text-slate-400"}`}><MessageCircle className="w-3 h-3" /> {r.result?.whatsapp?.length ? `${r.result.whatsapp.length} WhatsApp` : "WhatsApp yok"}</span></div>
+          </div>))}
+      </div>
+    </div>
+  );
+};
+
+export const PlatformSettingsPanel = () => {
+  const [s, setS] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { axios.get(`${API_URL}/system/settings`).then((r) => setS(r.data)).catch(() => toast.error("Ayarlar alınamadı.")); }, []);
+  if (!s) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
+  const save = async (e) => { e.preventDefault(); setBusy(true); try { const r = await axios.put(`${API_URL}/system/settings`, { ...s, reminder_days: String(s.reminder_days_text ?? s.reminder_days.join(",")).split(",").map((x) => x.trim()).filter(Boolean) }); setS({ ...s, ...r.data, reminder_days_text: undefined }); toast.success("Platform ayarları kaydedildi."); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); } };
+  return (
+    <form onSubmit={save} className="space-y-4 text-xs max-w-3xl" data-testid="saas-settings">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <h3 className="font-bold text-slate-900 text-sm">Hatırlatma & Gönderim</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label className="block font-semibold text-slate-700 mb-1">Hatırlatma günleri (bitişten kaç gün önce; virgülle)</label><input value={s.reminder_days_text ?? s.reminder_days.join(",")} onChange={(e) => setS({ ...s, reminder_days_text: e.target.value })} className={inputCls} data-testid="set-reminder-days" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Gönderici hesapların alındığı şirket</label><select value={s.sender_company_id} onChange={(e) => setS({ ...s, sender_company_id: e.target.value })} className={inputCls} data-testid="set-sender-company">{s.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><div className="text-[10px] text-slate-500 mt-1">SMTP: {s.sender_mail || "tanımlı değil"} · WhatsApp: {s.sender_whatsapp_ready ? "hazır" : "tanımlı değil (simüle)"}</div></div>
+          <label className="flex items-center gap-2"><Toggle on={!!s.email_enabled} onChange={(v) => setS({ ...s, email_enabled: v })} testId="set-email" /> E-posta gönder</label>
+          <label className="flex items-center gap-2"><Toggle on={!!s.whatsapp_enabled} onChange={(v) => setS({ ...s, whatsapp_enabled: v })} testId="set-whatsapp" /> WhatsApp gönder</label>
+        </div>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <h3 className="font-bold text-slate-900 text-sm">Kayıt & Deneme</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label className="block font-semibold text-slate-700 mb-1">Deneme süresi (gün)</label><input type="number" min={0} max={90} value={s.trial_days} onChange={(e) => setS({ ...s, trial_days: Number(e.target.value) })} className={inputCls} data-testid="set-trial-days" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Varsayılan deneme paketi</label><input value={s.trial_plan_id} onChange={(e) => setS({ ...s, trial_plan_id: e.target.value })} className={inputCls} data-testid="set-trial-plan" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Marka adı</label><input value={s.brand_name} onChange={(e) => setS({ ...s, brand_name: e.target.value })} className={inputCls} data-testid="set-brand" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Destek e-postası</label><input value={s.support_email || ""} onChange={(e) => setS({ ...s, support_email: e.target.value })} className={inputCls} data-testid="set-support-email" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Destek telefonu</label><input value={s.support_phone || ""} onChange={(e) => setS({ ...s, support_phone: e.target.value })} className={inputCls} data-testid="set-support-phone" /></div>
+        </div>
+      </div>
+      <div className="flex justify-end"><button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="set-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
+    </form>
+  );
+};

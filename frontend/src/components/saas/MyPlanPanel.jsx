@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Check, Lock, Users, Sparkles, Clock } from "lucide-react";
+import { Check, Lock, Users, Sparkles, Clock, CreditCard } from "lucide-react";
 import { API_URL, useAuth } from "../../context/AuthContext";
 import { fmtTL, fmtDate, PlanChip, StatusBadge, groupByCategory } from "./saasUi";
 
@@ -17,6 +17,10 @@ export const MyPlanPanel = ({ companyId }) => {
   const request = async (plan) => {
     setBusy(true);
     try { const r = await axios.post(`${API_URL}/license/upgrade-request`, { company_id: companyId, plan_id: plan.id, message: `${plan.name} paketine geçiş (${yearly ? "yıllık" : "aylık"})` }); toast.success(r.data.message); await load(); refreshLicense(companyId); } catch (e) { toast.error(e.response?.data?.detail || "Talep gönderilemedi."); } finally { setBusy(false); }
+  };
+  const pay = async (plan) => {
+    setBusy(true);
+    try { const r = await axios.post(`${API_URL}/payments/checkout`, { company_id: companyId, plan_id: plan.id, period: yearly ? "yearly" : "monthly", origin_url: window.location.origin }); window.location.href = r.data.checkout_url; } catch (e) { toast.error(e.response?.data?.detail || "Ödeme başlatılamadı."); setBusy(false); }
   };
   return (
     <div className="space-y-5 text-xs" data-testid="my-plan-panel">
@@ -56,10 +60,12 @@ export const MyPlanPanel = ({ companyId }) => {
               <div className="text-xl font-bold text-slate-900 mt-2">{fmtTL(yearly ? p.price_yearly / 12 : p.price_monthly)}<span className="text-[10px] font-normal text-slate-500">/ay{yearly ? " (yıllık faturalanır)" : ""}</span></div>
               <div className="text-[10px] text-slate-500 mt-1">{p.user_limit ? `${p.user_limit} kullanıcı` : "Sınırsız kullanıcı"} · {p.modules.length} modül</div>
               <ul className="mt-3 space-y-1 flex-1">{d.catalog.filter((m) => !m.is_core).map((m) => <li key={m.key} className={`flex items-center gap-1.5 ${p.modules.includes(m.key) ? "text-slate-700" : "text-slate-300 line-through"}`}><Check className={`w-3 h-3 ${p.modules.includes(m.key) ? "text-emerald-600" : "text-slate-300"}`} />{m.label}</li>)}</ul>
-              <button disabled={cur || busy || !!d.pending_request} onClick={() => request(p)} className={`mt-4 w-full py-2 rounded-xl font-bold ${cur ? "bg-emerald-50 text-emerald-700" : "bg-slate-900 text-white hover:bg-slate-800"} disabled:opacity-60`} data-testid={`plan-request-${p.id}`}>{cur ? "Mevcut Paket" : "Bu Pakete Geç"}</button>
+              {cur && d.status === "active" ? <div className="mt-4 w-full py-2 rounded-xl font-bold bg-emerald-50 text-emerald-700 text-center" data-testid={`plan-current-${p.id}`}>Mevcut Paket</div> : (<>
+                <button disabled={busy} onClick={() => pay(p)} className="mt-4 w-full py-2 rounded-xl font-bold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 flex items-center justify-center gap-1.5" data-testid={`plan-pay-${p.id}`}><CreditCard className="w-3.5 h-3.5" /> {cur ? "Yenile / Satın Al" : "Satın Al"} · {fmtTL(yearly ? p.price_yearly : p.price_monthly)}</button>
+                <button disabled={busy || !!d.pending_request} onClick={() => request(p)} className="mt-1.5 w-full py-1.5 rounded-xl font-semibold text-slate-500 hover:text-slate-900 disabled:opacity-50" data-testid={`plan-request-${p.id}`}>{d.pending_request ? "Talep bekliyor" : "Yöneticiden talep et"}</button></>)}
             </div>); })}
         </div>
-        <p className="text-[10px] text-slate-400 mt-2">Paket değişiklikleri sistem yöneticisi onayı ile aktif olur. Fiyatlar KDV hariçtir.</p>
+        <p className="text-[10px] text-slate-400 mt-2">Kartla ödemede paket anında aktif olur (Stripe güvenli ödeme). "Yöneticiden talep et" ile manuel aktivasyon isteyebilirsiniz. Fiyatlar KDV hariçtir.</p>
       </div>
     </div>
   );

@@ -1,21 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useSearchParams } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Inbox, Boxes } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
 import { CompaniesTable } from "../components/saas/CompaniesTable";
 import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { PlansPanel } from "../components/saas/PlansPanel";
 import { RequestsPanel } from "../components/saas/RequestsPanel";
-
-const TABS = [["overview", "Genel Bakış", LayoutGrid], ["companies", "Şirketler & Lisanslar", Building2], ["plans", "Paketler", Package], ["modules", "Modül Kataloğu", Boxes], ["requests", "Yükseltme Talepleri", Inbox]];
+import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
 
 export default function SystemAdminPage() {
-  const { user, refreshLicense } = useAuth();
-  const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") || "overview";
+  const { user, authenticated, refreshLicense } = useAuth();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -28,27 +27,29 @@ export default function SystemAdminPage() {
       setOverview(o.data); setCompanies(c.data); setPlans(p.data); setCatalog(m.data); setRequests(r.data);
     } catch (e) { toast.error(e.response?.data?.detail || "Sistem verileri alınamadı."); }
   }, []);
-  useEffect(() => { if (user?.is_super_admin) load(); }, [load, user]);
-  if (user && !user.is_super_admin) return <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="system-denied"><ShieldCheck className="w-8 h-8 mx-auto text-slate-300 mb-2" /><div className="text-lg font-bold text-slate-900 mb-1">Sistem Yönetimi</div><div className="text-sm">Bu alan yalnızca platform yöneticisine açıktır.</div></div>;
+  useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const go = (t) => setParams({ tab: t });
+  const title = (SYSTEM_NAV.find(([p]) => p === pathname) || SYSTEM_NAV[0])[1];
   return (
-    <div className="space-y-5" data-testid="system-admin-page">
-      <div className="bg-slate-900 text-white rounded-3xl p-6 relative overflow-hidden">
-        <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-amber-400/10 blur-3xl" />
-        <div className="flex flex-wrap items-center justify-between gap-4 relative">
-          <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Platform Yönetimi</div><h1 className="text-2xl sm:text-3xl font-bold mt-1">NexusHesap SaaS Paneli</h1><p className="text-xs text-slate-300 mt-1">Müşteri şirketleri, paketler, modül lisansları ve yükseltme talepleri tek ekranda. Bir modülü kapattığınızda müşterinin menüsünden kaldırılır ve API erişimi engellenir.</p></div>
-          <div className="flex gap-2 text-xs">{overview && <><div className="bg-white/10 rounded-xl px-3 py-2"><div className="text-[10px] text-slate-300">Şirket</div><div className="text-lg font-bold">{overview.companies}</div></div><div className="bg-white/10 rounded-xl px-3 py-2"><div className="text-[10px] text-slate-300">MRR</div><div className="text-lg font-bold text-amber-300">{(overview.mrr || 0).toLocaleString("tr-TR")} ₺</div></div></>}</div>
+    <SystemLayout pendingCount={overview?.pending_requests || 0}>
+      <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
+          {overview && <div className="flex gap-2 text-xs">{[["Şirket", overview.companies], ["Kullanıcı", overview.users], ["MRR", `${(overview.mrr || 0).toLocaleString("tr-TR")} ₺`]].map(([l, v]) => <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-200"><div className="text-[10px] text-slate-400">{l}</div><div className="font-bold">{v}</div></div>)}</div>}
         </div>
+        <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
+          {pathname === "/sistem" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
+          {pathname === "/sistem/sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {pathname === "/sistem/paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
+          {pathname === "/sistem/moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
+          {pathname === "/sistem/talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
+          {pathname === "/sistem/odemeler" && <PaymentsPanel />}
+          {pathname === "/sistem/hatirlatmalar" && <RemindersPanel />}
+          {pathname === "/sistem/ayarlar" && <PlatformSettingsPanel />}
+        </div>
+        {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
-      <div className="flex gap-1 overflow-x-auto pb-1">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => go(k)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${tab === k ? "bg-amber-400 text-slate-900 shadow" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`} data-testid={`system-tab-${k}`}><Icon className="w-4 h-4" /> {l}{k === "requests" && overview?.pending_requests ? <span className="ml-1 bg-rose-500 text-white rounded-full px-1.5 text-[10px]">{overview.pending_requests}</span> : null}</button>)}</div>
-      {tab === "overview" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => go("requests")} />}
-      {tab === "companies" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
-      {tab === "plans" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
-      {tab === "modules" && <ModuleCatalog catalog={catalog} plans={plans} />}
-      {tab === "requests" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
-      {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
-    </div>
+    </SystemLayout>
   );
 }
 

@@ -10,6 +10,7 @@ export const API_URL = `${BACKEND_URL}/api`;
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [license, setLicense] = useState(null);
+  const [authenticated, setAuthenticated] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [activeCompany, setActiveCompany] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +42,6 @@ export const AuthProvider = ({ children }) => {
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
-    { label: "Sistem Yönetimi", path: "/sistem", badge: "SaaS", isSystem: true },
   ];
   const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel" };
   const perms = user?.permissions;
@@ -80,6 +80,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
       setUser(res.data.user);
+      setAuthenticated(!!res.data.authenticated);
       setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
       setCompanies(res.data.companies || []);
@@ -112,6 +113,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password }, { withCredentials: true });
       setUser(res.data.user);
+      setAuthenticated(true);
       setLicense(res.data.license || null);
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
@@ -141,17 +143,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = async () => {
+  const logout = async (to = "/login") => {
     try {
       await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
     } catch (e) {}
     setUser(null);
     toast.info("Oturum kapatıldı.");
-    window.location.href = "/login";
+    window.location.href = typeof to === "string" ? to : "/login";
   };
 
   return (
-    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

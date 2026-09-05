@@ -101,7 +101,7 @@ async def effective(company_id: str) -> Dict[str, Any]:
     end = (lic or {}).get("trial_ends_at") if status == "trial" else (lic or {}).get("expires_at")
     days_left = None
     if end:
-        days_left = max(0, (datetime.fromisoformat(end) - datetime.now(timezone.utc)).days)
+        days_left = max(0, -(-int((datetime.fromisoformat(end) - datetime.now(timezone.utc)).total_seconds()) // 86400))
     res = {"company_id": company_id, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
            "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0), "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly")}
@@ -143,6 +143,8 @@ async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14
 
 # ---------------- Super admin dependency ----------------
 async def require_super_admin(request: Request) -> dict:
+    if not (request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer ")):
+        raise HTTPException(status_code=401, detail="Sistem paneli için giriş yapmanız gerekiyor.")
     user = await _current_user(request)
     if not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Bu alan yalnızca platform (sistem) yöneticisine açıktır.")
