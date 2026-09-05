@@ -192,6 +192,14 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - **Banka kural önerisi**: `GET /banking/match-rule-suggestions` (aynı kalıpla ≥2 eşleşme, kural yoksa), `POST .../accept` (kural + bekleyenleri uygula); BankConnectionsPanel öneri kutusu.
 - **Mobil Mesaim**: büyük saat + 2 sütun büyük Giriş/Çıkış butonları, yatay taşma yok.
 
+## İterasyon 19–21 (Haziran 2026) — test ajanı ✅ (it19 95% → düzeltildi, it20 20/20+UI, it21 hepsi geçti)
+- **B2B müşteri portalı mobil** (`B2BPortalParts.jsx`): dikey header, 4'lü grid sekmeler, yatay kaydırmalı kategoriler, mobilde sabit alt sepet çubuğu + açılır sepet paneli (`-mobile` testid soneki), sipariş/ekstre mobil kart listesi, `n/a` → Ödenmedi. B2B/ORD sipariş no atomik sayaç (`_next_order_number`, mükerrer engeli), `Order.order_number` Optional.
+- **Kamera barkod** (`CameraScanner.jsx`, html5-qrcode): sürekli okuma, bip/titreşim, kamera değiştir, flaş, izin hatası mesajı. Bağlandı: Stok sayımı (sürekli), Barkod Okuyucu modalı, Ürün formu barkod alanı, Fatura "Barkodla Ekle", üst bar hızlı okut (mobilde görünür). craco `ignoreWarnings` source-map uyarıları.
+- **İzin talebi Mesaim'den** (`MyLeavePanel.jsx`; `GET /personnel/leaves/me`, `POST/DELETE /personnel/leaves/self`): bakiye − bekleyen, çakışma engeli, yöneticiye bildirim.
+- **Bordro PDF** (`utils/payslip.js` → yazdır penceresi): brüt/net/mesai kırılımı/2. maaş/prim/kesinti/avans/ödenecek, imza alanları.
+- **Haftalık Vardiya Planı** (`ShiftPlanner.jsx`; `shift_plans`, `GET/PUT/DELETE /personnel/shifts`, `copy-week`): hücre bazlı saat/izin; puantaj ve giriş-yok bildirimi plana göre hesaplar (`schedule_snapshot.from_shift_plan`).
+- Dashboard grafik konteynerlerine sabit yükseklik (mobil Recharts uyarısı giderildi).
+
 ## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).

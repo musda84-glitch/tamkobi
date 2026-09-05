@@ -200,11 +200,11 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             <Link
               to="/stock?scan=true"
-              className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
+              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition"
               data-testid="quick-barcode-scan-btn"
             >
-              <QrCode className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Barkod Oku</span>
+              <QrCode className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600" />
+              <span className="hidden md:inline">Barkod Oku</span>
             </Link>
 
             <Link

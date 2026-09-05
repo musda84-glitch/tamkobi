@@ -41,12 +41,12 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
         <div className="flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 text-slate-400" />
           <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className={`${sel} ${filterCategory !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-category-select">
             <option value="all">Tüm Kategoriler</option>
-            {categories.map((c) => <option key={c.name} value={c.name} data-testid={`stock-filter-${c.name}`}>{c.name}{c.count !== undefined ? ` (${c.count})` : ""}</option>)}
+            {categories.map((c) => <option key={c.name} value={c.name} data-testid={`stock-filter-${c.name}`}>{`${c.name}${c.count !== undefined ? ` (${c.count})` : ""}`}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-1.5"><PackageCheck className="w-3.5 h-3.5 text-slate-400" />
           <select value={f.status} onChange={(e) => set("status", e.target.value)} className={`${sel} ${f.status === "critical" || f.status === "out" ? "border-rose-300 bg-rose-50 text-rose-700 font-semibold" : f.status !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-status-select">
-            {STATUS.map(([k, l]) => <option key={k} value={k}>{l}{k === "critical" && criticalCount ? ` (${criticalCount})` : ""}</option>)}
+            {STATUS.map(([k, l]) => <option key={k} value={k}>{`${l}${k === "critical" && criticalCount ? ` (${criticalCount})` : ""}`}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5 text-slate-400" />

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Save, Loader2, RefreshCw } from "lucide-react";
+import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -25,7 +26,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
       <F label="Ürün Adı"><input value={f.name} onChange={(e) => set("name", e.target.value)} className={`${inputCls} font-semibold`} required data-testid="edit-name-input" /></F>
       <div className="grid grid-cols-2 gap-2">
         <F label="SKU"><input value={f.sku} onChange={(e) => set("sku", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-sku-input" /></F>
-        <F label="Barkod (EAN-13)"><div className="flex gap-1"><input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-barcode-input" /><button type="button" onClick={genBarcode} className="px-2 border rounded-lg hover:bg-slate-50" title="Yeni barkod üret" data-testid="regen-barcode-btn"><RefreshCw className="w-3.5 h-3.5" /></button></div></F>
+        <F label="Barkod (EAN-13)"><div className="flex gap-1"><input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-barcode-input" /><button type="button" onClick={genBarcode} className="px-2 border rounded-lg hover:bg-slate-50" title="Yeni barkod üret" data-testid="regen-barcode-btn"><RefreshCw className="w-3.5 h-3.5" /></button><ScanButton size="sm" onScan={(code) => set("barcode", code)} title="Ürün barkodunu kamerayla okut" /></div></F>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>

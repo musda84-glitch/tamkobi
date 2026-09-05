@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import {
   FileText,
@@ -135,6 +136,22 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20, total: 0 }
       ]
     });
+  };
+
+  const handleScanAddItem = (code) => {
+    const c = String(code || "").trim();
+    const prod = products.find((p) => p.barcode === c || p.sku === c || (p.variants || []).some((v) => v.barcode === c));
+    if (!prod) { toast.error(`Barkod eşleşmedi: ${c}`); return; }
+    const pid = prod.id || prod._id;
+    const existing = formData.items.findIndex((it) => it.product_id === pid);
+    if (existing >= 0) { handleItemChange(existing, "quantity", Number(formData.items[existing].quantity || 0) + 1); toast.success(`${prod.name} miktarı +1`); return; }
+    const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name);
+    if (emptyIdx >= 0) { handleItemProductSelect(emptyIdx, pid); }
+    else {
+      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
+      setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: price, vat_rate: prod.vat_rate || 20, total: price, discount_rate: 0 }] }));
+    }
+    toast.success(`${prod.name} eklendi`);
   };
 
   const handleItemProductSelect = (index, productId) => {
@@ -541,6 +558,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <Plus className="w-3.5 h-3.5" /> Kalem Ekle
                   </button>
                 </div>
+                <div className="flex justify-end"><ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle (kamera)" /></div>
 
                 <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
                   <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Tutar</div><div className="col-span-1"></div>

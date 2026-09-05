@@ -27,6 +27,7 @@ import { Factory } from "lucide-react";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { ScanButton } from "../components/CameraScanner";
 
 export default function StockBarcodePage() {
   const { activeCompany } = useAuth();
@@ -398,6 +399,7 @@ export default function StockBarcodePage() {
                 >
                   Sorgula
                 </button>
+                <ScanButton onScan={(code) => { setScannedBarcode(code); handleScanBarcode(code); }} title="Kamera ile Barkod Okut" label="Kamera" />
               </div>
 
               {/* Scanned Result */}

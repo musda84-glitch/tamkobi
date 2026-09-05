@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 21 retest passed on all 5 requested items. Backend (pytest 3/3): POST /api/orders with order_number omitted auto-generates B2B-2026-XXXX for channel:'b2b' and ORD-2026-XXXX for channel:'marketplace' (GET-verified) — orders cleaned up. POST /api/personnel/generate-payroll {company_id, period:'2026-09'} returns payrolls[].overtime_rate.divisor == 225 for every row — pending payrolls cleaned up. Frontend: (a) B2B /portal/57b063b0e3fb4e7e893b8429c3f8b654 at 390x844: scrollWidth == clientWidth == 390 across all 4 tabs; Hesap Ekstresi has no 'n/a' text (IRS-2026-0006 and IRS-2026-0008 now show 'Ödenmedi'); adding NX-BT-PRO shows b2b-mobile-cart-bar → sheet with unique DOM count=1 for b2b-note-mobile / b2b-cart-total-mobile / b2b-submit-order-mobile; strict Playwright fill on b2b-note-mobile works; b2b-cart-total-mobile shows 2.164,86 ₺; b2b-mobile-cart-close closes the sheet (sheet removed, bar remains); localStorage b2b_cart_<token> cleared. On the mobile viewport the desktop CartBody's b2b-note / b2b-cart-total / b2b-submit-order are still rendered (count=1 each) but hidden via lg:block, so the duplicate-testid strict-mode issue is fixed. At 1920 the sticky b2b-cart is visible with unique b2b-note / b2b-cart-total / b2b-submit-order; b2b-mobile-cart-bar is not visible. (b) /stock at 1920: no '<span> cannot be a child of <option>' and no 'Failed to parse source map' warnings; all 8 stock-filter-* selects present and interactive. (c) Dashboard '/' at 390x844: no Recharts 'width(-1) and height(-1)' warning; 2 charts render with positive dimensions (308x256, 308x176); scrollWidth == clientWidth == 390.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21.py",
+    "/app/test_reports/pytest/iteration_21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Order.order_number now Optional in models.py and server.create_order auto-fills via _next_order_number using channel prefix — verified end-to-end.",
+    "B2BPortalParts CartBody accepts an idSuffix so mobile ids get '-mobile' suffix, eliminating strict-mode selector collisions on small viewports.",
+    "StatementList/payStatus normalizes 'n/a' → 'unpaid' so raw sentinel values no longer surface to users.",
+    "StockToolbar options are now single-string labels — silences the React <option><span> DOM-nesting warning.",
+    "Dashboard ResponsiveContainer uses a fixed height so Recharts no longer emits width(-1)/height(-1) at mobile breakpoints."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (3/3)", "frontend": "100% on the 3 requested checks"},
+  "test_credentials": "/app/memory/test_credentials.md (admin@nexus.com / admin123). B2B token: 57b063b0e3fb4e7e893b8429c3f8b654 (contact cnt_01 in comp_nexus_main_01).",
+  "seed_data_creation": "Backend test created 2 orders via POST /api/orders (B2B + marketplace) and pending payrolls for period 2026-09; both were deleted by the class-scoped teardown. Frontend B2B test only manipulated localStorage (cleared at end); no order was submitted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Correct B2B portal route is /portal/<token> (NOT /b2b/<token>). To resolve the token in tests use GET /api/contacts?company_id=comp_nexus_main_01 → pick contact with b2b_enabled=true → b2b_token, or POST /api/contacts/{id}/b2b-access. When testing the mobile cart at 390 viewport, target the '-mobile' testids (b2b-note-mobile, b2b-cart-total-mobile, b2b-submit-order-mobile, b2b-mobile-cart-close) — the desktop CartBody is still in the DOM but hidden below lg. All previously reported iteration-19/20 issues (duplicate order_number, 'n/a' status, duplicate testids, stock <option><span> warning, Recharts width(-1)) are resolved.",
+  "rca_of_the_issue": ""
+}

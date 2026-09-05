@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ClipboardList, Plus, Scan, CheckCircle2, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { ScanButton } from "./CameraScanner";
 
 export const StockCountPanel = ({ companyId, warehouses }) => {
   const [counts, setCounts] = useState([]);
@@ -25,13 +26,13 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
     catch (err) { toast.error(err.response?.data?.detail || "Sayım oluşturulamadı."); }
   };
 
-  const scan = async (e) => {
-    e?.preventDefault();
-    if (!barcode.trim()) return;
-    try { const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: barcode.trim(), quantity: 1 }); toast.success(r.data.message); setBarcode(""); open(active.id); }
-    catch (err) { toast.error(err.response?.data?.detail || "Barkod okunamadı."); setBarcode(""); }
-    inputRef.current?.focus();
+  const scanCode = async (code) => {
+    const c = String(code || "").trim();
+    if (!c) return;
+    try { const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: c, quantity: 1 }); toast.success(r.data.message); setBarcode(""); open(active.id); }
+    catch (err) { toast.error(err.response?.data?.detail || `Barkod eşleşmedi: ${c}`); setBarcode(""); }
   };
+  const scan = async (e) => { e?.preventDefault(); await scanCode(barcode); inputRef.current?.focus(); };
 
   const setCounted = async (item, value) => {
     try { const r = await axios.put(`${API_URL}/warehouses/stock-counts/${active.id}/items`, { product_id: item.product_id, variant_id: item.variant_id, counted: Number(value) }); setActive(r.data); }
@@ -96,6 +97,7 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
                 <form onSubmit={scan} className="flex gap-2">
                   <div className="relative flex-1"><Scan className="w-4 h-4 absolute left-3 top-2.5 text-violet-500" /><input ref={inputRef} value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Barkod okutun veya yazın, Enter → +1" className="w-full pl-9 bg-violet-50/50 border border-violet-200 rounded-xl p-2 font-mono text-sm font-bold" autoFocus data-testid="stock-count-scan-input" /></div>
                   <button type="submit" className="px-4 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold" data-testid="stock-count-scan-btn">Okut</button>
+                  <ScanButton onScan={scanCode} continuous title="Sayım: Kamera ile Okut" label="Kamera" />
                 </form>
               )}
               <div className="flex gap-1 text-[11px]">{[["all", "Tümü"], ["scanned", "Sayılan"], ["pending", "Sayılmayan"], ["diff", "Farklı"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-2.5 py-1 rounded-lg font-semibold ${filter === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`count-filter-${k}`}>{l}</button>)}</div>

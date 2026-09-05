@@ -174,8 +174,8 @@ export default function Dashboard() {
               </span>
             </div>
           </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-64 w-full min-w-0 min-h-[256px]">
+            <ResponsiveContainer width="100%" height={256} minWidth={0}>
               <AreaChart data={stats.chart_data}>
                 <defs>
                   <linearGradient id="colorGelir" x1="0" y1="0" x2="0" y2="1">
@@ -204,8 +204,8 @@ export default function Dashboard() {
             <h2 className="text-base font-bold text-slate-900">Satış Kanalı Dağılımı</h2>
             <p className="text-xs text-slate-500">Pazaryerleri ve B2B Sipariş Payı</p>
           </div>
-          <div className="h-44 w-full flex items-center justify-center relative">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-44 w-full min-w-0 min-h-[176px] flex items-center justify-center relative">
+            <ResponsiveContainer width="100%" height={176} minWidth={0}>
               <PieChart>
                 <Pie
                   data={stats.channels_breakdown}

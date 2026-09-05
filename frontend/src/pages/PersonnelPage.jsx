@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { printPayslip } from "../utils/payslip";
 import { toast } from "sonner";
 import {
   UserCheck,
@@ -258,6 +259,7 @@ export default function PersonnelPage() {
                   <td className="px-4 py-2.5 text-center whitespace-nowrap">
                     <button onClick={() => openQuickPay(p, "advance")} className="px-2.5 py-1 mr-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold" title="Avans ver (maaştan mahsup edilir)" data-testid={`advance-btn-${p.employee_name}`}>Avans</button>
                     <button onClick={() => openQuickPay(p, "expense")} className="px-2.5 py-1 mr-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg text-xs font-semibold" title="Masraf ödemesi (yol, yemek, harcama)" data-testid={`expense-btn-${p.employee_name}`}>Masraf</button>
+                    <button onClick={() => printPayslip(p, activeCompany)} className="px-2.5 py-1 mr-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold" title="Maaş bordrosu PDF (yazdır / kaydet)" data-testid={`payslip-btn-${p.id || p._id}`}>Bordro PDF</button>
                     {p.status !== 'paid' ? (
                       <button
                         onClick={() => setPayPayrollItem(p)}

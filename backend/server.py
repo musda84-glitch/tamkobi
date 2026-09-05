@@ -308,10 +308,26 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(data)}
 
 # ----------------- TEKLİF / PROJE / KEŞİF -----------------
-async def _next_number(prefix: str, coll) -> str:
+async def _next_number(prefix: str, coll=None, company_id: Optional[str] = None) -> str:
     year = datetime.now(timezone.utc).year
-    c = await db.counters.find_one_and_update({"_id": f"{prefix}-{year}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
+    key = f"{prefix}-{year}" + (f"-{company_id}" if company_id else "")
+    c = await db.counters.find_one_and_update({"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
     return f"{prefix}-{year}-{c['seq']:04d}"
+
+async def _next_order_number(company_id: str, prefix: str) -> str:
+    """Atomik sayaç; mevcut en büyük numaradan devam eder (mükerrer sipariş no engeli)."""
+    year = datetime.now(timezone.utc).year
+    key = f"{prefix}-{year}-{company_id}"
+    if not await db.counters.find_one({"_id": key}):
+        last = await db.orders.find({"company_id": company_id, "order_number": {"$regex": f"^{prefix}-{year}-"}}).sort("order_number", -1).limit(1).to_list(1)
+        seed = 0
+        if last:
+            try:
+                seed = int(last[0]["order_number"].rsplit("-", 1)[1])
+            except (ValueError, IndexError):
+                seed = await db.orders.count_documents({"company_id": company_id})
+        await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    return await _next_number(prefix, None, company_id)
 
 def _calc_items(items: List[Dict[str, Any]]):
     subtotal = vat_total = 0.0
@@ -870,8 +886,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     if float(_bs.get("min_order_amount", 0) or 0) > total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
-    count = await db.orders.count_documents({"company_id": c["company_id"]}) + 1
-    order = Order(company_id=c["company_id"], order_number=f"B2B-{datetime.now().strftime('%Y')}-{str(count).zfill(4)}", channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
+    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
     doc = order.to_mongo()
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
@@ -3638,9 +3653,7 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
 @api_router.post("/orders")
 async def create_order(order: Order):
     if not order.order_number:
-        count = await db.orders.count_documents({"company_id": order.company_id}) + 1
-        prefix = "B2B" if order.channel == "b2b" else "ORD"
-        order.order_number = f"{prefix}-{datetime.now().strftime('%Y')}-{str(count).zfill(4)}"
+        order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
 
     doc = order.to_mongo()
     await db.orders.insert_one(doc)
@@ -4219,7 +4232,7 @@ async def generate_payroll(req: Dict[str, Any]):
             "overtime_weekday_hours": ot["weekday_hours"],
             "overtime_holiday_hours": ot["holiday_hours"],
             "overtime_pay": ot["amount"],
-            "overtime_rate": {k: ot[k] for k in ("method", "hourly_base", "weekday_rate", "holiday_rate", "multiplier", "holiday_multiplier")},
+            "overtime_rate": {**{k: ot[k] for k in ("method", "hourly_base", "weekday_rate", "holiday_rate", "multiplier", "holiday_multiplier")}, "divisor": attendance.merge_schedule(company, emp).get("monthly_hours_divisor", 225)},
             "bonus": bonus,
             "deduction": deduction,
             "advance_payment": advance,

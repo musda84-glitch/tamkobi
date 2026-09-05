@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
+import { MyLeavePanel } from "../components/MyLeavePanel";
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -107,6 +108,7 @@ export default function MyAttendancePage() {
         <Stat label="Geç kalma" value={s.late_count} sub={`${s.late_minutes} dk toplam`} tone={s.late_count ? "rose" : "slate"} testId="my-att-stat-late" />
         <Stat label="Onay bekleyen" value={s.unconfirmed} sub="kayıtlarınızı onaylayın" tone={s.unconfirmed ? "rose" : "slate"} testId="my-att-stat-unconfirmed" />
       </div>
+      <MyLeavePanel enabled={!!data.employee} />
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         <div className="px-4 py-2.5 border-b flex items-center justify-between"><span className="font-bold text-slate-900 text-sm flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-600" /> Giriş / Çıkış Kayıtlarım ({data.records.length})</span><span className="text-[11px] text-slate-400 flex items-center gap-1"><Moon className="w-3 h-3" /> Sarı satır: tatil günü</span></div>
         <div className="divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
