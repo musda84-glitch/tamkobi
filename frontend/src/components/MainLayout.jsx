@@ -48,7 +48,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck };
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);

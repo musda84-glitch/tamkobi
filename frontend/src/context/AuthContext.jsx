@@ -20,6 +20,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Genel Bakış", path: "/" },
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
     { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
+    { label: "B2B Portal Yönetimi", path: "/b2b-yonetim", badge: "Bayi" },
     { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
     { label: "Masraflar", path: "/expenses", badge: "Gider" },
     { label: "Krediler", path: "/loans", badge: "Banka" },
@@ -43,7 +44,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel" };
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" };
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;

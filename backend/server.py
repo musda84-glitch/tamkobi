@@ -236,7 +236,7 @@ B2B_DEFAULTS = {"enabled": True, "login_method": "link", "default_discount": 0.0
 async def get_b2b_settings(company_id: str):
     c = await db.companies.find_one({"_id": company_id}) or {}
     settings = {**B2B_DEFAULTS, **(c.get("b2b_settings") or {})}
-    customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone")} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
+    customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone"), "tax_number_or_id": x.get("tax_number_or_id"), "b2b_login_email": x.get("b2b_login_email"), "has_password": bool(x.get("b2b_password_hash")), "b2b_last_login": x.get("b2b_last_login")} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
     return {"settings": settings, "customers": customers, "active_count": sum(1 for x in customers if x["b2b_enabled"])}
 
 @api_router.put("/companies/{company_id}/b2b-settings")

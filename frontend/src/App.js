@@ -39,6 +39,7 @@ import SignupPage from "./pages/SignupPage";
 import PaymentResultPage from "./pages/PaymentResultPage";
 import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
+import B2BAdminPage from "./pages/B2BAdminPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="/odeme/iptal" element={<PaymentResultPage />} />
             <Route path="/yenile/:token" element={<RenewPage />} />
             <Route path="/b2b/giris" element={<B2BLoginPage />} />
+            <Route path="/b2b-yonetim" element={<B2BAdminPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

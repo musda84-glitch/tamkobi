@@ -104,6 +104,7 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p.setdefault("/expenses", p.get("/banking", "none"))
         p.setdefault("/loans", p.get("/banking", "none"))
         p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
+        p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 
