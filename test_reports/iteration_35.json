@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 35: Tested new Fiyat Merkezi (PricingCenter) + Sabah Özeti (MorningSummary). Backend: 11/11 pytest cases pass. Pricing: PUT/GET rules trendyol margin_pct=40 rounding=0.99 persisted; POST /api/pricing/compute channel=trendyol → count=56, priced=45, push_supported=true, all priced rows have suggested ending .99, list_price ≈ suggested*1.10, margin_pct ≥ 40 (small overshoot expected due to round-up), net_profit ≥ cost*0.4, formula matches (raw ≤ suggested). Inline rule {margin_pct:30, rounding:0.90} produces .90 endings and DOES NOT persist. Rows without cost have suggested=null and reason='Alış fiyatı yok'. shopphp compute → push_supported=false. Rule restored to margin_pct=30 rounding=0.90. Summary: GET preview → 27 orders/24h, text contains 'Sabah Özeti' & 'Kritik stok'. PUT settings with qa@test.com then POST send → status success, result.email present, last_sent set (SMTP IS configured in this env, so email.ok=true — endpoint stable). Empty-recipient POST send → status='error' message contains 'Alıcı tanımlı değil'. Cleanup restored settings to empty/enabled=false/08:00. Frontend: /orders tab-pricing renders 56 rows, rule-margin=35 + rule-recalc updates Yeni Net Kâr column (11 cells now show %35, matches only-diff count 11), pricing-only-diff filters 56→11, pricing-select-all enables pricing-push with correct text 'Seçili 11 Fiyatı Gönder' (NOT CLICKED). Switching pricing-channel to shopphp removes push button and shows 'salt-okunur' note (count=1). /settings 'Sabah Özeti' tab (no data-testid on the tab itself; navigable via text 'Sabah Özeti'): morning-summary-settings visible, ms-preview populates ms-preview-text with header, ms-save toast 'Sabah özeti ayarları kaydedildi.', ms-send successful with ms-last='Son gönderim: 05.09.2026 18:04:56 · e-posta ✓'. Emails cleared and saved for cleanup. No push endpoints called; Trendyol prices untouched.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/settings → Sabah Özeti sub-nav", "issues": ["Sub-navigation item 'Sabah Özeti' lacks a data-testid on its clickable button (only inner content has data-testid='morning-summary-settings' after selection). Adding a data-testid='settings-nav-summary' or similar to the nav link would improve testability."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration35.py", "/app/test_reports/pytest/iteration35.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "pricing.py suggest_price(): with rounding='0.99' the round-UP causes actual margin_pct to overshoot the target (observed up to +0.6..+1 % on typical items and much more on cheap items). Consider surfacing this in the UI (e.g., color-code rows where realized margin deviates from target by >1%) or offer 'nearest' rounding as an option — the spec's ±0.5% tolerance is not achievable with strict round-UP-to-.99 semantics.",
+    "pricing.py get_rules(): filters keys against DEFAULT_RULE only, so any extra columns previously persisted (rounding='none' etc.) are correctly ignored — good. But DEFAULT_RULE lacks 'company_id' and the response omits 'channel' key inside each rule; if the frontend later needs to know which record it hydrated, this is fine (channel is the map key), but consider echoing it for symmetry with PUT response.",
+    "pricing.py send_summary(): swallows all comm_service exceptions into result.email.error — good. However when SMTP is actually configured the endpoint sends the email immediately without any confirmation gate; a manual 'send' button in production may spam real inboxes. Consider requiring an explicit ?confirm=true or a 'test' recipient override.",
+    "PricingCenter.jsx line 17: compute() catches error but does not clear stale `data` or show a placeholder, so the UI may keep displaying prior channel's rows if the new compute fails. Minor.",
+    "PricingCenter.jsx line 55: push button omits an aria-label; when disabled the tooltip 'Ürün seçin.' toast only fires on click (which is blocked when disabled). Fine but not ideal.",
+    "PricingCenter.jsx has no loading skeleton on first mount; between compute() call and response users see empty area for ~3s on Trendyol (56 rows).",
+    "/settings → 'Sabah Özeti' nav item lacks data-testid (see design_issues).",
+    "server.py continues to exceed 700 lines (unchanged from iter34)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration35.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100%"},
+  "test_credentials": "admin@nexus.com / admin123",
+  "seed_data_creation": "None permanent. Temporarily set pricing rule trendyol margin=40 rounding=.99 list_markup=10 → restored to 30/.90/0. Temporarily set morning_summary emails=[qa@test.com] → cleared. Sent one morning summary email via configured SMTP to qa@test.com (added rows to morning_summary_logs and last_sent* on settings — non-critical, ephemeral log).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fiyat Merkezi + Sabah Özeti fully working. Test file /app/backend/tests/test_iteration35.py can be re-run with: pytest -o addopts='' backend/tests/test_iteration35.py -v. NOTE: environment HAS SMTP configured (Sabah Özeti email actually delivers to qa@test.com); the review-request assumption of 'no SMTP' is not true here. push endpoints (pricing-push, marketplace/products/push) were NEVER called — Trendyol store untouched. If future test needs the 'no SMTP → email.ok=false' branch, temporarily invalidate the mail account for comp_nexus_main_01."
+}

@@ -33,6 +33,7 @@ import { channelTr, statusTr } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
+import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
 
 export default function OrdersB2BPage() {
@@ -301,7 +302,7 @@ export default function OrdersB2BPage() {
           >
             Gelen Siparişler ({orders.length})
           </button>
-          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${orders.filter((o) => ["cancelled", "returned"].includes(o.order_status)).length})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
+          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${orders.filter((o) => ["cancelled", "returned"].includes(o.order_status)).length})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["pricing", "Fiyat Merkezi", Tag], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
             <button key={k} onClick={() => setActiveTab(k)} className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${activeTab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`} data-testid={`tab-${k}`}><Icon className="w-3.5 h-3.5" /><span>{l}</span></button>
           ))}
         </div>
@@ -311,6 +312,7 @@ export default function OrdersB2BPage() {
       {activeTab === "cancelled" && <CancelledPanel orders={orders} />}
       {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}

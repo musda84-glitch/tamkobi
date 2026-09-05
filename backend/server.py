@@ -1,3 +1,4 @@
+import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -43,6 +44,7 @@ import finance
 import attendance
 import trash
 import migration
+import pricing
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -80,6 +82,7 @@ def clean_docs(docs: list) -> list:
 # Startup event
 @app.on_event("startup")
 async def startup_event():
+    asyncio.get_event_loop().create_task(pricing.scheduler_loop())
     try:
         await seed_all_data(db)
         await seed_partners(db)
@@ -806,7 +809,7 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    contacts = await db.contacts.find(query).to_list(1000)
+    contacts = await db.contacts.find(query).to_list(10000)
     return clean_docs(contacts)
 
 @api_router.post("/contacts")
@@ -1128,7 +1131,7 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
         query["category"] = category
     if type and type != "all":
         query["type"] = type
-    products = await db.products.find(query).to_list(1000)
+    products = await db.products.find(query).to_list(10000)
     return clean_docs(products)
 
 @api_router.post("/products")
@@ -2230,7 +2233,7 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
             return c
     if not counterparty and not description:
         return None
-    contacts = await db.contacts.find({"company_id": company_id}).to_list(1000)
+    contacts = await db.contacts.find({"company_id": company_id}).to_list(10000)
     hay = f"{counterparty} {description}".lower()
     for c in contacts:
         tokens = [t for t in (c.get("name") or "").lower().split() if len(t) > 3]
@@ -5209,6 +5212,7 @@ finance.init(db)
 attendance.init(db, get_current_user)
 trash.init(db)
 migration.init(db)
+pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
 
 async def _restore_bank_tx(doc, _related):
     await _reverse_tx_effects(doc, +1)
@@ -5247,6 +5251,7 @@ app.include_router(finance.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)
 app.include_router(migration.router)
+app.include_router(pricing.router)
 
 @app.get("/")
 async def root():

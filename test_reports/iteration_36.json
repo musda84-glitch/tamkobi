@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 36: Verified BizimHesap customers import (real data). All 5 backend pytest cases PASSED. Frontend BizimHesap card renders all required data-testids and last-import note; Contacts page shows 2323 total, ERSAY search returns the target contact with balance 727.546,63 ₺ and tax info 3680486408 / Başakşehir.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ContactsPage", "issues": ["React hydration warning: <span> inside <option> in contact-fin-filter select (dev-mode nuisance, not a bug in production build)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bh_customers_it36.py",
+    "/app/test_reports/pytest/iteration36.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Re-running POST /api/migration/bizimhesap/import-customers with on_duplicate=skip overwrites config.last_customer_import (now shows 0/0 with total_balance 3.361.911,77 ₺). The migration_batches log still keeps the true 2309/39 record, but the UI 'last import' note under the customers section now says '0 yeni / 0 güncel'. Consider only updating last_customer_import when inserted+updated > 0, or storing separate 'last_run' vs 'last_effective_import'."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bh_customers_it36.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@nexus.com / admin123 (company_id=comp_nexus_main_01)",
+  "seed_data_creation": "Ran POST /api/migration/bizimhesap/import-customers with on_duplicate=skip once as instructed → read 2348, inserted 0, updated 0, skipped 2348, total_balance 3361911.77 ₺. Created harmless new migration batch b5e712bf-7eab-4c3a-97a3-cd8aa2bda7c2 (0 inserted / 0 updated). Left in place per instructions (rollback harmless). Real 2309/39 customers batch NOT rolled back.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "BizimHesap customers real import is live: 2309 new + 39 updated contacts in comp_nexus_main_01, total balance 3.361.911,77 ₺. Contacts count ~2323, Products ~1902. Do NOT rollback the 'BizimHesap API /customers' batch with inserted=2309. Config.last_customer_import may reflect a subsequent skip re-run (0/0) — batches log is source of truth. Rate limit not hit during a single re-run.",
+  "rca of the issue": "N/A — no bugs. Minor observation: config.last_customer_import is overwritten by every successful import call (including skip-only reruns), which can mask the historic 2309/39 numbers on the UI 'last import' note."
+}
