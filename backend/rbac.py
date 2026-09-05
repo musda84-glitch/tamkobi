@@ -60,9 +60,15 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/warehouses", "/warehouses"), ("/api/quotes", "/projects"), ("/api/projects", "/projects"), ("/api/surveys", "/projects"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
-                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
-SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/edocs", "/invoices"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
+SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/system", "/api/license", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute")
+_license_guard = None
+
+
+def set_license_guard(fn):
+    global _license_guard
+    _license_guard = fn
 
 
 def init(db, mail_account_fn, current_user_dep):
@@ -97,6 +103,7 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p.setdefault("/trash", p.get("/settings", "none"))
         p.setdefault("/expenses", p.get("/banking", "none"))
         p.setdefault("/loans", p.get("/banking", "none"))
+        p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 
@@ -120,6 +127,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 user = await get_user_from_token(token, _db)
             except HTTPException:
                 user = None
+        module = module_for_path(path)
+        if _license_guard and module:
+            blocked = await _license_guard(request, user, module)
+            if blocked is not None:
+                return blocked
         if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
@@ -134,7 +146,6 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                         return JSONResponse(content=None, status_code=response.status_code)
                     return JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"})
             return response
-        module = module_for_path(path)
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
             if role.get("permissions", {}).get(module, "none") != "edit":
@@ -259,6 +270,8 @@ async def invite_user(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı kullanıcı zaten var.")
     role = req.get("role") or "sales"
     await ensure_roles(company_id)
+    import saas
+    await saas.check_user_limit(company_id)
     if not await _db.roles.find_one({"company_id": company_id, "code": role}):
         raise HTTPException(status_code=400, detail="Geçersiz rol.")
     company = await _db.companies.find_one({"_id": company_id}) or {}

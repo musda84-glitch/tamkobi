@@ -31,6 +31,8 @@ import LoginPage from "./pages/LoginPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoansPage from "./pages/LoansPage";
 import TrashPage from "./pages/TrashPage";
+import EdocInboxPage from "./pages/EdocInboxPage";
+import SystemAdminPage from "./pages/SystemAdminPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -67,6 +69,8 @@ export default function App() {
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/trash" element={<TrashPage />} />
+            <Route path="/edoc-inbox" element={<EdocInboxPage />} />
+            <Route path="/sistem" element={<SystemAdminPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -45,6 +45,8 @@ import attendance
 import trash
 import migration
 import pricing
+import edocs
+import saas
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -86,6 +88,7 @@ async def startup_event():
     try:
         await seed_all_data(db)
         await seed_partners(db)
+        await saas.seed()
         await db.users.create_index("email", unique=True)
         await db.products.create_index("sku")
         await db.products.create_index("barcode")
@@ -193,8 +196,10 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
+            "is_super_admin": bool(user.get("is_super_admin")),
         },
-        "companies": clean_docs(companies)
+        "companies": clean_docs(companies),
+        "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
 
 @api_router.put("/auth/me/preferences")
@@ -656,6 +661,7 @@ async def register(req: RegisterRequest, response: Response):
         active_company_id=company_id
     )
     await db.users.insert_one(new_user.to_mongo())
+    await saas.start_trial(company_id)
 
     token = create_access_token(user_id, email, "admin")
     return {
@@ -684,8 +690,10 @@ async def get_me(user: dict = Depends(get_current_user)):
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
+            "is_super_admin": bool(user.get("is_super_admin")),
         },
-        "companies": clean_docs(companies)
+        "companies": clean_docs(companies),
+        "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
 
 @api_router.post("/auth/switch-company")
@@ -5207,11 +5215,14 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
+saas.init(db, get_current_user)
+rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
 attendance.init(db, get_current_user)
 trash.init(db)
 migration.init(db)
+edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace})
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
 
 async def _restore_bank_tx(doc, _related):
@@ -5252,6 +5263,8 @@ app.include_router(attendance.router)
 app.include_router(trash.router)
 app.include_router(migration.router)
 app.include_router(pricing.router)
+app.include_router(edocs.router)
+app.include_router(saas.router)
 
 @app.get("/")
 async def root():

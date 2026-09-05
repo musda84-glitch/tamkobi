@@ -1,0 +1,76 @@
+import React, { useCallback, useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock } from "lucide-react";
+import { API_URL } from "../../context/AuthContext";
+import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+
+export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onChanged }) => {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState(null);
+  const [busy, setBusy] = useState("");
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  useEffect(() => { load(); }, [load]);
+  if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
+  const lic = d.license;
+  const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
+  const groups = groupByCategory(catalog);
+  const save = async () => {
+    setBusy("save");
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit) }); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+  };
+  const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
+  const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
+        <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10">
+          <div><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-5">
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+            <h3 className="font-bold text-slate-900 text-sm">Lisans</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div><label className="block font-semibold text-slate-700 mb-1">Paket</label><select value={f.plan_id} onChange={(e) => setF({ ...f, plan_id: e.target.value })} className={inputCls} data-testid="lic-plan">{plans.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.modules.length} modül)</option>)}</select></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Durum</label><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} className={inputCls} data-testid="lic-status">{Object.entries(STATUS_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Faturalama</label><select value={f.billing_period} onChange={(e) => setF({ ...f, billing_period: e.target.value })} className={inputCls} data-testid="lic-billing"><option value="monthly">Aylık</option><option value="yearly">Yıllık</option></select></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Deneme Bitiş</label><input type="date" value={f.trial_ends_at} onChange={(e) => setF({ ...f, trial_ends_at: e.target.value })} className={inputCls} data-testid="lic-trial-end" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Lisans Bitiş (boş = süresiz)</label><input type="date" value={f.expires_at} onChange={(e) => setF({ ...f, expires_at: e.target.value })} className={inputCls} data-testid="lic-expires" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Kullanıcı Limiti (boş = paket: {plan?.user_limit || "∞"})</label><input type="number" min={0} value={f.user_limit} onChange={(e) => setF({ ...f, user_limit: e.target.value })} className={inputCls} data-testid="lic-user-limit" /></div>
+              <div className="sm:col-span-3"><label className="block font-semibold text-slate-700 mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inputCls} data-testid="lic-notes" /></div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="text-slate-500 flex items-center gap-1"><CalendarPlus className="w-3.5 h-3.5" /> Hızlı uzat:</span>
+              {[7, 30, 365].map((n) => <button key={n} onClick={() => extend(n)} disabled={!!busy} className="px-2.5 py-1.5 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`lic-extend-${n}`}>+{n} gün</button>)}
+              <button onClick={save} disabled={busy === "save"} className="ml-auto px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="lic-save">{busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
+            </div>
+            {lic.days_left !== null && lic.days_left !== undefined && <div className={`rounded-lg px-3 py-2 ${lic.days_left <= 7 ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-600"}`}>Bitiş: {fmtDate(lic.trial_ends_at || lic.expires_at)} · <b>{lic.days_left} gün</b> kaldı</div>}
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-slate-900 text-sm">Modüller <span className="text-slate-400 font-normal">({lic.enabled_count}/{lic.total_count} aktif)</span></h3>{lic.locked && <span className="text-rose-600 font-semibold flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Lisans {lic.status_label.toLowerCase()} — tüm modüller kilitli</span>}</div>
+            <p className="text-[10px] text-slate-500 mb-3">Paketin dışında modül açmak veya paketteki bir modülü kapatmak için anahtarı değiştirin. Paket varsayılanından farklı olanlar “özel” olarak işaretlenir.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Object.entries(groups).map(([cat, mods]) => (
+                <div key={cat} className="border border-slate-100 rounded-xl p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">{cat}</div>
+                  <ul className="space-y-2">{mods.map((m) => { const on = !!lic.modules[m.key]; const inPlan = plan?.modules?.includes(m.key); const custom = lic.module_overrides?.[m.key] !== undefined; return (
+                    <li key={m.key} className="flex items-center justify-between gap-2" data-testid={`mod-row-${m.key.replace("/", "")}`}>
+                      <div className="min-w-0"><div className={`font-semibold ${on ? "text-slate-800" : "text-slate-400"} flex items-center gap-1.5`}>{m.label}{custom && <span className="text-[9px] bg-amber-100 text-amber-800 px-1 rounded">özel</span>}{inPlan && !custom && <Check className="w-3 h-3 text-emerald-500" />}</div><div className="text-[10px] text-slate-400 truncate">{m.description}</div></div>
+                      <Toggle on={on} disabled={lic.locked || busy === m.key} onChange={(v) => toggle(m.key, v)} testId={`mod-toggle-${m.key.replace("/", "")}`} />
+                    </li>); })}</ul>
+                </div>))}
+            </div>
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4">
+            <h3 className="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1.5"><Users className="w-4 h-4 text-slate-400" /> Kullanıcılar ({d.users.length}{lic.user_limit ? `/${lic.user_limit}` : ""})</h3>
+            <ul className="divide-y">{d.users.map((u) => <li key={u.id} className="py-1.5 flex items-center justify-between"><div><b className="text-slate-800">{u.name}</b> <span className="text-slate-500">{u.email}</span></div><div className="text-[10px] text-slate-500">{u.role} · {u.is_active ? "aktif" : "pasif"} · son giriş {fmtDate(u.last_login_at)}</div></li>)}</ul>
+            {d.requests.length > 0 && (<><h3 className="font-bold text-slate-900 text-sm mt-4 mb-2">Paket Talepleri</h3><ul className="divide-y">{d.requests.map((r) => <li key={r.id} className="py-1.5 flex items-center justify-between"><span>{r.plan_name} · {r.message}</span><span className={`text-[10px] font-semibold ${r.status === "pending" ? "text-amber-700" : r.status === "approved" ? "text-emerald-700" : "text-slate-400"}`}>{r.status} · {fmtDate(r.created_at)}</span></li>)}</ul></>)}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+};

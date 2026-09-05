@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
@@ -13,9 +13,10 @@ import { UsersRolesPanel } from "../components/UsersRolesPanel";
 import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
 import { MigrationPanel } from "../components/MigrationPanel";
 import { MorningSummarySettings } from "../components/PricingCenter";
+import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -198,6 +199,7 @@ export default function SettingsPage() {
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
           {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
+          {tab === "plan" && <MyPlanPanel companyId={companyId} />}
           {tab === "print" && <PrintSettings companyId={companyId} />}
           {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
           {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}

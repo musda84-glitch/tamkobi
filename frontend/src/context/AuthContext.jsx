@@ -9,6 +9,7 @@ export const API_URL = `${BACKEND_URL}/api`;
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [license, setLicense] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [activeCompany, setActiveCompany] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17,6 +18,7 @@ export const AuthProvider = ({ children }) => {
   const BASE_MENU = [
     { label: "Genel Bakış", path: "/" },
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
+    { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
     { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
     { label: "Masraflar", path: "/expenses", badge: "Gider" },
     { label: "Krediler", path: "/loans", badge: "Banka" },
@@ -39,10 +41,14 @@ export const AuthProvider = ({ children }) => {
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
+    { label: "Sistem Yönetimi", path: "/sistem", badge: "SaaS", isSystem: true },
   ];
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel" };
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
+  const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
+  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
     if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
@@ -50,7 +56,7 @@ export const AuthProvider = ({ children }) => {
     for (let k = bi - 1; k >= 0; k--) { const j = moduleOrder.indexOf(BASE_MENU[k].path); if (j !== -1) return j + 0.5 + bi / 1000; }
     return -0.5 + bi / 1000;
   };
-  const menuItems = BASE_MENU.filter((m) => can(m.path)).sort((a, b) => rank(a.path) - rank(b.path));
+  const menuItems = BASE_MENU.filter(visible).sort((a, b) => rank(a.path) - rank(b.path));
 
   const persistOrder = async (order) => {
     setModuleOrder(order);
@@ -74,6 +80,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
       setUser(res.data.user);
+      setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
@@ -105,6 +112,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password }, { withCredentials: true });
       setUser(res.data.user);
+      setLicense(res.data.license || null);
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
         const found = res.data.companies.find(c => c.id === res.data.user.active_company_id || c._id === res.data.user.active_company_id);
@@ -125,6 +133,7 @@ export const AuthProvider = ({ children }) => {
       const comp = companies.find(c => (c.id === companyId || c._id === companyId));
       if (comp) {
         setActiveCompany(comp);
+        try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: companyId } }); setLicense(l.data); } catch { /* ignore */ }
         toast.success(`Aktif şirket değiştirildi: ${comp.name}`);
       }
     } catch (err) {
@@ -142,7 +151,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature }}>
+    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

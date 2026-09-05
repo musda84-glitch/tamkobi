@@ -34,22 +34,25 @@ import {
   CalendarClock,
   MonitorPlay,
   BarChart3,
-  Trash2
+  Trash2,
+  Inbox
 } from "lucide-react";
+import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
-  const { user, companies, activeCompany, switchCompany, logout, feature } = useAuth();
+  const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading } = useAuth();
   const location = useLocation();
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2 };
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck };
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);
 
   if (["/teklif/", "/portal/", "/davet/", "/login"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
+  const lockedModule = location.pathname !== "/sistem" && !moduleOn(location.pathname);
 
   const roleLabels = {
     admin: "Yönetici",
@@ -133,14 +136,14 @@ export default function MainLayout({ children, onOpenQuickAction }) {
                   isActive
                     ? item.isAi
                       ? "bg-gradient-to-r from-purple-600/90 to-indigo-600/90 text-white shadow-md shadow-purple-900/40"
-                      : "bg-emerald-600 text-white shadow-md shadow-emerald-950/40"
+                      : item.isSystem ? "bg-amber-500 text-slate-900 shadow-md shadow-amber-900/40" : "bg-emerald-600 text-white shadow-md shadow-emerald-950/40"
                     : item.isAi
                     ? "text-purple-300 hover:bg-purple-950/40 hover:text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    : item.isSystem ? "text-amber-300 hover:bg-amber-950/40 hover:text-white border border-amber-500/20 mt-2" : "text-slate-300 hover:bg-slate-800 hover:text-white"
                 }`}
               >
                 <div className="flex items-center gap-2.5 truncate">
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-white' : item.isAi ? 'text-purple-400' : 'text-slate-400'}`} />
+                  <Icon className={`w-4 h-4 ${isActive ? (item.isSystem ? 'text-slate-900' : 'text-white') : item.isAi ? 'text-purple-400' : item.isSystem ? 'text-amber-400' : 'text-slate-400'}`} />
                   <span className="truncate">{item.label}</span>
                 </div>
                 {item.badge && (
@@ -192,7 +195,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
               <span className="font-medium text-slate-700">{activeCompany?.name}</span>
               <span>•</span>
-              <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-medium text-[11px]">E-Fatura & E-Ticaret Canlı</span>
+              <LicenseBadge license={license} />
             </div>
           </div>
 
@@ -240,7 +243,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {/* Page View Body */}
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>}
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
-          {denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : children}
+          {loading ? null : denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : lockedModule ? <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} /> : children}
         </main>
       </div>
     </div>

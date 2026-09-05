@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 37: Backend + frontend validation of SaaS System Admin Panel (/api/system/*, /api/license/*) and Inbound e-Document Inbox (/api/edocs/inbox/*). All 24 pytest cases pass (100%). Frontend: super-admin login shows license-badge 'Kurumsal · Aktif', nav-item-sistem + nav-item-edoc-inbox visible; /sistem renders all 5 tabs with expected data-testids (stat-companies/stat-mrr, company-row-*, new-company-btn, new-plan-btn, saas-module-catalog, saas-requests). Company drawer opens via company-manage-{id} button; disabling /ecommerce hides the sidebar item and shows module-locked panel with upgrade CTA; re-enabling restores both. /settings?tab=plan renders my-plan-panel (name+status), 20 my-module cards, 4 plan-card cards, billing-y toggle, and plan-request-plan_pro button. /edoc-inbox renders page, upload input and status filters. Non-super-admin (satis@nexus.com): 'Sistem Yönetimi' is hidden and direct visit shows system-denied panel; /api/system/overview returns 403.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration37.py",
+    "/app/test_reports/pytest/iteration37.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CompaniesTable rows use a dedicated 'Yönet' button (data-testid=company-manage-{id}) to open the license drawer; the row (company-row-{id}) itself is NOT clickable. Task spec implies clicking the row opens the drawer — consider adding an onClick to the row OR update the spec/doc so testers know to use the manage button. This tripped the initial UI test.",
+    "GET /api/system/plans, /system/companies, /system/modules, /system/upgrade-requests return raw JSON arrays (not wrapped). Consider a consistent {items:[...]} envelope for pagination/metadata later, but current shape is fine.",
+    "saas.effective() returns license fields at the top level (plan_id, plan_name, status, modules, module_overrides, ...) plus catalog/plans/users/pending_request. Frontend appears to consume this shape directly — good.",
+    "edocs.list_inbox returns {items:[...], counts:{...}} which is nicely wrapped; recommend applying the same envelope to /system/* endpoints for consistency."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration37.py"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100%"},
+  "test_credentials": "musda84@gmail.com / Nexus2026! (super admin) — musda84 is company admin of MATEK DEKORASYON (not comp_nexus_main_01 as first company; but license.company_id in /auth/me response uses comp_nexus_main_01 fallback). satis@nexus.com / satis123 for non-super-admin negative tests.",
+  "seed_data_creation": "Test artefacts kept in place (harmless): several TEST_Co_* customer companies with trial licenses created by TestCompanyCreate + upgrade-request approved to plan_pro; a couple of TEST_Reg_* register-flow companies; two extra e-document inbox entries on comp_nexus_main_01 (one approved -> a purchase invoice + stock movement was created, one rejected). Main company comp_nexus_main_01: plan_enterprise, status=active, module_overrides={} (verified after UI toggle test).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "For SaaS admin UI, use company-manage-{cid} button (Yönet) NOT the row itself to open CompanyLicenseDrawer. Backend list endpoints /api/system/{plans,companies,upgrade-requests,modules} return raw arrays. /api/license/me returns lic fields at top level plus catalog/plans/users/pending_request. /api/edocs/inbox returns {items, counts}. Sample UBL XML at /app/backend/tests/sample_einvoice_ubl.xml already used; tests generate new cbc:UUID + cbc:ID per run. Main company modules all ON at end of run.",
+  "rca of the issue": "N/A — no bugs found. Initial test failures were all test-side assumptions about response envelopes; fixed and re-run: 24/24 PASS."
+}
