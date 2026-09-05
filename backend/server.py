@@ -3173,7 +3173,9 @@ async def approve_order(order_id: str, req: Dict[str, Any] = None):
     if req.get("cargo_carrier"):
         update["cargo_carrier"] = req["cargo_carrier"]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
-    return clean_doc(await db.orders.find_one({"_id": order_id}))
+    updated = await db.orders.find_one({"_id": order_id})
+    await _push_order_to_shopphp(updated, reason="approve")
+    return clean_doc(updated)
 
 @api_router.post("/orders/{order_id}/return")
 async def return_order(order_id: str, req: Dict[str, Any]):
@@ -3423,6 +3425,8 @@ async def wa_send(req: Dict[str, Any]):
 @api_router.get("/integrations/ecommerce")
 async def list_ecommerce_integrations(company_id: Optional[str] = "comp_nexus_main_01"):
     configs = await db.integration_configs.find({"company_id": company_id}).to_list(100)
+    for c in configs:
+        c["rest_configured"] = bool(c.get("rest_email") and c.pop("rest_password_enc", None))
     return clean_docs(configs)
 
 @api_router.put("/integrations/ecommerce/{channel_id}")
@@ -3499,6 +3503,81 @@ async def backfill_order_contacts(req: Dict[str, Any]):
         linked += 1
         created += 1 if c.get("_created") else 0
     return {"status": "success", "linked": linked, "created": created, "skipped": skipped, "message": f"{linked} sipariş cariye bağlandı ({created} yeni cari açıldı)." + (f" {skipped} siparişte müşteri adı yok." if skipped else "")}
+
+SHOPPHP_STATUS_CODES = {"approved": 2, "preparing": 3, "shipped": 51, "completed": 81, "cancelled": 90}
+CARGO_NAME_TR = {"yurtici": "Yurtiçi Kargo", "aras": "Aras Kargo", "mng": "MNG Kargo", "ptt": "PTT Kargo", "surat": "Sürat Kargo", "ups": "UPS", "dhl": "DHL", "hepsijet": "HepsiJet", "sendeo": "Sendeo", "kolaygelsin": "Kolay Gelsin", "trendyol_express": "Trendyol Express", "geliver": "Geliver"}
+
+@api_router.put("/integrations/ecommerce/{channel_id}/rest-credentials")
+async def set_shopphp_rest_credentials(channel_id: str, req: Dict[str, Any]):
+    cfg = await db.integration_configs.find_one({"_id": channel_id})
+    if not cfg or cfg.get("channel") != "shopphp":
+        raise HTTPException(status_code=404, detail="ShopPHP kanalı bulunamadı.")
+    upd: Dict[str, Any] = {"rest_email": (req.get("rest_email") or "").strip(), "rest_auto_push": bool(req.get("rest_auto_push", True))}
+    if req.get("rest_password"):
+        upd["rest_password_enc"] = comm_service.encrypt(req["rest_password"])
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": upd})
+    return {"status": "success", "rest_email": upd["rest_email"], "rest_configured": bool(upd["rest_email"] and (upd.get("rest_password_enc") or cfg.get("rest_password_enc"))), "rest_auto_push": upd["rest_auto_push"]}
+
+def _shopphp_rest_client(cfg: dict) -> Optional["marketplace_providers.ShopPHPClient"]:
+    if not (cfg.get("rest_email") and cfg.get("rest_password_enc")):
+        return None
+    r = marketplace_providers.shopphp_resolve(cfg)
+    return marketplace_providers.ShopPHPClient({"store_url": r["store_url"] or cfg.get("store_url"), "api_key": cfg["rest_email"], "api_secret": comm_service.decrypt(cfg["rest_password_enc"])})
+
+async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_errors: bool = False) -> Optional[dict]:
+    """Onay durumu + kargo firması/takip no + fatura no bilgisini ShopPHP mağazasına REST ile yazar."""
+    if (order.get("channel") or "") != "shopphp":
+        return None
+    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": "shopphp"})
+    if not cfg or (reason != "manual" and not cfg.get("rest_auto_push", True)):
+        return None
+    client = _shopphp_rest_client(cfg)
+    if not client:
+        if raise_errors:
+            raise HTTPException(status_code=400, detail="ShopPHP REST API kullanıcı bilgileri girilmemiş (E-Ticaret → ShopPHP → Ayarlar → Mağazaya Geri Bildirim).")
+        return None
+    inv_no = None
+    if order.get("invoice_id"):
+        inv = await db.invoices.find_one({"_id": order["invoice_id"]}, {"invoice_number": 1})
+        inv_no = (inv or {}).get("invoice_number")
+    carrier = order.get("cargo_carrier_name") or CARGO_NAME_TR.get(str(order.get("cargo_carrier") or "").lower(), order.get("cargo_carrier"))
+    status = SHOPPHP_STATUS_CODES.get(order.get("order_status") or "")
+    log = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_number": order.get("order_number"), "reason": reason, "sent": {"sdurum": status, "kargoFirma": carrier, "kargoSeriNo": order.get("cargo_tracking_number"), "faturaNo": inv_no}, "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        res = await client.update_order(order.get("external_id") or order.get("order_number"), status=status, cargo_firm=carrier, tracking=order.get("cargo_tracking_number"), invoice_no=inv_no)
+        log.update({"ok": True, "response": res if isinstance(res, (dict, list, str)) else str(res)})
+    except HTTPException as e:
+        log.update({"ok": False, "error": e.detail})
+    finally:
+        await client.close()
+    await db.shopphp_push_logs.insert_one(log)
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"shopphp_push": {"at": log["created_at"], "ok": log["ok"], "error": log.get("error"), "sent": log["sent"]}}})
+    if not log["ok"] and raise_errors:
+        raise HTTPException(status_code=502, detail=log["error"])
+    return log
+
+@api_router.post("/orders/{order_id}/push-shopphp")
+async def push_order_to_shopphp(order_id: str):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("channel") != "shopphp":
+        raise HTTPException(status_code=400, detail="Yalnızca ShopPHP siparişleri mağazaya bildirilebilir.")
+    log = await _push_order_to_shopphp(o, reason="manual", raise_errors=True)
+    s = log["sent"]
+    return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s}
+
+@api_router.post("/integrations/ecommerce/{channel_id}/rest-test")
+async def test_shopphp_rest(channel_id: str):
+    cfg = await db.integration_configs.find_one({"_id": channel_id})
+    client = _shopphp_rest_client(cfg or {})
+    if not client:
+        raise HTTPException(status_code=400, detail="REST kullanıcı e-postası ve parolası girilmemiş.")
+    try:
+        res = await client._call("GET", "orders/date/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "_" + datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    finally:
+        await client.close()
+    return {"status": "success", "message": "ShopPHP REST API bağlantısı başarılı; sipariş güncellemeleri (onay, kargo, fatura no) mağazaya iletilebilir.", "sample_type": type(res).__name__}
 
 @api_router.put("/integrations/ecommerce/{channel_id}/settlement-account")
 async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
@@ -4138,6 +4217,7 @@ async def refresh_cargo_shipment(shipment_id: str):
     await db.cargo_shipments.update_one({"_id": shipment_id}, {"$set": upd})
     if sh.get("order_id") and upd.get("tracking_number"):
         await db.orders.update_one({"_id": sh["order_id"]}, {"$set": {"cargo_tracking_number": upd["tracking_number"], "cargo_label_url": upd.get("label_url"), "cargo_tracking_url": upd.get("tracking_url")}})
+        await _push_order_to_shopphp(await db.orders.find_one({"_id": sh["order_id"]}), reason="cargo_tracking")
     return clean_doc(await db.cargo_shipments.find_one({"_id": shipment_id}))
 
 @api_router.delete("/integrations/cargo/{carrier_id}")
@@ -4228,6 +4308,7 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     await db.cargo_shipments.insert_one(doc)
     if order_id:
         await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "shipped", "cargo_carrier": carrier_code, "cargo_tracking_number": tracking_num, "cargo_barcode": barcode, "cargo_label_url": extra.get("label_url"), "cargo_tracking_url": extra.get("tracking_url"), "cargo_shipment_id": doc["_id"]}})
+        await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="cargo")
     return {**clean_doc(doc), "message": ("Geliver üzerinden gönderi oluşturuldu" + (" (TEST modu)" if extra.get("test_mode") else "") + (f" — teklif kabul edildi, takip: {tracking_num}" if extra.get("offer_accepted") else " — teklif henüz hazır değil, 'Güncelle' ile takip numarasını çekin.")) if live else "Kargo kaydı oluşturuldu (SİMÜLE)."}
 
 @api_router.get("/cargo/shipments")
@@ -4258,6 +4339,7 @@ async def create_order(order: Order):
 async def update_order_status(order_id: str, req: Dict[str, str]):
     new_status = req.get("status", "approved")
     await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": new_status}})
+    await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="status")
     return {"status": "success", "order_status": new_status}
 
 @api_router.post("/orders/{order_id}/convert-to-invoice")
@@ -4326,6 +4408,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         {"$set": {"is_invoiced": True, "invoice_id": inv_id}}
     )
     settlement = await _post_marketplace_settlement(order, new_invoice, _oc)
+    await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="invoice")
 
     return {
         "status": "success",

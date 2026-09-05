@@ -73,6 +73,10 @@ export default function EcommercePage() {
   };
 
   const [accounts, setAccounts] = useState([]);
+  const [rest, setRest] = useState({ email: "", password: "", auto: true });
+  useEffect(() => { if (selectedConfig) setRest({ email: selectedConfig.rest_email || "", password: "", auto: selectedConfig.rest_auto_push !== false }); }, [selectedConfig?.id, selectedConfig?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveRest = async () => { try { const r = await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/rest-credentials`, { rest_email: rest.email, rest_password: rest.password || undefined, rest_auto_push: rest.auto }); setSelectedConfig({ ...selectedConfig, rest_email: r.data.rest_email, rest_configured: r.data.rest_configured, rest_auto_push: r.data.rest_auto_push }); toast.success("REST bilgileri kaydedildi."); loadIntegrations(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } };
+  const testRest = async () => { try { if (rest.password) await saveRest(); const r = await axios.post(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/rest-test`); toast.success(r.data.message); } catch (e) { toast.error(e.response?.data?.detail || "REST testi başarısız."); } };
   useEffect(() => { axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [activeCompany]);
   const handleSaveConfig = async (e) => {
     e.preventDefault();
@@ -255,6 +259,21 @@ export default function EcommercePage() {
                 />
               </div>
 
+              {selectedConfig.channel === "shopphp" && (
+                <div className="pt-2 border-t space-y-2" data-testid="shopphp-rest-section">
+                  <div className="font-semibold text-slate-800">Mağazaya Geri Bildirim (ShopPHP REST API)</div>
+                  <p className="text-[10px] text-slate-500">Sipariş onayı, kargo firması/takip no ve fatura numarası otomatik mağazaya yazılır. ShopPHP Yönetim → Ayarlar → REST API'yi açın; "Rest API kullanabilir" izinli bir yönetici kullanıcının e-posta/parolasını girin.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <input value={rest.email} onChange={(e) => setRest({ ...rest, email: e.target.value })} placeholder="REST kullanıcı e-postası" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="shopphp-rest-email" />
+                    <input type="password" value={rest.password} onChange={(e) => setRest({ ...rest, password: e.target.value })} placeholder={selectedConfig.rest_configured ? "Parola kayıtlı (değiştirmek için yazın)" : "REST kullanıcı parolası"} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="shopphp-rest-password" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={rest.auto} onChange={(e) => setRest({ ...rest, auto: e.target.checked })} data-testid="shopphp-rest-auto" /> Otomatik bildir (onay / kargo / fatura)</label>
+                    <button type="button" onClick={saveRest} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="shopphp-rest-save">REST Bilgilerini Kaydet</button>
+                    <button type="button" onClick={testRest} disabled={!selectedConfig.rest_configured && !rest.password} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="shopphp-rest-test">REST Test</button>
+                    {selectedConfig.rest_configured && <span className="text-[10px] text-emerald-700 font-semibold" data-testid="shopphp-rest-ok">REST kayıtlı</span>}
+                  </div>
+                </div>)}
               <div className="pt-2 border-t">
                 <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
                 <select value={selectedConfig.settlement_account_id || ""} onChange={(e) => setSelectedConfig({ ...selectedConfig, settlement_account_id: e.target.value || null })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="ecom-settlement-select">
