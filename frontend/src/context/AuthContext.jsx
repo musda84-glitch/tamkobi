@@ -79,7 +79,7 @@ export const AuthProvider = ({ children }) => {
   const checkAuth = async () => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
-      setUser(res.data.user);
+      setUser({ ...res.data.user, impersonation: res.data.impersonation || null });
       setAuthenticated(!!res.data.authenticated);
       setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }

@@ -16,11 +16,11 @@ export const PaymentsPanel = () => {
     <div className="space-y-4 text-xs" data-testid="saas-payments">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3"><StatCard label="Tahsil Edilen" value={fmtTL(d.total_paid)} accent="text-emerald-700" testId="pay-total" /><StatCard label="Başarılı Ödeme" value={d.paid_count} testId="pay-count" /><StatCard label="Toplam Deneme" value={d.items.length} testId="pay-attempts" /></div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-        <table className="w-full min-w-[760px]"><thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Şirket</th><th className="px-3 py-2.5 text-left">Paket</th><th className="px-3 py-2.5 text-left">Dönem</th><th className="px-3 py-2.5 text-right">Tutar</th><th className="px-3 py-2.5 text-left">Durum</th><th className="px-3 py-2.5 text-left">Stripe Oturumu</th></tr></thead>
+        <table className="w-full min-w-[760px]"><thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Şirket</th><th className="px-3 py-2.5 text-left">Paket</th><th className="px-3 py-2.5 text-left">Dönem</th><th className="px-3 py-2.5 text-right">Tutar</th><th className="px-3 py-2.5 text-left">Durum</th><th className="px-3 py-2.5 text-left">Sağlayıcı / Fatura</th></tr></thead>
           <tbody className="divide-y divide-slate-100">{d.items.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Henüz ödeme yok.</td></tr>}
-            {d.items.map((t) => <tr key={t.id} data-testid={`pay-row-${t.id}`}><td className="px-3 py-2">{fmtDate(t.created_at)}</td><td className="px-3 py-2 font-semibold text-slate-800">{t.company_name}</td><td className="px-3 py-2">{t.plan_name}</td><td className="px-3 py-2">{t.period === "yearly" ? "Yıllık" : "Aylık"}</td><td className="px-3 py-2 text-right font-bold">{Number(t.amount).toLocaleString("tr-TR")} {String(t.currency).toUpperCase()}</td><td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${PAY_STYLE[t.payment_status] || PAY_STYLE.expired}`}>{PAY_LABEL[t.payment_status] || t.payment_status}</span>{t.applied && <span className="ml-1 text-[9px] text-emerald-600">lisans aktif</span>}</td><td className="px-3 py-2 font-mono text-[10px] text-slate-400">{t.session_id?.slice(0, 22)}…</td></tr>)}</tbody></table>
+            {d.items.map((t) => <tr key={t.id} data-testid={`pay-row-${t.id}`}><td className="px-3 py-2">{fmtDate(t.created_at)}</td><td className="px-3 py-2 font-semibold text-slate-800">{t.company_name}</td><td className="px-3 py-2">{t.plan_name}</td><td className="px-3 py-2">{t.period === "yearly" ? "Yıllık" : "Aylık"}</td><td className="px-3 py-2 text-right font-bold">{Number(t.amount).toLocaleString("tr-TR")} {String(t.currency).toUpperCase()}</td><td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${PAY_STYLE[t.payment_status] || PAY_STYLE.expired}`}>{PAY_LABEL[t.payment_status] || t.payment_status}</span>{t.applied && <span className="ml-1 text-[9px] text-emerald-600">lisans aktif</span>}</td><td className="px-3 py-2 text-[10px]"><span className={`px-1.5 py-0.5 rounded font-bold ${t.provider === "paytr" ? "bg-sky-50 text-sky-700" : "bg-indigo-50 text-indigo-700"}`}>{t.provider === "paytr" ? "PayTR" : "Stripe"}</span>{t.invoice_number && <span className="ml-1.5 font-mono text-emerald-700" data-testid={`pay-invoice-${t.id}`}>{t.invoice_number}</span>}<div className="font-mono text-slate-400">{t.session_id?.slice(0, 22)}…</div></td></tr>)}</tbody></table>
       </div>
-      <p className="text-[10px] text-slate-400 flex items-center gap-1"><CreditCard className="w-3 h-3" /> Ödemeler Stripe Checkout ile alınır; ödeme onaylanınca paket otomatik aktive edilir ve süre dönem kadar uzatılır.</p>
+      <p className="text-[10px] text-slate-400 flex items-center gap-1"><CreditCard className="w-3 h-3" /> Ödemeler Stripe veya PayTR ile alınır; ödeme onaylanınca paket otomatik aktive edilir, e-Arşiv fatura kesilip müşteriye e-posta ile gönderilir.</p>
     </div>
   );
 };
@@ -72,7 +72,31 @@ export const PlatformSettingsPanel = () => {
           <div><label className="block font-semibold text-slate-700 mb-1">Destek telefonu</label><input value={s.support_phone || ""} onChange={(e) => setS({ ...s, support_phone: e.target.value })} className={inputCls} data-testid="set-support-phone" /></div>
         </div>
       </div>
+      <PaytrSettings />
       <div className="flex justify-end"><button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="set-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
+  );
+};
+
+const PaytrSettings = () => {
+  const [p, setP] = useState(null);
+  const [f, setF] = useState({ merchant_key: "", merchant_salt: "" });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { axios.get(`${API_URL}/system/paytr`).then((r) => setP(r.data)).catch(() => {}); }, []);
+  if (!p) return null;
+  const save = async () => { setBusy(true); try { const r = await axios.put(`${API_URL}/system/paytr`, { ...p, ...f }); setP(r.data); setF({ merchant_key: "", merchant_salt: "" }); toast.success("PayTR ayarları kaydedildi."); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); } };
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="paytr-settings">
+      <div className="flex items-center justify-between"><h3 className="font-bold text-slate-900 text-sm">PayTR (Türkiye kartlı ödeme)</h3><label className="flex items-center gap-2"><Toggle on={!!p.enabled} onChange={(v) => setP({ ...p, enabled: v })} testId="paytr-enabled" /> Aktif</label></div>
+      <p className="text-[10px] text-slate-500">PayTR Mağaza Paneli → Bilgi sayfasındaki değerleri girin. Bildirim URL'si olarak <code className="bg-slate-100 px-1 rounded">{window.location.origin}/api/payments/paytr/callback</code> adresini PayTR paneline kaydedin. Anahtarlar şifreli saklanır.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div><label className="block font-semibold text-slate-700 mb-1">Merchant ID</label><input value={p.merchant_id || ""} onChange={(e) => setP({ ...p, merchant_id: e.target.value })} className={inputCls} data-testid="paytr-merchant-id" /></div>
+        <div><label className="block font-semibold text-slate-700 mb-1">Merchant Key {p.has_key && <span className="text-emerald-600">(kayıtlı)</span>}</label><input type="password" value={f.merchant_key} onChange={(e) => setF({ ...f, merchant_key: e.target.value })} placeholder={p.has_key ? "••••••••" : ""} className={inputCls} data-testid="paytr-merchant-key" /></div>
+        <div><label className="block font-semibold text-slate-700 mb-1">Merchant Salt {p.has_salt && <span className="text-emerald-600">(kayıtlı)</span>}</label><input type="password" value={f.merchant_salt} onChange={(e) => setF({ ...f, merchant_salt: e.target.value })} placeholder={p.has_salt ? "••••••••" : ""} className={inputCls} data-testid="paytr-merchant-salt" /></div>
+        <label className="flex items-center gap-2"><Toggle on={!!p.test_mode} onChange={(v) => setP({ ...p, test_mode: v })} testId="paytr-test-mode" /> Test modu</label>
+        <div><label className="block font-semibold text-slate-700 mb-1">Maks. taksit (0 = tek çekim)</label><input type="number" min={0} max={12} value={p.max_installment || 0} onChange={(e) => setP({ ...p, max_installment: Number(e.target.value) })} className={inputCls} data-testid="paytr-max-installment" /></div>
+      </div>
+      <div className="flex justify-end"><button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-sky-600 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="paytr-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} PayTR Kaydet</button></div>
+    </div>
   );
 };

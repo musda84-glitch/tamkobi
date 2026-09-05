@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plus, Search, Settings2, Users, FileText, Loader2, X } from "lucide-react";
+import { Plus, Search, Settings2, Users, FileText, Loader2, X, LogIn } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, inputCls } from "./saasUi";
 
@@ -9,6 +9,10 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const impersonate = async (r) => {
+    if (!window.confirm(`${r.name} şirketine yönetici olarak girilecek (destek modu, 2 saat). Panel oturumunuz geçici olarak bu şirkete geçer; ERP'deki "Destek modunu bitir" ile geri dönersiniz. Devam?`)) return;
+    try { const res = await axios.post(`${API_URL}/system/companies/${r.id}/impersonate`, {}); toast.success(res.data.message); window.location.href = "/"; } catch (e) { toast.error(e.response?.data?.detail || "Giriş yapılamadı."); }
+  };
   const list = rows.filter((r) => (!status || r.license.status === status) && (!q || `${r.name} ${r.admin?.email || ""} ${r.tax_number || ""}`.toLowerCase().includes(q.toLowerCase())));
   return (
     <div className="space-y-3 text-xs" data-testid="saas-companies">
@@ -33,7 +37,7 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
                 <td className="px-3 py-2.5 text-center"><span className="inline-flex items-center gap-1"><FileText className="w-3 h-3 text-slate-400" />{r.usage.invoices}</span></td>
                 <td className="px-3 py-2.5 text-slate-600">{r.license.days_left !== null && r.license.days_left !== undefined ? <span className={r.license.days_left <= 7 ? "text-amber-700 font-bold" : ""}>{fmtDate(r.license.trial_ends_at || r.license.expires_at)} ({r.license.days_left} gün)</span> : "Süresiz"}</td>
                 <td className="px-3 py-2.5 text-slate-500">{r.usage.last_activity ? fmtDate(r.usage.last_activity) : "—"}</td>
-                <td className="px-3 py-2.5 text-right"><button onClick={() => onOpen(r.id)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-800" data-testid={`company-manage-${r.id}`}><Settings2 className="w-3.5 h-3.5" /> Yönet</button></td>
+                <td className="px-3 py-2.5 text-right whitespace-nowrap"><button onClick={() => impersonate(r)} className="px-3 py-1.5 border border-amber-300 text-amber-800 bg-amber-50 rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-amber-100 mr-1.5" title="Bu şirkete yönetici olarak gir (destek modu)" data-testid={`company-impersonate-${r.id}`}><LogIn className="w-3.5 h-3.5" /> Şirket Olarak Gir</button><button onClick={() => onOpen(r.id)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-800" data-testid={`company-manage-${r.id}`}><Settings2 className="w-3.5 h-3.5" /> Yönet</button></td>
               </tr>))}
           </tbody>
         </table>

@@ -48,6 +48,7 @@ import pricing
 import edocs
 import saas
 import saas_billing
+import saas_extras
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -696,6 +697,7 @@ async def get_me(request: Request, user: dict = Depends(get_current_user)):
             "is_super_admin": bool(user.get("is_super_admin")),
         },
         "authenticated": authenticated,
+        "impersonation": saas_extras.impersonation_info(request),
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
@@ -5221,6 +5223,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
+saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5271,6 +5274,7 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(saas_billing.router)
+app.include_router(saas_extras.router)
 
 @app.get("/")
 async def root():

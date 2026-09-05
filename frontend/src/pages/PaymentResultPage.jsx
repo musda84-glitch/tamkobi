@@ -7,7 +7,7 @@ import { API_URL } from "../context/AuthContext";
 export default function PaymentResultPage() {
   const { pathname } = useLocation();
   const [params] = useSearchParams();
-  const sessionId = params.get("session_id");
+  const sessionId = params.get("session_id") || params.get("merchant_oid");
   const [st, setSt] = useState(null);
   const [tries, setTries] = useState(0);
   const cancelled = pathname.endsWith("/iptal");
@@ -30,7 +30,7 @@ export default function PaymentResultPage() {
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 text-center space-y-4" data-testid="payment-result">
         {cancelled ? (<><XCircle className="w-14 h-14 mx-auto text-slate-400" /><h1 className="text-xl font-bold text-slate-900">Ödeme iptal edildi</h1><p className="text-sm text-slate-500">Herhangi bir ücret alınmadı. Dilediğiniz zaman tekrar deneyebilirsiniz.</p></>)
-          : paid ? (<><CheckCircle2 className="w-14 h-14 mx-auto text-emerald-500" /><h1 className="text-xl font-bold text-slate-900" data-testid="payment-success-title">Ödeme alındı, paketiniz aktif!</h1><p className="text-sm text-slate-600"><b>{st.plan_name}</b> paketi ({st.period === "yearly" ? "yıllık" : "aylık"}) {st.license?.expires_at ? `${new Date(st.license.expires_at).toLocaleDateString("tr-TR")} tarihine kadar` : ""} aktif edildi. Tutar: {Number(st.amount).toLocaleString("tr-TR")} {String(st.currency).toUpperCase()}.</p></>)
+          : paid ? (<><CheckCircle2 className="w-14 h-14 mx-auto text-emerald-500" /><h1 className="text-xl font-bold text-slate-900" data-testid="payment-success-title">Ödeme alındı, paketiniz aktif!</h1><p className="text-sm text-slate-600"><b>{st.plan_name}</b> paketi ({st.period === "yearly" ? "yıllık" : "aylık"}) {st.license?.expires_at ? `${new Date(st.license.expires_at).toLocaleDateString("tr-TR")} tarihine kadar` : ""} aktif edildi. Tutar: {Number(st.amount).toLocaleString("tr-TR")} {String(st.currency).toUpperCase()}.{st.invoice_number ? ` e-Arşiv faturanız (${st.invoice_number}) e-posta adresinize gönderildi.` : ""}</p></>)
           : failed ? (<><XCircle className="w-14 h-14 mx-auto text-rose-500" /><h1 className="text-xl font-bold text-slate-900">Ödeme tamamlanamadı</h1><p className="text-sm text-slate-500">Oturum süresi doldu ya da ödeme reddedildi. Lütfen tekrar deneyin.</p></>)
           : timeout ? (<><Clock className="w-14 h-14 mx-auto text-amber-500" /><h1 className="text-xl font-bold text-slate-900">Ödeme kontrol ediliyor</h1><p className="text-sm text-slate-500">Ödemeniz henüz onaylanmadı. Birkaç dakika içinde paketiniz otomatik aktif olacaktır; e-posta ile bilgilendirileceksiniz.</p></>)
           : (<><Loader2 className="w-14 h-14 mx-auto text-indigo-500 animate-spin" /><h1 className="text-xl font-bold text-slate-900">Ödemeniz doğrulanıyor…</h1><p className="text-sm text-slate-500">Lütfen sayfayı kapatmayın.</p></>)}

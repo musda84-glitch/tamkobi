@@ -79,6 +79,11 @@ async def _apply_payment(tx: dict):
     await _db.company_licenses.update_one({"_id": tx["company_id"]}, {"$set": {"plan_id": tx["plan_id"], "status": "active", "billing_period": tx["period"], "expires_at": ends, "trial_ends_at": None, "last_payment_at": _now(), "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "module_overrides": {}}}, upsert=True)
     await _db.upgrade_requests.update_many({"company_id": tx["company_id"], "status": "pending"}, {"$set": {"status": "approved", "admin_note": "Online ödeme ile aktif edildi", "resolved_at": _now()}})
     saas.invalidate(tx["company_id"])
+    try:
+        import saas_extras
+        await saas_extras.issue_subscription_invoice(tx)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"subscription invoice: {e}")
     await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": tx["company_id"], "type": "license", "title": f"{tx['plan_name']} paketi aktif", "message": f"Ödemeniz alındı ({tx['amount']:,.0f} {tx['currency'].upper()}). Paketiniz {ends[:10]} tarihine kadar aktif.", "ref_type": "license", "ref_id": tx["_id"], "is_read": False, "created_at": _now()})
 
 
@@ -101,14 +106,14 @@ async def payment_status(session_id: str, request: Request):
     tx = await _db.payment_transactions.find_one({"session_id": session_id})
     if not tx:
         raise HTTPException(status_code=404, detail="Ödeme kaydı bulunamadı.")
-    if tx.get("payment_status") != "paid":
+    if tx.get("payment_status") != "paid" and tx.get("provider", "stripe") == "stripe":
         try:
             s = await _checkout(request).get_checkout_status(session_id)
             tx = await _mark_paid(session_id, s.payment_status, s.status) or tx
         except Exception as e:  # noqa: BLE001
             logger.warning(f"stripe status: {e}")
     lic = await saas.effective(tx["company_id"]) if tx.get("applied") else None
-    return {"session_id": session_id, "status": tx["status"], "payment_status": tx["payment_status"], "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "license": lic}
+    return {"session_id": session_id, "provider": tx.get("provider", "stripe"), "invoice_number": tx.get("invoice_number"), "status": tx["status"], "payment_status": tx["payment_status"], "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "license": lic}
 
 
 @router.post("/webhook/stripe")
