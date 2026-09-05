@@ -654,3 +654,93 @@ async def cancel_my_leave(leave_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
     await _db.leave_requests.delete_one({"_id": leave_id})
     return {"status": "success"}
+
+
+# ---------- Vardiya şablonları & toplu atama ----------
+def _clean_template_days(days: Any) -> dict:
+    out = {}
+    if not isinstance(days, dict):
+        raise HTTPException(status_code=400, detail="Şablon günleri gerekli.")
+    for k, v in days.items():
+        if str(k) not in {"0", "1", "2", "3", "4", "5", "6"} or not isinstance(v, dict):
+            continue
+        if v.get("off"):
+            out[str(k)] = {"off": True}
+            continue
+        d = {"off": False, "start": _valid_time(v.get("start")), "end": _valid_time(v.get("end")), "break_minutes": max(0, int(v.get("break_minutes") if v.get("break_minutes") not in (None, "") else 60))}
+        if _hm(d["end"]) <= _hm(d["start"]):
+            raise HTTPException(status_code=400, detail=f"{DAY_LABELS[int(k)]}: bitiş başlangıçtan sonra olmalı.")
+        out[str(k)] = d
+    if not out:
+        raise HTTPException(status_code=400, detail="En az bir gün tanımlayın.")
+    return out
+
+
+@router.get("/personnel/shift-templates")
+async def list_shift_templates(company_id: Optional[str] = "comp_nexus_main_01"):
+    return [_clean(t) for t in await _db.shift_templates.find({"company_id": company_id}).sort("name", 1).to_list(100)]
+
+
+@router.post("/personnel/shift-templates")
+async def create_shift_template(req: Dict[str, Any]):
+    name = (req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Şablon adı gerekli.")
+    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "name": name[:60], "days": _clean_template_days(req.get("days")), "created_at": _now()}
+    await _db.shift_templates.insert_one(doc)
+    return _clean(doc)
+
+
+@router.delete("/personnel/shift-templates/{tpl_id}")
+async def delete_shift_template(tpl_id: str):
+    r = await _db.shift_templates.delete_one({"_id": tpl_id})
+    if not r.deleted_count:
+        raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
+    return {"status": "success"}
+
+
+@router.post("/personnel/shifts/bulk-assign")
+async def bulk_assign_shifts(req: Dict[str, Any]):
+    """Bir şablonu departmanın (veya seçili personelin) tüm haftasına tek seferde uygula."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    dates = _week_dates(req.get("week_start") or _today())
+    days = _clean_template_days(req.get("days") or (await _db.shift_templates.find_one({"_id": req.get("template_id")}) or {}).get("days"))
+    q: Dict[str, Any] = {"company_id": company_id, "status": "active"}
+    if req.get("employee_ids"):
+        q["_id"] = {"$in": list(req["employee_ids"])}
+    elif req.get("department") and req["department"] != "all":
+        q["department"] = req["department"]
+    emps = await _db.employees.find(q).to_list(500)
+    if not emps:
+        raise HTTPException(status_code=404, detail="Seçime uyan aktif personel yok.")
+    skip_leave = bool(req.get("skip_leave", True))
+    overwrite = bool(req.get("overwrite", True))
+    saved, skipped_leave, skipped_existing, conflicts = 0, 0, 0, []
+    for emp in emps:
+        for i, d in enumerate(dates):
+            tpl = days.get(str(i))
+            if not tpl:
+                continue
+            existing = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": d})
+            if existing and not overwrite:
+                skipped_existing += 1
+                continue
+            lv = await _db.leave_requests.find_one({"employee_id": emp["_id"], "status": "approved", "start_date": {"$lte": d}, "end_date": {"$gte": d}})
+            if lv and not tpl.get("off"):
+                if skip_leave:
+                    skipped_leave += 1
+                    continue
+                conflicts.append(f"{emp['full_name']} {d}")
+            doc = {"company_id": company_id, "employee_id": emp["_id"], "employee_name": emp["full_name"], "date": d, "off": bool(tpl.get("off")),
+                   "start": None if tpl.get("off") else tpl["start"], "end": None if tpl.get("off") else tpl["end"], "break_minutes": 0 if tpl.get("off") else tpl["break_minutes"],
+                   "note": (req.get("note") or "")[:200], "source": "bulk", "updated_at": _now()}
+            await _db.shift_plans.update_one({"employee_id": emp["_id"], "date": d}, {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
+            saved += 1
+    msg = f"{len(emps)} personel için {saved} vardiya atandı."
+    if skipped_leave:
+        msg += f" {skipped_leave} izinli gün atlandı."
+    if skipped_existing:
+        msg += f" {skipped_existing} mevcut plan korundu."
+    if conflicts:
+        msg += f" Uyarı: {len(conflicts)} izin çakışması."
+    return {"status": "success", "employees": len(emps), "saved": saved, "skipped_leave": skipped_leave, "skipped_existing": skipped_existing, "conflicts": conflicts, "week_start": dates[0], "message": msg}

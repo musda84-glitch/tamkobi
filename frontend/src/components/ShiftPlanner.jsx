@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { CalendarRange, ChevronLeft, ChevronRight, Copy, Loader2, X, Trash2, AlertTriangle } from "lucide-react";
+import { CalendarRange, ChevronLeft, ChevronRight, Copy, Loader2, X, Trash2, AlertTriangle, Users } from "lucide-react";
+import { BulkAssignModal } from "./BulkAssignModal";
 import { API_URL } from "../context/AuthContext";
 
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
@@ -42,6 +43,7 @@ export const ShiftPlanner = ({ companyId, onChanged }) => {
   const [week, setWeek] = useState(monday(new Date().toISOString().slice(0, 10)));
   const [d, setD] = useState(null);
   const [edit, setEdit] = useState(null);
+  const [bulk, setBulk] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/shifts?company_id=${companyId}&week_start=${week}`).then((r) => setD(r.data)).catch(() => toast.error("Vardiya planı yüklenemedi.")), [companyId, week]);
   useEffect(() => { load(); }, [load]);
   const copyPrev = async () => { try { const r = await axios.post(`${API_URL}/personnel/shifts/copy-week`, { company_id: companyId, from_week_start: addDays(week, -7), to_week_start: week }); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kopyalanamadı."); } };
@@ -56,6 +58,7 @@ export const ShiftPlanner = ({ companyId, onChanged }) => {
           <button onClick={() => setWeek(addDays(week, 7))} className="p-1.5 border rounded-lg hover:bg-slate-50" data-testid="shift-next-week"><ChevronRight className="w-4 h-4" /></button>
           <button onClick={() => setWeek(monday(today))} className="px-2 py-1.5 border rounded-lg hover:bg-slate-50 font-semibold" data-testid="shift-this-week">Bu hafta</button>
           <button onClick={copyPrev} className="flex items-center gap-1 px-2 py-1.5 border rounded-lg hover:bg-slate-50 font-semibold" title="Önceki haftanın planını bu haftaya kopyala" data-testid="shift-copy-prev"><Copy className="w-3.5 h-3.5" /> Önceki haftayı kopyala</button>
+          <button onClick={() => setBulk(true)} className="flex items-center gap-1 px-2 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold" title="Bir şablonu departmanın tüm haftasına uygula" data-testid="shift-bulk-assign"><Users className="w-3.5 h-3.5" /> Toplu Ata</button>
         </div>
       </div>
       {d?.conflicts > 0 && <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-amber-800 font-semibold" data-testid="shift-conflicts-banner"><AlertTriangle className="w-4 h-4" /> {d.conflicts} vardiya onaylı izin günüyle çakışıyor — turuncu işaretli hücreleri kontrol edin.</div>}
@@ -76,6 +79,7 @@ export const ShiftPlanner = ({ companyId, onChanged }) => {
             </tr>))}</tbody>
         </table></div>
       )}
+      {bulk && d && <BulkAssignModal companyId={companyId} weekStart={d.week_start} rows={d.rows} onClose={() => setBulk(false)} onDone={() => { load(); onChanged?.(); }} />}
       {edit && <CellEditor row={edit.row} cell={edit.cell} companyId={companyId} onClose={() => setEdit(null)} onSaved={() => { load(); onChanged?.(); }} />}
     </div>
   );
