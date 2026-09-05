@@ -25,6 +25,7 @@ import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../compo
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { Factory } from "lucide-react";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
+import { LabelDesigner } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -211,13 +212,14 @@ export default function StockBarcodePage() {
       </div>
 
       <div className="flex items-center gap-1 border-b border-slate-200">
-        {[["products", "Ürünler & Stoklar", Package], ["count", "Barkodlu Stok Sayımı", ClipboardList]].map(([k, l, Icon]) => (
+        {[["products", "Ürünler & Stoklar", Package], ["count", "Barkodlu Stok Sayımı", ClipboardList], ["labels", "Etiket Tasarımı", ClipboardList]].map(([k, l, Icon]) => (
           <button key={k} onClick={() => setPageTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${pageTab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`stock-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
       <datalist id="product-units-list">{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
+      {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
       <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />

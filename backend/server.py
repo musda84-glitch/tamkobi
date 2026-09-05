@@ -3710,6 +3710,38 @@ async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main
     return {"days": days, "total": total, "settlement": settlement_total, "channels": sorted(by_channel.values(), key=lambda x: -x["revenue"]), "orders": rows[:300], "top_products": [{**t, "gross_profit": round(t["revenue"] - t["cost"], 2)} for t in top[:10]],
             "low_margin": [r for r in rows if r["margin_pct"] < 10][:20]}
 
+@api_router.get("/label-templates")
+async def list_label_templates(company_id: Optional[str] = "comp_nexus_main_01"):
+    return clean_docs(await db.label_templates.find({"company_id": company_id}).sort("created_at", 1).to_list(200))
+
+@api_router.post("/label-templates")
+async def create_label_template(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": (req.get("name") or "Yeni Etiket").strip(), "width_mm": float(req.get("width_mm") or 100), "height_mm": float(req.get("height_mm") or 30), "elements": req.get("elements") or [],
+           "page": req.get("page") or {"mode": "thermal", "cols": 1, "rows": 1, "gap_mm": 2}, "is_default": bool(req.get("is_default")), "created_at": datetime.now(timezone.utc).isoformat()}
+    if doc["is_default"]:
+        await db.label_templates.update_many({"company_id": company_id}, {"$set": {"is_default": False}})
+    await db.label_templates.insert_one(doc)
+    return clean_doc(doc)
+
+@api_router.put("/label-templates/{tpl_id}")
+async def update_label_template(tpl_id: str, req: Dict[str, Any]):
+    t = await db.label_templates.find_one({"_id": tpl_id})
+    if not t:
+        raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
+    allowed = {k: v for k, v in req.items() if k in {"name", "width_mm", "height_mm", "elements", "page", "is_default"}}
+    if allowed.get("is_default"):
+        await db.label_templates.update_many({"company_id": t["company_id"]}, {"$set": {"is_default": False}})
+    await db.label_templates.update_one({"_id": tpl_id}, {"$set": {**allowed, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return clean_doc(await db.label_templates.find_one({"_id": tpl_id}))
+
+@api_router.delete("/label-templates/{tpl_id}")
+async def delete_label_template(tpl_id: str):
+    r = await db.label_templates.delete_one({"_id": tpl_id})
+    if not r.deleted_count:
+        raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
+    return {"status": "success"}
+
 @api_router.get("/marketplace/product-profitability")
 async def product_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 90):
     """Ürün bazında pazaryeri satış/komisyon/maliyet/kâr + eşleşmeyen pazaryeri kalemleri."""
