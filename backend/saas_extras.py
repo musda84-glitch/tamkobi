@@ -129,7 +129,7 @@ async def paytr_conf() -> Dict[str, Any]:
 @router.get("/system/paytr")
 async def get_paytr(_: dict = Depends(saas.require_super_admin)):
     st = await saas_billing.settings(); p = st.get("paytr") or {}
-    return {"enabled": bool(p.get("enabled")), "merchant_id": p.get("merchant_id", ""), "has_key": bool(p.get("merchant_key_enc")), "has_salt": bool(p.get("merchant_salt_enc")), "test_mode": p.get("test_mode", True), "max_installment": p.get("max_installment", 0)}
+    return {"enabled": bool(p.get("enabled")), "merchant_id": p.get("merchant_id", ""), "has_key": bool(p.get("merchant_key_enc")), "has_salt": bool(p.get("merchant_salt_enc")), "test_mode": p.get("test_mode", True), "max_installment": p.get("max_installment", 0), "last_test": p.get("last_test")}
 
 
 @router.put("/system/paytr")
@@ -150,6 +150,26 @@ async def put_paytr(req: Dict[str, Any], _: dict = Depends(saas.require_super_ad
         raise HTTPException(status_code=400, detail="PayTR'ı aktif etmek için merchant_id, merchant_key ve merchant_salt gerekli.")
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"paytr": p, "updated_at": _now()}}, upsert=True)
     return await get_paytr(_)
+
+
+@router.post("/system/paytr/test")
+async def test_paytr(request: Request, _: dict = Depends(saas.require_super_admin)):
+    c = await paytr_conf()
+    if not (c["merchant_id"] and c["merchant_key"] and c["merchant_salt"]):
+        raise HTTPException(status_code=400, detail="Önce Merchant ID, Key ve Salt kaydedin.")
+    oid, email, minor, ip = "NXTEST" + uuid.uuid4().hex[:16], "test@nexushesap.com", "100", "127.0.0.1"
+    basket = base64.b64encode(json.dumps([["Bağlantı testi", "1.00", 1]], separators=(",", ":")).encode()).decode()
+    token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + "0" + "0" + "TL" + "1" + c["merchant_salt"])
+    origin = str(request.base_url).rstrip("/")
+    form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": "1", "no_installment": "0", "max_installment": "0", "currency": "TL", "merchant_ok_url": f"{origin}/odeme/basarili", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": "Test", "user_address": "-", "user_phone": "-"}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = (await client.post(PAYTR_TOKEN_URL, data=form)).json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"PayTR'a ulaşılamadı: {str(e)[:120]}")
+    ok = res.get("status") == "success"
+    await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"paytr.last_test": {"ok": ok, "reason": res.get("reason"), "at": _now()}}})
+    return {"ok": ok, "reason": res.get("reason"), "message": "PayTR bağlantısı doğrulandı; mağaza bilgileri geçerli." if ok else f"PayTR bilgileri reddedildi: {res.get('reason', 'bilinmeyen hata')}"}
 
 
 @router.get("/payments/providers")

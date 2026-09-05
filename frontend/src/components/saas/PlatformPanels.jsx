@@ -58,8 +58,8 @@ export const PlatformSettingsPanel = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className="block font-semibold text-slate-700 mb-1">Hatırlatma günleri (bitişten kaç gün önce; virgülle)</label><input value={s.reminder_days_text ?? s.reminder_days.join(",")} onChange={(e) => setS({ ...s, reminder_days_text: e.target.value })} className={inputCls} data-testid="set-reminder-days" /></div>
           <div><label className="block font-semibold text-slate-700 mb-1">Gönderici hesapların alındığı şirket</label><select value={s.sender_company_id} onChange={(e) => setS({ ...s, sender_company_id: e.target.value })} className={inputCls} data-testid="set-sender-company">{s.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><div className="text-[10px] text-slate-500 mt-1">SMTP: {s.sender_mail || "tanımlı değil"} · WhatsApp: {s.sender_whatsapp_ready ? "hazır" : "tanımlı değil (simüle)"}</div></div>
-          <label className="flex items-center gap-2"><Toggle on={!!s.email_enabled} onChange={(v) => setS({ ...s, email_enabled: v })} testId="set-email" /> E-posta gönder</label>
-          <label className="flex items-center gap-2"><Toggle on={!!s.whatsapp_enabled} onChange={(v) => setS({ ...s, whatsapp_enabled: v })} testId="set-whatsapp" /> WhatsApp gönder</label>
+          <label className="flex items-center gap-2"><Toggle on={!!s.email_enabled} onChange={(v) => setS({ ...s, email_enabled: v })} testId="set-email" /> <span>E-posta gönder</span></label>
+          <label className="flex items-center gap-2"><Toggle on={!!s.whatsapp_enabled} onChange={(v) => setS({ ...s, whatsapp_enabled: v })} testId="set-whatsapp" /> <span>WhatsApp gönder</span></label>
         </div>
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
@@ -85,18 +85,26 @@ const PaytrSettings = () => {
   useEffect(() => { axios.get(`${API_URL}/system/paytr`).then((r) => setP(r.data)).catch(() => {}); }, []);
   if (!p) return null;
   const save = async () => { setBusy(true); try { const r = await axios.put(`${API_URL}/system/paytr`, { ...p, ...f }); setP(r.data); setF({ merchant_key: "", merchant_salt: "" }); toast.success("PayTR ayarları kaydedildi."); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); } };
+  const test = async () => { setBusy(true); try { const r = await axios.post(`${API_URL}/system/paytr/test`, {}); setP({ ...p, last_test: { ok: r.data.ok, reason: r.data.reason } }); (r.data.ok ? toast.success : toast.error)(r.data.message); } catch (e) { toast.error(e.response?.data?.detail || "Test yapılamadı."); } finally { setBusy(false); } };
+  const cb = `${window.location.origin}/api/payments/paytr/callback`;
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="paytr-settings">
-      <div className="flex items-center justify-between"><h3 className="font-bold text-slate-900 text-sm">PayTR (Türkiye kartlı ödeme)</h3><label className="flex items-center gap-2"><Toggle on={!!p.enabled} onChange={(v) => setP({ ...p, enabled: v })} testId="paytr-enabled" /> Aktif</label></div>
-      <p className="text-[10px] text-slate-500">PayTR Mağaza Paneli → Bilgi sayfasındaki değerleri girin. Bildirim URL'si olarak <code className="bg-slate-100 px-1 rounded">{window.location.origin}/api/payments/paytr/callback</code> adresini PayTR paneline kaydedin. Anahtarlar şifreli saklanır.</p>
+      <div className="flex items-center justify-between"><h3 className="font-bold text-slate-900 text-sm">PayTR (Türkiye kartlı ödeme)</h3><label className="flex items-center gap-2"><Toggle on={!!p.enabled} onChange={(v) => setP({ ...p, enabled: v })} testId="paytr-enabled" /> <span>Aktif</span></label></div>
+      <ol className="text-[10px] text-slate-600 space-y-1 list-decimal pl-4 bg-slate-50 rounded-xl p-3" data-testid="paytr-checklist">
+        <li><b>PayTR Mağaza Paneli → Bilgi</b> sayfasından Merchant ID, Merchant Key ve Merchant Salt değerlerini aşağıya girin, <b>PayTR Kaydet</b>.</li>
+        <li><b>Bağlantıyı Test Et</b> ile bilgilerin PayTR tarafından kabul edildiğini doğrulayın.</li>
+        <li>PayTR Paneli → Ayarlar → <b>Bildirim URL</b> alanına şunu kaydedin: <code className="bg-white border px-1 rounded select-all" data-testid="paytr-callback-url">{cb}</code> <button type="button" onClick={() => { navigator.clipboard?.writeText(cb); toast.success("Kopyalandı"); }} className="text-sky-700 font-semibold" data-testid="paytr-copy-callback">kopyala</button></li>
+        <li>Test modunda PayTR test kartıyla bir ödeme yapın; sonra <b>Test modu</b>nu kapatıp canlıya alın. Anahtarlar şifreli saklanır.</li>
+      </ol>
+      {p.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${p.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="paytr-last-test">Son test: {p.last_test.ok ? "başarılı" : `başarısız – ${p.last_test.reason || ""}`}</div>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div><label className="block font-semibold text-slate-700 mb-1">Merchant ID</label><input value={p.merchant_id || ""} onChange={(e) => setP({ ...p, merchant_id: e.target.value })} className={inputCls} data-testid="paytr-merchant-id" /></div>
         <div><label className="block font-semibold text-slate-700 mb-1">Merchant Key {p.has_key && <span className="text-emerald-600">(kayıtlı)</span>}</label><input type="password" value={f.merchant_key} onChange={(e) => setF({ ...f, merchant_key: e.target.value })} placeholder={p.has_key ? "••••••••" : ""} className={inputCls} data-testid="paytr-merchant-key" /></div>
         <div><label className="block font-semibold text-slate-700 mb-1">Merchant Salt {p.has_salt && <span className="text-emerald-600">(kayıtlı)</span>}</label><input type="password" value={f.merchant_salt} onChange={(e) => setF({ ...f, merchant_salt: e.target.value })} placeholder={p.has_salt ? "••••••••" : ""} className={inputCls} data-testid="paytr-merchant-salt" /></div>
-        <label className="flex items-center gap-2"><Toggle on={!!p.test_mode} onChange={(v) => setP({ ...p, test_mode: v })} testId="paytr-test-mode" /> Test modu</label>
+        <label className="flex items-center gap-2"><Toggle on={!!p.test_mode} onChange={(v) => setP({ ...p, test_mode: v })} testId="paytr-test-mode" /> <span>Test modu</span></label>
         <div><label className="block font-semibold text-slate-700 mb-1">Maks. taksit (0 = tek çekim)</label><input type="number" min={0} max={12} value={p.max_installment || 0} onChange={(e) => setP({ ...p, max_installment: Number(e.target.value) })} className={inputCls} data-testid="paytr-max-installment" /></div>
       </div>
-      <div className="flex justify-end"><button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-sky-600 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="paytr-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} PayTR Kaydet</button></div>
+      <div className="flex justify-end gap-2"><button type="button" onClick={test} disabled={busy || !(p.has_key && p.has_salt && p.merchant_id)} className="px-4 py-2 border border-sky-300 text-sky-700 rounded-xl font-bold disabled:opacity-50" data-testid="paytr-test">Bağlantıyı Test Et</button><button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-sky-600 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="paytr-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} PayTR Kaydet</button></div>
     </div>
   );
 };

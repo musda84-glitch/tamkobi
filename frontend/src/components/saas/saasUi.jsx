@@ -16,8 +16,8 @@ export const StatusBadge = ({ status, testId }) => (
 export const PlanChip = ({ name, color, testId }) => <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide ${PLAN_COLORS[color] || PLAN_COLORS.slate}`} data-testid={testId}>{name}</span>;
 
 export const Toggle = ({ on, onChange, disabled, testId }) => (
-  <button type="button" onClick={() => !disabled && onChange(!on)} disabled={disabled} className={`relative w-10 h-5 rounded-full transition-colors ${on ? "bg-emerald-500" : "bg-slate-300"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`} data-testid={testId} aria-pressed={on}>
-    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`} />
+  <button type="button" onClick={() => !disabled && onChange(!on)} disabled={disabled} className={`relative inline-flex shrink-0 w-10 h-5 p-0 m-0 align-middle rounded-full transition-colors ${on ? "bg-emerald-500" : "bg-slate-300"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`} data-testid={testId} aria-pressed={on}>
+    <span className={`absolute left-0 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${on ? "translate-x-5" : "translate-x-0.5"}`} />
   </button>
 );
 

@@ -48,7 +48,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
           {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}
           <div><label className="block font-semibold text-slate-700 mb-1">Renk</label><div className="flex gap-1.5">{Object.keys(PLAN_COLORS).map((c) => <button type="button" key={c} onClick={() => setF({ ...f, color: c })} className={`w-7 h-7 rounded-lg ${PLAN_COLORS[c]} ${f.color === c ? "ring-2 ring-offset-1 ring-slate-900" : ""}`} data-testid={`plan-color-${c}`} />)}</div></div>
           {num("sort", "Sıra")}
-          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> Müşteriye göster</label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> Popüler</label></div>
+          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>Müşteriye göster</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>
         </div>
         <div>
           <div className="font-bold text-slate-900 mb-2">Pakete Dahil Modüller ({f.modules.length})</div>
