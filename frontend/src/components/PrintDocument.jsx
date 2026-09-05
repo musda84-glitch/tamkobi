@@ -21,7 +21,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const [pickerOpen, setPickerOpen] = useState(false);
   const companyId = company?.id || "comp_nexus_main_01";
   useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { if (p.image_url) m[p.id] = p.image_url; }); setProdImgs(m); }).catch(() => {}); }, [companyId]);
-  useEffect(() => { axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); }, [docType, companyId]);
+  useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
@@ -35,6 +35,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const isModern = layout === "modern", isMinimal = layout === "minimal", isBold = layout === "bold";
   const thStyle = isMinimal ? { borderBottom: "2px solid #0f172a" } : isBold ? { backgroundColor: "#0f172a" } : { backgroundColor: color };
   const thCls = isMinimal ? "text-slate-900" : "text-white";
+  const hideAll = !!tpl.hide_all_prices, hideLine = hideAll || !!tpl.hide_line_prices, hideVat = hideAll || !!tpl.hide_vat;
+  const itemNote = (it) => it.note || it.notes || it.description || it.line_note || "";
+  const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
@@ -100,15 +103,17 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
-            <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className="text-right p-2">Miktar</th><th className="text-right p-2">Birim Fiyat</th><th className="text-right p-2">KDV</th><th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th></tr></thead>
-            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td><td className="p-2 text-right">{fmt(it.unit_price)} ₺</td><td className="p-2 text-right">%{it.vat_rate ?? 20}</td><td className="p-2 text-right font-semibold">{fmt(it.total)} ₺</td></tr>)}</tbody>
+            <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim Fiyat</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
+            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{(it.sku || it.barcode) && tpl.show_barcode && <div className="text-[10px] text-slate-400 font-mono">{it.sku}{it.barcode ? ` • ${it.barcode}` : ""}</div>}{tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmt(it.unit_price)} ₺</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmt(it.total)} ₺</td>}</tr>)}</tbody>
           </table>
-          <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
+          {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
+          {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
             {doc.discount_total > 0 && <div className="flex justify-between text-rose-600"><span>İskonto</span><span>-{fmt(doc.discount_total)} ₺</span></div>}
-            {doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam</span><span>{fmt(doc.subtotal)} ₺</span></div>}
-            {doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmt(doc.vat_total)} ₺</span></div>}
-            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>GENEL TOPLAM</span><span style={{ color }}>{fmt(total)} ₺</span></div>
-          </div></div>
+            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam</span><span>{fmt(doc.subtotal)} ₺</span></div>}
+            {!hideVat && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmt(doc.vat_total)} ₺</span></div>}
+            {doc.withholding_amount > 0 && <div className="flex justify-between text-indigo-700"><span>Tevkifat</span><span>-{fmt(doc.withholding_amount)} ₺</span></div>}
+            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM"}</span><span style={{ color }}>{fmt(total)} ₺</span></div>
+          </div></div>}
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Ödeme Planı ({plan.length} taksit)</div>
@@ -135,7 +140,7 @@ export const PrintTemplateEditor = ({ companyId, docType, onClose, onSaved }) =>
   useEffect(() => { axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])); }, [companyId, docType]);
   if (!tpl) return null;
   const set = (k, v) => setTpl({ ...tpl, [k]: v });
-  const save = async () => { const r = await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, tpl); onSaved?.(r.data); onClose(); };
+  const save = async () => { const r = await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, tpl); window.dispatchEvent(new Event("print-template-saved")); onSaved?.(r.data); onClose(); };
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-3 text-xs shadow-2xl" data-testid="print-template-editor">
@@ -151,7 +156,8 @@ export const PrintTemplateEditor = ({ companyId, docType, onClose, onSaved }) =>
           <div><label className="block font-semibold mb-1">Şablon</label><select value={tpl.layout || "classic"} onChange={(e) => set("layout", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-layout-select">{LAYOUTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
           <div><label className="block font-semibold mb-1">Kağıt</label><select value={tpl.paper} onChange={(e) => set("paper", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option>A4</option><option>A5</option></select></div>
         </div>
-        <div className="grid grid-cols-2 gap-1.5">{[["show_logo", "Logo göster"], ["show_tax_info", "Vergi bilgileri"], ["show_bank_info", "Banka / IBAN"], ["show_signature", "Kaşe / İmza alanı"], ["show_barcode", "Barkod"], ["show_images", "Ürün resimleri"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={!!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div>
+        <div className="grid grid-cols-2 gap-1.5">{[["show_logo", "Logo göster"], ["show_tax_info", "Vergi bilgileri"], ["show_bank_info", "Banka / IBAN"], ["show_signature", "Kaşe / İmza alanı"], ["show_barcode", "Barkod / SKU"], ["show_images", "Ürün resimleri"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={!!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div>
+        <div><div className="font-semibold mb-1 text-slate-500 uppercase text-[10px]">Fiyat & Not Görünümü</div><div className="grid grid-cols-2 gap-1.5">{[["hide_line_prices", "Satır fiyatlarını gizle", false], ["hide_vat", "KDV'yi gizle", false], ["hide_all_prices", "Tüm fiyatları gizle (sevk/çeki listesi)", false], ["show_item_notes", "Ürün açıklaması altında satır notu", true], ["show_order_notes", "Sipariş notlarını göster", true]].map(([k, l, def]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={tpl[k] === undefined ? def : !!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div></div>
         <div className="flex justify-end gap-2 pt-2 border-t"><button onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={save} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="tpl-save-btn">Kaydet</button></div>
       </div>
     </div>

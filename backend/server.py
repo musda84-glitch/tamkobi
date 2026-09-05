@@ -49,6 +49,7 @@ import edocs
 import saas
 import saas_billing
 import saas_extras
+import saas_docs
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -78,6 +79,9 @@ def clean_doc(doc: dict) -> dict:
         return doc
     if "_id" in doc:
         doc["id"] = str(doc.pop("_id"))
+    if "b2b_password_hash" in doc:
+        doc["has_b2b_password"] = bool(doc.pop("b2b_password_hash"))
+    doc.pop("password_hash", None)
     return doc
 
 def clean_docs(docs: list) -> list:
@@ -280,7 +284,7 @@ async def save_einvoice_settings(req: Dict[str, Any]):
     return await get_einvoice_settings(company_id)
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
-                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic"}
+                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True}
 
 @api_router.get("/companies/{company_id}/print-templates")
 async def get_print_templates(company_id: str):
@@ -832,8 +836,25 @@ async def create_contact(contact: Contact):
     await db.contacts.insert_one(doc)
     return clean_doc(doc)
 
+@api_router.get("/search")
+async def global_search(q: str, company_id: str = "comp_nexus_main_01"):
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"contacts": [], "products": [], "orders": [], "invoices": []}
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    contacts = await db.contacts.find({"company_id": company_id, "$or": [{"name": rx}, {"tax_number_or_id": rx}, {"phone": rx}, {"email": rx}]}, {"name": 1, "tax_number_or_id": 1, "balance": 1, "type": 1}).limit(6).to_list(6)
+    products = await db.products.find({"company_id": company_id, "$or": [{"name": rx}, {"sku": rx}, {"barcode": rx}]}, {"name": 1, "sku": 1, "stock_quantity": 1, "sale_price": 1}).limit(6).to_list(6)
+    orders = await db.orders.find({"company_id": company_id, "$or": [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
+    invoices = await db.invoices.find({"company_id": company_id, "$or": [{"invoice_number": rx}, {"contact_name": rx}]}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
+    return {"contacts": clean_docs(contacts), "products": clean_docs(products), "orders": clean_docs(orders), "invoices": clean_docs(invoices)}
+
 @api_router.put("/contacts/{contact_id}")
 async def update_contact(contact_id: str, updated: Dict[str, Any]):
+    updated = {k: v for k, v in updated.items() if k not in ("id", "_id", "company_id", "balance", "b2b_token", "b2b_password_hash", "created_at")}
+    if updated.get("b2b_password"):
+        updated["b2b_password_hash"] = hash_password(str(updated.pop("b2b_password")))
+    else:
+        updated.pop("b2b_password", None)
     await db.contacts.update_one({"_id": contact_id}, {"$set": updated})
     res = await db.contacts.find_one({"_id": contact_id})
     return clean_doc(res)
@@ -899,9 +920,67 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
     upd = {"b2b_token": token, "b2b_enabled": bool(req.get("enabled", True)), "b2b_discount": float(req.get("discount", c.get("b2b_discount", 0)) or 0)}
     if req.get("regenerate"):
         upd["b2b_token"] = token = uuid.uuid4().hex
+    if req.get("password"):
+        if len(str(req["password"])) < 6:
+            raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
+        upd["b2b_password_hash"] = hash_password(str(req["password"]))
+    if req.get("login_email"):
+        upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
     await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
     base = (req.get("base_url") or "").rstrip("/")
-    return {**upd, "link": f"{base}/portal/{token}"}
+    return {**{k: v for k, v in upd.items() if k != "b2b_password_hash"}, "has_password": bool(upd.get("b2b_password_hash") or c.get("b2b_password_hash")), "link": f"{base}/portal/{token}", "login_url": f"{base}/b2b/giris"}
+
+
+@api_router.post("/public/b2b/login")
+async def b2b_login(req: Dict[str, Any]):
+    ident = (req.get("email") or "").strip().lower(); pwd = req.get("password") or ""
+    if not ident or not pwd:
+        raise HTTPException(status_code=400, detail="E-posta / VKN ve şifre gerekli.")
+    c = await db.contacts.find_one({"b2b_enabled": True, "$or": [{"b2b_login_email": ident}, {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}, {"tax_number_or_id": ident}]})
+    if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
+        raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
+    if not c.get("b2b_token"):
+        await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
+        c = await db.contacts.find_one({"_id": c["_id"]})
+    await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_last_login": datetime.now(timezone.utc).isoformat()}})
+    return {"token": c["b2b_token"], "name": c.get("name"), "redirect": f"/portal/{c['b2b_token']}"}
+
+
+@api_router.post("/public/b2b/{token}/ai-cart")
+async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
+    c = await _b2b_contact(token)
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    text = await _file_to_text(file, data)
+    if len(text.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
+    try:
+        parsed = await ai_service_extract_orders(text)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+    prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
+    idx = {str(k).lower(): p for p in prods for k in (p.get("sku"), p.get("barcode")) if k}
+    names = {p["name"].lower(): p for p in prods if p.get("name")}
+    import difflib
+    items, unmatched = [], []
+    for o in parsed.get("orders") or []:
+        for it in o.get("items") or []:
+            qty = max(1, int(float(it.get("quantity") or 1)))
+            p = idx.get(str(it.get("barcode") or "").lower()) or idx.get(str(it.get("sku") or "").lower())
+            conf = 1.0 if p else 0
+            if not p and it.get("product_name"):
+                q = it["product_name"].lower()
+                p = names.get(q)
+                if p:
+                    conf = 0.95
+                else:
+                    best = difflib.get_close_matches(q, list(names.keys()), n=1, cutoff=0.55)
+                    if best:
+                        p = names[best[0]]; conf = round(difflib.SequenceMatcher(None, q, best[0]).ratio(), 2)
+            row = {"requested": it.get("product_name") or it.get("sku") or it.get("barcode") or "?", "quantity": qty, "product_id": p["_id"] if p else None, "matched_name": p.get("name") if p else None, "confidence": conf}
+            (items if p else unmatched).append(row)
+    return {"filename": file.filename, "items": items, "unmatched": unmatched, "total_lines": len(items) + len(unmatched)}
 
 async def _b2b_contact(token: str) -> Dict[str, Any]:
     c = await db.contacts.find_one({"b2b_token": token})
@@ -1431,7 +1510,8 @@ async def create_invoice(invoice: Invoice):
     invoice.general_discount_amount = gd
     invoice.subtotal = round(items_sum - gd, 2)
     invoice.vat_total = round(sum(item.total * factor * (item.vat_rate / 100) for item in invoice.items), 2)
-    invoice.grand_total = round(invoice.subtotal + invoice.vat_total, 2)
+    invoice.withholding_amount = round(invoice.vat_total * float(invoice.withholding_rate or 0), 2)
+    invoice.grand_total = round(invoice.subtotal + invoice.vat_total - invoice.withholding_amount, 2)
 
     if invoice.status in ["approved", "sent_to_gib"]:
         balance_change = invoice.grand_total if invoice.invoice_type == "sales" else -invoice.grand_total
@@ -5224,6 +5304,7 @@ rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
+saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5275,6 +5356,7 @@ app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
+app.include_router(saas_docs.router)
 
 @app.get("/")
 async def root():

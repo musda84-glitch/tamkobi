@@ -22,7 +22,7 @@ export const printThermalLabels = (orders, company = {}, { size = "100x150" } = 
       <div class="box small"><div class="lbl">GÖNDERİCİ</div><b>${esc(company.name || "")}</b> ${esc(company.address || "")} ${company.phone ? "· " + esc(company.phone) : ""}</div>
       <div class="items">${items}</div>
       <div class="bc">${barcodeSvg(code)}</div>
-      <div class="foot">${o.cargo_tracking_number ? "Takip: " + esc(o.cargo_tracking_number) : ""}${o.total_amount ? ` · ${Number(o.total_amount).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}${o.payment_type === "cod" ? " · KAPIDA ÖDEME" : ""}</div>
+      <div class="foot">${o.cargo_tracking_number ? "Takip: " + esc(o.cargo_tracking_number) : ""}${o.payment_type === "cod" ? " · KAPIDA ÖDEME" : ""}</div>
     </section>`;
   }).join("");
   w0.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Kargo Etiketleri (${orders.length})</title>

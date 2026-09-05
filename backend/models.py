@@ -79,6 +79,20 @@ class Contact(BaseDocument):
     longitude: Optional[float] = None
     location_url: Optional[str] = None
     notes: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_person_phone: Optional[str] = None
+    website: Optional[str] = None
+    iban: Optional[str] = None
+    bank_name: Optional[str] = None
+    currency: str = "TRY"
+    default_discount: float = 0.0
+    payment_method: Optional[str] = None
+    tags: List[str] = []
+    sms_opt_in: bool = True
+    email_opt_in: bool = True
+    sales_rep: Optional[str] = None
+    risk_status: Optional[str] = "normal"
+    b2b_login_email: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Stok & Ürünler
@@ -158,6 +172,7 @@ class InvoiceItem(BaseModel):
     discount_percent: float = 0.0
     discount_rate: float = 0.0
     total: float
+    is_service: bool = False
 
 class Invoice(BaseDocument):
     company_id: str
@@ -176,6 +191,10 @@ class Invoice(BaseDocument):
     general_discount_rate: float = 0.0
     general_discount_amount: float = 0.0
     grand_total: float = 0.0
+    withholding_rate: float = 0.0  # tevkifat oranı (0.5 = 5/10)
+    withholding_code: Optional[str] = None
+    withholding_amount: float = 0.0
+    price_mode: str = "excl"  # excl: KDV hariç, incl: KDV dahil girildi (net'e çevrilir)
     currency: str = "TRY"
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
     gib_status: Optional[str] = "Taslak"  # Taslak, GİB'e Gönderildi, Başarıyla İletildi, İptal Edildi

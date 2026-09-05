@@ -18,7 +18,7 @@ logger = logging.getLogger("NexusERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PERIOD_DAYS = {"monthly": 30, "yearly": 365}
-DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "NexusHesap", "currency": "try"}
+DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "NexusHesap", "currency": "try", "public_url": ""}
 
 
 def init(db, deps):
@@ -113,7 +113,7 @@ async def payment_status(session_id: str, request: Request):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"stripe status: {e}")
     lic = await saas.effective(tx["company_id"]) if tx.get("applied") else None
-    return {"session_id": session_id, "provider": tx.get("provider", "stripe"), "invoice_number": tx.get("invoice_number"), "status": tx["status"], "payment_status": tx["payment_status"], "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "license": lic}
+    return {"session_id": session_id, "provider": tx.get("provider", "stripe"), "invoice_number": tx.get("invoice_number"), "invoice_id": tx.get("invoice_id"), "status": tx["status"], "payment_status": tx["payment_status"], "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "license": lic}
 
 
 @router.post("/webhook/stripe")
@@ -147,7 +147,7 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
 
 @router.put("/system/settings")
 async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
-    upd = {k: req[k] for k in ("email_enabled", "whatsapp_enabled", "sender_company_id", "support_email", "support_phone", "brand_name", "trial_plan_id") if k in req}
+    upd = {k: req[k] for k in ("email_enabled", "whatsapp_enabled", "sender_company_id", "support_email", "support_phone", "brand_name", "trial_plan_id", "public_url") if k in req}
     if "reminder_days" in req:
         upd["reminder_days"] = sorted({int(x) for x in req["reminder_days"] if str(x).strip().isdigit() and 0 < int(x) <= 60}, reverse=True) or [7, 1]
     if "trial_days" in req:
@@ -169,13 +169,20 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
         body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Firma Ayarları → Paketim & Modüller ekranından yenileyebilirsiniz."
     if st.get("support_email") or st.get("support_phone"):
         body += f" Destek: {st.get('support_email', '')} {st.get('support_phone', '')}".rstrip()
-    res = {"notification": True, "email": [], "whatsapp": []}
+    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    link = ""
+    if base:
+        import saas_docs
+        link = f"{base}/yenile/{saas_docs.make_renew_token(company['_id'], lic.get('plan_id'))}"
+        body += f" Tek tıkla yenilemek için: {link}"
+    res = {"notification": True, "email": [], "whatsapp": [], "renew_link": bool(link)}
     await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:
             acc = await _deps["mail_account"](st["sender_company_id"])
-            await _deps["smtp_send"](acc, emails, title, body, html=f"<p>{body}</p>")
+            btn = f"<p style='margin-top:16px'><a href='{link}' style='background:#10b981;color:#0f172a;padding:12px 20px;border-radius:12px;font-weight:bold;text-decoration:none'>Şimdi Yenile →</a></p>" if link else ""
+            await _deps["smtp_send"](acc, emails, title, body, html=f"<div style='font-family:Arial,sans-serif;max-width:600px'><h2 style='color:#0f172a'>{title}</h2><p>{body.replace(' Tek tıkla yenilemek için: ' + link, '') if link else body}</p>{btn}</div>")
             res["email"] = emails
         except Exception as e:  # noqa: BLE001
             res["email_error"] = str(getattr(e, "detail", e))[:160]

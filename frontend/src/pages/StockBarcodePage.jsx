@@ -39,7 +39,7 @@ export default function StockBarcodePage() {
   const [products, setProducts] = useState([]);
   const [labelQuickProduct, setLabelQuickProduct] = useState(null);
   const [filterCategory, setFilterCategory] = useState("all");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
   const [stockF, setStockF] = useState(STOCK_FILTER_DEFAULTS);
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);

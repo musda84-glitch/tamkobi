@@ -106,8 +106,12 @@ async def issue_subscription_invoice(tx: dict) -> Optional[str]:
             acc = await _deps["mail_account"](platform_cid)
             rows = "".join(f"<tr><td style='padding:6px 10px;border:1px solid #e2e8f0'>{i['name']}</td><td style='padding:6px 10px;border:1px solid #e2e8f0;text-align:right'>{i['total']:,.2f} ₺</td></tr>" for i in inv["items"])
             html = f"<div style='font-family:Arial,sans-serif;max-width:640px'><h2 style='color:#0f172a'>e-Arşiv Fatura {inv['invoice_number']}</h2><p>Sayın {contact['name']},<br>{tx['plan_name']} paketi {period_label.lower()} abonelik ödemeniz için e-Arşiv faturanız oluşturulmuştur.</p><table style='border-collapse:collapse;width:100%'>{rows}<tr><td style='padding:6px 10px;text-align:right'>KDV %20</td><td style='padding:6px 10px;text-align:right'>{vat:,.2f} ₺</td></tr><tr><td style='padding:6px 10px;text-align:right;font-weight:bold'>Genel Toplam</td><td style='padding:6px 10px;text-align:right;font-weight:bold'>{gross:,.2f} ₺</td></tr></table><p style='color:#64748b;font-size:12px'>ETTN/Takip: {inv['gib_tracking_id']} · Tarih: {inv['issue_date']} · Ödeme alındı.</p></div>"
-            await _deps["smtp_send"](acc, to, f"e-Arşiv Faturanız {inv['invoice_number']} – {tx['plan_name']} Paketi", f"{tx['plan_name']} paketi {period_label.lower()} abonelik faturanız: {gross:,.2f} ₺ (KDV dahil). Takip: {inv['gib_tracking_id']}", html=html)
-            mail = {"status": "sent", "to": to}
+            import saas_docs
+            platform = await _db.companies.find_one({"_id": platform_cid}) or {}
+            pdf = saas_docs.build_invoice_pdf(inv, platform, contact)
+            html = html.replace("</p></div>", " Faturanızın PDF hali ekte yer almaktadır.</p></div>")
+            await _deps["smtp_send"](acc, to, f"e-Arşiv Faturanız {inv['invoice_number']} – {tx['plan_name']} Paketi", f"{tx['plan_name']} paketi {period_label.lower()} abonelik faturanız ektedir: {gross:,.2f} ₺ (KDV dahil). Takip: {inv['gib_tracking_id']}", html=html, attachments=[{"filename": f"{inv['invoice_number']}.pdf", "content_type": "application/pdf", "data": pdf}])
+            mail = {"status": "sent", "to": to, "attachment": f"{inv['invoice_number']}.pdf"}
         except Exception as e:  # noqa: BLE001
             mail = {"status": "failed", "detail": str(getattr(e, "detail", e))[:160]}
     await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"email_result": mail}})

@@ -23,7 +23,7 @@ import {
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -90,6 +90,7 @@ export default function OrdersB2BPage() {
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams] = useSearchParams();
+  useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
   const customerFilter = searchParams.get("customer") || "";
   const [ordF, setOrdF] = useState(ORDER_FILTER_DEFAULTS);
   const [sort, setSort] = useState({ key: "order_date", dir: "desc" });
@@ -132,6 +133,7 @@ export default function OrdersB2BPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const [invChooser, setInvChooser] = useState(null);
+  const [moreMenu, setMoreMenu] = useState(null);
   const handleConvertToInvoice = async (orderId, eType) => {
     setInvChooser(null);
     try {
@@ -351,9 +353,9 @@ export default function OrdersB2BPage() {
                     </td>
                     <td className="px-4 py-3">
                       {ord.items?.map((it, idx) => (
-                        <div key={idx} className="text-slate-700">
+                        <button type="button" key={idx} onClick={() => navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`)} className="block text-left text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                           {it.quantity}x {it.product_name || it.name}
-                        </div>
+                        </button>
                       ))}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
@@ -383,7 +385,7 @@ export default function OrdersB2BPage() {
                       </select>)}
                     </td>
                     <td className="px-4 py-3 text-center w-[380px] min-w-[380px]">
-                      <div className="grid grid-cols-[28px_112px_128px_28px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
+                      <div className="grid grid-cols-[28px_112px_128px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           <div className="relative inline-block justify-self-center">
@@ -426,18 +428,22 @@ export default function OrdersB2BPage() {
                           </button>
                         )}
                         {["pending", "new"].includes(ord.order_status) ? <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
-                        <button onClick={() => makeDispatch(ord)} className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition" title={ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır"} data-testid={`dispatch-btn-${ord.order_number}`}><FileIcon className="w-4 h-4" /></button>
-                        {!["returned"].includes(ord.order_status) ? <button onClick={() => setReturnOrder(ord)} className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="İade Al" data-testid={`return-order-btn-${ord.order_number}`}><RotateCcw className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
-                        <button onClick={() => setLabelOrder(ord)} className="p-1.5 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition" title="Kargo Etiketi Yazdır" data-testid={`cargo-label-btn-${ord.order_number}`}><Tag className="w-4 h-4" /></button>
-                        <button onClick={() => setPrintOrder(ord)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Sipariş Formu Yazdır" data-testid={`print-order-btn-${ord.order_number}`}><Printer className="w-4 h-4" /></button>
-                        <button
-                          onClick={() => setNotifyOrder(ord)}
-                          className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
-                          title="Müşteriye Sipariş / Kargo Takip Bildirimi Gönder"
-                          data-testid={`notify-order-btn-${ord.order_number}`}
-                        >
-                          <MessageSquare className="w-4 h-4" />
-                        </button>
+                        <div className="relative inline-block justify-self-center">
+                          <button onClick={() => setMoreMenu(moreMenu === ord.id ? null : ord.id)} className={`p-1.5 rounded-lg transition ${moreMenu === ord.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
+                          {moreMenu === ord.id && (
+                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
+                              {[
+                                [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
+                                [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", !["returned"].includes(ord.order_status)],
+                                [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, "hover:bg-orange-50 hover:text-orange-700", true],
+                                [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", true],
+                                [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, "hover:bg-violet-50 hover:text-violet-700", true],
+                              ].filter((it) => it[5]).map(([Ico, label, fn, tid, cls]) => (
+                                <button key={tid} onClick={() => { setMoreMenu(null); fn(); }} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-700 transition ${cls}`} data-testid={tid}><Ico className="w-4 h-4 shrink-0" /><span className="truncate">{label}</span></button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>

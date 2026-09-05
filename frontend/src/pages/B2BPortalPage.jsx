@@ -6,6 +6,7 @@ import { ShoppingCart, Package, FileText, Truck, CalendarClock, Loader2, Plus, M
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
+import { B2BAiCart } from "../components/B2BAiCart";
 
 const TABS = [["catalog", "Ürünler", Package], ["orders", "Siparişlerim", Truck], ["statement", "Hesap Ekstresi", FileText], ["installments", "Taksitlerim", CalendarClock]];
 
@@ -47,6 +48,7 @@ export default function B2BPortalPage() {
         {tab === "catalog" && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 space-y-3">
+              {d.settings?.allow_orders !== false && <B2BAiCart token={token} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
               <div className="space-y-2">
                 <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap" data-testid="b2b-categories">{cats.map((c) => <button key={c} onClick={() => setCat(c)} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === c ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600"}`}>{c === "all" ? "Tümü" : c}</button>)}</div>

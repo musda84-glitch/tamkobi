@@ -1,10 +1,10 @@
 import React from "react";
-import { Building, Phone, Mail, MapPin, Navigation, MessageSquare, ChevronRight } from "lucide-react";
+import { Building, Phone, Mail, MapPin, Navigation, MessageSquare, ChevronRight, Pencil } from "lucide-react";
 import { mapsLink } from "./ContactLocationModal";
 
 const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
-export const ContactRow = ({ contact, flag, onOpen, onMessage, onStatement, onLocation }) => {
+export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStatement, onLocation }) => {
   const tid = contact.tax_number_or_id;
   const bal = Number(contact.balance) || 0;
   return (
@@ -42,6 +42,7 @@ export const ContactRow = ({ contact, flag, onOpen, onMessage, onStatement, onLo
         </div>
       </div>
       <div className="col-span-6 md:col-span-2 flex items-center justify-end gap-1.5">
+        {onEdit && <button onClick={onEdit} className="p-1.5 text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 rounded-lg transition" title="Gelişmiş cari bilgilerini güncelle" data-testid={`edit-contact-btn-${tid}`}><Pencil className="w-4 h-4" /></button>}
         <button onClick={onMessage} className="p-1.5 text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 rounded-lg transition" title="SMS / E-posta Gönder" data-testid={`message-btn-${tid}`}><MessageSquare className="w-4 h-4" /></button>
         <button onClick={onStatement} className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition" data-testid={`statement-btn-${tid}`}><span>Ekstre</span><ChevronRight className="w-3.5 h-3.5" /></button>
         <button onClick={onOpen} className="p-1.5 text-slate-500 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 rounded-lg transition" title="Cari Kartı Aç" data-testid={`open-contact-btn-${tid}`}><ChevronRight className="w-4 h-4" /></button>

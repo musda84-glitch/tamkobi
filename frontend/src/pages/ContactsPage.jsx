@@ -25,6 +25,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
 import { ContactDetailPanel } from "../components/ContactDetailPanel";
 import { ContactRow } from "../components/ContactRow";
+import { ContactForm } from "../components/ContactForm";
 import { ExportButtons } from "../components/ExportButtons";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
@@ -51,22 +52,7 @@ export default function ContactsPage() {
   useEscape(React.useCallback(() => setSelectedContactStatement(null), []));
   const [statementData, setStatementData] = useState(null);
 
-  const [newContact, setNewContact] = useState({
-    type: "customer",
-    name: "",
-    company_title: "",
-    tax_number_or_id: "",
-    tax_office: "",
-    email: "",
-    phone: "",
-    address: "",
-    city: "İstanbul",
-    district: "Kadıköy",
-    credit_limit: 50000.0,
-    category: "Genel Bayi",
-    is_e_invoice_user: true,
-    notes: ""
-  });
+  const [editContact, setEditContact] = useState(null);
 
   const loadContacts = useCallback(async () => {
     try {
@@ -82,24 +68,6 @@ export default function ContactsPage() {
   }, [activeCompany, filterType]);
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
-  const handleSaveContact = async (e) => {
-    e.preventDefault();
-    if (!newContact.name || !newContact.tax_number_or_id) {
-      toast.error("Lütfen cari adını ve Vergi/TC kimlik numarasını girin.");
-      return;
-    }
-    try {
-      await axios.post(`${API_URL}/contacts`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
-        ...newContact
-      });
-      toast.success("Cari kartı başarıyla kaydedildi.");
-      setShowAddModal(false);
-      loadContacts();
-    } catch (err) {
-      toast.error("Cari kaydedilemedi.");
-    }
-  };
 
   const openStatement = async (contact) => {
     setSelectedContactStatement(contact);
@@ -187,7 +155,7 @@ export default function ContactsPage() {
       <div className="space-y-2" data-testid="contacts-list">
         {filtered.length === 0 && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
         {filtered.map((contact) => (
-          <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
+          <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onEdit={() => setEditContact(contact)} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
         ))}
       </div>
 
@@ -213,129 +181,7 @@ export default function ContactsPage() {
         />
       )}
 
-      {/* ADD CONTACT MODAL */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="add-contact-modal">
-            <div className="flex items-center justify-between border-b pb-2">
-              <h2 className="text-base font-bold text-slate-900">Yeni Cari Kartı Oluştur</h2>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleSaveContact} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Cari Türü</label>
-                  <select
-                    value={newContact.type}
-                    onChange={(e) => setNewContact({ ...newContact, type: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                    data-testid="contact-type-select"
-                  >
-                    <option value="customer">Müşteri</option>
-                    <option value="supplier">Tedarikçi</option>
-                    <option value="both">Her İkisi</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Kategori</label>
-                  <input
-                    type="text"
-                    value={newContact.category}
-                    onChange={(e) => setNewContact({ ...newContact, category: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Cari Adı / Ünvan</label>
-                <input
-                  type="text"
-                  placeholder="Örn: Trend Mağazacılık A.Ş."
-                  value={newContact.name}
-                  onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  data-testid="contact-name-input"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">VKN / TCKN</label>
-                  <input
-                    type="text"
-                    placeholder="10 veya 11 haneli"
-                    value={newContact.tax_number_or_id}
-                    onChange={(e) => setNewContact({ ...newContact, tax_number_or_id: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                    data-testid="contact-tax-input"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Vergi Dairesi</label>
-                  <input
-                    type="text"
-                    placeholder="Örn: Beşiktaş"
-                    value={newContact.tax_office}
-                    onChange={(e) => setNewContact({ ...newContact, tax_office: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Telefon</label>
-                  <input
-                    type="text"
-                    value={newContact.phone}
-                    onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">E-Posta</label>
-                  <input
-                    type="email"
-                    value={newContact.email}
-                    onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Açık Adres</label>
-                <textarea
-                  rows="2"
-                  value={newContact.address}
-                  onChange={(e) => setNewContact({ ...newContact, address: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-3 py-1.5 border rounded-lg text-xs"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
-                  data-testid="save-contact-btn"
-                >
-                  Cariyi Kaydet
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={() => { setShowAddModal(false); setEditContact(null); loadContacts(); }} />}
 
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (

@@ -40,6 +40,7 @@ import {
   Inbox
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
+import { HeaderQuickActions } from "./HeaderQuickActions";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading } = useAuth();
@@ -53,7 +54,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [dragIdx, setDragIdx] = useState(null);
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
-  if (["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  if (["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
   const lockedModule = !moduleOn(location.pathname);
 
@@ -205,6 +206,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
           {/* Quick Actions & Search */}
           <div className="flex items-center gap-2.5">
+            <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             {feature("header_barcode") && (<Link
               to="/stock?scan=true"
