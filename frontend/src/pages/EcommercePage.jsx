@@ -3,6 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { ProductMappingPanel } from "../components/ProductMappingPanel";
+import { ChannelCatalogModal, CHANNEL_FIELD_LABELS } from "../components/ChannelCatalogModal";
 import {
   ShoppingCart,
   CheckCircle2,
@@ -20,6 +21,7 @@ import {
 export default function EcommercePage() {
   const { activeCompany } = useAuth();
   const [integrations, setIntegrations] = useState([]);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState(null);
   const [testingId, setTestingId] = useState(null);
@@ -70,15 +72,19 @@ export default function EcommercePage() {
     }
   };
 
+  const [accounts, setAccounts] = useState([]);
+  useEffect(() => { axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [activeCompany]);
   const handleSaveConfig = async (e) => {
     e.preventDefault();
     try {
-      await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}`, selectedConfig);
+      const { settlement_account_id, settlement_account_name, ...rest } = selectedConfig;
+      await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}`, rest);
+      await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/settlement-account`, { account_id: settlement_account_id || null });
       toast.success(`${selectedConfig.channel_name} ayarları kaydedildi.`);
       setSelectedConfig(null);
       loadIntegrations();
     } catch (err) {
-      toast.error("Ayarlar kaydedilemedi.");
+      toast.error(err.response?.data?.detail || "Ayarlar kaydedilemedi.");
     }
   };
 
@@ -99,7 +105,9 @@ export default function EcommercePage() {
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">E-Ticaret Entegrasyon Merkezi</h1>
           <p className="text-xs sm:text-sm text-slate-500">Pazaryerleri & Web Siteleri ile 2 Yönlü Sipariş, Stok ve E-Fatura Eşitleme</p>
         </div>
+        <button onClick={() => setCatalogOpen(true)} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 self-start" data-testid="add-channel-btn"><Layers className="w-4 h-4" /> Kanal Ekle (69 kanal)</button>
       </div>
+      {catalogOpen && <ChannelCatalogModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCatalogOpen(false)} onAdded={loadIntegrations} />}
 
       {/* Info Banner */}
       <div className="bg-indigo-50/80 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-indigo-950">
@@ -201,7 +209,7 @@ export default function EcommercePage() {
             </div>
             <form onSubmit={handleSaveConfig} className="space-y-3 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">API Key / Satıcı Anahtarı</label>
+                <label className="block font-semibold text-slate-700 mb-1">{CHANNEL_FIELD_LABELS[selectedConfig.channel]?.api_key || "API Key / Satıcı Anahtarı"}</label>
                 <input
                   type="text"
                   value={selectedConfig.api_key || ""}
@@ -213,7 +221,7 @@ export default function EcommercePage() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">API Secret / Şifre</label>
+                <label className="block font-semibold text-slate-700 mb-1">{CHANNEL_FIELD_LABELS[selectedConfig.channel]?.api_secret || "API Secret / Şifre"}</label>
                 <input
                   type="password"
                   value={selectedConfig.api_secret || ""}
@@ -225,7 +233,7 @@ export default function EcommercePage() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Satıcı ID / Merchant ID</label>
+                <label className="block font-semibold text-slate-700 mb-1">{CHANNEL_FIELD_LABELS[selectedConfig.channel]?.supplier_id || "Satıcı ID / Merchant ID"}</label>
                 <input
                   type="text"
                   value={selectedConfig.supplier_id || ""}
@@ -237,7 +245,7 @@ export default function EcommercePage() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Mağaza Web Adresi</label>
+                <label className="block font-semibold text-slate-700 mb-1">{CHANNEL_FIELD_LABELS[selectedConfig.channel]?.store_url || "Mağaza Web Adresi"}</label>
                 <input
                   type="text"
                   value={selectedConfig.store_url || ""}
@@ -247,6 +255,14 @@ export default function EcommercePage() {
                 />
               </div>
 
+              <div className="pt-2 border-t">
+                <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
+                <select value={selectedConfig.settlement_account_id || ""} onChange={(e) => setSelectedConfig({ ...selectedConfig, settlement_account_id: e.target.value || null })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="ecom-settlement-select">
+                  <option value="">Hesap seçilmedi — fatura yalnızca "ödendi" işaretlenir</option>
+                  {accounts.map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; kesintiler "Pazaryeri Komisyonu" masrafına yazılır.</p>
+              </div>
               <div className="space-y-2 pt-2 border-t">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

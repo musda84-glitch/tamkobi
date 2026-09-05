@@ -49,10 +49,10 @@ export const LabelCanvas = ({ tpl, product, company, scale = 1, selected, onSele
   </div>
 );
 
-const PrintModal = ({ tpl, products, company, onClose }) => {
+const PrintModal = ({ tpl, products, company, onClose, initialSel = {}, templates = [], onTplChange }) => {
   useEscape(onClose);
   const [q, setQ] = useState("");
-  const [sel, setSel] = useState({});
+  const [sel, setSel] = useState(initialSel);
   const [page, setPage] = useState(tpl.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
   const list = useMemo(() => products.filter((p) => !q || p.name?.toLowerCase().includes(q.toLowerCase()) || p.sku?.toLowerCase().includes(q.toLowerCase()) || p.barcode?.includes(q)).slice(0, 200), [products, q]);
   const jobs = useMemo(() => Object.entries(sel).flatMap(([id, n]) => { const p = products.find((x) => (x.id || x._id) === id); return p && n > 0 ? Array.from({ length: n }, () => p) : []; }), [sel, products]);
@@ -69,7 +69,7 @@ const PrintModal = ({ tpl, products, company, onClose }) => {
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()} data-testid="label-print-modal">
-        <div className="flex items-center justify-between"><b className="text-sm">Toplu Etiket Yazdır — {tpl.name} ({tpl.width_mm}×{tpl.height_mm} mm)</b><button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" data-testid="label-print-close"><X className="w-4 h-4" /></button></div>
+        <div className="flex items-center justify-between"><b className="text-sm flex items-center gap-2">Etiket Yazdır — {templates.length > 1 ? <select value={tpl.id} onChange={(e) => onTplChange(templates.find((t) => t.id === e.target.value))} className="border rounded-lg p-1 text-xs font-normal" data-testid="label-print-tpl">{templates.map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name}</option>)}</select> : tpl.name} ({tpl.width_mm}×{tpl.height_mm} mm)</b><button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" data-testid="label-print-close"><X className="w-4 h-4" /></button></div>
         <div className="flex flex-wrap items-center gap-2">
           <label>Sayfa: <select value={page.mode} onChange={(e) => setPage({ ...page, mode: e.target.value })} className="border rounded-lg p-1.5" data-testid="label-page-mode"><option value="thermal">Termal rulo (etiket başına sayfa)</option><option value="a4">A4 etiket kağıdı</option></select></label>
           {page.mode === "a4" && <><label>Sütun <input type="number" min="1" max="8" value={page.cols} onChange={(e) => setPage({ ...page, cols: Number(e.target.value) })} className="w-14 border rounded-lg p-1.5" data-testid="label-page-cols" /></label><label>Boşluk mm <input type="number" min="0" step="0.5" value={page.gap_mm} onChange={(e) => setPage({ ...page, gap_mm: Number(e.target.value) })} className="w-16 border rounded-lg p-1.5" /></label></>}
@@ -158,4 +158,13 @@ export const LabelDesigner = ({ companyId, products, company }) => {
       {printing && tpl && <PrintModal tpl={tpl} products={products} company={company} onClose={() => setPrinting(false)} />}
     </div>
   );
+};
+
+export const LabelQuickPrint = ({ companyId, product, products, company, onClose }) => {
+  const [tpls, setTpls] = useState(null);
+  const [tpl, setTpl] = useState(null);
+  useEffect(() => { axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => { setTpls(r.data); setTpl(r.data.find((t) => t.is_default) || r.data[0] || DEFAULT_TPL(100, 50)); }).catch(() => { setTpls([]); setTpl(DEFAULT_TPL(100, 50)); }); }, [companyId]);
+  if (!tpl) return null;
+  const pid = product.id || product._id;
+  return <PrintModal tpl={tpl} templates={tpls || []} onTplChange={setTpl} products={products.some((p) => (p.id || p._id) === pid) ? products : [product, ...products]} company={company} initialSel={{ [pid]: 1 }} onClose={onClose} />;
 };

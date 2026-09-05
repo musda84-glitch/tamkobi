@@ -8,6 +8,7 @@ const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDig
 
 export const MarketplaceProductsPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
+  const [channel, setChannel] = useState("trendyol");
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
@@ -16,11 +17,14 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
   const [matchSel, setMatchSel] = useState({});
   const [bulkQty, setBulkQty] = useState("");
   const [stockSrc, setStockSrc] = useState("marketplace");
+  const [logs, setLogs] = useState([]);
+  const loadLogs = useCallback((check = false) => axios.get(`${API_URL}/marketplace/push-logs`, { params: { company_id: companyId, channel, check } }).then((r) => setLogs(r.data)).catch(() => {}), [companyId, channel]);
+  useEffect(() => { loadLogs(); }, [loadLogs]);
   const applyBulkQty = () => { if (bulkQty === "") { toast.error("Toplu stok değeri girin."); return; } const next = { ...edits }; rows.forEach((r) => { next[r.barcode] = { ...next[r.barcode], qty: Number(bulkQty) }; }); setEdits(next); setSel(rows.map((r) => r.barcode)); toast.success(`${rows.length} ürüne stok ${bulkQty} uygulandı; göndermek için "Stok/Fiyat Gönder".`); };
   const load = useCallback((refresh = false) => {
     setBusy(true);
-    return axios.get(`${API_URL}/marketplace/products`, { params: { company_id: companyId, channel: "trendyol", refresh } }).then((r) => setD(r.data)).catch((e) => toast.error(e.response?.data?.detail || "Pazaryeri ürünleri yüklenemedi.")).finally(() => setBusy(false));
-  }, [companyId]);
+    return axios.get(`${API_URL}/marketplace/products`, { params: { company_id: companyId, channel, refresh } }).then((r) => setD(r.data)).catch((e) => toast.error(e.response?.data?.detail || "Pazaryeri ürünleri yüklenemedi.")).finally(() => setBusy(false));
+  }, [companyId, channel]);
   useEffect(() => { load(); }, [load]);
 
   const rows = useMemo(() => (d?.rows || []).filter((r) => {
@@ -39,7 +43,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     if (!items.length) { toast.error("Seçili ürünlerin stok kartı eşleşmesi yok."); return; }
     if (!window.confirm(`${items.length} ürünün fiyat/stok bilgisi Trendyol'a gönderilsin mi?`)) return;
     setBusy(true);
-    try { const r = await axios.post(`${API_URL}/marketplace/products/push`, { company_id: companyId, channel: "trendyol", items, from_stock: fromStock }); toast.success(r.data.message); setSel([]); setEdits({}); load(); }
+    try { const r = await axios.post(`${API_URL}/marketplace/products/push`, { company_id: companyId, channel, items, from_stock: fromStock }); toast.success(r.data.message); setSel([]); setEdits({}); load(); setTimeout(() => loadLogs(true), 4000); }
     catch (e) { toast.error(e.response?.data?.detail || "Gönderilemedi."); } finally { setBusy(false); }
   };
   const match = async (r) => {
@@ -48,7 +52,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     try { const res = await axios.post(`${API_URL}/marketplace/product-match`, { product_id: pid, alias: r.barcode }); toast.success(res.data.message); load(); } catch (e) { toast.error(e.response?.data?.detail || "Eşleştirilemedi."); }
   };
   const createCard = async (r) => {
-    try { const res = await axios.post(`${API_URL}/marketplace/product-create`, { company_id: companyId, product_name: r.title, barcode: r.barcode, sku: r.stock_code, sale_price: r.sale_price, stock_quantity: r.quantity, vat_rate: r.vat_rate || 20, category: r.category, channel: "trendyol" }); toast.success(res.data.message); load(); }
+    try { const res = await axios.post(`${API_URL}/marketplace/product-create`, { company_id: companyId, product_name: r.title, barcode: r.barcode, sku: r.stock_code, sale_price: r.sale_price, stock_quantity: r.quantity, vat_rate: r.vat_rate || 20, category: r.category, channel }); toast.success(res.data.message); load(); }
     catch (e) { toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı."); }
   };
 
@@ -58,11 +62,11 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     <div className="space-y-3" data-testid="marketplace-products-panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">Trendyol Ürünleri — Fiyat & Stok Güncelleme, Eşleşme</h3>
-          <p className="text-[11px] text-slate-500">{d.live ? `Canlı API · ${d.count} ürün · ${d.matched} eşleşmiş` : "Canlı API bağlantısı yok — E-Ticaret Entegrasyon ekranından Trendyol API bilgilerini girin."}{d.fetched_at ? ` · Son çekim ${new Date(d.fetched_at).toLocaleString("tr-TR")}` : ""}</p>
+          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><select value={channel} onChange={(e) => { setChannel(e.target.value); setSel([]); setEdits({}); }} className="border rounded-lg p-1 text-xs" data-testid="mp-channel-select"><option value="trendyol">Trendyol</option><option value="shopphp">ShopPHP (Web Sitesi)</option></select> Ürünleri — Fiyat & Stok, Eşleşme</h3>
+          <p className="text-[11px] text-slate-500">{d.live ? `Canlı · ${d.count} ürün · ${d.matched} eşleşmiş${d.push_supported === false ? " · XML servisi salt-okunur (fiyat/stok gönderimi yok)" : ""}` : "Canlı bağlantı yok — E-Ticaret Entegrasyon ekranından API/XML bilgilerini girin."}{d.fetched_at ? ` · Son çekim ${new Date(d.fetched_at).toLocaleString("tr-TR")}` : ""}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => load(true)} disabled={busy || !d.live} className="px-3 py-1.5 border border-slate-200 bg-white rounded-lg text-xs font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-refresh-btn"><RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} /> Trendyol'dan Çek</button>
+          <button onClick={() => load(true)} disabled={busy || !d.live} className="px-3 py-1.5 border border-slate-200 bg-white rounded-lg text-xs font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-refresh-btn"><RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} /> Kanaldan Çek</button>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -71,8 +75,17 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         <span className="text-slate-400">{rows.length} ürün</span>
         <div className="flex items-center gap-1 border-l pl-2"><input type="number" min="0" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} placeholder="Toplu stok" className="w-24 bg-white border border-slate-200 rounded-lg p-1.5" data-testid="mp-bulk-qty" /><button onClick={applyBulkQty} className="px-2 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold" data-testid="mp-bulk-apply">Tümüne Uygula</button></div>
         <div className="flex items-center gap-1 border-l pl-2 text-[10px] text-slate-500">Stok kaynağı: {[["marketplace", "Pazaryeri"], ["crm", "Stok Kartı"]].map(([k, l]) => <button key={k} onClick={() => setStockSrc(k)} className={`px-2 py-1 rounded-lg border text-xs font-semibold ${stockSrc === k ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`mp-stocksrc-${k}`}>{l}</button>)}</div>
-        <button onClick={() => push(stockSrc === "crm")} disabled={busy || !sel.length} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-send-btn"><Upload className="w-3.5 h-3.5" /> Stok/Fiyat Gönder{sel.length ? ` (${sel.length})` : ""}</button>
+        {d.push_supported !== false && <button onClick={() => push(stockSrc === "crm")} disabled={busy || !sel.length} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-send-btn"><Upload className="w-3.5 h-3.5" /> Stok/Fiyat Gönder{sel.length ? ` (${sel.length})` : ""}</button>}
       </div>
+      {logs.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 text-xs" data-testid="mp-push-logs">
+          <div className="flex items-center justify-between mb-1"><b className="text-slate-900">Gönderim Geçmişi (Trendyol toplu işlem durumu)</b><button onClick={() => loadLogs(true)} className="px-2 py-1 border rounded-lg flex items-center gap-1" data-testid="mp-push-logs-check"><RefreshCw className="w-3 h-3" /> Durumu Sorgula</button></div>
+          <div className="space-y-1 max-h-40 overflow-y-auto">{logs.slice(0, 8).map((l) => (
+            <div key={l.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1" data-testid={`mp-push-log-${l.id}`}><span className="text-slate-400">{new Date(l.created_at).toLocaleString("tr-TR")}</span><span>{l.sent} ürün</span><span className="font-mono text-[10px] text-slate-400">{l.batch_request_id || "-"}</span>
+              <span className={`px-1.5 py-0.5 rounded font-semibold ${l.status === "COMPLETED" ? "bg-emerald-50 text-emerald-700" : l.status === "FAILED" || l.failed_items.length ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{l.status === "COMPLETED" ? "Tamamlandı" : l.status === "FAILED" ? "Başarısız" : l.status === "SENT" ? "Gönderildi" : "İşleniyor"}{l.failed_items.length ? ` · ${l.failed_items.length} hata` : ""}</span>
+              {l.failed_items.slice(0, 2).map((f, i) => <span key={i} className="text-rose-600 text-[10px]">{f.barcode}: {(f.reasons || []).join(", ")}</span>)}
+              <span className="ml-auto text-[10px] text-slate-500">{(l.items || []).slice(0, 3).map((it) => `${it.barcode}${it.salePrice != null ? ` ₺${it.salePrice}` : ""}${it.quantity != null ? ` ×${it.quantity}` : ""}`).join(" · ")}</span></div>))}</div>
+        </div>)}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-auto">
         <table className="w-full text-left text-xs text-slate-600">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold text-[10px]"><tr>

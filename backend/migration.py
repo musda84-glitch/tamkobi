@@ -292,6 +292,24 @@ async def _transform(upload: dict, mapping: Dict[str, Optional[str]]):
     return records, errors
 
 
+@router.post("/migration/ai-map")
+async def migration_ai_map(req: Dict[str, Any]):
+    """Claude ile sütun eşlemesi öner (otomatik eşleme yetersiz kaldığında)."""
+    upload = await _db.migration_uploads.find_one({"_id": req.get("upload_id")})
+    if not upload:
+        raise HTTPException(status_code=404, detail="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
+    from ai_service import ai_map_columns
+    ent = ENTITIES[upload["entity"]]
+    fields = [{"key": f, "label": d[0], "required": d[1]} for f, d in ent["fields"].items()]
+    try:
+        res = await ai_map_columns(ent["label"], fields, upload["columns"], upload["rows"][:5])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI eşleme başarısız: {str(e)[:140]}")
+    auto = suggest_mapping(upload["entity"], upload["columns"], upload["source"])
+    merged = {f: res["mapping"].get(f) or auto.get(f) for f in ent["fields"]}
+    return {"mapping": merged, "ai_mapping": res["mapping"], "notes": res["notes"], "mapped": sum(1 for v in merged.values() if v)}
+
+
 @router.post("/migration/preview")
 async def migration_preview(req: Dict[str, Any]):
     upload = await _db.migration_uploads.find_one({"_id": req.get("upload_id")})
@@ -420,13 +438,19 @@ def _bh_headers(token: str) -> Dict[str, str]:
 
 
 def _unwrap(payload: Any) -> List[dict]:
+    """BizimHesap zarfı: {resultCode, errorText, data:{products|warehouses|inventory:[...]}}"""
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if isinstance(payload, dict):
-        for k in ("data", "items", "products", "warehouses", "inventory", "result", "Data", "Items", "Products"):
+        if payload.get("resultCode") not in (None, 1, "1", True) and payload.get("errorText"):
+            raise HTTPException(status_code=502, detail=f"BizimHesap hata: {payload.get('errorText')}")
+        for k in ("data", "Data", "result"):
+            if isinstance(payload.get(k), (dict, list)):
+                return _unwrap(payload[k])
+        for k in ("products", "items", "warehouses", "inventory", "Products", "Items"):
             if isinstance(payload.get(k), list):
                 return [x for x in payload[k] if isinstance(x, dict)]
-        return [payload] if payload else []
+        return []
     return []
 
 
@@ -446,6 +470,8 @@ async def _bh_get(path: str, token: str) -> Any:
         raise HTTPException(status_code=502, detail=f"BizimHesap bağlantı hatası: {type(e).__name__}")
     if r.status_code in (401, 403):
         raise HTTPException(status_code=400, detail="BizimHesap token geçersiz veya yetkisiz (401/403).")
+    if r.status_code == 429:
+        raise HTTPException(status_code=429, detail="BizimHesap istek sınırı aşıldı (429). 1-2 dakika bekleyip tekrar deneyin.")
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"BizimHesap {path} hatası: HTTP {r.status_code}")
     try:
@@ -478,14 +504,37 @@ async def _bh_token(company_id: str) -> str:
     return comm_service.decrypt(c["token_enc"])
 
 
+async def _bh_products(company_id: str, token: str, force: bool = False) -> tuple[List[dict], bool]:
+    """/products ağır ve hız sınırlı → 15 dk önbellek. (ürünler, önbellekten_mi)"""
+    key = {"company_id": company_id, "provider": "bizimhesap", "kind": "products"}
+    cache = await _db.migration_api_cache.find_one(key)
+    if cache and not force:
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(cache["fetched_at"])).total_seconds()
+        except (KeyError, ValueError):
+            age = 1e9
+        if age < 900:
+            return cache["items"], True
+    try:
+        items = _unwrap(await _bh_get("/products", token))
+    except HTTPException as e:
+        if e.status_code == 429 and cache:
+            return cache["items"], True
+        raise
+    await _db.migration_api_cache.update_one(key, {"$set": {"items": items, "fetched_at": _now()}, "$setOnInsert": {"_id": str(uuid.uuid4()), **key}}, upsert=True)
+    return items, False
+
+
 @router.post("/migration/bizimhesap/test")
 async def bh_test(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     token = await _bh_token(company_id)
-    products = _unwrap(await _bh_get("/products", token))
     warehouses = _unwrap(await _bh_get("/warehouses", token))
+    products, cached = await _bh_products(company_id, token, force=bool(req.get("force")))
     wh = [{"id": str(_pick(w, "id", "warehouseId", "depoId", "code", default="")), "name": _pick(w, "name", "title", "warehouseName", "depoAdi", default="Depo")} for w in warehouses]
-    res = {"ok": True, "product_count": len(products), "warehouses": wh, "sample": products[:3], "product_fields": sorted({k for p in products[:50] for k in p.keys()})}
+    active = sum(1 for p in products if str(p.get("isActive", 1)) in ("1", "True", "true"))
+    res = {"ok": True, "cached": cached, "product_count": len(products), "active_count": active, "with_barcode": sum(1 for p in products if p.get("barcode")), "with_code": sum(1 for p in products if p.get("code")), "warehouses": wh,
+           "sample": [{k: p.get(k) for k in ("title", "code", "barcode", "price", "buyingPrice", "unit", "tax", "quantity", "category", "brand")} for p in products[:3]], "product_fields": sorted({k for p in products[:50] for k in p.keys()})}
     await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_test": {"at": _now(), "product_count": len(products), "warehouse_count": len(wh)}}})
     return res
 
@@ -495,43 +544,58 @@ async def bh_import(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     token = await _bh_token(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
-    products = _unwrap(await _bh_get("/products", token))
+    products, _cached = await _bh_products(company_id, token)
     stock: Dict[str, float] = {}
     if req.get("with_stock") and req.get("warehouse_id"):
         for it in _unwrap(await _bh_get(f"/inventory/{req['warehouse_id']}", token)):
-            key = str(_pick(it, "productId", "productid", "id", "code", "barcode", default="")).strip().lower()
             try:
-                stock[key] = float(_pick(it, "quantity", "stock", "amount", "miktar", default=0) or 0)
+                q = float(str(_pick(it, "qty", "quantity", "stock", default=0) or 0).replace(",", "."))
             except (TypeError, ValueError):
                 continue
+            for k in ("id", "productId", "barcode", "code"):
+                v = str(it.get(k) or "").strip().lower()
+                if v:
+                    stock[v] = q
     batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "products", "entity_label": ENTITIES["products"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /products", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now()}
+    only_active = req.get("only_active", True)
     for p in products:
-        name = _pick(p, "name", "productName", "title", "stokAdi", "urunAdi")
+        if only_active and str(p.get("isActive", 1)) not in ("1", "True", "true"):
+            batch["skipped"] += 1; continue
+        name = _pick(p, "title", "name", "productName")
         if not name:
-            batch["failed"] += 1; batch["errors"].append({"row": 0, "label": str(_pick(p, "id", "code", default="?")), "errors": ["Ürün adı yok"]}); continue
-        ext_id = str(_pick(p, "id", "productId", default="")).strip()
-        sku = str(_pick(p, "code", "productCode", "sku", "stokKodu", default="") or ext_id or "").strip()
-        barcode = str(_pick(p, "barcode", "barkod", default="") or "").strip()
-        data = {"name": str(name).strip(), "sku": sku or None, "barcode": barcode or None, "category": str(_pick(p, "category", "categoryName", "group", "kategori", default="") or "").strip() or None, "unit": str(_pick(p, "unit", "birim", default="") or "").strip() or None}
-        for f, keys in (("sale_price", ("salePrice", "price", "unitPrice", "satisFiyati")), ("purchase_price", ("purchasePrice", "buyPrice", "cost", "alisFiyati")), ("vat_rate", ("taxRate", "vat", "kdv", "kdvOrani"))):
+            batch["failed"] += 1; batch["errors"].append({"row": 0, "label": str(_pick(p, "id", default="?")), "errors": ["Ürün adı (title) yok"]}); continue
+        ext_id = str(_pick(p, "id", default="")).strip()
+        code = str(_pick(p, "code", "sku", default="") or "").strip()
+        barcode = str(_pick(p, "barcode", default="") or "").strip()
+        sku = code or (f"BH-{ext_id[:8]}" if ext_id else None)
+        data: Dict[str, Any] = {"name": str(name).strip()[:200], "sku": sku, "barcode": barcode or None, "category": str(p.get("category") or "").strip() or None, "unit": str(p.get("unit") or "").strip() or None,
+                                "brand": str(p.get("brand") or "").strip() or None, "description": str(p.get("description") or "").strip() or None, "variant_name": str(p.get("variantName") or "").strip() or None, "is_active": True}
+        for f, keys in (("sale_price", ("price", "salePrice")), ("purchase_price", ("buyingPrice", "purchasePrice")), ("vat_rate", ("tax", "taxRate", "vat"))):
             v = _pick(p, *keys)
             if v not in (None, ""):
                 try:
                     data[f] = int(round(_to_money(v))) if f == "vat_rate" else _to_money(v)
                 except ValueError:
                     pass
-        qty = stock.get(ext_id.lower()) if ext_id else None
-        if qty is None and barcode:
-            qty = stock.get(barcode.lower())
-        if qty is None and sku:
-            qty = stock.get(sku.lower())
+        if str(p.get("currency") or "").upper() in ("USD", "EUR", "GBP"):
+            data["currency"] = str(p["currency"]).upper()
+        photo = str(p.get("photo") or "").strip()
+        if photo.startswith("http"):
+            data["image_url"] = photo
+        qty = None
+        for k in (ext_id.lower() if ext_id else None, barcode.lower() if barcode else None, code.lower() if code else None):
+            if k and k in stock:
+                qty = stock[k]; break
+        if qty is None and p.get("quantity") not in (None, "") and not stock:
+            try:
+                qty = float(p["quantity"])
+            except (TypeError, ValueError):
+                qty = None
         if qty is not None:
             data["stock_quantity"] = qty
         data = {k: v for k, v in data.items() if v is not None}
-        existing = None
-        ors = [q for q in ([{"barcode": barcode}] if barcode else []) + ([{"sku": sku}] if sku else []) + ([{"bizimhesap_id": ext_id}] if ext_id else [])]
-        if ors:
-            existing = await _db.products.find_one({"company_id": company_id, "$or": ors})
+        ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"barcode": barcode}] if barcode else []) + ([{"sku": code}] if code else [])
+        existing = await _db.products.find_one({"company_id": company_id, "$or": ors}) if ors else None
         if existing:
             if on_dup == "skip":
                 batch["skipped"] += 1; continue
@@ -544,4 +608,4 @@ async def bh_import(req: Dict[str, Any]):
     await _db.migration_batches.insert_one(batch)
     await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_import": {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"])}}})
     return {"status": "success", "batch_id": batch["_id"], "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "with_stock": bool(stock),
-            "message": f"BizimHesap: {len(batch['inserted_ids'])} yeni ürün, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı" + (f", {len(stock)} ürün için stok miktarı alındı." if stock else ".")}
+            "message": f"BizimHesap: {len(products)} ürün okundu → {len(batch['inserted_ids'])} yeni stok kartı, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı (pasif/mevcut)" + (f", depodan {len(stock)} stok kaydı eşlendi." if stock else ".")}

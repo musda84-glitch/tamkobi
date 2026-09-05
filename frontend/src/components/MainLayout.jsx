@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
-  const { user, companies, activeCompany, switchCompany, logout } = useAuth();
+  const { user, companies, activeCompany, switchCompany, logout, feature } = useAuth();
   const location = useLocation();
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -199,45 +199,46 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           {/* Quick Actions & Search */}
           <div className="flex items-center gap-2.5">
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-            <Link
+            {feature("header_barcode") && (<Link
               to="/stock?scan=true"
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition"
               data-testid="quick-barcode-scan-btn"
             >
               <QrCode className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600" />
               <span className="hidden md:inline">Barkod Oku</span>
-            </Link>
+            </Link>)}
 
-            <Link
+            {feature("header_virman") && (<Link
               to="/banking?action=virman"
               className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
               data-testid="quick-virman-btn"
             >
               <ArrowRightLeft className="w-3.5 h-3.5 text-emerald-600" />
               <span>Virman</span>
-            </Link>
+            </Link>)}
 
-            <Link
+            {feature("header_invoice") && (<Link
               to="/invoices?new=true"
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-emerald-600/30 transition"
               data-testid="quick-create-invoice-btn"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               <span>Yeni Fatura</span>
-            </Link>
+            </Link>)}
 
-            <Link
+            {feature("header_ai") && (<Link
               to="/ai-advisor"
               className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-purple-600/30 transition"
               data-testid="quick-ai-btn"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">AI Danışman</span>
-            </Link>
+            </Link>)}
           </div>
         </header>
 
         {/* Page View Body */}
+        {user && user.role !== "admin" && user.features && user.features.view_prices === false && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>}
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
           {denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : children}
         </main>

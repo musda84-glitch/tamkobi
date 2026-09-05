@@ -111,3 +111,19 @@ async def extract_orders_from_text(text: str) -> dict:
             continue
         orders.append({**o, "items": items, "total_amount": round(float(o.get("total_amount") or sum(i["total"] for i in items)), 2), "channel": (o.get("channel") or "manual").lower()})
     return {"orders": orders}
+
+
+async def ai_map_columns(entity_label: str, fields: list, columns: list, sample_rows: list) -> dict:
+    """Excel sütunlarını hedef alanlara eşle: {"mapping": {field: column|null}, "notes": "..."}"""
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
+    sys_msg = "Sen bir veri aktarım uzmanısın. Türkçe muhasebe/ERP Excel dosyalarındaki sütun başlıklarını verilen hedef alanlara eşlersin. Yalnızca JSON döndür: {\"mapping\": {\"hedef_alan\": \"Sütun Başlığı veya null\"}, \"notes\": \"kısa Türkçe açıklama\"}. Aynı sütunu iki alana verme. Emin değilsen null bırak. Örnek satır değerlerine bakarak (VKN 10 hane, TCKN 11 hane, telefon, e-posta, tarih, para) karar ver."
+    chat = LlmChat(api_key=api_key, session_id=f"mig-map-{abs(hash(str(columns)))}", system_message=sys_msg).with_model("anthropic", "claude-sonnet-4-6")
+    prompt = f"VERİ TÜRÜ: {entity_label}\nHEDEF ALANLAR (key: açıklama):\n" + "\n".join(f"- {f['key']}: {f['label']}{' (zorunlu)' if f.get('required') else ''}" for f in fields) + f"\n\nEXCEL SÜTUNLARI: {json.dumps(columns, ensure_ascii=False)}\n\nÖRNEK SATIRLAR:\n{json.dumps(sample_rows[:5], ensure_ascii=False, default=str)[:6000]}"
+    raw = str(await chat.send_message(UserMessage(text=prompt))).strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    data = json.loads(raw[start:end + 1])
+    valid_fields = {f["key"] for f in fields}
+    mapping = {k: (v if v in columns else None) for k, v in (data.get("mapping") or {}).items() if k in valid_fields}
+    return {"mapping": mapping, "notes": str(data.get("notes") or "")[:400]}

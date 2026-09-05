@@ -89,7 +89,14 @@ export default function OrdersB2BPage() {
   const [searchParams] = useSearchParams();
   const customerFilter = searchParams.get("customer") || "";
   const [ordF, setOrdF] = useState(ORDER_FILTER_DEFAULTS);
-  const visibleOrders = useMemo(() => applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF), [orders, customerFilter, ordF]);
+  const [sort, setSort] = useState({ key: "order_date", dir: "desc" });
+  const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
+  const visibleOrders = useMemo(() => {
+    const list = applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF);
+    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
+    return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
+  }, [orders, customerFilter, ordF, sort]);
+  const SortTh = ({ k, children, className = "" }) => <th className={`px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>{children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span></th>;
   const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
@@ -313,12 +320,12 @@ export default function OrdersB2BPage() {
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
                   <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
-                  <th className="px-4 py-3">Sipariş No & Kanal</th>
-                  <th className="px-4 py-3">Müşteri / Alıcı</th>
-                  <th className="px-4 py-3">Ürünler</th>
-                  <th className="px-4 py-3 text-right">Tutar</th>
-                  <th className="px-4 py-3">Sipariş Durumu</th>
-                  <th className="px-4 py-3 text-center">İşlemler</th>
+                  <SortTh k="order_number">Sipariş No & Kanal</SortTh>
+                  <SortTh k="customer_name">Müşteri / Alıcı</SortTh>
+                  <SortTh k="items">Ürünler</SortTh>
+                  <SortTh k="total_amount" className="text-right">Tutar</SortTh>
+                  <SortTh k="order_status">Sipariş Durumu</SortTh>
+                  <th className="px-4 py-3 text-center w-[380px] min-w-[380px]">İşlemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -368,11 +375,11 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        {!ord.is_invoiced && !ord.invoice_id && <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button>}
+                    <td className="px-4 py-3 text-center w-[380px] min-w-[380px]">
+                      <div className="grid grid-cols-[28px_112px_128px_28px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
+                        {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
-                          <div className="relative inline-block">
+                          <div className="relative inline-block justify-self-center">
                           {invChooser === ord.id && (
                             <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-52 text-left" data-testid={`inv-type-chooser-${ord.order_number}`} onMouseLeave={() => setInvChooser(null)}>
                               <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Nasıl kesilsin?</div>
@@ -391,7 +398,7 @@ export default function OrdersB2BPage() {
                           </button>
                           </div>
                         ) : (
-                          <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
+                          <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-1 rounded text-center">
                             Faturalandı
                           </span>
                         )}
@@ -411,9 +418,9 @@ export default function OrdersB2BPage() {
                             <Printer className="w-3 h-3" /> {ord.cargo_tracking_number}{ord.label_printed_at ? " ✓" : ""}
                           </button>
                         )}
-                        {["pending", "new"].includes(ord.order_status) && <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button>}
+                        {["pending", "new"].includes(ord.order_status) ? <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         <button onClick={() => makeDispatch(ord)} className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition" title={ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır"} data-testid={`dispatch-btn-${ord.order_number}`}><FileIcon className="w-4 h-4" /></button>
-                        {!["returned"].includes(ord.order_status) && <button onClick={() => setReturnOrder(ord)} className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="İade Al" data-testid={`return-order-btn-${ord.order_number}`}><RotateCcw className="w-4 h-4" /></button>}
+                        {!["returned"].includes(ord.order_status) ? <button onClick={() => setReturnOrder(ord)} className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="İade Al" data-testid={`return-order-btn-${ord.order_number}`}><RotateCcw className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         <button onClick={() => setLabelOrder(ord)} className="p-1.5 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition" title="Kargo Etiketi Yazdır" data-testid={`cargo-label-btn-${ord.order_number}`}><Tag className="w-4 h-4" /></button>
                         <button onClick={() => setPrintOrder(ord)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Sipariş Formu Yazdır" data-testid={`print-order-btn-${ord.order_number}`}><Printer className="w-4 h-4" /></button>
                         <button

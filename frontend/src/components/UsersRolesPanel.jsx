@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2 } from "lucide-react";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
@@ -79,6 +79,7 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
     try { await axios.put(`${API_URL}/roles/${role.id}`, { permissions }); if (msg) toast.success(msg); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
   const setLevel = (mod, level) => savePerms({ ...role.permissions, [mod]: level });
+  const saveFeature = async (key, val) => { try { await axios.put(`${API_URL}/roles/${role.id}`, { features: { ...role.features, [key]: val } }); toast.success(val ? "Özellik açıldı." : "Özellik kapatıldı."); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const setAll = (level) => savePerms(Object.fromEntries(rolesData.modules.map((m) => [m.key, level])), `Tüm modüller "${LEVEL_LABEL[level]}" yapıldı.`);
   const add = async (e) => {
     e.preventDefault();
@@ -117,6 +118,15 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
           </div>
         </div>
         {role?.code === "admin" && <div className="text-[11px] text-slate-500 mb-2">Yönetici tüm modüllerde tam yetkilidir; değiştirilemez.</div>}
+        {rolesData.features && (
+          <div className="mb-3 border border-amber-200 bg-amber-50/40 rounded-xl p-2.5" data-testid="role-features">
+            <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-amber-600" /> Özellik Yetkileri (fiyat görünürlüğü & üst bar hızlı işlemler)</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">{rolesData.features.map((f) => (
+              <label key={f.key} className="flex items-start gap-2 bg-white border rounded-lg px-2.5 py-1.5 cursor-pointer" title={f.help} data-testid={`feature-row-${f.key}`}>
+                <input type="checkbox" disabled={role?.code === "admin"} checked={role?.features?.[f.key] !== false} onChange={(e) => saveFeature(f.key, e.target.checked)} className="mt-0.5 accent-emerald-600" data-testid={`feature-toggle-${f.key}`} />
+                <span><span className="font-semibold text-slate-800">{f.label}</span>{f.help && <div className="text-[10px] text-slate-500 leading-tight">{f.help}</div>}</span>
+              </label>))}</div>
+          </div>)}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {rolesData.modules.map((m) => (
             <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>

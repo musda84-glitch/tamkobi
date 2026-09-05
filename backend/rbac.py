@@ -20,6 +20,27 @@ MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "
            ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
            ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
 LEVELS = ("none", "view", "edit")
+FEATURES = [("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
+            ("header_barcode", "Üst bar: Hızlı barkod tarama", ""), ("header_virman", "Üst bar: Hızlı virman", ""), ("header_invoice", "Üst bar: Hızlı fatura oluştur", ""), ("header_ai", "Üst bar: AI asistan", "")]
+MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
+              "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
+              "cost_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider",
+              "value", "incoming", "outgoing", "collections", "payments", "not_due", "overdue", "payable", "receivable", "deductible", "calculated", "vat", "week", "today", "month_total", "yearly", "cash", "bank", "pos", "kdv", "ciro", "kar", "profit_amount", "spent_amount", "limit", "avg_order", "average"}
+
+
+def mask_money(obj):
+    if isinstance(obj, dict):
+        return {k: (0 if (k in MONEY_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool)) else mask_money(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mask_money(x) for x in obj]
+    return obj
+
+
+def role_features(role: dict) -> Dict[str, bool]:
+    if role.get("code") == "admin":
+        return {k: True for k, _, _ in FEATURES}
+    f = role.get("features") or {}
+    return {k: bool(f.get(k, True)) for k, _, _ in FEATURES}
 
 def _all(level: str) -> Dict[str, str]:
     return {m: level for m, _ in MODULES}
@@ -90,7 +111,7 @@ def module_for_path(path: str) -> Optional[str]:
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if not path.startswith("/api") or path.startswith(SKIP_PREFIXES) or request.method in ("GET", "OPTIONS", "HEAD") or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
+        if not path.startswith("/api") or path.startswith(SKIP_PREFIXES) or request.method in ("OPTIONS", "HEAD"):
             return await call_next(request)
         token = request.cookies.get("access_token") or (request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None)
         user = None
@@ -99,6 +120,20 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 user = await get_user_from_token(token, _db)
             except HTTPException:
                 user = None
+        if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
+            response = await call_next(request)
+            if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
+                role = await role_for(user)
+                if not role_features(role)["view_prices"]:
+                    import json as _json
+                    from fastapi.responses import JSONResponse
+                    body = b"".join([chunk async for chunk in response.body_iterator])
+                    try:
+                        data = mask_money(_json.loads(body))
+                    except ValueError:
+                        return JSONResponse(content=None, status_code=response.status_code)
+                    return JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"})
+            return response
         module = module_for_path(path)
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
@@ -123,7 +158,7 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
     counts = {}
     async for u in _db.users.find({"company_ids": company_id}, {"role": 1}):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
-    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "roles": [{**r, "user_count": counts.get(r["code"], 0)} for r in roles]}
+    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
 
 
 @router.post("/roles")
@@ -136,7 +171,7 @@ async def create_role(req: Dict[str, Any]):
     if await _db.roles.find_one({"company_id": company_id, "code": code}):
         raise HTTPException(status_code=400, detail="Bu rol kodu zaten var.")
     perms = {k: (req.get("permissions") or {}).get(k, "none") for k, _ in MODULES}
-    doc = {"_id": f"role_{company_id}_{code}", "company_id": company_id, "code": code, "name": name, "is_system": False, "permissions": perms, "created_at": _now()}
+    doc = {"_id": f"role_{company_id}_{code}", "company_id": company_id, "code": code, "name": name, "is_system": False, "permissions": perms, "features": {k: bool((req.get("features") or {}).get(k, True)) for k, _, _ in FEATURES}, "created_at": _now()}
     await _db.roles.insert_one(doc)
     return _clean(doc)
 
@@ -153,6 +188,11 @@ async def update_role(role_id: str, req: Dict[str, Any]):
         if r["code"] == "admin":
             raise HTTPException(status_code=400, detail="Yönetici rolünün yetkileri değiştirilemez.")
         upd["permissions"] = {k: (req["permissions"].get(k) if req["permissions"].get(k) in LEVELS else r["permissions"].get(k, "none")) for k, _ in MODULES}
+    if "features" in req:
+        if r["code"] == "admin":
+            raise HTTPException(status_code=400, detail="Yönetici rolünün yetkileri değiştirilemez.")
+        cur = role_features(r)
+        upd["features"] = {k: bool(req["features"].get(k, cur[k])) for k, _, _ in FEATURES}
     if upd:
         await _db.roles.update_one({"_id": role_id}, {"$set": {**upd, "updated_at": _now()}})
     return _clean(await _db.roles.find_one({"_id": role_id}))

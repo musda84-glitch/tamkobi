@@ -42,6 +42,7 @@ export const AuthProvider = ({ children }) => {
   ];
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
+  const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
     if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
@@ -141,7 +142,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can }}>
+    <AuthContext.Provider value={{ user, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature }}>
       {children}
     </AuthContext.Provider>
   );

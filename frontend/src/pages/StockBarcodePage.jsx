@@ -25,7 +25,7 @@ import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../compo
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { Factory } from "lucide-react";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
-import { LabelDesigner } from "../components/LabelDesigner";
+import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -37,6 +37,7 @@ export default function StockBarcodePage() {
   const navigate = useNavigate();
   const [pageTab, setPageTab] = useState(searchParams.get("tab") || "products");
   const [products, setProducts] = useState([]);
+  const [labelQuickProduct, setLabelQuickProduct] = useState(null);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [stockF, setStockF] = useState(STOCK_FILTER_DEFAULTS);
@@ -219,6 +220,7 @@ export default function StockBarcodePage() {
       <datalist id="product-units-list">{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
+      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
@@ -325,9 +327,17 @@ export default function StockBarcodePage() {
                           </button>
                         ) : <span className="w-7 h-7 inline-block" aria-hidden="true" />}
                         <button
+                          onClick={() => setLabelQuickProduct(prod)}
+                          className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                          title="Etiket Yazdır (tasarlanan şablonla)"
+                          data-testid={`label-quick-btn-${prod.sku}`}
+                        >
+                          <Tag className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => setPrintBarcodeProduct(prod)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                          title="Barkod Etiketi Yazdır"
+                          title="Hızlı Barkod Yazdır"
                           data-testid={`print-barcode-btn-${prod.sku}`}
                         >
                           <Printer className="w-4 h-4" />

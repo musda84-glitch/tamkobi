@@ -189,7 +189,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "company_ids": user.get("company_ids", []),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
-            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}),
+            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
         },
         "companies": clean_docs(companies)
     }
@@ -680,7 +680,7 @@ async def get_me(user: dict = Depends(get_current_user)):
             "role": user.get("role", "admin"),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
-            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}),
+            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
         },
         "companies": clean_docs(companies)
     }
@@ -3561,6 +3561,23 @@ async def test_ecommerce_connection(channel_id: str):
     config = await db.integration_configs.find_one({"_id": channel_id})
     if not config:
         raise HTTPException(status_code=404, detail="Entegrasyon yapılandırması bulunamadı.")
+    if config.get("channel") == "shopphp":
+        if not marketplace_providers.has_shopphp_credentials(config):
+            return {"status": "error", "message": "Mağaza adresi ve Sipariş XML kodu (xml.php?c=siparisler&xmlc=…) gerekli. Kodu ya da tam XML adresini yapıştırabilirsiniz."}
+        r = marketplace_providers.shopphp_resolve(config)
+        try:
+            orders = await marketplace_providers.shopphp_orders_xml(config)
+            prod_note = ""
+            if r["products"]:
+                prods = await marketplace_providers.shopphp_products_xml(config)
+                prod_note = f", ürün XML: {len(prods)} ürün/varyasyon"
+            else:
+                prod_note = ", ürün XML kodu (c=shopphp) yok → Ürünler & Fiyat sekmesi çalışmaz"
+        except HTTPException as e:
+            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
+            return {"status": "error", "message": e.detail}
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
+        return {"status": "success", "live": True, "message": f"ShopPHP XML bağlantısı başarılı: sipariş XML'inde {len(orders)} sipariş{prod_note}." + (" RSS beslemesi (c=rss) fiyat/stok içermediği için kullanılmaz." if r.get("rss") else "")}
     if not marketplace_providers.has_live_credentials(config):
         return {"status": "error", "message": "API Key, API Secret ve Satıcı ID (supplier/seller ID) eksiksiz doldurulmalı."}
     if config.get("channel") == "trendyol":
@@ -3577,6 +3594,48 @@ async def test_ecommerce_connection(channel_id: str):
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": False}})
     return {"status": "success", "live": False, "message": f"{config.get('channel_name')} için canlı API henüz bağlı değil; bilgiler kaydedildi (SİMÜLE mod)."}
 
+CHANNEL_CATALOG = {
+    "Pazaryerleri": [("trendyol", "Trendyol"), ("hepsiburada", "Hepsiburada"), ("amazon", "Amazon"), ("n11", "n11"), ("ciceksepeti", "Çiçeksepeti"), ("pttavm", "PttAVM"), ("akakce", "Akakçe"), ("flo", "FLO"), ("pazarama", "Pazarama"), ("beymen", "Beymen"), ("teknosa", "Teknosa"),
+                     ("koctas", "Koçtaş"), ("idefix", "idefix"), ("lcw", "LC Waikiki"), ("modanisa", "Modanisa"), ("turkcell_pasaj", "Turkcell Pasaj"), ("azall", "Azall"), ("allesgo", "Allesgo"), ("banayeni", "Banayeni"), ("trendyol_market", "Trendyol Go Market"), ("trendyol_yemek", "Trendyol Go Yemek"),
+                     ("getir_carsi", "Getir Çarşı"), ("boyner", "Boyner"), ("azkarbon", "Azkarbon"), ("toptantr", "ToptanTR")],
+    "e-Ticaret Altyapıları": [("shopphp", "ShopPHP"), ("wix", "Wix"), ("opencart", "OpenCart"), ("tsoft", "T-Soft"), ("woocommerce", "WooCommerce"), ("ikas", "ikas"), ("shopify", "Shopify"), ("ideasoft", "İdeasoft"), ("imagaza", "iMağaza"), ("prestashop", "PrestaShop"), ("proticaret", "ProTicaret"),
+                              ("ticimax", "Ticimax"), ("omnieticaret", "Omni e-Ticaret"), ("platinmarket", "PlatinMarket"), ("whmcs", "WHMCS"), ("ganipara", "Ganipara"), ("softtr", "SoftTR"), ("eticaretkur", "e-TicaretKur"), ("faprika", "Faprika"), ("akilliticaret", "Akıllı Ticaret"), ("kolaysiparis", "Kolay Sipariş"),
+                              ("bilgikurumsal", "Bilgi Kurumsal"), ("qukasoft", "Qukasoft"), ("hipotenus", "Hipotenüs"), ("rgsyazilim", "RGS Yazılım"), ("dokuzyazilim", "Dokuz Yazılım"), ("shopier", "Shopier"), ("wisecp", "WISECP"), ("jetteknoloji", "Jet Teknoloji")],
+    "e-İhracat": [("amazon_global", "Amazon Global"), ("ozon", "Ozon"), ("aliexpress", "AliExpress"), ("hepsiglobal", "HepsiGlobal"), ("etsy", "Etsy"), ("joom", "Joom"), ("wish", "Wish")],
+    "e-Ticaret Entegratörleri": [("entegra", "Entegra"), ("prapazar", "PraPazar"), ("sopyo", "Sopyo"), ("stockmount", "StockMount"), ("pixasoftware", "Pixa Software"), ("sentos", "Sentos"), ("dopigo", "Dopigo"), ("platin360", "Platin360")],
+}
+LIVE_API_CHANNELS = {"trendyol": "Canlı API (sipariş, iade, soru, fiyat/stok)", "shopphp": "Canlı XML servisi (sipariş çekme, ürün/varyasyon/stok/fiyat okuma)"}
+
+@api_router.get("/integrations/ecommerce/catalog")
+async def ecommerce_channel_catalog(company_id: Optional[str] = "comp_nexus_main_01"):
+    existing = {c["channel"] for c in await db.integration_configs.find({"company_id": company_id}, {"channel": 1}).to_list(500)}
+    return {"groups": [{"group": g, "channels": [{"code": c, "name": n, "added": c in existing, "live_api": LIVE_API_CHANNELS.get(c)} for c, n in chs]} for g, chs in CHANNEL_CATALOG.items()]}
+
+@api_router.post("/integrations/ecommerce/add-channel")
+async def add_ecommerce_channel(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01"); code = (req.get("channel") or "").strip().lower()
+    name = next((n for chs in CHANNEL_CATALOG.values() for c, n in chs if c == code), None)
+    if not name:
+        raise HTTPException(status_code=400, detail="Katalogda olmayan kanal.")
+    if await db.integration_configs.find_one({"company_id": company_id, "channel": code}):
+        raise HTTPException(status_code=400, detail=f"{name} zaten ekli.")
+    doc = {"_id": f"ecom_{code}_{uuid.uuid4().hex[:4]}" if code != "shopphp" else "ecom_shopphp", "company_id": company_id, "channel": code, "channel_name": name, "is_active": False, "api_key": "", "api_secret": "", "supplier_id": "", "store_url": "",
+           "status": "not_configured", "live": False, "synced_orders": 0, "auto_invoice": False, "stock_sync": True, "created_at": datetime.now(timezone.utc).isoformat(), "live_api": LIVE_API_CHANNELS.get(code)}
+    if await db.integration_configs.find_one({"_id": doc["_id"]}):
+        doc["_id"] = f"ecom_{code}_{uuid.uuid4().hex[:4]}"
+    await db.integration_configs.insert_one(doc)
+    return {"status": "success", "channel": clean_doc(doc), "message": f"{name} kanalı eklendi." + (" API bilgilerini girerek bağlantıyı kurun." if code in LIVE_API_CHANNELS else " Bu kanal için henüz canlı API bağlantısı yok; siparişleri Excel/AI ile yükleyebilir, fiyat/komisyon ayarlarını kullanabilirsiniz.")}
+
+@api_router.delete("/integrations/ecommerce/{channel_id}")
+async def remove_ecommerce_channel(channel_id: str):
+    cfg = await db.integration_configs.find_one({"_id": channel_id})
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Kanal bulunamadı.")
+    if await db.orders.count_documents({"company_id": cfg["company_id"], "channel": cfg["channel"]}):
+        raise HTTPException(status_code=400, detail="Bu kanala ait siparişler var; kanal silinemez, pasife alın.")
+    await db.integration_configs.delete_one({"_id": channel_id})
+    return {"status": "success", "message": f"{cfg.get('channel_name')} kanalı kaldırıldı."}
+
 @api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
 async def sync_ecommerce_channel(channel_id: str, days: int = 14):
     config = await db.integration_configs.find_one({"_id": channel_id})
@@ -3585,6 +3644,15 @@ async def sync_ecommerce_channel(channel_id: str, days: int = 14):
     company_id = config.get("company_id", "comp_nexus_main_01")
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
+    if channel == "shopphp" and marketplace_providers.has_shopphp_credentials(config):
+        try:
+            raw_orders = await marketplace_providers.shopphp_orders_xml(config)
+        except HTTPException as e:
+            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
+            raise
+        res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        return {"status": "success", "live": True, "channel": channel, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
         client = marketplace_providers.TrendyolClient(config)
         try:
@@ -3792,10 +3860,14 @@ async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01",
     """Pazaryeri ürün listesi (canlı API varsa çekilir, önbelleğe yazılır) + stok kartı eşleşmesi ve fiyat karşılaştırması."""
     cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
     cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel})
-    live = bool(cfg and channel == "trendyol" and marketplace_providers.has_live_credentials(cfg))
+    live = bool(cfg and ((channel == "trendyol" and marketplace_providers.has_live_credentials(cfg)) or (channel == "shopphp" and marketplace_providers.has_shopphp_credentials(cfg) and cfg.get("api_secret"))))
     items = (cache or {}).get("items") or []
     fetched_at = (cache or {}).get("fetched_at")
-    if live and (refresh or not cache):
+    if live and channel == "shopphp" and (refresh or not cache):
+        items = await marketplace_providers.shopphp_products_xml(cfg)
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        await db.marketplace_product_cache.update_one({"company_id": company_id, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel}}, upsert=True)
+    elif live and (refresh or not cache):
         client = marketplace_providers.TrendyolClient(cfg)
         try:
             raw = await client.products()
@@ -3818,7 +3890,7 @@ async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01",
         local_stock = float(p.get("stock_quantity") or 0) if p else None
         rows.append({**it, "product_id": p["_id"] if p else None, "product_name": p.get("name") if p else None, "product_sku": p.get("sku") if p else None, "local_price": local_price, "local_stock": local_stock, "purchase_price": float(p.get("purchase_price") or 0) if p else None,
                      "price_diff": round(it["sale_price"] - local_price, 2) if p and local_price else None, "stock_diff": round(it["quantity"] - local_stock, 2) if p else None})
-    return {"channel": channel, "live": live, "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
+    return {"channel": channel, "live": live, "push_supported": channel == "trendyol", "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
             "products": [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "sale_price": p.get("sale_price"), "stock_quantity": p.get("stock_quantity")} for p in products]}
 
 @api_router.post("/marketplace/products/push")
@@ -3863,6 +3935,29 @@ async def marketplace_push_price_stock(req: Dict[str, Any]):
         await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
     await db.marketplace_push_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel, "items": items, "batch_request_id": (res or {}).get("batchRequestId"), "created_at": datetime.now(timezone.utc).isoformat()})
     return {"status": "success", "sent": len(items), "batch_request_id": (res or {}).get("batchRequestId"), "message": f"{len(items)} ürünün fiyat/stok bilgisi Trendyol'a gönderildi (toplu işlem no: {(res or {}).get('batchRequestId') or '-'}). Yansıması birkaç dakika sürebilir."}
+
+@api_router.get("/marketplace/push-logs")
+async def marketplace_push_logs(company_id: Optional[str] = "comp_nexus_main_01", channel: str = "trendyol", check: bool = False):
+    """Fiyat/stok gönderim geçmişi; check=true ise Trendyol'dan toplu işlem durumunu sorgular."""
+    logs = await db.marketplace_push_logs.find({"company_id": company_id, "channel": channel}).sort("created_at", -1).to_list(30)
+    if check and logs:
+        cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+        if cfg and marketplace_providers.has_live_credentials(cfg):
+            client = marketplace_providers.TrendyolClient(cfg)
+            try:
+                for lg in logs[:10]:
+                    if lg.get("batch_request_id") and lg.get("status") not in ("COMPLETED", "FAILED"):
+                        try:
+                            st = await client.batch_status(lg["batch_request_id"]) or {}
+                        except Exception as e:
+                            st = {"status": "UNKNOWN", "error": str(e)[:120]}
+                        items = st.get("items") or []
+                        fails = [{"barcode": (i.get("requestItem") or {}).get("barcode"), "reasons": i.get("failureReasons") or []} for i in items if i.get("status") == "FAILED"]
+                        upd = {"status": st.get("status") or ("COMPLETED" if items and not fails else "PROCESSING"), "item_count": st.get("itemCount"), "failed_items": fails, "checked_at": datetime.now(timezone.utc).isoformat()}
+                        await db.marketplace_push_logs.update_one({"_id": lg["_id"]}, {"$set": upd}); lg.update(upd)
+            finally:
+                await client.close()
+    return [{"id": l["_id"], "created_at": l["created_at"], "batch_request_id": l.get("batch_request_id"), "sent": len(l.get("items") or []), "items": l.get("items"), "status": l.get("status") or "SENT", "failed_items": l.get("failed_items") or [], "checked_at": l.get("checked_at")} for l in logs]
 
 @api_router.post("/marketplace/product-create")
 async def create_product_from_marketplace(req: Dict[str, Any]):

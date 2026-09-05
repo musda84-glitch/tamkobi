@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 31 backend + frontend testing for role FEATURES (view_prices, header_barcode/virman/invoice/ai), money-masking middleware, and OrdersB2BPage sortable headers + fixed-width actions grid. Backend: 9/9 pytest cases passed (roles shape+features, admin PUT features -> 400, warehouse toggle off, depo login features flag, /api/products & /api/orders masked with X-Prices-Masked:1 and zeroed money fields, dashboard 200, admin unmasked, features restored). Frontend admin: Settings -> Kullanıcılar & Roller -> Roller & Yetkiler tab -> Depo role selected -> 'Özellik Yetkileri' box with all 5 feature-toggle-* checkboxes visible; view_prices toggle on/off/restore works; Admin role toggles are disabled. Frontend depo (with warehouse view_prices=false & header_virman=false): quick-barcode-scan-btn visible, quick-virman-btn hidden, quick-create-invoice-btn visible, quick-ai-btn visible, prices-masked-banner shown, dashboard tahsilat/ödeme/fatura totals show 0,00. Orders page as admin: all 5 ord-sort-* headers present, ord-sort-total_amount click reorders rows, 31 order-actions-* containers rendered, convert-inv-btn-* x-coordinates identical across rows (1533.109px), so actions column is column-aligned. Warehouse role features restored to all-true at the end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "admin@nexus.com password_hash on disk did not verify 'admin123' at test start (verify_password returned False). Had to reset it via a helper (hash_password('admin123')). No seed_admin idempotent updater exists (server.py only has demo-admin fallback in get_current_user). Also login_attempts had a 429 lockout from previous parallel tests; there is no admin/dev endpoint to clear it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Genel Bakış (Depo user, view_prices=false)", "issues": ["Some dashboard cards still show real money amounts even with view_prices=false: 'Toplam Kasa & Banka 489.404,26₺', 'Müşteri Alacakları 22.400,00₺', 'Tedarikçi Borçları 112.795,48₺', 'Ciro 186.029,15₺', 'Vadesi Gelmemiş Tahsilatlar 68.584,00₺', 'Vadesi Gelmemiş Ödemeler 28.800,00₺'. These use dashboard-specific keys (cash_total / receivables_total / payables_total / turnover / not_due_receivable / not_due_payable etc.) that are NOT in rbac.py MONEY_KEYS, so mask_money leaves them intact. Banner 'Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür)' is shown but is misleading because these are visible."]},
+      {"screen": "Global (React warning)", "issues": ["React hydration warning in console: 'In HTML, %s cannot be a child of %s' pointing at a <span> nested inside an <option>. Cosmetic but should be cleaned up."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_rbac_features.py", "/app/test_reports/pytest/iter31.xml"],
+  "action_items": [
+    "Extend rbac.py MONEY_KEYS (or add explicit dashboard field list) so that dashboard totals — cash_total, receivables/receivables_total, payables/payables_total, turnover/ciro, not_due_receivable, not_due_payable, monthly_profit, etc. — are also masked when view_prices=false. Otherwise the 'prices-masked-banner' promise is broken on the home overview.",
+    "Add an idempotent seed_admin that (re)sets admin@nexus.com password to admin123 on startup so /app/memory/test_credentials.md stays valid; or provide a documented reset step. Currently the DB hash drifted from the documented password.",
+    "Remove <span> child of <option> to fix React hydration warning (likely in a role/user Select in settings)."
+  ],
+  "critical_code_review_comments": [
+    "rbac.py PermissionAndAuditMiddleware.dispatch: masking is only applied when response Content-Type contains 'application/json'; StreamingResponse or gzipped responses may bypass masking — verify with dashboard endpoints (some may return non-JSON aggregated data).",
+    "rbac.py mask_money iterates a fixed MONEY_KEYS set; dashboard responses use domain-specific keys not in this list, so masking is silently incomplete. Consider a data-model-level mask or a wider superset.",
+    "server.py login has no admin-recovery/unlock path; combined with 15-min brute-force lockout this can easily wedge test environments.",
+    "rbac.py role_features defaults missing keys to True. On new roles created before FEATURES was introduced, this is safe, but any future feature added silently defaults to True everywhere — consider explicit migration."
+  ],
+  "updated_files": ["/app/backend/tests/test_rbac_features.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% on the requested checks"},
+  "test_credentials": "admin@nexus.com/admin123 (password_hash was re-seeded during testing), depo@nexus.com/depo123 (unchanged)",
+  "seed_data_creation": "None. Warehouse role features were toggled off then restored to {view_prices,header_barcode,header_virman,header_invoice,header_ai}=all true. Admin password_hash rewritten to hash of 'admin123'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend brute force lockout on admin can persist for 15 min if tests run in parallel with wrong password. Clear /login_attempts via a mongo helper before running auth-heavy tests. Warehouse role id pattern: role_comp_nexus_main_01_warehouse. Dashboard masking is incomplete — main agent needs to widen MONEY_KEYS before retesting.",
+  "rca_of_issues": "1) Admin login failure: DB password_hash for admin@nexus.com does not correspond to 'admin123'. There is no seed_admin path that rewrites it — only a demo fallback in get_current_user (used when no token). Fix: seed_admin at startup that upserts password if hash differs. 2) Dashboard money not masked for depo: mask_money uses a whitelist MONEY_KEYS that omits dashboard aggregate keys. Fix: add cash_total/receivables_total/payables_total/turnover/not_due_receivable/not_due_payable/monthly_profit (and any similar) to MONEY_KEYS, or refactor to mask by response shape."
+}
