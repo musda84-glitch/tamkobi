@@ -1,5 +1,5 @@
 import React from "react";
-import { ShoppingCart, Truck, Trash2, Building2, X } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 
@@ -59,6 +59,27 @@ export const MobileCartBar = ({ lines, total, open, setOpen, children }) => {
   );
 };
 
+const STEP_LABELS = { created: "Hazırlanıyor", picked_up: "Kargoya Verildi", in_transit: "Yolda", out_for_delivery: "Dağıtımda", delivered: "Teslim Edildi", returned: "İade" };
+const fmtDate = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short", weekday: "short" }) : "");
+
+export const TrackingCard = ({ t, orderNumber }) => {
+  if (!t) return <span className="text-slate-400 text-xs">Kargo bekleniyor</span>;
+  const done = t.status === "delivered";
+  return (
+    <div className={`rounded-xl border p-2.5 text-xs space-y-1.5 ${done ? "bg-emerald-50 border-emerald-200" : t.is_late ? "bg-rose-50 border-rose-200" : "bg-sky-50 border-sky-200"}`} data-testid={`b2b-tracking-${orderNumber}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1 font-bold ${done ? "text-emerald-700" : t.is_late ? "text-rose-700" : "text-sky-800"}`}>{done ? <PackageCheck className="w-4 h-4" /> : <Truck className="w-4 h-4" />} {STEP_LABELS[t.status] || t.status}{t.carrier ? <span className="font-normal text-slate-500"> · {t.carrier}</span> : null}</span>
+        {t.tracking_number && (t.tracking_url ? <a href={t.tracking_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono font-semibold text-indigo-700 underline decoration-dotted" data-testid={`b2b-tracking-link-${orderNumber}`}>{t.tracking_number} <ExternalLink className="w-3 h-3" /></a> : <span className="font-mono font-semibold">{t.tracking_number}</span>)}
+      </div>
+      {t.step >= 0 && <div className="flex items-center gap-1" aria-label="Kargo adımları">{t.steps.map((s, i) => <div key={s} className={`h-1.5 flex-1 rounded-full ${i <= t.step ? (done ? "bg-emerald-500" : "bg-sky-500") : "bg-slate-200"}`} title={STEP_LABELS[s]} />)}</div>}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
+        {done ? <span>Teslim: <b>{fmtDate((t.delivered_at || "").slice(0, 10)) || "—"}</b></span> : t.estimated_delivery ? <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" /> Tahmini teslim <b className={t.is_late ? "text-rose-700" : ""} data-testid={`b2b-eta-${orderNumber}`}>{fmtDate(t.estimated_delivery)}</b>{t.is_late ? " (gecikti)" : ""}</span> : null}
+        {t.shipped_at && !done && <span>Kargolandı {fmtDate(t.shipped_at)}</span>}
+      </div>
+    </div>
+  );
+};
+
 const Th = ({ children, right }) => <th className={`p-3 ${right ? "text-right" : "text-left"}`}>{children}</th>;
 
 export const OrdersList = ({ orders }) => (
@@ -68,9 +89,10 @@ export const OrdersList = ({ orders }) => (
       <div key={o.id} className="p-3 text-xs space-y-1" data-testid={`b2b-order-${o.order_number}`}>
         <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{o.order_number}</span><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></div>
         <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</div>
-        <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(o.total_amount)} ₺</span>{o.cargo_tracking_number ? <span className="flex items-center gap-1 text-emerald-700 font-semibold"><Truck className="w-3.5 h-3.5" /> {o.cargo_carrier} • {o.cargo_tracking_number}</span> : <span className="text-slate-400">Kargo bekleniyor</span>}</div>
+        <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(o.total_amount)} ₺</span></div>
+        <TrackingCard t={o.tracking} orderNumber={o.order_number} />
       </div>))}</div>
-    {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="p-3"><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></td><td className="p-3">{o.cargo_tracking_number ? <span className="flex items-center gap-1 text-emerald-700 font-semibold"><Truck className="w-3.5 h-3.5" /> {o.cargo_carrier} • {o.cargo_tracking_number}</span> : <span className="text-slate-400">—</span>}</td></tr>)}</tbody></table>}
+    {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="p-3"><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></td><td className="p-3 min-w-[260px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td></tr>)}</tbody></table>}
   </div>
 );
 

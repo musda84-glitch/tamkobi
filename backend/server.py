@@ -31,6 +31,7 @@ from ai_service import get_financial_ai_advice, extract_invoice_from_text
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
 import bank_guard
+from zoneinfo import ZoneInfo
 import httpx
 from urllib.parse import quote
 import comm_service
@@ -828,6 +829,34 @@ async def get_contact_statement(contact_id: str):
     }
 
 # ---- B2B Müşteri Portalı
+PUBLIC_TRACKING_URLS = {
+    "yurtici": "https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code={n}", "aras": "https://kargotakip.araskargo.com.tr/mainpage.aspx?code={n}",
+    "mng": "https://kargotakip.mngkargo.com.tr/?takipNo={n}", "ptt": "https://gonderitakip.ptt.gov.tr/Track/Verify?q={n}", "surat": "https://suratkargo.com.tr/KargoTakip/?kargotakipno={n}",
+    "hepsijet": "https://www.hepsijet.com/gonderi-takibi/{n}", "trendyolexpress": "https://www.trendyolexpress.com/kargo-takip?trackingNumber={n}", "ups": "https://www.ups.com/track?loc=tr_TR&tracknum={n}",
+}
+SHIPMENT_STEPS = ["created", "picked_up", "in_transit", "out_for_delivery", "delivered"]
+
+def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
+    """Portal için canlı kargo bilgisi: takip linki, durum adımı ve tahmini teslim."""
+    num = (sh or {}).get("tracking_number") or o.get("cargo_tracking_number")
+    if not num and o.get("order_status") not in ("shipped", "delivered"):
+        return None
+    carrier = (sh or {}).get("carrier_code") or o.get("cargo_carrier") or ""
+    url = (sh or {}).get("tracking_url") or o.get("cargo_tracking_url") or (PUBLIC_TRACKING_URLS.get(carrier, "").format(n=num) if num else None)
+    status = (sh or {}).get("status") or ("delivered" if o.get("order_status") == "delivered" else "in_transit" if num else "created")
+    eta = (sh or {}).get("estimated_delivery")
+    shipped_at = ((sh or {}).get("created_at") or o.get("updated_at") or o.get("order_date") or "")[:10]
+    if not eta and status != "delivered" and shipped_at:
+        try:
+            eta = (datetime.strptime(shipped_at, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d")
+        except ValueError:
+            eta = None
+    today = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
+    return {"carrier": (sh or {}).get("carrier_name") or carrier or None, "tracking_number": num, "tracking_url": url, "status": status,
+            "step": SHIPMENT_STEPS.index(status) if status in SHIPMENT_STEPS else (0 if status != "returned" else -1), "steps": SHIPMENT_STEPS,
+            "estimated_delivery": eta, "delivered_at": (sh or {}).get("delivered_at"), "shipped_at": shipped_at or None,
+            "is_late": bool(eta and status != "delivered" and eta < today), "events": ((sh or {}).get("events") or [])[-5:]}
+
 @api_router.post("/contacts/{contact_id}/b2b-access")
 async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
     c = await db.contacts.find_one({"_id": contact_id})
@@ -858,6 +887,9 @@ async def b2b_portal(token: str):
     prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}).to_list(5000)
     products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
+    shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
+    for o in orders:
+        o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},

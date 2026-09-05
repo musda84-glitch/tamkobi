@@ -490,6 +490,9 @@ async def overtime_preview(company_id: Optional[str] = "comp_nexus_main_01", per
     return {"period": period, "rows": out, "total": round(sum(r["amount"] for r in out), 2)}
 
 
+LEAVE_TYPES = {"annual": "Yıllık", "sick": "Hastalık", "unpaid": "Ücretsiz", "other": "Diğer"}
+
+
 # ---------- Vardiya planı ----------
 def _week_dates(week_start: str) -> list:
     d0 = datetime.strptime(week_start, "%Y-%m-%d")
@@ -504,21 +507,29 @@ async def get_shifts(company_id: Optional[str] = "comp_nexus_main_01", week_star
     week_start = week_start or _today(base)
     dates = _week_dates(week_start)
     plans = {(p["employee_id"], p["date"]): p for p in await _db.shift_plans.find({"company_id": company_id, "date": {"$in": dates}}).to_list(2000)}
+    leaves = await _db.leave_requests.find({"company_id": company_id, "status": "approved", "start_date": {"$lte": dates[-1]}, "end_date": {"$gte": dates[0]}}).to_list(1000)
     rows = []
+    conflicts = 0
     for emp in await _db.employees.find({"company_id": company_id, "status": "active"}).sort("full_name", 1).to_list(300):
         sch = merge_schedule(company, emp)
         cells = []
         for d in dates:
             wd = datetime.strptime(d, "%Y-%m-%d").weekday()
             p = plans.get((emp["_id"], d))
+            lv = next((l for l in leaves if l["employee_id"] == emp["_id"] and l["start_date"] <= d <= l["end_date"]), None)
             if p:
-                cells.append({"date": d, "planned": True, "id": p["_id"], "off": bool(p.get("off")), "start": p.get("start"), "end": p.get("end"), "break_minutes": p.get("break_minutes"), "note": p.get("note", "")})
+                cell = {"date": d, "planned": True, "id": p["_id"], "off": bool(p.get("off")), "start": p.get("start"), "end": p.get("end"), "break_minutes": p.get("break_minutes"), "note": p.get("note", "")}
             else:
                 off = wd not in (sch.get("work_days") or [])
                 w = day_window(sch, wd)
-                cells.append({"date": d, "planned": False, "off": off, "start": None if off else w["start"], "end": None if off else w["end"], "break_minutes": None if off else w["break_minutes"], "note": ""})
+                cell = {"date": d, "planned": False, "off": off, "start": None if off else w["start"], "end": None if off else w["end"], "break_minutes": None if off else w["break_minutes"], "note": ""}
+            if lv:
+                cell["leave"] = {"id": lv["_id"], "type": lv.get("type"), "label": LEAVE_TYPES.get(lv.get("type"), lv.get("type"))}
+                cell["conflict"] = bool(cell["planned"] and not cell["off"])
+                conflicts += cell["conflict"]
+            cells.append(cell)
         rows.append({"employee_id": emp["_id"], "employee_name": emp["full_name"], "department": emp.get("department"), "cells": cells})
-    return {"week_start": dates[0], "dates": dates, "day_labels": DAY_LABELS, "rows": rows}
+    return {"week_start": dates[0], "dates": dates, "day_labels": DAY_LABELS, "rows": rows, "conflicts": conflicts}
 
 
 @router.put("/personnel/shifts")
@@ -528,10 +539,15 @@ async def put_shifts(req: Dict[str, Any]):
     if not isinstance(items, list) or not items:
         raise HTTPException(status_code=400, detail="items listesi gerekli.")
     saved = 0
+    warnings = []
     for it in items:
         emp = await _db.employees.find_one({"_id": it.get("employee_id")})
         if not emp:
             raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+        if not it.get("off") and it.get("date"):
+            lv = await _db.leave_requests.find_one({"employee_id": emp["_id"], "status": "approved", "start_date": {"$lte": it["date"]}, "end_date": {"$gte": it["date"]}})
+            if lv:
+                warnings.append(f"{emp['full_name']} {it['date']} tarihinde onaylı {LEAVE_TYPES.get(lv.get('type'), '')} izinli — vardiya çakışıyor.")
         try:
             datetime.strptime(it.get("date") or "", "%Y-%m-%d")
         except ValueError:
@@ -548,7 +564,7 @@ async def put_shifts(req: Dict[str, Any]):
             doc.update({"start": None, "end": None, "break_minutes": 0})
         await _db.shift_plans.update_one({"employee_id": emp["_id"], "date": it["date"]}, {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
         saved += 1
-    return {"status": "success", "saved": saved}
+    return {"status": "success", "saved": saved, "warnings": warnings, "message": f"{saved} vardiya kaydedildi." + (f" Uyarı: {warnings[0]}" if warnings else "")}
 
 
 @router.delete("/personnel/shifts/{shift_id}")
@@ -576,7 +592,6 @@ async def copy_week(req: Dict[str, Any]):
 
 
 # ---------- Personel self-servis izin talebi ----------
-LEAVE_TYPES = {"annual": "Yıllık", "sick": "Hastalık", "unpaid": "Ücretsiz", "other": "Diğer"}
 
 
 @router.get("/personnel/leaves/me")

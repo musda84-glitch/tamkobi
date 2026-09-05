@@ -200,6 +200,10 @@ Notlar: WhatsApp Business Cloud API, e-İrsaliye entegratör, canlı banka, paza
 - **Haftalık Vardiya Planı** (`ShiftPlanner.jsx`; `shift_plans`, `GET/PUT/DELETE /personnel/shifts`, `copy-week`): hücre bazlı saat/izin; puantaj ve giriş-yok bildirimi plana göre hesaplar (`schedule_snapshot.from_shift_plan`).
 - Dashboard grafik konteynerlerine sabit yükseklik (mobil Recharts uyarısı giderildi).
 
+## İterasyon 22 (Haziran 2026) — test ajanı ✅ 3/3 backend, 2/2 frontend
+- **Portal sipariş takibi**: `_b2b_tracking` (PUBLIC_TRACKING_URLS kargo firması takip linkleri, SHIPMENT_STEPS adım çubuğu, ETA = shipment.estimated_delivery ya da kargolanma+3 gün, is_late) → `TrackingCard` (mobil + masaüstü).
+- **Vardiya-izin çakışma uyarısı**: `get_shifts` hücrelerde `leave`/`conflict`, `conflicts` sayısı; `put_shifts` `warnings`; ShiftPlanner turuncu hücre + ikon + banner + editör uyarısı.
+
 ## SIRADAKİ FAZ
 1. **Kullanıcı & Roller (OVOCRM tarzı)** — Firma Ayarları içinde: kullanıcı listesi, roller (yönetici/muhasebe/satış/depo/üretim/mali müşavir), modül bazlı yetki matrisi, e-posta ile davet (mail hesabı üzerinden link), kullanıcı bazlı işlem günlüğü. ⚠ Auth değişikliği → önce `integration_expert` (JWT auth playbook) çağrılmalı; mevcut `auth_utils.py`, `/auth/*`, `AuthContext.jsx` incelenmeli; `menuItems` yetkiye göre filtrelenmeli.
 2. **Personel Kartı** — `/personnel` içinde detay modalı: belgeler (upload), maaş geçmişi (payroll kayıtları), izin bakiyesi, puantaj özeti, "Sistem kullanıcısı oluştur" (1. maddeye bağlı: employee_id ↔ user).
