@@ -153,10 +153,12 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any]):
 
 @router.delete("/loans/{loan_id}")
 async def delete_loan(loan_id: str):
-    r = await _db.loans.delete_one({"_id": loan_id})
-    if not r.deleted_count:
+    loan = await _db.loans.find_one({"_id": loan_id})
+    if not loan:
         raise HTTPException(status_code=404, detail="Kredi bulunamadı.")
-    return {"status": "success"}
+    import trash
+    await trash.soft_delete("loans", loan, "loan", loan.get("name") or loan_id, note=f"{loan.get('bank_name') or ''} · {float(loan.get('principal') or loan.get('amount') or 0):,.2f} ₺")
+    return {"status": "success", "message": "Kredi çöp kutusuna taşındı."}
 
 
 # ---------------- Credit card statement import ----------------

@@ -37,7 +37,7 @@ export default function ContactsPage() {
   const [filterType, setFilterType] = useState("all");
   const [flags, setFlags] = useState({});
   const [finFilter, setFinFilter] = useState("all");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() => new URLSearchParams(window.location.search).get("search") || "");
   const [loading, setLoading] = useState(true);
   const [messageContact, setMessageContact] = useState(null);
   const [locationContact, setLocationContact] = useState(null);

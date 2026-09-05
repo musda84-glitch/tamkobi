@@ -83,3 +83,31 @@ async def extract_invoice_from_text(text: str) -> dict:
                       "discount_rate": d, "total": round(float(it.get("total") or q * p * (1 - d / 100)), 2)})
     data["items"] = items
     return data
+
+
+ORDER_SYSTEM = """Sen bir e-ticaret/toptan sipariş belgesi ayrıştırıcısısın. Sana verilen metin (PDF, Excel/CSV tablo dökümü veya e-posta) içinden SİPARİŞLERİ çıkar. Yalnızca geçerli JSON döndür:
+{"orders":[{"order_number":"varsa belge/sipariş no yoksa null","order_date":"YYYY-MM-DD veya null","customer_name":"müşteri/alıcı adı","customer_phone":"telefon veya null","customer_email":"e-posta veya null","shipping_address":"adres veya null","city":"il veya null","channel":"trendyol|hepsiburada|amazon|n11|shopify|b2b|manual — bilinmiyorsa manual","notes":"not veya null",
+"items":[{"product_name":"ürün adı","sku":"stok kodu veya null","barcode":"barkod veya null","quantity":1,"unit_price":0.0,"total":0.0}],"total_amount":0.0}]}
+Kurallar: Aynı müşteriye ait satırları tek siparişte topla (belge/sipariş no varsa ona göre grupla). Excel tablolarında her satır bir kalem olabilir; müşteri sütununa göre grupla. Sayılarda Türkçe biçim (1.234,56) olabilir → ondalık noktaya çevir. total yoksa quantity*unit_price. Bulamadığın alanlara null yaz. Hiç sipariş yoksa {"orders":[]} döndür."""
+
+
+async def extract_orders_from_text(text: str) -> dict:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
+    chat = LlmChat(api_key=api_key, session_id=f"ord-extract-{abs(hash(text[:200]))}", system_message=ORDER_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    raw = str(await chat.send_message(UserMessage(text=f"SİPARİŞ BELGESİ:\n\n{text[:30000]}"))).strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("AI yanıtı JSON içermiyor.")
+    data = json.loads(raw[start:end + 1])
+    orders = []
+    for o in data.get("orders") or []:
+        items = []
+        for it in o.get("items") or []:
+            q = float(it.get("quantity") or 1); p = float(it.get("unit_price") or 0)
+            items.append({"product_name": str(it.get("product_name") or "Kalem")[:200], "sku": it.get("sku"), "barcode": it.get("barcode"), "quantity": int(round(q)) or 1, "unit_price": p, "total": round(float(it.get("total") or q * p), 2)})
+        if not items:
+            continue
+        orders.append({**o, "items": items, "total_amount": round(float(o.get("total_amount") or sum(i["total"] for i in items)), 2), "channel": (o.get("channel") or "manual").lower()})
+    return {"orders": orders}

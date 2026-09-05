@@ -569,10 +569,12 @@ async def put_shifts(req: Dict[str, Any]):
 
 @router.delete("/personnel/shifts/{shift_id}")
 async def delete_shift(shift_id: str):
-    r = await _db.shift_plans.delete_one({"_id": shift_id})
-    if not r.deleted_count:
+    sh = await _db.shift_plans.find_one({"_id": shift_id})
+    if not sh:
         raise HTTPException(status_code=404, detail="Vardiya bulunamadı.")
-    return {"status": "success"}
+    import trash
+    await trash.soft_delete("shift_plans", sh, "shift", f"{sh.get('employee_name')} · {sh.get('date')}", note=f"{sh.get('start') or ''}-{sh.get('end') or ''}" if sh.get("start") else "İzin/Off")
+    return {"status": "success", "message": "Vardiya çöp kutusuna taşındı."}
 
 
 @router.post("/personnel/shifts/copy-week")
@@ -693,10 +695,12 @@ async def create_shift_template(req: Dict[str, Any]):
 
 @router.delete("/personnel/shift-templates/{tpl_id}")
 async def delete_shift_template(tpl_id: str):
-    r = await _db.shift_templates.delete_one({"_id": tpl_id})
-    if not r.deleted_count:
+    tpl = await _db.shift_templates.find_one({"_id": tpl_id})
+    if not tpl:
         raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
-    return {"status": "success"}
+    import trash
+    await trash.soft_delete("shift_templates", tpl, "shift_template", tpl.get("name") or tpl_id)
+    return {"status": "success", "message": "Şablon çöp kutusuna taşındı."}
 
 
 @router.post("/personnel/shifts/bulk-assign")

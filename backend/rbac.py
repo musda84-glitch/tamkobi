@@ -18,7 +18,7 @@ _current_user = None
 MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"),
            ("/stock", "Stoklar & Ürünler"), ("/projects", "Teklif / Proje / Keşif"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/warehouses", "Depo"),
            ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
-           ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları")]
+           ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
 LEVELS = ("none", "view", "edit")
 
 def _all(level: str) -> Dict[str, str]:
@@ -39,7 +39,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/warehouses", "/warehouses"), ("/api/quotes", "/projects"), ("/api/projects", "/projects"), ("/api/surveys", "/projects"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
-                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/dashboard", "/")]
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
 SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute")
 
@@ -73,6 +73,7 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
     if r:
         p = r.setdefault("permissions", {})
         p.setdefault("/dispatches", p.get("/invoices", "none"))
+        p.setdefault("/trash", p.get("/settings", "none"))
         p.setdefault("/expenses", p.get("/banking", "none"))
         p.setdefault("/loans", p.get("/banking", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}

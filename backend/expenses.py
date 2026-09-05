@@ -198,8 +198,9 @@ async def delete_expense(expense_id: str):
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     if exp.get("payment_status") == "paid":
         await _reverse_payment(exp)
-    await _db.expenses.delete_one({"_id": expense_id})
-    return {"status": "success", "message": "Masraf silindi" + (", kasa/banka hareketi geri alındı." if exp.get("payment_status") == "paid" else ".")}
+    import trash
+    await trash.soft_delete("expenses", exp, "expense", f"{exp.get('expense_number')} · {exp.get('description') or exp.get('category')}", note=f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}")
+    return {"status": "success", "message": "Masraf çöp kutusuna taşındı" + (", kasa/banka hareketi geri alındı." if exp.get("payment_status") == "paid" else ".")}
 
 
 @router.post("/expenses/run-recurring")

@@ -24,6 +24,7 @@ import { StockCountPanel } from "../components/StockCountPanel";
 import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { Factory } from "lucide-react";
+import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -219,6 +220,7 @@ export default function StockBarcodePage() {
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
+      <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
       <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} />
 
       {/* Products Table */}

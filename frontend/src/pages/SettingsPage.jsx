@@ -11,9 +11,10 @@ import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { UsersRolesPanel } from "../components/UsersRolesPanel";
 import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
+import { MigrationPanel } from "../components/MigrationPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -211,6 +212,7 @@ export default function SettingsPage() {
           {tab === "units" && <UnitsCategories companyId={companyId} />}
           {tab === "b2b" && <B2BSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
+          {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "modules" && <ModuleOrder />}
         </div>
       </div>

@@ -30,6 +30,7 @@ import InviteAcceptPage from "./pages/InviteAcceptPage";
 import LoginPage from "./pages/LoginPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoansPage from "./pages/LoansPage";
+import TrashPage from "./pages/TrashPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="/dispatches" element={<DispatchesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/loans" element={<LoansPage />} />
+            <Route path="/trash" element={<TrashPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

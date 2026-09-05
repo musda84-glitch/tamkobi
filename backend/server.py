@@ -27,10 +27,11 @@ from auth_utils import (
     create_refresh_token, get_user_from_token
 )
 from seed_data import seed_all_data, seed_partners
-from ai_service import get_financial_ai_advice, extract_invoice_from_text
+from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
 import bank_guard
+import marketplace_providers
 from zoneinfo import ZoneInfo
 import httpx
 from urllib.parse import quote
@@ -40,6 +41,8 @@ import rbac
 import expenses
 import finance
 import attendance
+import trash
+import migration
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -98,6 +101,7 @@ async def startup_event():
     attendance.init_notify(_mail_account, comm_service.smtp_send)
     import asyncio as _asyncio
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
+    _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -503,8 +507,11 @@ async def update_quote(quote_id: str, req: Dict[str, Any]):
 
 @api_router.delete("/quotes/{quote_id}")
 async def delete_quote(quote_id: str):
-    await db.quotes.delete_one({"_id": quote_id})
-    return {"status": "success"}
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    await trash.soft_delete("quotes", q, "quote", f"{q.get('quote_number')} · {q.get('contact_name') or q.get('title')}")
+    return {"status": "success", "message": "Teklif çöp kutusuna taşındı."}
 
 @api_router.post("/quotes/{quote_id}/convert-to-invoice")
 async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
@@ -565,8 +572,11 @@ async def update_project(project_id: str, req: Dict[str, Any]):
 
 @api_router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
-    await db.projects.delete_one({"_id": project_id})
-    return {"status": "success"}
+    p = await db.projects.find_one({"_id": project_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    await trash.soft_delete("projects", p, "project", f"{p.get('project_number')} · {p.get('name')}")
+    return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
 
 @api_router.get("/surveys")
 async def list_surveys(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -593,8 +603,11 @@ async def update_survey(survey_id: str, req: Dict[str, Any]):
 
 @api_router.delete("/surveys/{survey_id}")
 async def delete_survey(survey_id: str):
-    await db.surveys.delete_one({"_id": survey_id})
-    return {"status": "success"}
+    s = await db.surveys.find_one({"_id": survey_id})
+    if not s:
+        raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
+    await trash.soft_delete("surveys", s, "survey", f"{s.get('survey_number')} · {s.get('contact_name') or s.get('address')}")
+    return {"status": "success", "message": "Keşif çöp kutusuna taşındı."}
 
 @api_router.post("/surveys/{survey_id}/convert-to-quote")
 async def convert_survey_to_quote(survey_id: str):
@@ -810,8 +823,11 @@ async def update_contact(contact_id: str, updated: Dict[str, Any]):
 
 @api_router.delete("/contacts/{contact_id}")
 async def delete_contact(contact_id: str):
-    await db.contacts.delete_one({"_id": contact_id})
-    return {"status": "success"}
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    await trash.soft_delete("contacts", c, "contact", c.get("name"), note=f"Bakiye: {float(c.get('balance') or 0):,.2f} ₺")
+    return {"status": "success", "message": "Cari çöp kutusuna taşındı."}
 
 @api_router.get("/contacts/{contact_id}/statement")
 async def get_contact_statement(contact_id: str):
@@ -1135,8 +1151,11 @@ async def update_product(product_id: str, updated: Dict[str, Any]):
 
 @api_router.delete("/products/{product_id}")
 async def delete_product(product_id: str):
-    await db.products.delete_one({"_id": product_id})
-    return {"status": "success"}
+    p = await db.products.find_one({"_id": product_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    await trash.soft_delete("products", p, "product", f"{p.get('name')}" + (f" ({p.get('sku')})" if p.get("sku") else ""), note=f"Stok: {p.get('stock_quantity', 0)}")
+    return {"status": "success", "message": "Ürün çöp kutusuna taşındı."}
 
 @api_router.get("/products/barcode/{barcode}")
 async def get_product_by_barcode(barcode: str, company_id: Optional[str] = "comp_nexus_main_01"):
@@ -1905,8 +1924,8 @@ async def delete_bank_transaction(tx_id: str):
     tx = await db.bank_transactions.find_one({"_id": tx_id})
     _assert_editable_tx(tx)
     await _reverse_tx_effects(tx, -1)
-    await db.bank_transactions.delete_one({"_id": tx_id})
-    return {"status": "success", "message": "Hareket silindi, bakiyeler geri alındı."}
+    await trash.soft_delete("bank_transactions", tx, "bank_transaction", f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺", note=f"{tx.get('account_name')} · {tx.get('date')}")
+    return {"status": "success", "message": "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."}
 
 @api_router.post("/banking/virman")
 async def perform_virman(req: Dict[str, Any]):
@@ -1989,8 +2008,8 @@ async def delete_partner(partner_id: str):
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     if abs(p.get("balance", 0)) > 0.01:
         raise HTTPException(status_code=400, detail="Bakiyesi sıfır olmayan ortak silinemez.")
-    await db.partners.delete_one({"_id": partner_id})
-    return {"status": "success"}
+    await trash.soft_delete("partners", p, "partner", p.get("name"))
+    return {"status": "success", "message": "Ortak çöp kutusuna taşındı."}
 
 @api_router.get("/banking/partners/transactions")
 async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main_01", partner_id: Optional[str] = None):
@@ -2067,8 +2086,8 @@ async def delete_partner_transaction(tx_id: str):
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     await _reverse_partner_tx(tx)
-    await db.partner_transactions.delete_one({"_id": tx_id})
-    return {"status": "success", "message": "Hareket silindi; ortak ve hesap bakiyeleri geri alındı."}
+    await trash.soft_delete("partner_transactions", tx, "partner_transaction", f"{tx.get('partner_name')} · {PARTNER_TX_LABELS.get(tx.get('type'), tx.get('type'))} · {float(tx.get('amount') or 0):,.2f} ₺", note=tx.get("date") or "")
+    return {"status": "success", "message": "Hareket çöp kutusuna taşındı; ortak ve hesap bakiyeleri geri alındı."}
 
 @api_router.post("/banking/partners/transactions")
 async def create_partner_transaction(req: Dict[str, Any]):
@@ -2927,8 +2946,11 @@ async def complete_stock_count(count_id: str, req: Dict[str, Any]):
 
 @api_router.delete("/warehouses/stock-counts/{count_id}")
 async def delete_stock_count(count_id: str):
-    await db.stock_counts.delete_one({"_id": count_id})
-    return {"status": "success"}
+    sc = await db.stock_counts.find_one({"_id": count_id})
+    if not sc:
+        raise HTTPException(status_code=404, detail="Sayım bulunamadı.")
+    await trash.soft_delete("stock_counts", sc, "stock_count", sc.get("name") or sc.get("title") or count_id, note=sc.get("status") or "")
+    return {"status": "success", "message": "Sayım çöp kutusuna taşındı."}
 
 # ----------------- PERSONEL: İZİN, MAAŞ HESABI, PRİM -----------------
 @api_router.get("/personnel/leaves")
@@ -2978,8 +3000,8 @@ async def delete_leave(leave_id: str):
         raise HTTPException(status_code=404, detail="İzin bulunamadı.")
     if leave.get("status") == "approved" and leave.get("type") == "annual":
         await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": -leave["days"]}})
-    await db.leave_requests.delete_one({"_id": leave_id})
-    return {"status": "success"}
+    await trash.soft_delete("leave_requests", leave, "leave", f"{leave.get('employee_name')} · {leave.get('start_date')} → {leave.get('end_date')}", note=f"{leave.get('days')} gün · {leave.get('status')}")
+    return {"status": "success", "message": "İzin çöp kutusuna taşındı."}
 
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str):
@@ -3081,10 +3103,12 @@ async def create_bonus(req: Dict[str, Any]):
 @api_router.delete("/personnel/bonuses/{bonus_id}")
 async def delete_bonus(bonus_id: str):
     b = await db.bonus_payments.find_one({"_id": bonus_id})
-    if b and b.get("account_id") and b.get("status") == "paid":
+    if not b:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if b.get("account_id") and b.get("status") == "paid":
         await db.bank_accounts.update_one({"_id": b["account_id"]}, {"$inc": {"current_balance": b["amount"]}})
-    await db.bonus_payments.delete_one({"_id": bonus_id})
-    return {"status": "success"}
+    await trash.soft_delete("bonus_payments", b, "bonus", f"{b.get('employee_name')} · {b.get('type')} · {float(b.get('amount') or 0):,.2f} ₺", note=b.get("status") or "")
+    return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
 
 
 # ----------------- E-TİCARET DETAYLARI: EŞLEŞTİRME, İADE, KARGO SEÇİMİ -----------------
@@ -3136,8 +3160,8 @@ async def delete_order(order_id: str):
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     if o.get("is_invoiced") or o.get("invoice_id"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
-    await db.orders.delete_one({"_id": order_id})
-    return {"status": "success", "message": "Sipariş silindi."}
+    await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺")
+    return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
 
 @api_router.post("/orders/{order_id}/approve")
 async def approve_order(order_id: str, req: Dict[str, Any] = None):
@@ -3237,8 +3261,8 @@ async def delete_bank_account(account_id: str):
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
     if await db.bank_transactions.count_documents({"account_id": account_id}):
         raise HTTPException(status_code=400, detail="Hareketi olan hesap silinemez; önce hareketleri kontrol edin.")
-    await db.bank_accounts.delete_one({"_id": account_id})
-    return {"status": "success"}
+    await trash.soft_delete("bank_accounts", acc, "bank_account", acc.get("account_name"), note=f"Bakiye: {float(acc.get('current_balance') or 0):,.2f} ₺")
+    return {"status": "success", "message": "Hesap çöp kutusuna taşındı."}
 
 @api_router.put("/companies/{company_id}/location")
 async def set_company_location(company_id: str, req: Dict[str, Any]):
@@ -3407,105 +3431,516 @@ async def update_ecommerce_integration(channel_id: str, data: Dict[str, Any]):
     res = await db.integration_configs.find_one({"_id": channel_id})
     return clean_doc(res)
 
+async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
+    inserted = updated = 0
+    for d in docs:
+        key = {"company_id": company_id, "channel": d["channel"], "order_number": d["order_number"]}
+        existing = await db.orders.find_one(key)
+        d["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if existing:
+            keep = {k: existing[k] for k in ("invoice_id", "is_invoiced", "contact_id", "contact_name", "internal_note", "label_printed_at") if existing.get(k) is not None}
+            await db.orders.update_one({"_id": existing["_id"]}, {"$set": {**d, **keep}})
+            if not existing.get("contact_id"):
+                await _ensure_order_contact({**existing, **d})
+            updated += 1
+        else:
+            d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
+            d["created_at"] = d["updated_at"]
+            await db.orders.insert_one(d)
+            await _ensure_order_contact(d)
+            inserted += 1
+    return {"inserted": inserted, "updated": updated}
+
+CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
+                             "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel"}
+
+async def _ensure_order_contact(o: dict) -> Optional[dict]:
+    """Sipariş için cari bul (ad / telefon / e-posta / VKN) yoksa otomatik müşteri carisi aç ve siparişe bağla."""
+    if o.get("contact_id"):
+        c = await db.contacts.find_one({"_id": o["contact_id"]})
+        if c:
+            return c
+    name = (o.get("customer_name") or "").strip()
+    if not name:
+        return None
+    cid = o.get("company_id")
+    ors: List[Dict[str, Any]] = [{"name": name}]
+    digits = re.sub(r"\D", "", o.get("customer_phone") or "")[-10:]
+    if len(digits) == 10:
+        ors.append({"phone": {"$regex": f"{digits}$"}})
+    if o.get("customer_email"):
+        ors.append({"email": o["customer_email"].strip().lower()})
+    if o.get("customer_tax_id"):
+        ors.append({"tax_number_or_id": o["customer_tax_id"]})
+    c = await db.contacts.find_one({"company_id": cid, "$or": ors})
+    created = False
+    if not c:
+        c = {"_id": f"cnt_{uuid.uuid4().hex[:8]}", "company_id": cid, "type": "customer", "name": name, "company_title": o.get("customer_company") or None, "tax_number_or_id": o.get("customer_tax_id") or "11111111111",
+             "tax_office": o.get("customer_tax_office") or None, "email": (o.get("customer_email") or "").strip().lower() or None, "phone": o.get("customer_phone") or None, "address": o.get("shipping_address") or None, "city": o.get("city") or None,
+             "balance": 0.0, "credit_limit": 0.0, "category": CHANNEL_CUSTOMER_CATEGORY.get((o.get("channel") or "").lower(), "Pazaryeri Müşterisi"), "is_e_invoice_user": False, "payment_term_days": 0, "late_fee_rate": 0.0,
+             "b2b_enabled": False, "b2b_discount": 0.0, "source": f"order:{o.get('channel') or 'manual'}", "auto_created": True, "created_at": datetime.now(timezone.utc).isoformat()}
+        await db.contacts.insert_one(c)
+        created = True
+    await db.orders.update_one({"_id": o["_id"]}, {"$set": {"contact_id": c["_id"], "contact_name": c.get("name")}})
+    o["contact_id"], o["contact_name"] = c["_id"], c.get("name")
+    c["_created"] = created
+    return c
+
+@api_router.post("/orders/auto-contacts")
+async def backfill_order_contacts(req: Dict[str, Any]):
+    """Carisi olmayan tüm siparişler için cari bul/oluştur."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    linked = created = skipped = 0
+    async for o in db.orders.find({"company_id": company_id, "$or": [{"contact_id": None}, {"contact_id": {"$exists": False}}, {"contact_id": ""}]}):
+        c = await _ensure_order_contact(o)
+        if not c:
+            skipped += 1
+            continue
+        linked += 1
+        created += 1 if c.get("_created") else 0
+    return {"status": "success", "linked": linked, "created": created, "skipped": skipped, "message": f"{linked} sipariş cariye bağlandı ({created} yeni cari açıldı)." + (f" {skipped} siparişte müşteri adı yok." if skipped else "")}
+
+@api_router.put("/integrations/ecommerce/{channel_id}/settlement-account")
+async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
+    cfg = await db.integration_configs.find_one({"_id": channel_id})
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Kanal bulunamadı.")
+    account_id = req.get("account_id") or None
+    name = None
+    if account_id:
+        acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": cfg["company_id"]})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+        if await bank_guard.get_connection_for_account(db, account_id):
+            raise HTTPException(status_code=400, detail="Entegre (API bağlı) hesaba otomatik hakediş yazılamaz; ödemeler banka senkronuyla gelir. Manuel bir kasa/banka hesabı seçin.")
+        name = acc.get("account_name")
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"settlement_account_id": account_id, "settlement_account_name": name}})
+    return {"status": "success", "settlement_account_id": account_id, "settlement_account_name": name, "message": f"Hakediş hesabı: {name}" if name else "Hakediş hesabı kaldırıldı; faturalar yalnızca 'ödendi' işaretlenir."}
+
+async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
+    """Kanal için hakediş hesabı seçiliyse: net tutar (ciro − komisyon − hizmet/kargo) hesaba tahsilat, kesintiler 'Pazaryeri Komisyonu' masrafı."""
+    channel = (order.get("channel") or "").lower()
+    if channel in ("", "b2b", "manual"):
+        return None
+    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
+    if not cfg or not cfg.get("settlement_account_id"):
+        return None
+    acc = await db.bank_accounts.find_one({"_id": cfg["settlement_account_id"]})
+    if not acc:
+        return None
+    p = _order_profit(order, _channel_fees(cfg, channel), {})
+    deductions = round(p["commission"] + p["commission_vat"] + p["service_fee"] + p["cargo_fee"], 2)
+    net = round(p["revenue"] - deductions, 2)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc).isoformat()
+    tx = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Pazaryeri Hakedişi",
+          "amount": net, "currency": acc.get("currency", "TRY"), "description": f"{channel.title()} {order.get('order_number')} hakediş (brüt {p['revenue']:,.2f} − kesinti {deductions:,.2f})", "contact_id": None,
+          "contact_name": contact.get("name"), "related_invoice_id": invoice["_id"], "order_id": order["_id"], "channel": channel, "source": "marketplace_settlement", "is_simulated": False, "date": today, "created_at": now}
+    await db.bank_transactions.insert_one(tx)
+    await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": net}})
+    exp = None
+    if deductions > 0:
+        exp = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "expense_number": await expenses._next_number(order["company_id"]), "date": today, "category": "Pazaryeri Komisyonu",
+               "description": f"{channel.title()} {order.get('order_number')} komisyon + hizmet/kargo bedeli", "amount": round(deductions - p["commission_vat"], 2), "vat_rate": float(_channel_fees(cfg, channel).get("commission_vat_rate") or 0),
+               "vat_amount": p["commission_vat"], "total": deductions, "currency": "TRY", "payment_status": "paid", "account_id": acc["_id"], "account_name": acc.get("account_name"), "paid_date": today,
+               "order_id": order["_id"], "invoice_id": invoice["_id"], "channel": channel, "netted_in_settlement": True, "notes": "Hakedişten mahsup edildi (ayrı kasa çıkışı yok).", "is_recurring": False, "created_at": now}
+        await db.expenses.insert_one(exp)
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"settlement": {"account_id": acc["_id"], "account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "tx_id": tx["_id"], "expense_id": exp["_id"] if exp else None, "date": today}}})
+    return {"account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net}
+
+async def _upsert_by_external(coll, company_id: str, docs: list) -> int:
+    n = 0
+    for d in docs:
+        d["updated_at"] = datetime.now(timezone.utc).isoformat()
+        r = await coll.update_one({"company_id": company_id, "channel": d["channel"], "external_id": d["external_id"]}, {"$set": d, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": d["updated_at"]}}, upsert=True)
+        n += 1 if r.upserted_id else 0
+    return n
+
 @api_router.post("/integrations/ecommerce/{channel_id}/test-connection")
 async def test_ecommerce_connection(channel_id: str):
     config = await db.integration_configs.find_one({"_id": channel_id})
     if not config:
         raise HTTPException(status_code=404, detail="Entegrasyon yapılandırması bulunamadı.")
-
-    if not config.get("api_key") or not config.get("supplier_id"):
-        return {
-            "status": "error",
-            "message": "Lütfen API Anahtarı ve Satıcı ID/Mağaza Kodunu eksiksiz doldurun."
-        }
-
-    await db.integration_configs.update_one(
-        {"_id": channel_id},
-        {"$set": {"status": "connected", "is_active": True, "last_synced_at": datetime.now(timezone.utc).isoformat()}}
-    )
-    return {
-        "status": "success",
-        "message": f"{config.get('channel_name')} API bağlantısı başarıyla doğrulandı! Mağaza ve Webhook hazır."
-    }
+    if not marketplace_providers.has_live_credentials(config):
+        return {"status": "error", "message": "API Key, API Secret ve Satıcı ID (supplier/seller ID) eksiksiz doldurulmalı."}
+    if config.get("channel") == "trendyol":
+        client = marketplace_providers.TrendyolClient(config)
+        try:
+            pkgs = await client.orders(days=1, size=1)
+        except HTTPException as e:
+            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
+            return {"status": "error", "message": e.detail}
+        finally:
+            await client.close()
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "last_error": None, "live": True}})
+        return {"status": "success", "live": True, "message": f"Trendyol Seller API bağlantısı doğrulandı (satıcı {config['supplier_id']}). Son 24 saatte {len(pkgs)} paket görüldü."}
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": False}})
+    return {"status": "success", "live": False, "message": f"{config.get('channel_name')} için canlı API henüz bağlı değil; bilgiler kaydedildi (SİMÜLE mod)."}
 
 @api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
-async def sync_ecommerce_channel(channel_id: str):
+async def sync_ecommerce_channel(channel_id: str, days: int = 14):
     config = await db.integration_configs.find_one({"_id": channel_id})
     if not config:
         raise HTTPException(status_code=404, detail="Entegrasyon bulunamadı.")
-
     company_id = config.get("company_id", "comp_nexus_main_01")
     channel = config.get("channel", "trendyol")
+    now = datetime.now(timezone.utc).isoformat()
+    if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
+        client = marketplace_providers.TrendyolClient(config)
+        try:
+            pkgs = await client.orders(days=days)
+            claims = await client.claims(days=max(days, 30))
+            questions = await client.questions("WAITING_FOR_ANSWER") + await client.questions("ANSWERED")
+        except HTTPException as e:
+            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
+            raise
+        finally:
+            await client.close()
+        res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_trendyol_order(p, company_id, channel) for p in pkgs])
+        new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims])
+        new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions])
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        cancelled = sum(1 for p in pkgs if (p.get("shipmentPackageStatus") or p.get("status")) == "Cancelled")
+        return {"status": "success", "live": True, **res, "claims": len(claims), "new_claims": new_claims, "questions": len(questions), "new_questions": new_q, "cancelled": cancelled,
+                "message": f"Trendyol canlı senkron: {len(pkgs)} paket ({res['inserted']} yeni, {res['updated']} güncellendi, {cancelled} iptal), {len(claims)} iade talebi, {len(questions)} müşteri sorusu çekildi."}
+    docs = marketplace_providers.simulated_orders(company_id, channel)
+    res = await _upsert_marketplace_orders(company_id, docs)
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"last_synced_at": now, "live": False}})
+    return {"status": "success", "live": False, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
 
-    order_num = f"{channel.upper()[:2]}-{str(uuid.uuid4().int)[:8]}"
-    new_order = {
-        "_id": f"ord_sync_{uuid.uuid4().hex[:8]}",
-        "company_id": company_id,
-        "order_number": order_num,
-        "channel": channel,
-        "customer_name": "Ayşe Gökmen",
-        "customer_email": "ayse.gokmen@example.com",
-        "customer_phone": "0533 888 77 66",
-        "shipping_address": "Çankaya Mah. Atatürk Bulvarı No:105 D:12",
-        "city": "Ankara",
-        "items": [
-            {"product_id": "prod_01", "product_name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}
-        ],
-        "total_amount": 1899.0,
-        "currency": "TRY",
-        "order_status": "approved",
-        "cargo_carrier": "yurtici",
-        "cargo_tracking_number": f"YK-{str(uuid.uuid4().int)[:10]}",
-        "cargo_barcode": f"8690{str(uuid.uuid4().int)[:9]}",
-        "is_invoiced": True,
-        "invoice_id": None,
-        "order_date": datetime.now(timezone.utc).isoformat()
-    }
-    await db.orders.insert_one(new_order)
+async def _marketplace_auto_sync_loop(interval_s: int = 600):
+    """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder."""
+    import asyncio as _a
+    await _a.sleep(20)
+    while True:
+        try:
+            for cfg in await db.integration_configs.find({"is_active": True, "channel": "trendyol"}).to_list(50):
+                if marketplace_providers.has_live_credentials(cfg) and cfg.get("auto_sync", True):
+                    try:
+                        await sync_ecommerce_channel(cfg["_id"], days=3)
+                    except HTTPException:
+                        pass
+        except Exception:
+            pass
+        await _a.sleep(interval_s)
 
-    inv_num = f"EAR{datetime.now().strftime('%Y')}{str(uuid.uuid4().int)[:8]}"
-    new_inv = {
-        "_id": f"inv_sync_{uuid.uuid4().hex[:8]}",
-        "company_id": company_id,
-        "invoice_type": "sales",
-        "e_type": "e_archive",
-        "invoice_number": inv_num,
-        "contact_id": "cnt_01",
-        "contact_name": "Ayşe Gökmen (Pazaryeri Müşterisi)",
-        "contact_tax_id": "11111111111",
-        "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "due_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "items": [
-            {"product_id": "prod_01", "name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "quantity": 1, "unit": "Adet", "unit_price": 1899.0, "vat_rate": 20, "discount_percent": 0.0, "total": 1899.0}
-        ],
-        "subtotal": 1582.50,
-        "vat_total": 316.50,
-        "discount_total": 0.0,
-        "grand_total": 1899.0,
-        "currency": "TRY",
-        "status": "approved",
-        "gib_status": "GİB'e Gönderildi",
-        "gib_tracking_id": f"EAR-{uuid.uuid4().hex[:8].upper()}",
-        "payment_status": "paid",
-        "paid_amount": 1899.0,
-        "notes": f"{config.get('channel_name')} üzerinden otomatik oluşturuldu. Sipariş No: {order_num}",
-        "source_channel": channel,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.invoices.insert_one(new_inv)
+DEFAULT_CHANNEL_FEES = {"trendyol": {"commission_rate": 21.5, "service_fee": 12.99, "cargo_fee": 0.0}, "hepsiburada": {"commission_rate": 18.0, "service_fee": 9.90, "cargo_fee": 0.0},
+                        "amazon": {"commission_rate": 15.0, "service_fee": 0.0, "cargo_fee": 0.0}, "n11": {"commission_rate": 16.0, "service_fee": 7.99, "cargo_fee": 0.0}, "ciceksepeti": {"commission_rate": 20.0, "service_fee": 0.0, "cargo_fee": 0.0}}
 
-    await db.products.update_one({"_id": "prod_01"}, {"$inc": {"stock_quantity": -1}})
+def _channel_fees(cfg: Optional[dict], channel: str) -> dict:
+    base = {"commission_rate": 0.0, "service_fee": 0.0, "cargo_fee": 0.0, "commission_vat_rate": 20.0, **DEFAULT_CHANNEL_FEES.get(channel, {})}
+    return {**base, **((cfg or {}).get("fees") or {})}
 
-    await db.integration_configs.update_one(
-        {"_id": channel_id},
-        {"$set": {"last_synced_at": datetime.now(timezone.utc).isoformat()}}
-    )
+@api_router.put("/integrations/ecommerce/{channel_id}/fees")
+async def set_channel_fees(channel_id: str, req: Dict[str, Any]):
+    cfg = await db.integration_configs.find_one({"_id": channel_id})
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Kanal bulunamadı.")
+    fees = {}
+    for k in ("commission_rate", "service_fee", "cargo_fee", "commission_vat_rate"):
+        if req.get(k) not in (None, ""):
+            v = float(req[k])
+            if v < 0 or (k.endswith("_rate") and v > 100):
+                raise HTTPException(status_code=400, detail=f"{k} geçersiz.")
+            fees[k] = v
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"fees": {**_channel_fees(cfg, cfg.get("channel", "")), **fees}}})
+    return {"status": "success", "fees": _channel_fees(await db.integration_configs.find_one({"_id": channel_id}), cfg.get("channel", ""))}
 
-    return {
-        "status": "success",
-        "message": f"Senkronizasyon tamamlandı! {config.get('channel_name')} üzerinden 1 yeni sipariş ({order_num}) çekildi, E-Arşiv faturası ({inv_num}) kesildi ve stok 1 adet düşüldü.",
-        "order": clean_doc(new_order)
-    }
+def _order_profit(o: dict, fees: dict, cost_lookup: Dict[str, float]) -> dict:
+    revenue = float(o.get("total_amount") or 0)
+    commission = round(revenue * float(fees.get("commission_rate") or 0) / 100, 2)
+    commission_vat = round(commission * float(fees.get("commission_vat_rate") or 0) / 100, 2)
+    service = float(fees.get("service_fee") or 0)
+    cargo = float(o.get("cargo_cost") or fees.get("cargo_fee") or 0)
+    cost, missing = 0.0, 0
+    for it in o.get("items") or []:
+        c = cost_lookup.get(it.get("barcode") or "") or cost_lookup.get(it.get("sku") or "") or cost_lookup.get(it.get("product_id") or "")
+        if c is None:
+            missing += 1
+        cost += float(c or 0) * int(it.get("quantity") or 1)
+    vat_on_sale = round(revenue - revenue / 1.20, 2)
+    net = round(revenue - vat_on_sale - commission - commission_vat - service - cargo - cost, 2)
+    return {"revenue": revenue, "sale_vat": vat_on_sale, "commission": commission, "commission_vat": commission_vat, "service_fee": service, "cargo_fee": cargo, "product_cost": round(cost, 2),
+            "net_profit": net, "margin_pct": round(net / revenue * 100, 1) if revenue else 0.0, "cost_missing_items": missing}
+
+@api_router.get("/marketplace/profitability")
+async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 30, channel: Optional[str] = None):
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q: Dict[str, Any] = {"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", None]}}
+    if channel:
+        q["channel"] = channel
+    orders = await db.orders.find(q).sort("order_date", -1).to_list(2000)
+    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": company_id}).to_list(50)}
+    products = await db.products.find({"company_id": company_id}).to_list(5000)
+    lookup: Dict[str, float] = {}
+    for p in products:
+        for key in (p.get("barcode"), p.get("sku"), p["_id"]):
+            if key:
+                lookup[key] = float(p.get("purchase_price") or 0)
+        for v in p.get("variants") or []:
+            if v.get("barcode"):
+                lookup[v["barcode"]] = float(v.get("purchase_price") or p.get("purchase_price") or 0)
+    rows, by_channel, by_product = [], {}, {}
+    for o in orders:
+        fees = _channel_fees(cfgs.get(o.get("channel")), o.get("channel") or "")
+        pr = _order_profit(o, fees, lookup)
+        rows.append({"id": o["_id"], "order_number": o.get("order_number"), "channel": o.get("channel"), "order_date": o.get("order_date"), "customer_name": o.get("customer_name"), "status": o.get("order_status"), **pr})
+        ch = by_channel.setdefault(o.get("channel"), {"channel": o.get("channel"), "orders": 0, "revenue": 0.0, "commission": 0.0, "fees": 0.0, "product_cost": 0.0, "net_profit": 0.0, "fee_settings": fees, "channel_id": (cfgs.get(o.get("channel")) or {}).get("_id")})
+        ch["orders"] += 1; ch["revenue"] += pr["revenue"]; ch["commission"] += pr["commission"] + pr["commission_vat"]; ch["fees"] += pr["service_fee"] + pr["cargo_fee"]; ch["product_cost"] += pr["product_cost"]; ch["net_profit"] += pr["net_profit"]
+        for it in o.get("items") or []:
+            key = it.get("product_name") or it.get("sku")
+            bp = by_product.setdefault(key, {"product_name": key, "qty": 0, "revenue": 0.0, "cost": 0.0})
+            bp["qty"] += int(it.get("quantity") or 1); bp["revenue"] += float(it.get("total") or (float(it.get("unit_price") or 0) * int(it.get("quantity") or 1))); bp["cost"] += float(lookup.get(it.get("barcode") or "") or lookup.get(it.get("sku") or "") or 0) * int(it.get("quantity") or 1)
+    for ch in by_channel.values():
+        for k in ("revenue", "commission", "fees", "product_cost", "net_profit"):
+            ch[k] = round(ch[k], 2)
+        ch["margin_pct"] = round(ch["net_profit"] / ch["revenue"] * 100, 1) if ch["revenue"] else 0.0
+    for c in cfgs.values():
+        if c["channel"] not in by_channel and c["channel"] not in ("b2b",):
+            by_channel[c["channel"]] = {"channel": c["channel"], "orders": 0, "revenue": 0.0, "commission": 0.0, "fees": 0.0, "product_cost": 0.0, "net_profit": 0.0, "margin_pct": 0.0, "fee_settings": _channel_fees(c, c["channel"]), "channel_id": c["_id"]}
+    for ch in by_channel.values():
+        cfg = cfgs.get(ch["channel"]) or {}
+        ch["settlement_account_id"] = cfg.get("settlement_account_id")
+        ch["settlement_account_name"] = cfg.get("settlement_account_name")
+    settled = await db.orders.find({"company_id": company_id, "settlement.date": {"$gte": since[:10]}}, {"settlement": 1}).to_list(5000)
+    settlement_total = {"count": len(settled), "gross": round(sum(float(o["settlement"].get("gross") or 0) for o in settled), 2), "deductions": round(sum(float(o["settlement"].get("deductions") or 0) for o in settled), 2), "net": round(sum(float(o["settlement"].get("net") or 0) for o in settled), 2)}
+    total = {"orders": len(rows), "revenue": round(sum(r["revenue"] for r in rows), 2), "net_profit": round(sum(r["net_profit"] for r in rows), 2), "commission": round(sum(r["commission"] + r["commission_vat"] for r in rows), 2)}
+    total["margin_pct"] = round(total["net_profit"] / total["revenue"] * 100, 1) if total["revenue"] else 0.0
+    top = sorted(by_product.values(), key=lambda x: -(x["revenue"] - x["cost"]))
+    return {"days": days, "total": total, "settlement": settlement_total, "channels": sorted(by_channel.values(), key=lambda x: -x["revenue"]), "orders": rows[:300], "top_products": [{**t, "gross_profit": round(t["revenue"] - t["cost"], 2)} for t in top[:10]],
+            "low_margin": [r for r in rows if r["margin_pct"] < 10][:20]}
+
+@api_router.get("/marketplace/product-profitability")
+async def product_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 90):
+    """Ürün bazında pazaryeri satış/komisyon/maliyet/kâr + eşleşmeyen pazaryeri kalemleri."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    orders = await db.orders.find({"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", None]}}).to_list(3000)
+    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": company_id}).to_list(50)}
+    products = await db.products.find({"company_id": company_id}).to_list(5000)
+    idx: Dict[str, dict] = {}
+    for p in products:
+        for key in [p.get("barcode"), p.get("sku"), p["_id"], *(p.get("marketplace_aliases") or [])] + [v.get("barcode") for v in (p.get("variants") or []) if v.get("barcode")]:
+            if key:
+                idx[str(key).strip().lower()] = p
+    stats: Dict[str, dict] = {}
+    unmatched: Dict[str, dict] = {}
+    for o in orders:
+        fees = _channel_fees(cfgs.get(o.get("channel")), o.get("channel") or "")
+        order_total = float(o.get("total_amount") or 0) or 1.0
+        for it in o.get("items") or []:
+            keys = [it.get("barcode"), it.get("sku"), it.get("product_id")]
+            p = next((idx[str(k).strip().lower()] for k in keys if k and str(k).strip().lower() in idx), None)
+            line_rev = float(it.get("total") or (float(it.get("unit_price") or 0) * int(it.get("quantity") or 1)))
+            qty = int(it.get("quantity") or 1)
+            if not p:
+                uk = str(it.get("barcode") or it.get("sku") or it.get("product_name")).strip().lower()
+                u = unmatched.setdefault(uk, {"key": uk, "product_name": it.get("product_name"), "barcode": it.get("barcode"), "sku": it.get("sku"), "channels": set(), "qty": 0, "revenue": 0.0})
+                u["qty"] += qty; u["revenue"] += line_rev; u["channels"].add(o.get("channel"))
+                continue
+            st = stats.setdefault(p["_id"], {"product_id": p["_id"], "product_name": p.get("name"), "sku": p.get("sku"), "barcode": p.get("barcode"), "purchase_price": float(p.get("purchase_price") or 0), "sale_price": float(p.get("sale_price") or 0), "qty": 0, "revenue": 0.0, "commission": 0.0, "fees": 0.0, "cost": 0.0, "channels": {}})
+            comm = round(line_rev * float(fees.get("commission_rate") or 0) / 100 * (1 + float(fees.get("commission_vat_rate") or 0) / 100), 2)
+            fee_share = round((float(fees.get("service_fee") or 0) + float(fees.get("cargo_fee") or 0)) * line_rev / order_total, 2)
+            cost = float(p.get("purchase_price") or 0) * qty
+            st["qty"] += qty; st["revenue"] += line_rev; st["commission"] += comm; st["fees"] += fee_share; st["cost"] += cost
+            ch = st["channels"].setdefault(o.get("channel"), {"channel": o.get("channel"), "qty": 0, "revenue": 0.0, "net": 0.0})
+            ch["qty"] += qty; ch["revenue"] += line_rev; ch["net"] += line_rev - (line_rev - line_rev / 1.2) - comm - fee_share - cost
+    rows = []
+    for st in stats.values():
+        vat = st["revenue"] - st["revenue"] / 1.2
+        net = round(st["revenue"] - vat - st["commission"] - st["fees"] - st["cost"], 2)
+        rows.append({**st, "revenue": round(st["revenue"], 2), "commission": round(st["commission"], 2), "fees": round(st["fees"], 2), "cost": round(st["cost"], 2), "sale_vat": round(vat, 2), "net_profit": net,
+                     "margin_pct": round(net / st["revenue"] * 100, 1) if st["revenue"] else 0.0, "avg_price": round(st["revenue"] / st["qty"], 2) if st["qty"] else 0.0, "unit_profit": round(net / st["qty"], 2) if st["qty"] else 0.0,
+                     "channels": [{**c, "revenue": round(c["revenue"], 2), "net": round(c["net"], 2)} for c in st["channels"].values()]})
+    rows.sort(key=lambda r: -r["net_profit"])
+    return {"days": days, "rows": rows, "unmatched": [{**u, "channels": sorted(c for c in u["channels"] if c), "revenue": round(u["revenue"], 2)} for u in unmatched.values()],
+            "products": [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku")} for p in products]}
+
+@api_router.get("/marketplace/products")
+async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01", channel: str = "trendyol", refresh: bool = False):
+    """Pazaryeri ürün listesi (canlı API varsa çekilir, önbelleğe yazılır) + stok kartı eşleşmesi ve fiyat karşılaştırması."""
+    cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+    cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel})
+    live = bool(cfg and channel == "trendyol" and marketplace_providers.has_live_credentials(cfg))
+    items = (cache or {}).get("items") or []
+    fetched_at = (cache or {}).get("fetched_at")
+    if live and (refresh or not cache):
+        client = marketplace_providers.TrendyolClient(cfg)
+        try:
+            raw = await client.products()
+        finally:
+            await client.close()
+        items = [{"barcode": str(p.get("barcode") or ""), "title": p.get("title"), "stock_code": p.get("stockCode"), "product_main_id": p.get("productMainId"), "sale_price": float(p.get("salePrice") or 0), "list_price": float(p.get("listPrice") or 0),
+                  "quantity": int(p.get("quantity") or 0), "approved": bool(p.get("approved")), "on_sale": bool(p.get("onSale", True)), "brand": p.get("brand"), "category": p.get("categoryName"), "image": ((p.get("images") or [{}])[0] or {}).get("url"), "vat_rate": p.get("vatRate")} for p in raw]
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        await db.marketplace_product_cache.update_one({"company_id": company_id, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel}}, upsert=True)
+    products = await db.products.find({"company_id": company_id}).to_list(5000)
+    idx: Dict[str, dict] = {}
+    for p in products:
+        for key in [p.get("barcode"), p.get("sku"), *(p.get("marketplace_aliases") or [])] + [v.get("barcode") for v in (p.get("variants") or []) if v.get("barcode")]:
+            if key:
+                idx[str(key).strip().lower()] = p
+    rows = []
+    for it in items:
+        p = idx.get(it["barcode"].lower()) or (idx.get(str(it.get("stock_code") or "").lower()) if it.get("stock_code") else None)
+        local_price = float(p.get("sale_price") or 0) if p else None
+        local_stock = float(p.get("stock_quantity") or 0) if p else None
+        rows.append({**it, "product_id": p["_id"] if p else None, "product_name": p.get("name") if p else None, "product_sku": p.get("sku") if p else None, "local_price": local_price, "local_stock": local_stock, "purchase_price": float(p.get("purchase_price") or 0) if p else None,
+                     "price_diff": round(it["sale_price"] - local_price, 2) if p and local_price else None, "stock_diff": round(it["quantity"] - local_stock, 2) if p else None})
+    return {"channel": channel, "live": live, "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
+            "products": [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "sale_price": p.get("sale_price"), "stock_quantity": p.get("stock_quantity")} for p in products]}
+
+@api_router.post("/marketplace/products/push")
+async def marketplace_push_price_stock(req: Dict[str, Any]):
+    """Seçili ürünlerin fiyat / stok bilgisini pazaryerine gönder. items: [{barcode, sale_price?, list_price?, quantity?}] veya from_stock=true → eşleşen stok kartından."""
+    company_id = req.get("company_id", "comp_nexus_main_01"); channel = req.get("channel", "trendyol")
+    cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+    if not cfg or channel != "trendyol" or not marketplace_providers.has_live_credentials(cfg):
+        raise HTTPException(status_code=400, detail="Bu kanal için canlı API bağlantısı yok; E-Ticaret Entegrasyon ekranından API bilgilerini girin.")
+    items = []
+    for it in req.get("items") or []:
+        row: Dict[str, Any] = {"barcode": str(it.get("barcode") or "").strip()}
+        if not row["barcode"]:
+            continue
+        if req.get("from_stock"):
+            p = await db.products.find_one({"company_id": company_id, "$or": [{"barcode": row["barcode"]}, {"marketplace_aliases": row["barcode"]}, {"variants.barcode": row["barcode"]}]})
+            if not p:
+                continue
+            row["salePrice"] = float(p.get("sale_price") or 0); row["listPrice"] = float(p.get("sale_price") or 0); row["quantity"] = int(max(0, float(p.get("stock_quantity") or 0)))
+        else:
+            if it.get("sale_price") not in (None, ""):
+                row["salePrice"] = float(it["sale_price"]); row["listPrice"] = float(it.get("list_price") or it["sale_price"])
+            if it.get("quantity") not in (None, ""):
+                row["quantity"] = int(it["quantity"])
+        if len(row) > 1:
+            items.append(row)
+    if not items:
+        raise HTTPException(status_code=400, detail="Gönderilecek fiyat/stok verisi yok.")
+    client = marketplace_providers.TrendyolClient(cfg)
+    try:
+        res = await client.update_price_inventory(items)
+    finally:
+        await client.close()
+    # önbelleği güncelle
+    cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel})
+    if cache:
+        by_bc = {i["barcode"]: i for i in items}
+        for c in cache.get("items") or []:
+            u = by_bc.get(c["barcode"])
+            if u:
+                c.update({k2: u[k1] for k1, k2 in (("salePrice", "sale_price"), ("listPrice", "list_price"), ("quantity", "quantity")) if k1 in u})
+        await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
+    await db.marketplace_push_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel, "items": items, "batch_request_id": (res or {}).get("batchRequestId"), "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"status": "success", "sent": len(items), "batch_request_id": (res or {}).get("batchRequestId"), "message": f"{len(items)} ürünün fiyat/stok bilgisi Trendyol'a gönderildi (toplu işlem no: {(res or {}).get('batchRequestId') or '-'}). Yansıması birkaç dakika sürebilir."}
+
+@api_router.post("/marketplace/product-create")
+async def create_product_from_marketplace(req: Dict[str, Any]):
+    """Eşleşmeyen pazaryeri ürününden stok kartı oluştur (barkod/SKU otomatik eşlenir)."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    name = (req.get("product_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Ürün adı gerekli.")
+    barcode = (req.get("barcode") or "").strip()
+    sku = (req.get("sku") or "").strip() or (barcode or f"MP-{uuid.uuid4().hex[:6].upper()}")
+    if barcode and await db.products.find_one({"company_id": company_id, "$or": [{"barcode": barcode}, {"variants.barcode": barcode}]}):
+        raise HTTPException(status_code=400, detail="Bu barkodla bir stok kartı zaten var; 'Eşleştir' ile bağlayın.")
+    if await db.products.find_one({"company_id": company_id, "sku": sku}):
+        sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
+    aliases = [a for a in {barcode, (req.get("sku") or "").strip(), name.lower()} if a]
+    p = Product(company_id=company_id, name=name, sku=sku, barcode=barcode or f"868{str(uuid.uuid4().int)[:10]}", category=req.get("category") or "Pazaryeri", sale_price=float(req.get("sale_price") or 0),
+                purchase_price=float(req.get("purchase_price") or 0), stock_quantity=float(req.get("stock_quantity") or 0), vat_rate=int(req.get("vat_rate") or 20))
+    doc = p.to_mongo()
+    doc["marketplace_aliases"] = aliases
+    doc["source"] = f"marketplace:{req.get('channel') or ''}"
+    await db.products.insert_one(doc)
+    await _remember_category(company_id, doc["category"])
+    return {"status": "success", "product": clean_doc(doc), "message": f"'{name}' stok kartı oluşturuldu ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."}
+
+@api_router.post("/marketplace/product-match")
+async def match_marketplace_product(req: Dict[str, Any]):
+    alias = str(req.get("alias") or "").strip()
+    p = await db.products.find_one({"_id": req.get("product_id")})
+    if not p or not alias:
+        raise HTTPException(status_code=400, detail="Ürün ve pazaryeri barkod/SKU gerekli.")
+    await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
+    return {"status": "success", "message": f"'{alias}' → {p.get('name')} eşleştirildi. Kârlılık ve stok düşümü bu ürün üzerinden hesaplanır."}
+
+@api_router.get("/marketplace/claims")
+async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
+    q: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        q["status"] = status
+    return clean_docs(await db.marketplace_claims.find(q).sort("claim_date", -1).to_list(500))
+
+@api_router.post("/marketplace/claims/{claim_id}/approve")
+async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
+    c = await db.marketplace_claims.find_one({"_id": claim_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="İade talebi bulunamadı.")
+    cfg = await db.integration_configs.find_one({"company_id": c["company_id"], "channel": c["channel"]})
+    line_ids = (req or {}).get("claim_item_ids") or [i["claim_item_id"] for i in c.get("items", []) if i.get("claim_item_id")]
+    if c["channel"] == "trendyol" and cfg and marketplace_providers.has_live_credentials(cfg) and c.get("external_id"):
+        client = marketplace_providers.TrendyolClient(cfg)
+        try:
+            await client.approve_claim(c["external_id"], line_ids)
+        finally:
+            await client.close()
+    await db.marketplace_claims.update_one({"_id": claim_id}, {"$set": {"status": "Accepted", "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": (req or {}).get("note", "")}})
+    if (req or {}).get("restock"):
+        for it in c.get("items", []):
+            if it.get("barcode"):
+                await db.products.update_one({"company_id": c["company_id"], "barcode": it["barcode"]}, {"$inc": {"stock_quantity": 1}})
+    return clean_doc(await db.marketplace_claims.find_one({"_id": claim_id}))
+
+@api_router.get("/marketplace/questions")
+async def list_marketplace_questions(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
+    q: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        q["status"] = status
+    return clean_docs(await db.marketplace_questions.find(q).sort("asked_at", -1).to_list(500))
+
+@api_router.post("/marketplace/questions/{question_id}/answer")
+async def answer_marketplace_question(question_id: str, req: Dict[str, Any]):
+    text = (req.get("text") or "").strip()
+    if len(text) < 10 or len(text) > 2000:
+        raise HTTPException(status_code=400, detail="Cevap 10–2000 karakter olmalı.")
+    qd = await db.marketplace_questions.find_one({"_id": question_id})
+    if not qd:
+        raise HTTPException(status_code=404, detail="Soru bulunamadı.")
+    if qd.get("status") != "WAITING_FOR_ANSWER":
+        raise HTTPException(status_code=400, detail="Yalnızca cevap bekleyen sorular yanıtlanabilir.")
+    cfg = await db.integration_configs.find_one({"company_id": qd["company_id"], "channel": qd["channel"]})
+    sent_live = False
+    if qd["channel"] == "trendyol" and cfg and marketplace_providers.has_live_credentials(cfg) and qd.get("external_id"):
+        client = marketplace_providers.TrendyolClient(cfg)
+        try:
+            await client.answer(qd["external_id"], text)
+            sent_live = True
+        finally:
+            await client.close()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.marketplace_questions.update_one({"_id": question_id}, {"$set": {"status": "ANSWERED", "answer": text, "answered_at": now, "answered_live": sent_live}})
+    return {**clean_doc(await db.marketplace_questions.find_one({"_id": question_id})), "message": "Cevap Trendyol'a gönderildi." if sent_live else "Cevap kaydedildi (canlı API bağlı değil)."}
+
+@api_router.post("/orders/bulk-delete")
+async def bulk_delete_orders(req: Dict[str, Any]):
+    ids = req.get("ids") or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="Silinecek sipariş seçilmedi.")
+    deleted = 0
+    for oid in ids:
+        try:
+            await delete_order(oid)
+            deleted += 1
+        except HTTPException:
+            continue
+    return {"status": "success", "deleted": deleted, "message": f"{deleted} sipariş silindi."}
+
+@api_router.post("/orders/mark-labels-printed")
+async def mark_labels_printed(req: Dict[str, Any]):
+    ids = req.get("ids") or []
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"label_printed_at": now}})
+    return {"status": "success", "count": len(ids)}
 
 # ----------------- KARGO ENTEGRASYONLARI -----------------
 CARGO_CATALOG = [
@@ -3689,6 +4124,7 @@ async def create_order(order: Order):
 
     doc = order.to_mongo()
     await db.orders.insert_one(doc)
+    await _ensure_order_contact(doc)
     return clean_doc(doc)
 
 @api_router.put("/orders/{order_id}/status")
@@ -3706,11 +4142,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
 
     if order.get("is_invoiced") or order.get("invoice_id"):
         return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
-    _oc = None
-    if order.get("contact_id"):
-        _oc = await db.contacts.find_one({"_id": order["contact_id"]})
-    if not _oc and order.get("customer_name"):
-        _oc = await db.contacts.find_one({"company_id": order.get("company_id"), "name": order["customer_name"]})
+    _oc = await _ensure_order_contact(order)
     if not _oc:
         _oc = {"_id": str(uuid.uuid4()), "company_id": order.get("company_id"), "type": "customer", "name": order.get("customer_name") or "Pazaryeri Müşterisi", "tax_number_or_id": "11111111111", "phone": order.get("customer_phone"), "email": order.get("customer_email"), "address": order.get("shipping_address"), "city": order.get("city"), "balance": 0.0, "is_e_invoice_user": False, "created_at": datetime.now(timezone.utc).isoformat()}
         await db.contacts.insert_one(_oc)
@@ -3766,11 +4198,12 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         {"_id": order_id},
         {"$set": {"is_invoiced": True, "invoice_id": inv_id}}
     )
+    settlement = await _post_marketplace_settlement(order, new_invoice, _oc)
 
     return {
         "status": "success",
-        "message": f"Sipariş başarıyla faturalandırıldı. Fatura No: {invoice_number}",
-        "invoice_id": inv_id
+        "message": f"Sipariş başarıyla faturalandırıldı. Fatura No: {invoice_number}" + (f" · {settlement['net']:,.2f} ₺ net hakediş {settlement['account_name']} hesabına işlendi." if settlement else ""),
+        "invoice_id": inv_id, "settlement": settlement
     }
 
 # ----------------- DEPO & TRANSFERLER -----------------
@@ -3870,10 +4303,10 @@ async def delete_recipe(recipe_id: str):
     r = await db.recipes.find_one({"_id": recipe_id})
     if not r:
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
-    await db.recipes.delete_one({"_id": recipe_id})
+    await trash.soft_delete("recipes", r, "recipe", r.get("name") or r.get("finished_product_name") or recipe_id)
     if not await db.recipes.count_documents({"finished_product_id": r.get("finished_product_id")}):
         await db.products.update_one({"_id": r.get("finished_product_id")}, {"$set": {"has_recipe": False}})
-    return {"status": "success"}
+    return {"status": "success", "message": "Reçete çöp kutusuna taşındı."}
 
 @api_router.get("/production/requirements")
 async def production_requirements(recipe_id: str, quantity: float = 1):
@@ -4048,9 +4481,9 @@ async def delete_production_order(order_id: str):
         raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
     if o.get("status") == "completed" or float(o.get("completed_quantity", 0) or 0) > 0:
         raise HTTPException(status_code=400, detail="Üretimi yapılmış (stok işlenmiş) emir silinemez; iptal edin.")
-    await db.work_orders.delete_many({"order_id": order_id})
-    await db.production_orders.delete_one({"_id": order_id})
-    return {"status": "success", "message": "Üretim emri ve iş emirleri silindi."}
+    wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
+    await trash.soft_delete("production_orders", o, "production_order", f"{o.get('order_number') or order_id} · {o.get('product_name') or ''}", related=[{"collection": "work_orders", "docs": wos}], note=f"{len(wos)} iş emri")
+    return {"status": "success", "message": "Üretim emri ve iş emirleri çöp kutusuna taşındı."}
 
 @api_router.post("/production/orders/{order_id}/start")
 async def start_production_order(order_id: str):
@@ -4320,6 +4753,71 @@ class AIChatRequest(BaseModel):
     message: str
     company_id: Optional[str] = "comp_nexus_main_01"
 
+async def _file_to_text(file: UploadFile, data: bytes) -> str:
+    """PDF / Excel / CSV / metin → düz metin (AI ayrıştırma için)."""
+    name = (file.filename or "").lower()
+    if name.endswith(".pdf") or file.content_type == "application/pdf":
+        from pypdf import PdfReader
+        import io
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            return "\n".join((p.extract_text() or "") for p in reader.pages[:15])
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
+    if name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+        header, body = migration._read_table(file.filename, data)
+        lines = [" | ".join(header)] + [" | ".join("" if c is None else str(c) for c in r) for r in body[:400]]
+        return "\n".join(lines)
+    return data.decode("utf-8", "ignore")
+
+@api_router.post("/ai/order-extract")
+async def ai_order_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    text = await _file_to_text(file, data)
+    if len(text.strip()) < 20:
+        raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
+    try:
+        parsed = await ai_service_extract_orders(text)
+    except Exception as e:
+        logger.error(f"AI order extract failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+    products = await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "barcode": 1, "sale_price": 1}).to_list(5000)
+    pidx = {str(k).lower(): p for p in products for k in (p.get("sku"), p.get("barcode")) if k}
+    for o in parsed["orders"]:
+        c = None
+        if o.get("customer_name"):
+            c = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(o['customer_name'][:40])}", "$options": "i"}})
+        o["contact_id"] = c["_id"] if c else None
+        o["contact_match"] = c.get("name") if c else None
+        for it in o["items"]:
+            p = pidx.get(str(it.get("barcode") or "").lower()) or pidx.get(str(it.get("sku") or "").lower()) or next((x for x in products if it.get("product_name") and x.get("name", "").lower() == it["product_name"].lower()), None)
+            it["product_id"] = p["_id"] if p else None
+            it["product_match"] = p.get("name") if p else None
+    return {"filename": file.filename, "orders": parsed["orders"], "count": len(parsed["orders"])}
+
+@api_router.post("/ai/order-extract/confirm")
+async def ai_order_confirm(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    created = []
+    for o in req.get("orders") or []:
+        items = [OrderItem(product_id=it.get("product_id") or "", product_name=it.get("product_name") or "Kalem", sku=it.get("sku") or "", quantity=int(it.get("quantity") or 1), unit_price=float(it.get("unit_price") or 0), total=round(float(it.get("total") or float(it.get("unit_price") or 0) * int(it.get("quantity") or 1)), 2)) for it in o.get("items") or []]
+        if not items or not o.get("customer_name"):
+            continue
+        channel = (o.get("channel") or "manual").lower()
+        num = (o.get("order_number") or "").strip()
+        if not num or await db.orders.find_one({"company_id": company_id, "order_number": num}):
+            num = await _next_order_number(company_id, "ORD")
+        order = Order(company_id=company_id, order_number=num, channel=channel, customer_name=o["customer_name"], customer_email=o.get("customer_email"), customer_phone=o.get("customer_phone"),
+                      shipping_address=o.get("shipping_address") or "-", city=o.get("city") or "-", items=items, total_amount=round(sum(i.total for i in items), 2), order_status="pending")
+        doc = order.to_mongo()
+        doc.update({"notes": o.get("notes") or "", "source": "ai_import", "order_date": (o.get("order_date") + "T00:00:00+00:00") if o.get("order_date") else doc.get("order_date"), "contact_id": o.get("contact_id")})
+        await db.orders.insert_one(doc)
+        await _ensure_order_contact(doc)
+        created.append(clean_doc(doc))
+    return {"status": "success", "created": len(created), "orders": created, "message": f"{len(created)} sipariş oluşturuldu."}
+
 @api_router.post("/ai/invoice-extract")
 async def ai_invoice_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
     if file.content_type not in ("application/pdf", "text/plain"):
@@ -4461,11 +4959,46 @@ rbac.init(db, _mail_account, get_current_user)
 expenses.init(db)
 finance.init(db)
 attendance.init(db, get_current_user)
+trash.init(db)
+migration.init(db)
+
+async def _restore_bank_tx(doc, _related):
+    await _reverse_tx_effects(doc, +1)
+
+async def _restore_partner_tx(doc, _related):
+    amount = float(doc.get("amount") or 0)
+    inc = {"capital_in": {"balance": amount, "total_capital_in": amount}, "withdrawal": {"balance": -amount, "total_withdrawn": amount},
+           "profit_share": {"total_profit_share": amount, **({"balance": -amount} if doc.get("is_paid") else {})}}.get(doc.get("type"), {})
+    if inc:
+        await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": inc})
+    if doc.get("account_id") and (doc.get("type") != "profit_share" or doc.get("is_paid")):
+        await _post_partner_cash_movement(doc["company_id"], doc["account_id"], doc["type"], amount, doc.get("partner_name", ""), doc.get("description", ""), doc.get("date"), partner_tx_id=doc["_id"])
+
+async def _restore_leave(doc, _related):
+    if doc.get("status") == "approved" and doc.get("type") == "annual":
+        await db.employees.update_one({"_id": doc["employee_id"]}, {"$inc": {"used_leave_days": float(doc.get("days") or 0)}})
+
+async def _restore_bonus(doc, _related):
+    if doc.get("account_id") and doc.get("status") == "paid":
+        await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -float(doc.get("amount") or 0)}})
+
+async def _restore_expense(doc, _related):
+    if doc.get("payment_status") == "paid" and doc.get("account_id") and not doc.get("netted_in_settlement"):
+        await expenses._post_payment(doc, doc["account_id"], doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+
+async def _restore_recipe(doc, _related):
+    await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})
+
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe)):
+    trash.register_hook(_t, _fn)
+
 app.include_router(api_router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
 app.include_router(finance.router)
 app.include_router(attendance.router)
+app.include_router(trash.router)
+app.include_router(migration.router)
 
 @app.get("/")
 async def root():

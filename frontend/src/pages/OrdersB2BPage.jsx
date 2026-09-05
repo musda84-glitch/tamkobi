@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import {
@@ -22,14 +23,21 @@ import {
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon } from "lucide-react";
+import { printThermalLabels } from "../utils/thermalLabels";
+import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
+import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
-import { channelTr } from "../utils/labels";
+import { channelTr, statusTr } from "../utils/labels";
+import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
+import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
 import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
+  const navigate = useNavigate();
+  const goContact = (ord) => navigate(ord.contact_id ? `/contacts?contact_id=${ord.contact_id}` : `/contacts?search=${encodeURIComponent(ord.customer_name || "")}`);
   const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
   const [orders, setOrders] = useState([]);
   const [notifyOrder, setNotifyOrder] = useState(null);
@@ -45,6 +53,14 @@ export default function OrdersB2BPage() {
     const list = orders.filter((o) => selected.includes(o.id));
     if (!list.length) { toast.error("Sipariş seçin."); return; }
     if (action === "labels") { setBulkLabels(list); return; }
+    if (action === "thermal") { if (printThermalLabels(list, activeCompany)) { axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => o.id) }).catch(() => {}); toast.success(`${list.length} termal etiket yazdırmaya gönderildi.`); } return; }
+    if (action === "delete") {
+      const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
+      if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
+      if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
+      try { const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => o.id) }); toast.success(r.data.message); setSelected([]); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+      return;
+    }
     let ok = 0, fail = 0;
     for (const o of list) {
       try {
@@ -58,6 +74,14 @@ export default function OrdersB2BPage() {
     setSelected([]); loadData();
   };
   const [returnReason, setReturnReason] = useState("");
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [newOrder, setNewOrder] = useState(false);
+  const [aiImport, setAiImport] = useState(false);
+  const autoContacts = async () => {
+    setAutoBusy(true);
+    try { const r = await axios.post(`${API_URL}/orders/auto-contacts`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" }); toast.success(r.data.message); loadData(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Cariler eşlenemedi."); } finally { setAutoBusy(false); }
+  };
   const approve = (ord) => setApproveOrder(ord);
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
@@ -68,6 +92,7 @@ export default function OrdersB2BPage() {
   const visibleOrders = useMemo(() => applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF), [orders, customerFilter, ordF]);
   const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -86,6 +111,7 @@ export default function OrdersB2BPage() {
       setOrders(ordRes.data);
       setProducts(prodRes.data);
       setContacts(cntRes.data);
+      axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`).then((r) => setAllProducts(r.data)).catch(() => {});
       if (cntRes.data.length > 0) setB2bCustomer(cntRes.data[0].id || cntRes.data[0]._id);
     } catch (err) {
       toast.error("Sipariş verileri yüklenemedi.");
@@ -225,7 +251,9 @@ export default function OrdersB2BPage() {
           <span className="font-bold">{selected.length} sipariş seçildi</span>
           <button onClick={() => bulk("approve")} className="px-3 py-1.5 bg-emerald-600 rounded-lg font-semibold" data-testid="bulk-approve-btn">Toplu Onayla (entegrasyona yansır)</button>
           <button onClick={() => bulk("invoice")} className="px-3 py-1.5 bg-blue-600 rounded-lg font-semibold" data-testid="bulk-invoice-btn">Toplu Fatura Kes</button>
-          <button onClick={() => bulk("labels")} className="px-3 py-1.5 bg-amber-500 rounded-lg font-semibold" data-testid="bulk-labels-btn">Kargo Etiketlerini Yazdır</button>
+          <button onClick={() => bulk("thermal")} className="px-3 py-1.5 bg-amber-500 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-thermal-btn"><Printer className="w-3.5 h-3.5" /> Termal Etiket (100×150)</button>
+          <button onClick={() => bulk("labels")} className="px-3 py-1.5 border border-amber-400 text-amber-200 rounded-lg font-semibold" data-testid="bulk-labels-btn">A4 Etiket</button>
+          <button onClick={() => bulk("delete")} className="px-3 py-1.5 bg-rose-600 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-delete-btn"><Trash2 className="w-3.5 h-3.5" /> Sil</button>
           <button onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="bulk-clear-btn">Seçimi Kaldır</button>
         </div>
       )}
@@ -240,12 +268,20 @@ export default function OrdersB2BPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Sipariş Modülü & B2B Bayi Portalı</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Pazaryeri & B2B Sipariş Takibi, Kargo Barkodu ve Tek Tıkla Faturalama</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Sipariş Modülü</h1>
+          <p className="text-xs sm:text-sm text-slate-500">Pazaryeri & B2B siparişleri, iade/iptal/soru yönetimi, termal kargo etiketi ve tek tıkla faturalama</p>
+          {orders.some((o) => !o.contact_id) && (
+            <button onClick={autoContacts} disabled={autoBusy} className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="orders-auto-contacts-btn">
+              <UserPlus className="w-3.5 h-3.5" /> Carileri Eşle ({orders.filter((o) => !o.contact_id).length} carisiz sipariş)
+            </button>
+          )}
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button onClick={() => setNewOrder(true)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="new-order-btn"><Plus className="w-4 h-4" /> Yeni Sipariş</button>
+          <button onClick={() => setAiImport(true)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /> AI ile Yükle (PDF/Excel)</button>
         {/* Tab Switcher */}
-        <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl self-start sm:self-auto text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
           <button
             onClick={() => setActiveTab("orders")}
             className={`px-3 py-1.5 rounded-lg transition ${
@@ -255,18 +291,19 @@ export default function OrdersB2BPage() {
           >
             Gelen Siparişler ({orders.length})
           </button>
-          <button
-            onClick={() => setActiveTab("b2b_portal")}
-            className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
-              activeTab === "b2b_portal" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
-            }`}
-            data-testid="tab-b2b-portal"
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>B2B Bayi Kataloğu {cartItemsCount > 0 && `(${cartItemsCount})`}</span>
-          </button>
+          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${orders.filter((o) => ["cancelled", "returned"].includes(o.order_status)).length})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
+            <button key={k} onClick={() => setActiveTab(k)} className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${activeTab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`} data-testid={`tab-${k}`}><Icon className="w-3.5 h-3.5" /><span>{l}</span></button>
+          ))}
+        </div>
         </div>
       </div>
+      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "cancelled" && <CancelledPanel orders={orders} />}
+      {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
+      {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
 
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} />
@@ -295,8 +332,8 @@ export default function OrdersB2BPage() {
                         {channelTr(ord.channel)}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-slate-900">{ord.customer_name}</div>
+                    <td className="px-4 py-3 cursor-pointer group" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>
+                      <div className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline decoration-dotted">{ord.customer_name}</div>
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3">
@@ -310,6 +347,12 @@ export default function OrdersB2BPage() {
                       {ord.total_amount?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
                     </td>
                     <td className="px-4 py-3">
+                      {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
+                        <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
+                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold ${["shipped", "completed"].includes(ord.order_status) ? "bg-emerald-50 text-emerald-700" : ["cancelled", "returned", "partially_returned"].includes(ord.order_status) ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(ord.order_status)}</span>
+                          {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {ord.marketplace_status}</div>}
+                        </div>
+                      ) : (
                       <select
                         value={ord.order_status}
                         onChange={(e) => handleUpdateOrderStatus(ord.id || ord._id, e.target.value)}
@@ -323,10 +366,11 @@ export default function OrdersB2BPage() {
                         <option value="completed">Tamamlandı</option>
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
-                      </select>
+                      </select>)}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1.5">
+                        {!ord.is_invoiced && !ord.invoice_id && <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button>}
                         {!ord.is_invoiced ? (
                           <div className="relative inline-block">
                           {invChooser === ord.id && (
@@ -363,9 +407,9 @@ export default function OrdersB2BPage() {
                             <span>Kargola</span>
                           </button>
                         ) : (
-                          <span className="text-[10px] font-mono font-semibold text-slate-600">
-                            {ord.cargo_tracking_number}
-                          </span>
+                          <button onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).catch(() => {}); }} className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold text-slate-700 hover:text-indigo-700 hover:bg-indigo-50 border border-dashed border-slate-300 rounded-lg px-2 py-1" title="Termal kargo etiketi yazdır (100×150)" data-testid={`print-label-${ord.order_number}`}>
+                            <Printer className="w-3 h-3" /> {ord.cargo_tracking_number}{ord.label_printed_at ? " ✓" : ""}
+                          </button>
                         )}
                         {["pending", "new"].includes(ord.order_status) && <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button>}
                         <button onClick={() => makeDispatch(ord)} className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition" title={ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır"} data-testid={`dispatch-btn-${ord.order_number}`}><FileIcon className="w-4 h-4" /></button>
@@ -388,103 +432,7 @@ export default function OrdersB2BPage() {
             </table>
           </div>
         </div>
-      </>) : (
-        /* B2B WHOLESALE PORTAL VIEW */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" data-testid="b2b-portal-view">
-          {/* Products Catalog */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900">B2B Toptan Bayi Ürün Kataloğu</h2>
-              <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-semibold">
-                Bayi Özel İskontosu (%15 İndirimli Fiyatlar)
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {products.map((p) => {
-                const b2bPrice = p.sale_price * 0.85;
-                return (
-                  <div key={p.id || p._id} className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm flex flex-col justify-between space-y-3">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-400">{p.category}</span>
-                      <h3 className="font-bold text-sm text-slate-900 mt-0.5">{p.name}</h3>
-                      <div className="text-[11px] font-mono text-slate-500">SKU: {p.sku} • Stok: {p.stock_quantity} {p.unit}</div>
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] text-slate-400 line-through">{p.sale_price?.toLocaleString('tr-TR')} ₺</div>
-                        <div className="text-base font-bold text-indigo-700">{b2bPrice?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
-                      </div>
-                      <button
-                        onClick={() => handleAddToCart(p, 5)}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm flex items-center gap-1"
-                        data-testid={`b2b-add-btn-${p.sku}`}
-                      >
-                        <Plus className="w-3.5 h-3.5" /> +5 Koli Ekle
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* B2B Cart & Checkout */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4 h-fit">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <ShoppingCart className="w-5 h-5 text-indigo-600" />
-              <span>B2B Sipariş Sepeti</span>
-            </h3>
-
-            <div className="space-y-2 text-xs">
-              <label className="block font-semibold text-slate-700">Sipariş Veren Bayi</label>
-              <select
-                value={b2bCustomer}
-                onChange={(e) => setB2bCustomer(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-              >
-                {contacts.map(c => (
-                  <option key={c.id || c._id} value={c.id || c._id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="divide-y divide-slate-100 text-xs max-h-56 overflow-y-auto">
-              {Object.keys(cart).length === 0 ? (
-                <p className="py-6 text-center text-slate-400">Sepetinizde ürün bulunmuyor.</p>
-              ) : (
-                Object.keys(cart).map(prodId => {
-                  const p = products.find(prod => (prod.id === prodId || prod._id === prodId));
-                  const qty = cart[prodId];
-                  if (!p || qty <= 0) return null;
-                  const price = p.sale_price * 0.85;
-                  return (
-                    <div key={prodId} className="py-2 flex items-center justify-between">
-                      <div>
-                        <div className="font-semibold text-slate-900">{p.name}</div>
-                        <div className="text-slate-400 text-[11px]">{qty} Adet x {price.toLocaleString('tr-TR')} ₺</div>
-                      </div>
-                      <div className="font-bold text-slate-900">
-                        {(qty * price).toLocaleString('tr-TR')} ₺
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <button
-              onClick={handlePlaceB2BOrder}
-              disabled={cartItemsCount === 0}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 transition"
-              data-testid="b2b-submit-order-btn"
-            >
-              Toptan Siparişi Tamamla
-            </button>
-          </div>
-        </div>
-      )}
+      </>) : null}
     </div>
   );
 }
