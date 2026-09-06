@@ -10,7 +10,7 @@ export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => 
     <div className="space-y-5 text-xs" data-testid="saas-overview">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Müşteri Şirket" value={data.companies} sub={`${data.by_status.active || 0} aktif · ${data.by_status.trial || 0} deneme`} testId="stat-companies" />
-        <StatCard label="Toplam Kullanıcı" value={data.users} testId="stat-users" />
+        <StatCard label="Müşteri Kullanıcı" value={data.users} sub={`${data.platform_admins || 0} panel yöneticisi hariç`} testId="stat-users" />
         <StatCard label="Aylık Gelir (MRR)" value={fmtTL(data.mrr)} sub="aktif lisanslar, KDV hariç" accent="text-emerald-700" testId="stat-mrr" />
         <StatCard label="Bekleyen Talep" value={data.pending_requests} sub={data.pending_requests ? "onay bekliyor" : "talep yok"} accent={data.pending_requests ? "text-amber-600" : "text-slate-900"} testId="stat-requests" />
       </div>

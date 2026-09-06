@@ -168,7 +168,7 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
     await ensure_roles(company_id)
     roles = [_clean(r) for r in await _db.roles.find({"company_id": company_id}).to_list(100)]
     counts = {}
-    async for u in _db.users.find({"company_ids": company_id}, {"role": 1}):
+    async for u in _db.users.find({"company_ids": company_id, "is_super_admin": {"$ne": True}}, {"role": 1}):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
     return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
 
@@ -217,7 +217,7 @@ async def delete_role(role_id: str):
         raise HTTPException(status_code=404, detail="Rol bulunamadı.")
     if r.get("is_system"):
         raise HTTPException(status_code=400, detail="Sistem rolleri silinemez.")
-    if await _db.users.count_documents({"role": r["code"], "company_ids": r["company_id"]}):
+    if await _db.users.count_documents({"role": r["code"], "company_ids": r["company_id"], "is_super_admin": {"$ne": True}}):
         raise HTTPException(status_code=400, detail="Bu role sahip kullanıcılar var; önce rollerini değiştirin.")
     await _db.roles.delete_one({"_id": role_id})
     return {"status": "success"}
@@ -228,7 +228,7 @@ async def delete_role(role_id: str):
 async def list_users(company_id: str = "comp_nexus_main_01"):
     await ensure_roles(company_id)
     names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
-    users = [_clean(u) for u in await _db.users.find({"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}).sort("name", 1).to_list(500)]
+    users = [_clean(u) for u in await _db.users.find({"$and": [{"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}, {"is_super_admin": {"$ne": True}}]}).sort("name", 1).to_list(500)]
     invites = [_clean(i) for i in await _db.user_invites.find({"company_id": company_id, "accepted_at": None}).sort("created_at", -1).to_list(100)]
     return {"users": [{**u, "role_name": names.get(u.get("role"), u.get("role")), "is_active": u.get("is_active", True)} for u in users], "invites": invites}
 
@@ -238,6 +238,8 @@ async def update_user(user_id: str, req: Dict[str, Any]):
     u = await _db.users.find_one({"_id": user_id})
     if not u:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if u.get("is_super_admin"):
+        raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden düzenlenemez.")
     upd = {k: req[k] for k in ("name", "role", "is_active", "phone", "employee_id") if k in req}
     if "role" in upd and u.get("email") == "admin@nexus.com" and upd["role"] != "admin":
         raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
@@ -254,8 +256,8 @@ async def delete_user(user_id: str):
     u = await _db.users.find_one({"_id": user_id})
     if not u:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-    if u.get("email") == "admin@nexus.com":
-        raise HTTPException(status_code=400, detail="Ana yönetici silinemez.")
+    if u.get("is_super_admin") or u.get("email") == "admin@nexus.com":
+        raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden silinemez.")
     await _db.users.delete_one({"_id": user_id})
     return {"status": "success"}
 

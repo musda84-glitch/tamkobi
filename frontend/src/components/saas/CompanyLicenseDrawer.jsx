@@ -65,8 +65,9 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">
-            <h3 className="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1.5"><Users className="w-4 h-4 text-slate-400" /> Kullanıcılar ({d.users.length}{lic.user_limit ? `/${lic.user_limit}` : ""})</h3>
-            <ul className="divide-y">{d.users.map((u) => <li key={u.id} className="py-1.5 flex items-center justify-between"><div><b className="text-slate-800">{u.name}</b> <span className="text-slate-500">{u.email}</span></div><div className="text-[10px] text-slate-500">{u.role} · {u.is_active ? "aktif" : "pasif"} · son giriş {fmtDate(u.last_login_at)}</div></li>)}</ul>
+            <h3 className="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1.5"><Users className="w-4 h-4 text-slate-400" /> Şirket kullanıcıları ({d.users.length}{lic.user_limit ? `/${lic.user_limit}` : ""})</h3>
+            <p className="text-[10px] text-slate-500 mb-2">Bu listedekiler müşteri şirketinin personelidir. Platform (panel) yöneticileri burada görünmez.</p>
+            <ul className="divide-y">{d.users.length === 0 ? <li className="py-2 text-slate-400">Şirket kullanıcısı yok.</li> : d.users.map((u) => <li key={u.id} className="py-1.5 flex items-center justify-between"><div><b className="text-slate-800">{u.name}</b> <span className="text-slate-500">{u.email}</span></div><div className="text-[10px] text-slate-500">{u.role} · {u.is_active ? "aktif" : "pasif"} · son giriş {fmtDate(u.last_login_at)}</div></li>)}</ul>
             {d.requests.length > 0 && (<><h3 className="font-bold text-slate-900 text-sm mt-4 mb-2">Paket Talepleri</h3><ul className="divide-y">{d.requests.map((r) => <li key={r.id} className="py-1.5 flex items-center justify-between"><span>{r.plan_name} · {r.message}</span><span className={`text-[10px] font-semibold ${r.status === "pending" ? "text-amber-700" : r.status === "approved" ? "text-emerald-700" : "text-slate-400"}`}>{r.status} · {fmtDate(r.created_at)}</span></li>)}</ul></>)}
           </section>
         </div>
