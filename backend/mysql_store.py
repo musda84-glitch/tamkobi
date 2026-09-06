@@ -540,8 +540,11 @@ class MySQLCollection:
                 if tuple(scalar_at(o, f) for f in spec) == key and all(v is not MISSING for v in key):
                     raise DuplicateKeyError(f"duplicate key {spec}={key} on {self.name}")
 
-    async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None):
+    async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None, sort=None, skip=0):
         docs = await self._load_filtered(query)
+        docs = sort_docs(docs, sort)
+        if skip:
+            docs = docs[skip:]
         if not docs:
             return None
         return project_doc(docs[0], projection)
