@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SmsCenter } from "../components/SmsCenter";
@@ -16,7 +16,7 @@ import { MorningSummarySettings } from "../components/PricingCenter";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["b2b", "B2B Portal", ShoppingCart], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -186,10 +186,12 @@ export const B2BSettings = ({ companyId }) => {
 export default function SettingsPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const tab = searchParams.get("tab") || "company";
   const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  useEffect(() => { if (tab === "b2b") navigate("/b2b-yonetim", { replace: true }); }, [tab, navigate]);
   useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [companyId]);
   return (
     <div className="space-y-6" data-testid="settings-page">
@@ -218,7 +220,6 @@ export default function SettingsPage() {
           )}
           {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
           {tab === "units" && <UnitsCategories companyId={companyId} />}
-          {tab === "b2b" && <B2BSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
