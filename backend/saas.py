@@ -75,15 +75,16 @@ async def seed():
             await _db.users.insert_one({"_id": f"usr_{uuid.uuid4().hex[:8]}", "email": email, "password_hash": hash_password(pwd), "name": name, "role": "admin", "is_super_admin": True, "company_ids": ["comp_nexus_main_01"], "active_company_id": "comp_nexus_main_01", "is_active": True, "preferences": {}, "created_at": _now()})
     await _db.login_attempts.delete_many({"identifier": {"$regex": f":{os.environ.get('SUPER_ADMIN_EMAIL', 'x@x').strip().lower()}$"}})
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
-    site = {"brand_name": "Takibi", "public_url": "https://takibi.com"}
+    site = {"brand_name": "TamKobi", "public_url": "https://tamkobi.com"}
     if not st:
         await _db.platform_settings.insert_one({"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "currency": "try", **site, "created_at": _now()})
     else:
         patch = {}
-        if not (st.get("public_url") or "").strip():
+        url = (st.get("public_url") or "").strip()
+        if not url or "takibi.com" in url.lower():
             patch["public_url"] = site["public_url"]
-        if (st.get("brand_name") or "") in ("", "NexusHesap"):
-            patch["brand_name"] = "Takibi"
+        if (st.get("brand_name") or "") in ("", "NexusHesap", "Takibi"):
+            patch["brand_name"] = "TamKobi"
         if patch:
             await _db.platform_settings.update_one({"_id": "platform"}, {"$set": patch})
 

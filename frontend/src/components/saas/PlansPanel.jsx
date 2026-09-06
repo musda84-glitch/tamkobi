@@ -13,14 +13,14 @@ export const PlansPanel = ({ plans, catalog, onChanged }) => {
   const publish = async (p, on) => {
     try {
       await axios.put(`${API_URL}/system/plans/${p.id}`, { is_public: on }, cred);
-      toast.success(on ? `${p.name} takibi.com vitrininde yayınlandı.` : `${p.name} siteden kaldırıldı.`);
+      toast.success(on ? `${p.name} tamkobi.com vitrininde yayınlandı.` : `${p.name} siteden kaldırıldı.`);
       onChanged();
     } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); }
   };
   return (
     <div className="space-y-3 text-xs" data-testid="saas-plans">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-slate-500">“Yayınla” açık paketler <b>takibi.com</b> vitrininde görünür; kapalı olanlar gizlenir.</p>
+        <p className="text-slate-500">“Yayınla” açık paketler <b>tamkobi.com</b> vitrininde görünür; kapalı olanlar gizlenir.</p>
         <div className="flex gap-2">
           <a href="/fiyatlar" target="_blank" rel="noreferrer" className="px-3 py-2 border border-slate-200 rounded-xl font-semibold flex items-center gap-1.5 hover:bg-white" data-testid="plans-preview-site"><ExternalLink className="w-3.5 h-3.5" /> Sitede gör</a>
           <button onClick={() => setEdit({})} className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center gap-1.5" data-testid="new-plan-btn"><Plus className="w-4 h-4" /> Yeni Paket</button>
@@ -67,7 +67,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
           {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}
           <div><label className="block font-semibold text-slate-700 mb-1">Renk</label><div className="flex gap-1.5">{Object.keys(PLAN_COLORS).map((c) => <button type="button" key={c} onClick={() => setF({ ...f, color: c })} className={`w-7 h-7 rounded-lg ${PLAN_COLORS[c]} ${f.color === c ? "ring-2 ring-offset-1 ring-slate-900" : ""}`} data-testid={`plan-color-${c}`} />)}</div></div>
           {num("sort", "Sıra")}
-          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>takibi.com’da yayınla</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>
+          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>tamkobi.com’da yayınla</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>
         </div>
         <div>
           <div className="font-bold text-slate-900 mb-2">Pakete Dahil Modüller ({f.modules.length})</div>
