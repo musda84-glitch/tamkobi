@@ -113,6 +113,50 @@ async def extract_orders_from_text(text: str) -> dict:
     return {"orders": orders}
 
 
+PRODUCT_SYSTEM = """Sen bir stok/ürün listesi ayrıştırıcısısın. Sana verilen metin (PDF katalog, fiyat listesi, Excel/CSV dökümü) içinden ÜRÜN/STOK KARTLARINI çıkar. Yalnızca geçerli JSON döndür:
+{"products":[{"name":"ürün adı","sku":"stok kodu veya null","barcode":"barkod/EAN veya null","category":"kategori veya null","unit":"Adet|Kg|Metre|Litre|Paket|Koli veya null","vat_rate":20,"purchase_price":0.0,"sale_price":0.0,"stock_quantity":0.0,"min_stock_alert":null,"type":"product|service|raw_material"}]}
+Kurallar: Her satır/kalem bir üründür. Sayılarda Türkçe biçim (1.234,56) olabilir → ondalık noktaya çevir. KDV yoksa 20. Birim yoksa Adet. Tür belirsizse product. Stok miktarı yoksa 0. Ürün adı yoksa satırı atla. Hiç ürün yoksa {"products":[]} döndür."""
+
+
+async def extract_products_from_text(text: str) -> dict:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
+    chat = LlmChat(api_key=api_key, session_id=f"prod-extract-{abs(hash(text[:200]))}", system_message=PRODUCT_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    raw = str(await chat.send_message(UserMessage(text=f"STOK / ÜRÜN BELGESİ:\n\n{text[:30000]}"))).strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("AI yanıtı JSON içermiyor.")
+    data = json.loads(raw[start:end + 1])
+    products = []
+    for p in data.get("products") or []:
+        name = str(p.get("name") or "").strip()
+        if not name:
+            continue
+        vat = p.get("vat_rate")
+        try:
+            vat = int(vat) if vat is not None else 20
+        except (TypeError, ValueError):
+            vat = 20
+        ptype = str(p.get("type") or "product").lower()
+        if ptype not in ("product", "service", "raw_material", "finished_good"):
+            ptype = "product"
+        products.append({
+            "name": name[:200],
+            "sku": (str(p["sku"]).strip() if p.get("sku") not in (None, "") else None),
+            "barcode": (str(p["barcode"]).strip() if p.get("barcode") not in (None, "") else None),
+            "category": (str(p["category"]).strip() if p.get("category") not in (None, "") else None),
+            "unit": p.get("unit") or "Adet",
+            "vat_rate": vat,
+            "purchase_price": float(p.get("purchase_price") or 0),
+            "sale_price": float(p.get("sale_price") or 0),
+            "stock_quantity": float(p.get("stock_quantity") or 0),
+            "min_stock_alert": float(p["min_stock_alert"]) if p.get("min_stock_alert") not in (None, "") else None,
+            "type": ptype,
+        })
+    return {"products": products}
+
+
 async def ai_map_columns(entity_label: str, fields: list, columns: list, sample_rows: list) -> dict:
     """Excel sütunlarını hedef alanlara eşle: {"mapping": {field: column|null}, "notes": "..."}"""
     api_key = os.environ.get("EMERGENT_LLM_KEY", "")

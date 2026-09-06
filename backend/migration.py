@@ -187,6 +187,31 @@ def suggest_mapping(entity: str, columns: List[str], source: str) -> Dict[str, O
     return mapping
 
 
+def products_from_table_bytes(filename: str, data: bytes) -> List[dict]:
+    """Excel/CSV stok listesini sütun eşlemesiyle ürün kayıtlarına çevirir (AI gerekmez)."""
+    header, body = _read_table(filename, data)
+    mapping = suggest_mapping("products", header, "other")
+    if not mapping.get("name"):
+        return []
+    fields = ENTITIES["products"]["fields"]
+    out: List[dict] = []
+    for r in body:
+        row = {header[i]: (r[i] if i < len(r) else None) for i in range(len(header))}
+        rec: Dict[str, Any] = {}
+        for f, (_label, _req, t, _a) in fields.items():
+            col = mapping.get(f)
+            raw = row.get(col) if col else None
+            if raw in (None, ""):
+                continue
+            try:
+                rec[f] = _cast(t, raw)
+            except ValueError:
+                continue
+        if rec.get("name"):
+            out.append(rec)
+    return out
+
+
 def _read_table(filename: str, data: bytes) -> tuple[List[str], List[List[Any]]]:
     name = (filename or "").lower()
     if name.endswith(".csv") or name.endswith(".txt"):

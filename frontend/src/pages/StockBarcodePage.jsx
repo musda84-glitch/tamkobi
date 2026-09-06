@@ -18,7 +18,8 @@ import {
   Tag,
   Images,
   Pencil,
-  ClipboardList
+  ClipboardList,
+  Sparkles,
 } from "lucide-react";
 import { StockCountPanel } from "../components/StockCountPanel";
 import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
@@ -28,6 +29,7 @@ import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
+import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { ScanButton } from "../components/CameraScanner";
 
@@ -48,6 +50,7 @@ export default function StockBarcodePage() {
 
   // Modals & Scanner state
   const [showAddModal, setShowAddModal] = useState(false);
+  const [aiStockImport, setAiStockImport] = useState(false);
   const [printBarcodeProduct, setPrintBarcodeProduct] = useState(null);
   const [showScannerModal, setShowScannerModal] = useState(searchParams.get("scan") === "true");
   const [scannedBarcode, setScannedBarcode] = useState("");
@@ -184,7 +187,7 @@ export default function StockBarcodePage() {
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Stoklar & Ürünler</h1>
           <p className="text-xs sm:text-sm text-slate-500">Ürünler, Varyantlar, Barkod Yazdırma ve Hızlı Terminal Modu</p>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <button
             onClick={() => setShowScannerModal(true)}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-indigo-600/20 transition"
@@ -200,6 +203,14 @@ export default function StockBarcodePage() {
           >
             <ClipboardList className="w-4 h-4" />
             <span>Stok Sayımı</span>
+          </button>
+          <button
+            onClick={() => setAiStockImport(true)}
+            className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-purple-600/20 transition"
+            data-testid="ai-stock-import-btn"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>AI ile Yükle (Excel/PDF)</span>
           </button>
           <button
             onClick={() => setShowAddModal(true)}
@@ -219,6 +230,7 @@ export default function StockBarcodePage() {
       </div>
       <datalist id="product-units-list">{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
+      {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
