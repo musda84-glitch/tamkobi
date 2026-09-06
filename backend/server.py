@@ -5,6 +5,7 @@ load_dotenv()
 import os
 import uuid
 import re
+import secrets
 import logging
 from datetime import datetime, timezone, timedelta, date
 from calendar import monthrange
@@ -967,12 +968,30 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
     return {**{k: v for k, v in upd.items() if k != "b2b_password_hash"}, "has_password": bool(upd.get("b2b_password_hash") or c.get("b2b_password_hash")), "link": f"{base}/portal/{token}", "login_url": f"{base}/b2b/giris"}
 
 
+async def _b2b_find_contact(ident: str) -> Optional[dict]:
+    ident = (ident or "").strip().lower()
+    if not ident:
+        return None
+    return await db.contacts.find_one({"b2b_enabled": True, "$or": [{"b2b_login_email": ident}, {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}, {"tax_number_or_id": ident}]})
+
+
+async def _public_base_url(request: Request, explicit: str = "") -> str:
+    base = (explicit or "").rstrip("/")
+    if base:
+        return base
+    st = await db.platform_settings.find_one({"_id": "platform"}) or {}
+    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    if not base:
+        base = str(request.headers.get("origin") or "").rstrip("/")
+    return base
+
+
 @api_router.post("/public/b2b/login")
 async def b2b_login(req: Dict[str, Any]):
     ident = (req.get("email") or "").strip().lower(); pwd = req.get("password") or ""
     if not ident or not pwd:
         raise HTTPException(status_code=400, detail="E-posta / VKN ve şifre gerekli.")
-    c = await db.contacts.find_one({"b2b_enabled": True, "$or": [{"b2b_login_email": ident}, {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}, {"tax_number_or_id": ident}]})
+    c = await _b2b_find_contact(ident)
     if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
         raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
     if not c.get("b2b_token"):
@@ -980,6 +999,142 @@ async def b2b_login(req: Dict[str, Any]):
         c = await db.contacts.find_one({"_id": c["_id"]})
     await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_last_login": datetime.now(timezone.utc).isoformat()}})
     return {"token": c["b2b_token"], "name": c.get("name"), "redirect": f"/portal/{c['b2b_token']}"}
+
+
+FORGOT_MSG = "Eşleşen bir B2B hesabı varsa şifre sıfırlama bağlantısı e-posta adresine gönderildi."
+
+
+@api_router.post("/public/b2b/forgot-password")
+async def b2b_forgot_password(req: Dict[str, Any], request: Request):
+    ident = (req.get("email") or "").strip()
+    out = {"status": "ok", "message": FORGOT_MSG, "mail_status": "skipped"}
+    c = await _b2b_find_contact(ident)
+    if not c or not c.get("b2b_password_hash"):
+        return out
+    to = (c.get("b2b_login_email") or c.get("email") or "").strip().lower()
+    if not to or "@" not in to:
+        out["mail_status"] = "skipped"
+        out["detail"] = "Bu hesapta e-posta yok; tedarikçinizden şifre isteyin."
+        return out
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.b2b_password_resets.update_many({"contact_id": c["_id"], "used_at": None}, {"$set": {"used_at": now.isoformat(), "revoked": True}})
+    await db.b2b_password_resets.insert_one({
+        "_id": token, "contact_id": c["_id"], "company_id": c["company_id"], "email": to,
+        "expires_at": (now + timedelta(hours=1)).isoformat(), "used_at": None, "created_at": now.isoformat(),
+    })
+    base = await _public_base_url(request, req.get("base_url") or "")
+    link = f"{base}/b2b/sifre/{token}" if base else f"/b2b/sifre/{token}"
+    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+    try:
+        a = await _mail_account(c["company_id"])
+        subject = f"{company.get('name') or 'Tedarikçiniz'} B2B şifre sıfırlama"
+        body = f"Merhaba {c.get('name') or ''},\nB2B portal şifrenizi sıfırlamak için bu bağlantıyı 1 saat içinde kullanın:\n{link}\nBu isteği siz yapmadıysanız bu e-postayı yok sayın."
+        html = f"<p>Merhaba {c.get('name') or ''},</p><p>B2B portal şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
+        await comm_service.smtp_send(a, [to], subject, body, html=html)
+        mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
+    except HTTPException as e:
+        mail_status, mail_detail = "skipped", str(e.detail)
+    except Exception as e:
+        mail_status, mail_detail = "failed", str(e)[:140]
+    out["mail_status"] = mail_status
+    out["detail"] = mail_detail
+    if mail_status != "sent":
+        out["reset_url"] = link
+        out["reset_token"] = token
+    return out
+
+
+@api_router.get("/public/b2b/reset/{token}")
+async def b2b_reset_get(token: str):
+    row = await _b2b_reset_doc(token)
+    c = await db.contacts.find_one({"_id": row["contact_id"]}) or {}
+    email = row.get("email") or c.get("b2b_login_email") or c.get("email") or ""
+    masked = (email[:2] + "•••@" + email.split("@", 1)[-1]) if "@" in email else ""
+    return {"valid": True, "name": c.get("name"), "email_masked": masked}
+
+
+@api_router.post("/public/b2b/reset/{token}")
+async def b2b_reset_post(token: str, req: Dict[str, Any]):
+    row = await _b2b_reset_doc(token)
+    pwd = str(req.get("password") or "")
+    if len(pwd) < 6:
+        raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+    c = await db.contacts.find_one({"_id": row["contact_id"]})
+    if not c or not c.get("b2b_enabled"):
+        raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+    if not c.get("b2b_token"):
+        await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
+        c = await db.contacts.find_one({"_id": c["_id"]})
+    await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_password_hash": hash_password(pwd)}})
+    await db.b2b_password_resets.update_one({"_id": token}, {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}})
+    return {"status": "success", "message": "Şifreniz güncellendi.", "redirect": f"/portal/{c['b2b_token']}", "token": c["b2b_token"], "name": c.get("name")}
+
+
+async def _b2b_reset_doc(token: str) -> dict:
+    row = await db.b2b_password_resets.find_one({"_id": token})
+    if not row:
+        raise HTTPException(status_code=404, detail="Sıfırlama bağlantısı geçersiz.")
+    if row.get("used_at"):
+        raise HTTPException(status_code=400, detail="Bu bağlantı zaten kullanılmış. Yeni istek oluşturun.")
+    exp = row.get("expires_at") or ""
+    try:
+        exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        if exp_dt < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Sıfırlama bağlantısının süresi doldu.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Sıfırlama bağlantısı geçersiz.")
+    return row
+
+
+def _alias_key(s: str) -> str:
+    t = (s or "").strip().lower().replace("ı", "i").replace("İ", "i")
+    t = t.replace("ş", "s").replace("ğ", "g").replace("ü", "u").replace("ö", "o").replace("ç", "c")
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
+    import difflib
+    prods = await db.products.find({"company_id": company_id, "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
+    idx = {str(k).lower(): p for p in prods for k in (p.get("sku"), p.get("barcode")) if k}
+    names = {p["name"].lower(): p for p in prods if p.get("name")}
+    by_id = {p["_id"]: p for p in prods}
+    aliases = {r["alias"]: r["product_id"] for r in await db.b2b_product_aliases.find({"company_id": company_id}).to_list(5000) if r.get("alias") and r.get("product_id")}
+    items, unmatched = [], []
+    used_aliases = []
+    for it in lines or []:
+        qty = max(1, int(float(it.get("quantity") or 1)))
+        requested = it.get("product_name") or it.get("sku") or it.get("barcode") or "?"
+        p = idx.get(str(it.get("barcode") or "").lower()) or idx.get(str(it.get("sku") or "").lower())
+        conf, learned = (1.0, False) if p else (0.0, False)
+        if not p:
+            ak = _alias_key(requested)
+            pid = aliases.get(ak)
+            if pid and pid in by_id:
+                p = by_id[pid]
+                conf, learned = 0.99, True
+                used_aliases.append(ak)
+        if not p and it.get("product_name"):
+            q = it["product_name"].lower()
+            p = names.get(q)
+            if p:
+                conf = 0.95
+            else:
+                best = difflib.get_close_matches(q, list(names.keys()), n=1, cutoff=0.55)
+                if best:
+                    p = names[best[0]]
+                    conf = round(difflib.SequenceMatcher(None, q, best[0]).ratio(), 2)
+        row = {"requested": requested, "quantity": qty, "product_id": p["_id"] if p else None, "matched_name": p.get("name") if p else None, "confidence": conf, "learned": learned}
+        (items if p else unmatched).append(row)
+    if used_aliases:
+        await db.b2b_product_aliases.update_many({"company_id": company_id, "alias": {"$in": used_aliases}}, {"$inc": {"hits": 1}})
+    return items, unmatched
 
 
 @api_router.post("/public/b2b/{token}/ai-cart")
@@ -998,28 +1153,39 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
         parsed = await ai_service_extract_orders(text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
-    prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
-    idx = {str(k).lower(): p for p in prods for k in (p.get("sku"), p.get("barcode")) if k}
-    names = {p["name"].lower(): p for p in prods if p.get("name")}
-    import difflib
-    items, unmatched = [], []
-    for o in parsed.get("orders") or []:
-        for it in o.get("items") or []:
-            qty = max(1, int(float(it.get("quantity") or 1)))
-            p = idx.get(str(it.get("barcode") or "").lower()) or idx.get(str(it.get("sku") or "").lower())
-            conf = 1.0 if p else 0
-            if not p and it.get("product_name"):
-                q = it["product_name"].lower()
-                p = names.get(q)
-                if p:
-                    conf = 0.95
-                else:
-                    best = difflib.get_close_matches(q, list(names.keys()), n=1, cutoff=0.55)
-                    if best:
-                        p = names[best[0]]; conf = round(difflib.SequenceMatcher(None, q, best[0]).ratio(), 2)
-            row = {"requested": it.get("product_name") or it.get("sku") or it.get("barcode") or "?", "quantity": qty, "product_id": p["_id"] if p else None, "matched_name": p.get("name") if p else None, "confidence": conf}
-            (items if p else unmatched).append(row)
+    parsed_items = [it for o in (parsed.get("orders") or []) for it in (o.get("items") or [])]
+    items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
     return {"filename": file.filename, "items": items, "unmatched": unmatched, "total_lines": len(items) + len(unmatched)}
+
+
+@api_router.post("/public/b2b/{token}/ai-cart/match")
+async def b2b_ai_cart_match(token: str, req: Dict[str, Any]):
+    c = await _b2b_contact(token)
+    items, unmatched = await _b2b_match_cart_items(c["company_id"], req.get("items") or [])
+    return {"items": items, "unmatched": unmatched, "total_lines": len(items) + len(unmatched)}
+
+
+@api_router.post("/public/b2b/{token}/ai-cart/learn")
+async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
+    c = await _b2b_contact(token)
+    now = datetime.now(timezone.utc).isoformat()
+    saved = []
+    for m in (req.get("mappings") or []):
+        alias = _alias_key(m.get("alias") or m.get("requested") or "")
+        pid = m.get("product_id")
+        if not alias or not pid:
+            continue
+        p = await db.products.find_one({"_id": pid, "company_id": c["company_id"]})
+        if not p:
+            continue
+        await db.b2b_product_aliases.update_one(
+            {"company_id": c["company_id"], "alias": alias},
+            {"$set": {"product_id": pid, "product_name": p.get("name"), "alias_raw": m.get("alias") or m.get("requested"), "contact_id": c["_id"], "updated_at": now},
+             "$setOnInsert": {"_id": f"als_{uuid.uuid4().hex[:12]}", "company_id": c["company_id"], "alias": alias, "created_at": now, "hits": 0}},
+            upsert=True,
+        )
+        saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
+    return {"saved": saved, "count": len(saved)}
 
 async def _b2b_contact(token: str) -> Dict[str, Any]:
     c = await db.contacts.find_one({"b2b_token": token})
