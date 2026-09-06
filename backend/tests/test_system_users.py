@@ -40,14 +40,16 @@ class TestSystemUsers:
         assert r.status_code == 200, r.text
         uid = r.json()["id"]
         assert r.json()["email"] == email
-        r = s.put(f"{API}/system/users/{uid}", json={"name": "Platform Test 2", "is_active": False}, timeout=20)
-        assert r.status_code == 200, r.text
-        assert r.json()["name"] == "Platform Test 2"
-        assert r.json()["is_active"] is False
         r = s.put(f"{API}/system/users/{uid}", json={"password": "newpass1"}, timeout=20)
         assert r.status_code == 200, r.text
         login = requests.post(f"{API}/auth/login", json={"email": email, "password": "newpass1"}, timeout=20)
         assert login.status_code == 200, login.text
+        r = s.put(f"{API}/system/users/{uid}", json={"name": "Platform Test 2", "is_active": False}, timeout=20)
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "Platform Test 2"
+        assert r.json()["is_active"] is False
+        blocked = requests.post(f"{API}/auth/login", json={"email": email, "password": "newpass1"}, timeout=20)
+        assert blocked.status_code == 403
         r = s.delete(f"{API}/system/users/{uid}", timeout=20)
         assert r.status_code == 200, r.text
         r = s.delete(f"{API}/system/users/{uid}", timeout=20)
