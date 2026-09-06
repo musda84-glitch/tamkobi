@@ -12,7 +12,7 @@ export default function LoginPage() {
     e.preventDefault(); setBusy(true);
     const ok = await login(form.email, form.password);
     setBusy(false);
-    if (ok) navigate("/");
+    if (ok) navigate("/panel");
   };
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">

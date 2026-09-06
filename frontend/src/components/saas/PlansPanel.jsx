@@ -1,16 +1,31 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Save, Loader2, Check, Sparkles } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Save, Loader2, Check, Sparkles, ExternalLink } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtTL, PlanChip, Toggle, inputCls, groupByCategory, PLAN_COLORS } from "./saasUi";
 
+const cred = { withCredentials: true };
+
 export const PlansPanel = ({ plans, catalog, onChanged }) => {
   const [edit, setEdit] = useState(null);
-  const del = async (p) => { if (!window.confirm(`${p.name} paketi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/system/plans/${p.id}`); toast.success("Paket silindi."); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Silinemedi."); } };
+  const del = async (p) => { if (!window.confirm(`${p.name} paketi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/system/plans/${p.id}`, cred); toast.success("Paket silindi."); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Silinemedi."); } };
+  const publish = async (p, on) => {
+    try {
+      await axios.put(`${API_URL}/system/plans/${p.id}`, { is_public: on }, cred);
+      toast.success(on ? `${p.name} takibi.com vitrininde yayınlandı.` : `${p.name} siteden kaldırıldı.`);
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); }
+  };
   return (
     <div className="space-y-3 text-xs" data-testid="saas-plans">
-      <div className="flex justify-end"><button onClick={() => setEdit({})} className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center gap-1.5" data-testid="new-plan-btn"><Plus className="w-4 h-4" /> Yeni Paket</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-slate-500">“Yayınla” açık paketler <b>takibi.com</b> vitrininde görünür; kapalı olanlar gizlenir.</p>
+        <div className="flex gap-2">
+          <a href="/fiyatlar" target="_blank" rel="noreferrer" className="px-3 py-2 border border-slate-200 rounded-xl font-semibold flex items-center gap-1.5 hover:bg-white" data-testid="plans-preview-site"><ExternalLink className="w-3.5 h-3.5" /> Sitede gör</a>
+          <button onClick={() => setEdit({})} className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center gap-1.5" data-testid="new-plan-btn"><Plus className="w-4 h-4" /> Yeni Paket</button>
+        </div>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
         {plans.map((p) => (
           <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col relative" data-testid={`plan-admin-${p.id}`}>
@@ -18,7 +33,11 @@ export const PlansPanel = ({ plans, catalog, onChanged }) => {
             <div className="flex items-center justify-between"><PlanChip name={p.name} color={p.color} /><span className="text-[10px] text-slate-500">{p.company_count} şirket</span></div>
             <div className="text-[11px] text-slate-500 mt-2 min-h-[28px]">{p.tagline}</div>
             <div className="text-xl font-bold text-slate-900 mt-1">{fmtTL(p.price_monthly)}<span className="text-[10px] font-normal text-slate-500">/ay</span></div>
-            <div className="text-[10px] text-slate-500">{fmtTL(p.price_yearly)}/yıl · {p.user_limit ? `${p.user_limit} kullanıcı` : "sınırsız kullanıcı"} · {p.modules.length}/{catalog.filter((m) => !m.is_core).length} modül{p.is_public ? "" : " · gizli"}</div>
+            <div className="text-[10px] text-slate-500">{fmtTL(p.price_yearly)}/yıl · {p.user_limit ? `${p.user_limit} kullanıcı` : "sınırsız kullanıcı"} · {p.modules.length}/{catalog.filter((m) => !m.is_core).length} modül</div>
+            <label className={`mt-2 flex items-center gap-2 font-semibold ${p.is_public ? "text-emerald-700" : "text-slate-500"}`}>
+              <Toggle on={!!p.is_public} onChange={(v) => publish(p, v)} testId={`plan-publish-${p.id}`} />
+              <span>{p.is_public ? "Sitede yayınlı" : "Gizli"}</span>
+            </label>
             <ul className="mt-3 space-y-0.5 flex-1">{catalog.filter((m) => !m.is_core).map((m) => <li key={m.key} className={`flex items-center gap-1.5 ${p.modules.includes(m.key) ? "text-slate-700" : "text-slate-300"}`}><Check className={`w-3 h-3 ${p.modules.includes(m.key) ? "text-emerald-600" : "text-slate-200"}`} />{m.label}</li>)}</ul>
             <div className="flex gap-2 mt-3"><button onClick={() => setEdit(p)} className="flex-1 py-1.5 border rounded-lg font-semibold flex items-center justify-center gap-1 hover:bg-slate-50" data-testid={`plan-edit-${p.id}`}><Pencil className="w-3.5 h-3.5" /> Düzenle</button><button onClick={() => del(p)} className="px-2.5 py-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" data-testid={`plan-delete-${p.id}`}><Trash2 className="w-3.5 h-3.5" /></button></div>
           </div>))}
@@ -35,7 +54,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
   const toggleMod = (k) => setF({ ...f, modules: f.modules.includes(k) ? f.modules.filter((x) => x !== k) : [...f.modules, k] });
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
-    try { if (plan.id) await axios.put(`${API_URL}/system/plans/${plan.id}`, f); else await axios.post(`${API_URL}/system/plans`, f); toast.success("Paket kaydedildi."); onSaved(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
+    try { if (plan.id) await axios.put(`${API_URL}/system/plans/${plan.id}`, f, cred); else await axios.post(`${API_URL}/system/plans`, f, cred); toast.success("Paket kaydedildi."); onSaved(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   const num = (k, l) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={`plan-${k}`} /></div>;
   return (
@@ -48,7 +67,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
           {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}
           <div><label className="block font-semibold text-slate-700 mb-1">Renk</label><div className="flex gap-1.5">{Object.keys(PLAN_COLORS).map((c) => <button type="button" key={c} onClick={() => setF({ ...f, color: c })} className={`w-7 h-7 rounded-lg ${PLAN_COLORS[c]} ${f.color === c ? "ring-2 ring-offset-1 ring-slate-900" : ""}`} data-testid={`plan-color-${c}`} />)}</div></div>
           {num("sort", "Sıra")}
-          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>Müşteriye göster</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>
+          <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>takibi.com’da yayınla</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>
         </div>
         <div>
           <div className="font-bold text-slate-900 mb-2">Pakete Dahil Modüller ({f.modules.length})</div>

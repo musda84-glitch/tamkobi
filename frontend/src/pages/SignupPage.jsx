@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Check, Loader2, Rocket } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PLAN_COLORS } from "../components/saas/saasUi";
+import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -20,15 +21,15 @@ export default function SignupPage() {
     e.preventDefault(); setBusy(true);
     try { const r = await axios.post(`${API_URL}/public/signup`, f, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
   };
-  const plan = d?.plans.find((p) => p.id === f.plan_id);
+  const plan = d?.plans?.find((p) => p.id === f.plan_id);
   if (done) return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100 flex items-center justify-center p-6"><div className="bg-white/5 border border-white/10 rounded-3xl p-10 max-w-md text-center space-y-4" data-testid="signup-success">
       <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500 text-slate-900 flex items-center justify-center"><Rocket className="w-7 h-7" /></div>
       <h2 className="text-xl font-bold">Hesabınız hazır!</h2><p className="text-sm text-slate-300">{done.message} Paket: <b>{done.license?.plan_name}</b> · {done.license?.days_left} gün.</p>
-      <a href="/" className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
+      <a href="/panel" className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="signup-page">
-      <header className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between"><Link to="/fiyatlar" className="font-bold text-lg">Nexus<span className="text-emerald-400">Hesap</span></Link><Link to="/login" className="text-xs text-slate-300 hover:text-white">Zaten hesabım var</Link></header>
+      <SiteHeader brand={siteBrand(d?.brand_name)} right={<Link to="/login" className="text-xs text-slate-300 hover:text-white">Zaten hesabım var</Link>} />
       <div className="max-w-5xl mx-auto px-6 pb-16 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
         <form onSubmit={submit} className="space-y-5">
           <div><h1 className="text-3xl sm:text-4xl font-black">{d?.trial_days || 14} gün ücretsiz deneyin</h1><p className="text-sm text-slate-400 mt-2">Kredi kartı gerekmez. Deneme bitiminde dilediğiniz pakete geçebilirsiniz.</p></div>

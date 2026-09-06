@@ -35,6 +35,7 @@ import EdocInboxPage from "./pages/EdocInboxPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
 import SystemLoginPage from "./pages/SystemLoginPage";
 import PricingPage from "./pages/PricingPage";
+import HomeOrApp from "./pages/HomeOrApp";
 import SignupPage from "./pages/SignupPage";
 import PaymentResultPage from "./pages/PaymentResultPage";
 import RenewPage from "./pages/RenewPage";
@@ -49,7 +50,8 @@ export default function App() {
         <Toaster position="top-right" richColors closeButton />
         <MainLayout>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<HomeOrApp />} />
+            <Route path="/panel" element={<Dashboard />} />
             <Route path="/invoices" element={<InvoicesPage />} />
             <Route path="/contacts" element={<ContactsPage />} />
             <Route path="/banking" element={<BankingPage />} />
