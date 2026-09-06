@@ -11,8 +11,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-# Private Emergent SDK is not on PyPI; a local stub is copied below so the API can start.
-RUN grep -v '^emergentintegrations==' /tmp/requirements.txt > /tmp/requirements.docker.txt \
+# Skip the PyPI namesake (malware / unpublished). Core REST+MySQL runs with the stub.
+# AI/billing call sites import emergentintegrations; drop a real wheel in
+# docker/stubs to replace this without changing application imports.
+RUN grep -vE '^(#|emergentintegrations==)' /tmp/requirements.txt > /tmp/requirements.docker.txt \
     && pip install --no-cache-dir -r /tmp/requirements.docker.txt
 
 COPY docker/stubs/emergentintegrations /usr/local/lib/python3.12/site-packages/emergentintegrations

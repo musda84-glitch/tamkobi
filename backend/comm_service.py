@@ -14,7 +14,21 @@ import httpx
 import aiosmtplib
 from cryptography.fernet import Fernet
 
-_fernet = Fernet(os.environ["CREDENTIAL_ENCRYPTION_KEY"].encode())
+
+def _build_fernet() -> Fernet:
+    raw = (os.environ.get("CREDENTIAL_ENCRYPTION_KEY") or "").strip()
+    if raw:
+        try:
+            return Fernet(raw.encode())
+        except (ValueError, TypeError):
+            pass
+    # Local/Docker fallback so the API can start without a pre-set key.
+    key = Fernet.generate_key()
+    os.environ["CREDENTIAL_ENCRYPTION_KEY"] = key.decode()
+    return Fernet(key)
+
+
+_fernet = _build_fernet()
 
 def encrypt(value: str) -> str:
     return _fernet.encrypt(value.encode()).decode()

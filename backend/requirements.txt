@@ -20,6 +20,8 @@ distro==1.9.0
 dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
+# Private Emergent LLM/Stripe SDK used by ai_service, finance, saas_billing.
+# Do not install the PyPI namesake (removed as malware). Docker vendors a local stub.
 emergentintegrations==0.2.0
 et_xmlfile==2.0.0
 execnet==2.1.2
