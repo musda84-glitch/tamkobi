@@ -29,7 +29,7 @@ from auth_utils import (
     create_refresh_token, get_user_from_token
 )
 from seed_data import seed_all_data, seed_partners
-from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders
+from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
 import bank_guard
@@ -5248,6 +5248,137 @@ async def ai_order_confirm(req: Dict[str, Any]):
         await _ensure_order_contact(doc)
         created.append(clean_doc(doc))
     return {"status": "success", "created": len(created), "orders": created, "message": f"{len(created)} sipariş oluşturuldu."}
+
+
+def _normalize_extracted_product(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    name = str(raw.get("name") or "").strip()
+    if not name:
+        return None
+    vat = raw.get("vat_rate")
+    try:
+        vat = int(vat) if vat is not None else 20
+    except (TypeError, ValueError):
+        vat = 20
+    ptype = str(raw.get("type") or "product").lower()
+    if ptype not in ("product", "service", "raw_material", "finished_good"):
+        ptype = "product"
+    sku = str(raw.get("sku") or "").strip() or None
+    barcode = str(raw.get("barcode") or "").strip() or None
+    return {
+        "name": name[:200],
+        "sku": sku,
+        "barcode": barcode,
+        "category": str(raw.get("category") or "").strip() or "Genel",
+        "unit": raw.get("unit") or "Adet",
+        "vat_rate": vat,
+        "purchase_price": float(raw.get("purchase_price") or 0),
+        "sale_price": float(raw.get("sale_price") or 0),
+        "stock_quantity": float(raw.get("stock_quantity") or 0),
+        "min_stock_alert": float(raw["min_stock_alert"]) if raw.get("min_stock_alert") not in (None, "") else 5.0,
+        "type": ptype,
+    }
+
+
+async def _annotate_extracted_products(company_id: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    existing = await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "barcode": 1, "stock_quantity": 1, "sale_price": 1, "purchase_price": 1}).to_list(20000)
+    by_sku = {str(p.get("sku") or "").strip().lower(): p for p in existing if p.get("sku")}
+    by_bc = {str(p.get("barcode") or "").strip().lower(): p for p in existing if p.get("barcode")}
+    by_name = {str(p.get("name") or "").strip().lower(): p for p in existing if p.get("name")}
+    out = []
+    for it in items:
+        rec = _normalize_extracted_product(it)
+        if not rec:
+            continue
+        match = None
+        if rec.get("sku"):
+            match = by_sku.get(rec["sku"].lower())
+        if not match and rec.get("barcode"):
+            match = by_bc.get(rec["barcode"].lower())
+        if not match:
+            match = by_name.get(rec["name"].lower())
+        rec["match_id"] = match["_id"] if match else None
+        rec["match_name"] = match.get("name") if match else None
+        rec["match_stock"] = match.get("stock_quantity") if match else None
+        rec["status"] = "güncelle" if match else "yeni"
+        out.append(rec)
+    return out
+
+
+@api_router.post("/ai/product-extract")
+async def ai_product_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    name = (file.filename or "").lower()
+    items: List[Dict[str, Any]] = []
+    source = "table"
+    if name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+        items = migration.products_from_table_bytes(file.filename, data)
+    if not items:
+        text = await _file_to_text(file, data)
+        if len(text.strip()) < 20:
+            raise HTTPException(status_code=400, detail="Dosyada okunabilir ürün satırı bulunamadı (taranmış PDF olabilir).")
+        source = "ai"
+        try:
+            parsed = await ai_service_extract_products(text)
+        except Exception as e:
+            logger.error(f"AI product extract failed: {e}")
+            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+        items = parsed.get("products") or []
+    products = await _annotate_extracted_products(company_id, items)
+    if not products:
+        raise HTTPException(status_code=400, detail="Dosyada ürün adı bulunan satır bulunamadı.")
+    return {"filename": file.filename, "source": source, "products": products, "count": len(products),
+            "new_count": sum(1 for p in products if not p.get("match_id")), "existing_count": sum(1 for p in products if p.get("match_id"))}
+
+
+@api_router.post("/ai/product-extract/confirm")
+async def ai_product_confirm(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    update_existing = req.get("update_existing") is not False
+    update_stock = req.get("update_stock") is not False
+    inserted, updated, skipped = 0, 0, 0
+    for raw in req.get("products") or []:
+        rec = _normalize_extracted_product(raw)
+        if not rec:
+            skipped += 1
+            continue
+        match_id = raw.get("match_id")
+        existing = await db.products.find_one({"_id": match_id}) if match_id else None
+        if existing:
+            if not update_existing:
+                skipped += 1
+                continue
+            upd = {k: rec[k] for k in ("name", "category", "unit", "vat_rate", "purchase_price", "sale_price", "min_stock_alert", "type") if rec.get(k) not in (None, "")}
+            if rec.get("barcode"):
+                upd["barcode"] = rec["barcode"]
+            if rec.get("sku"):
+                upd["sku"] = rec["sku"]
+            if update_stock:
+                upd["stock_quantity"] = rec["stock_quantity"]
+            await db.products.update_one({"_id": existing["_id"]}, {"$set": upd})
+            await _remember_category(company_id, rec.get("category"))
+            updated += 1
+            continue
+        sku = rec.get("sku") or f"AI-{uuid.uuid4().hex[:6].upper()}"
+        if await db.products.find_one({"company_id": company_id, "sku": sku}):
+            sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
+        prod = Product(
+            company_id=company_id, name=rec["name"], sku=sku,
+            barcode=rec.get("barcode") or f"868{str(uuid.uuid4().int)[:10]}",
+            type=rec["type"], category=rec.get("category") or "Genel", unit=rec.get("unit") or "Adet",
+            vat_rate=rec.get("vat_rate") or 20, purchase_price=rec.get("purchase_price") or 0,
+            sale_price=rec.get("sale_price") or 0, stock_quantity=rec.get("stock_quantity") or 0,
+            min_stock_alert=rec.get("min_stock_alert") if rec.get("min_stock_alert") is not None else 5,
+        )
+        doc = prod.to_mongo()
+        doc["source"] = "ai_import"
+        await db.products.insert_one(doc)
+        await _remember_category(company_id, doc.get("category"))
+        inserted += 1
+    return {"status": "success", "inserted": inserted, "updated": updated, "skipped": skipped,
+            "message": f"{inserted} yeni stok kartı, {updated} güncellendi" + (f", {skipped} atlandı" if skipped else "") + "."}
+
 
 @api_router.post("/ai/invoice-extract")
 async def ai_invoice_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):

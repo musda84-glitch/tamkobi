@@ -13,6 +13,17 @@ from mysql_store import (
 )
 
 
+def test_products_from_table_bytes():
+    from migration import products_from_table_bytes
+    csv = "Ürün Adı;Stok Kodu;Satış Fiyatı;Stok Miktarı\nKalem;SKU-1;10,5;3\n".encode("utf-8")
+    rows = products_from_table_bytes("stok.csv", csv)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Kalem"
+    assert rows[0]["sku"] == "SKU-1"
+    assert abs(rows[0]["sale_price"] - 10.5) < 0.01
+    assert abs(rows[0]["stock_quantity"] - 3) < 0.01
+
+
 def test_eq_and_array_contains():
     doc = {"_id": "u1", "email": "a@b.com", "company_ids": ["c1", "c2"], "role": "admin"}
     assert match_query(doc, {"email": "a@b.com"})
