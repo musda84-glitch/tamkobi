@@ -21,8 +21,12 @@ from auth_utils import get_jwt_secret, JWT_ALGORITHM
 router = APIRouter(prefix="/api")
 _db = None
 FONT_DIR = "/usr/share/fonts/truetype/liberation/"
-pdfmetrics.registerFont(TTFont("Lib", FONT_DIR + "LiberationSans-Regular.ttf"))
-pdfmetrics.registerFont(TTFont("LibB", FONT_DIR + "LiberationSans-Bold.ttf"))
+try:
+    pdfmetrics.registerFont(TTFont("Lib", FONT_DIR + "LiberationSans-Regular.ttf"))
+    pdfmetrics.registerFont(TTFont("LibB", FONT_DIR + "LiberationSans-Bold.ttf"))
+    PDF_FONT, PDF_FONT_B = "Lib", "LibB"
+except Exception:
+    PDF_FONT, PDF_FONT_B = "Helvetica", "Helvetica-Bold"
 
 
 def init(db):
@@ -39,32 +43,32 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
     c.setFillColor(colors.HexColor("#0f172a")); c.rect(0, h - 38 * mm, w, 38 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white); c.setFont("LibB", 20); c.drawString(18 * mm, h - 18 * mm, "e-ARŞİV FATURA")
-    c.setFont("Lib", 9); c.drawString(18 * mm, h - 25 * mm, f"Fatura No: {inv['invoice_number']}    Tarih: {inv['issue_date']}    Senaryo: e-Arşiv / Satış")
+    c.setFillColor(colors.white); c.setFont(PDF_FONT_B, 20); c.drawString(18 * mm, h - 18 * mm, "e-ARŞİV FATURA")
+    c.setFont(PDF_FONT, 9); c.drawString(18 * mm, h - 25 * mm, f"Fatura No: {inv['invoice_number']}    Tarih: {inv['issue_date']}    Senaryo: e-Arşiv / Satış")
     c.drawString(18 * mm, h - 30 * mm, f"ETTN / Takip: {inv.get('gib_tracking_id', '')}")
-    c.setFillColor(colors.HexColor("#fbbf24")); c.setFont("LibB", 10); c.drawRightString(w - 18 * mm, h - 18 * mm, seller.get("name", ""))
-    c.setFillColor(colors.white); c.setFont("Lib", 8)
+    c.setFillColor(colors.HexColor("#fbbf24")); c.setFont(PDF_FONT_B, 10); c.drawRightString(w - 18 * mm, h - 18 * mm, seller.get("name", ""))
+    c.setFillColor(colors.white); c.setFont(PDF_FONT, 8)
     for i, line in enumerate([f"VKN: {seller.get('tax_number', '')}  {seller.get('tax_office', '')}", (seller.get("address") or "")[:80], f"{seller.get('city', '')}  {seller.get('phone', '')}  {seller.get('email', '')}"]):
         c.drawRightString(w - 18 * mm, h - (23 + i * 4) * mm, line)
     y = h - 52 * mm
-    c.setFillColor(colors.HexColor("#0f172a")); c.setFont("LibB", 9); c.drawString(18 * mm, y, "ALICI")
-    c.setFont("Lib", 9)
+    c.setFillColor(colors.HexColor("#0f172a")); c.setFont(PDF_FONT_B, 9); c.drawString(18 * mm, y, "ALICI")
+    c.setFont(PDF_FONT, 9)
     for i, line in enumerate([buyer.get("name", ""), f"VKN/TCKN: {buyer.get('tax_number_or_id') or '-'}", f"{buyer.get('city') or ''}  {buyer.get('email') or ''}", buyer.get("phone") or ""]):
         c.drawString(18 * mm, y - (5 + i * 4.5) * mm, str(line))
     y -= 32 * mm
     c.setFillColor(colors.HexColor("#f1f5f9")); c.rect(18 * mm, y - 2 * mm, w - 36 * mm, 8 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.HexColor("#334155")); c.setFont("LibB", 8)
+    c.setFillColor(colors.HexColor("#334155")); c.setFont(PDF_FONT_B, 8)
     cols = [(20 * mm, "Açıklama"), (118 * mm, "Miktar"), (138 * mm, "Birim Fiyat"), (160 * mm, "KDV"), (w - 20 * mm, "Tutar")]
     for x, t in cols:
         (c.drawRightString if t == "Tutar" else c.drawString)(x, y, t)
-    y -= 8 * mm; c.setFont("Lib", 9); c.setFillColor(colors.black)
+    y -= 8 * mm; c.setFont(PDF_FONT, 9); c.setFillColor(colors.black)
     for it in inv["items"]:
         c.drawString(20 * mm, y, str(it["name"])[:70]); c.drawString(118 * mm, y, f"{it['quantity']} {it.get('unit', '')}"); c.drawString(138 * mm, y, _tl(it["unit_price"])); c.drawString(160 * mm, y, f"%{it['vat_rate']}"); c.drawRightString(w - 20 * mm, y, _tl(it["total"]))
         y -= 7 * mm
     y -= 4 * mm; c.setStrokeColor(colors.HexColor("#e2e8f0")); c.line(120 * mm, y + 3 * mm, w - 18 * mm, y + 3 * mm)
     for label, val, bold in [("Ara Toplam", inv["subtotal"], False), ("Hesaplanan KDV (%20)", inv["vat_total"], False), ("Genel Toplam", inv["grand_total"], True), ("Ödenen", inv.get("paid_amount", inv["grand_total"]), False)]:
-        c.setFont("LibB" if bold else "Lib", 10 if bold else 9); c.drawString(120 * mm, y, label); c.drawRightString(w - 20 * mm, y, _tl(val)); y -= 6 * mm
-    c.setFont("Lib", 8); c.setFillColor(colors.HexColor("#64748b"))
+        c.setFont(PDF_FONT_B if bold else PDF_FONT, 10 if bold else 9); c.drawString(120 * mm, y, label); c.drawRightString(w - 20 * mm, y, _tl(val)); y -= 6 * mm
+    c.setFont(PDF_FONT, 8); c.setFillColor(colors.HexColor("#64748b"))
     c.drawString(18 * mm, 30 * mm, "Bu fatura online abonelik ödemesi karşılığında elektronik ortamda düzenlenmiştir; ödeme alınmıştır.")
     c.drawString(18 * mm, 25 * mm, (inv.get("notes") or "")[:120])
     c.drawString(18 * mm, 18 * mm, "e-Arşiv Fatura – GİB e-Arşiv uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.")
