@@ -220,7 +220,7 @@ class TestTrashProductContactOrder:
         r = requests.post(f"{BASE}/orders", json={
             "company_id": COMPANY, "channel": "manual",
             "customer_name": "TEST_it27 order cust", "shipping_address": "test", "city": "İstanbul",
-            "items": [{"product_id": pid, "sku": "TEST_IT27_SKU", "product_name": "TEST_it27 product", "quantity": 1, "unit_price": 100, "total": 100}],
+            "items": [{"product_id": "", "sku": "TEST_IT27_SKU", "product_name": "TEST_it27 product", "quantity": 1, "unit_price": 100, "total": 100}],
             "total_amount": 100.0
         })
         assert r.status_code == 200, r.text

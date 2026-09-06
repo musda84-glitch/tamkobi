@@ -18,12 +18,21 @@ import {
   Tag,
   Images,
   Pencil,
-  ClipboardList
+  ClipboardList,
+  Factory,
+  MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import { StockCountPanel } from "../components/StockCountPanel";
 import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
-import { Factory } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
@@ -73,6 +82,18 @@ export default function StockBarcodePage() {
   const handleProductUpdated = (updated) => {
     setDetailProduct(updated);
     setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  };
+
+  const handleDeleteProduct = async (prod) => {
+    if (!window.confirm(`${prod.name} stok kartı çöp kutusuna taşınsın mı? İşlem görmüş kartlar cari bakiyesini etkilememek için silinemez.`)) return;
+    try {
+      const r = await axios.delete(`${API_URL}/products/${prod.id || prod._id}`);
+      toast.success(r.data.message || "Stok kartı silindi.");
+      setProducts((prev) => prev.filter((p) => (p.id || p._id) !== (prod.id || prod._id)));
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Stok kartı silinemedi.");
+    }
   };
 
   // New Product Form
@@ -240,7 +261,7 @@ export default function StockBarcodePage() {
                 <th className="px-4 py-3 text-right">Satış Fiyatı</th>
                 <th className="px-4 py-3 text-center">Mevcut Stok</th>
                 <th className="px-4 py-3 text-center whitespace-nowrap">B2B / Takip</th>
-                <th className="px-4 py-3 text-center w-[230px]">İşlemler</th>
+                <th className="px-4 py-3 text-center w-[168px]">İşlemler</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -303,48 +324,50 @@ export default function StockBarcodePage() {
                         <button onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center w-[230px] min-w-[230px]">
-                      <div className="inline-grid grid-cols-[28px_28px_28px_28px_auto] gap-1 items-center justify-items-center">
-                        <button
-                          onClick={() => openDetail(prod, "images")}
-                          className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                          title="Görseller"
-                          data-testid={`images-btn-${prod.sku}`}
-                        >
-                          <Images className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => openDetail(prod, "variants")}
-                          className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
-                          title="Varyantlar"
-                          data-testid={`variants-btn-${prod.sku}`}
-                        >
-                          <Layers className="w-4 h-4" />
-                        </button>
+                    <td className="px-4 py-3 text-center w-[168px] min-w-[168px]">
+                      <div className="inline-flex items-center justify-center gap-1">
                         {prod.type !== "service" && prod.type !== "raw_material" ? (
                           <button onClick={() => setProduceProduct(prod)} className={`p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
                             <Factory className="w-4 h-4" />
                           </button>
                         ) : <span className="w-7 h-7 inline-block" aria-hidden="true" />}
-                        <button
-                          onClick={() => setLabelQuickProduct(prod)}
-                          className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                          title="Etiket Yazdır (tasarlanan şablonla)"
-                          data-testid={`label-quick-btn-${prod.sku}`}
-                        >
-                          <Tag className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setPrintBarcodeProduct(prod)}
-                          className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                          title="Hızlı Barkod Yazdır"
-                          data-testid={`print-barcode-btn-${prod.sku}`}
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
+                              title="Diğer işlemler"
+                              data-testid={`product-more-btn-${prod.sku}`}
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem onSelect={() => openDetail(prod, "images")} data-testid={`images-btn-${prod.sku}`}>
+                              <Images className="w-4 h-4" /> Görseller
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => openDetail(prod, "variants")} data-testid={`variants-btn-${prod.sku}`}>
+                              <Layers className="w-4 h-4" /> Varyantlar
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setLabelQuickProduct(prod)} data-testid={`label-quick-btn-${prod.sku}`}>
+                              <Tag className="w-4 h-4" /> Etiket yazdır
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setPrintBarcodeProduct(prod)} data-testid={`print-barcode-btn-${prod.sku}`}>
+                              <Printer className="w-4 h-4" /> Hızlı barkod
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onSelect={() => handleDeleteProduct(prod)}
+                              className="text-rose-600 focus:text-rose-700 focus:bg-rose-50"
+                              data-testid={`delete-product-btn-${prod.sku}`}
+                            >
+                              <Trash2 className="w-4 h-4" /> Stok kartını sil
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <button
                           onClick={() => openDetail(prod, "general")}
-                          className="flex items-center gap-1 px-2.5 py-1.5 ml-1 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap"
                           title="Stok Kartını Düzenle"
                           data-testid={`edit-product-btn-${prod.sku}`}
                         >

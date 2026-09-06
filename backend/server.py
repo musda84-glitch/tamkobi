@@ -1284,11 +1284,32 @@ async def update_product(product_id: str, updated: Dict[str, Any]):
     res = await db.products.find_one({"_id": product_id})
     return clean_doc(res)
 
+async def _product_usage_labels(product_id: str) -> List[str]:
+    """Fatura / sipariş / teklifte geçen stok kartları cari bakiyesini etkilemeden silinemez."""
+    labels = []
+    if await db.invoices.find_one({"items.product_id": product_id}, {"_id": 1}):
+        labels.append("fatura/irsaliye")
+    if await db.orders.find_one({"items.product_id": product_id}, {"_id": 1}):
+        labels.append("sipariş")
+    if await db.quotes.find_one({"items.product_id": product_id}, {"_id": 1}):
+        labels.append("teklif")
+    return labels
+
+
 @api_router.delete("/products/{product_id}")
 async def delete_product(product_id: str):
     p = await db.products.find_one({"_id": product_id})
     if not p:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    used = await _product_usage_labels(product_id)
+    if used:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Bu stok kartı işlem görmüş ({', '.join(used)}). "
+                "Cari bakiyelerinin etkilenmemesi için silinemez. Kartı düzenleyin veya B2B'den gizleyin."
+            ),
+        )
     await trash.soft_delete("products", p, "product", f"{p.get('name')}" + (f" ({p.get('sku')})" if p.get("sku") else ""), note=f"Stok: {p.get('stock_quantity', 0)}")
     return {"status": "success", "message": "Ürün çöp kutusuna taşındı."}
 
