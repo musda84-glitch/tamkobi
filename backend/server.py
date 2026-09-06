@@ -724,6 +724,38 @@ async def logout(response: Response):
     response.delete_cookie("refresh_token")
     return {"status": "success", "message": "Çıkış yapıldı."}
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+async def require_token_user(request: Request) -> dict:
+    """Authenticated user only — no demo-admin fallback."""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    return await get_user_from_token(token, db)
+
+@api_router.post("/auth/change-password")
+async def change_password(req: ChangePasswordRequest, request: Request):
+    user = await require_token_user(request)
+    uid = user.get("_id") or user.get("id")
+    raw = await db.users.find_one({"_id": uid}) or await db.users.find_one({"email": user.get("email")})
+    if not raw:
+        raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı.")
+    if not verify_password(req.current_password, raw.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Mevcut şifre hatalı.")
+    new_pw = (req.new_password or "").strip()
+    if len(new_pw) < 6:
+        raise HTTPException(status_code=400, detail="Yeni şifre en az 6 karakter olmalı.")
+    if verify_password(new_pw, raw.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Yeni şifre mevcut şifreyle aynı olamaz.")
+    await db.users.update_one(
+        {"_id": raw["_id"]},
+        {"$set": {"password_hash": hash_password(new_pw), "password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "success", "message": "Şifreniz güncellendi."}
+
 # ----------------- DASHBOARD & KPIS -----------------
 @api_router.get("/dashboard/overview")
 async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
