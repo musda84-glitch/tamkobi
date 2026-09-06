@@ -36,6 +36,9 @@ def test_or_and_dotted():
     assert match_query(doc, {"$or": [{"company_id": "x"}, {"approval.token": "tok-9"}]})
     assert match_query(doc, {"variants.variant_id": "v2"})
     assert not match_query(doc, {"variants.variant_id": "v9"})
+    inv = {"items": [{"product_id": "p1", "name": "A"}, {"product_id": "p2"}]}
+    assert match_query(inv, {"items.product_id": "p2"})
+    assert not match_query(inv, {"items.product_id": "p9"})
 
 
 def test_expr_low_stock():
