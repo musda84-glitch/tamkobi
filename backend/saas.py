@@ -323,6 +323,162 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
     return await effective(company_id)
 
 
+ROLE_CODES = [r["code"] for r in rbac.DEFAULT_ROLES]
+
+
+def _user_row(u: dict, companies_by_id: Dict[str, dict]) -> Dict[str, Any]:
+    cids = list(u.get("company_ids") or [])
+    return {
+        "id": u.get("_id") or u.get("id"),
+        "name": u.get("name"),
+        "email": u.get("email"),
+        "role": u.get("role") or "admin",
+        "is_super_admin": bool(u.get("is_super_admin")),
+        "is_active": u.get("is_active", True),
+        "company_ids": cids,
+        "companies": [{"id": cid, "name": (companies_by_id.get(cid) or {}).get("name") or cid} for cid in cids],
+        "active_company_id": u.get("active_company_id"),
+        "last_login_at": u.get("last_login_at"),
+        "created_at": u.get("created_at"),
+    }
+
+
+async def _companies_map() -> Dict[str, dict]:
+    return {c["_id"]: c for c in await _db.companies.find({}).to_list(2000)}
+
+
+async def _super_admin_count() -> int:
+    return await _db.users.count_documents({"is_super_admin": True})
+
+
+@router.get("/system/users")
+async def system_list_users(q: Optional[str] = None, _: dict = Depends(require_super_admin)):
+    comps = await _companies_map()
+    rows = [_user_row(u, comps) for u in await _db.users.find({}).sort("name", 1).to_list(2000)]
+    if q:
+        ql = q.strip().lower()
+        rows = [u for u in rows if ql in (u.get("name") or "").lower() or ql in (u.get("email") or "").lower()]
+    return {"users": rows, "companies": [{"id": cid, "name": c.get("name")} for cid, c in comps.items()], "roles": [{"code": r["code"], "name": r["name"]} for r in rbac.DEFAULT_ROLES]}
+
+
+@router.post("/system/users")
+async def system_create_user(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    name = (req.get("name") or "").strip()
+    email = (req.get("email") or "").strip().lower()
+    pwd = (req.get("password") or "").strip()
+    if not name or "@" not in email:
+        raise HTTPException(status_code=400, detail="Ad ve geçerli e-posta gerekli.")
+    if len(pwd) < 6:
+        raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+    if await _db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
+    role = req.get("role") or "admin"
+    if role not in ROLE_CODES:
+        raise HTTPException(status_code=400, detail="Geçersiz rol.")
+    comps = await _companies_map()
+    company_ids = [cid for cid in (req.get("company_ids") or []) if cid in comps]
+    is_super = bool(req.get("is_super_admin"))
+    if not company_ids and not is_super:
+        raise HTTPException(status_code=400, detail="En az bir şirket seçin (veya platform yöneticisi işaretleyin).")
+    for cid in company_ids:
+        await rbac.ensure_roles(cid)
+        if not is_super:
+            await check_user_limit(cid)
+    uid = f"usr_{uuid.uuid4().hex[:8]}"
+    doc = {
+        "_id": uid,
+        "email": email,
+        "password_hash": hash_password(pwd),
+        "name": name,
+        "role": role,
+        "company_ids": company_ids,
+        "active_company_id": company_ids[0] if company_ids else None,
+        "is_active": req.get("is_active", True) is not False,
+        "is_super_admin": is_super,
+        "preferences": {},
+        "created_at": _now(),
+    }
+    await _db.users.insert_one(doc)
+    return _user_row(doc, comps)
+
+
+@router.put("/system/users/{user_id}")
+async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = Depends(require_super_admin)):
+    u = await _db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    comps = await _companies_map()
+    upd: Dict[str, Any] = {}
+    if "name" in req:
+        name = (req.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Ad boş olamaz.")
+        upd["name"] = name
+    if "email" in req:
+        email = (req.get("email") or "").strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=400, detail="Geçerli e-posta girin.")
+        other = await _db.users.find_one({"email": email})
+        if other and other["_id"] != user_id:
+            raise HTTPException(status_code=400, detail="Bu e-posta başka bir kullanıcıya ait.")
+        upd["email"] = email
+    if "role" in req:
+        if req["role"] not in ROLE_CODES:
+            raise HTTPException(status_code=400, detail="Geçersiz rol.")
+        if u.get("email") == "admin@nexus.com" and req["role"] != "admin":
+            raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
+        upd["role"] = req["role"]
+    if "is_active" in req:
+        active = bool(req["is_active"])
+        if not active and u.get("is_super_admin") and await _super_admin_count() <= 1:
+            raise HTTPException(status_code=400, detail="Son platform yöneticisi pasifleştirilemez.")
+        upd["is_active"] = active
+    if "is_super_admin" in req:
+        flag = bool(req["is_super_admin"])
+        if not flag and u.get("is_super_admin") and await _super_admin_count() <= 1:
+            raise HTTPException(status_code=400, detail="Son platform yöneticisinin yetkisi alınamaz.")
+        upd["is_super_admin"] = flag
+    if "company_ids" in req:
+        company_ids = [cid for cid in (req.get("company_ids") or []) if cid in comps]
+        will_super = upd.get("is_super_admin", u.get("is_super_admin"))
+        if not company_ids and not will_super:
+            raise HTTPException(status_code=400, detail="En az bir şirket seçin (veya platform yöneticisi işaretleyin).")
+        for cid in company_ids:
+            await rbac.ensure_roles(cid)
+            if cid not in (u.get("company_ids") or []) and not will_super:
+                await check_user_limit(cid)
+        upd["company_ids"] = company_ids
+        active = req.get("active_company_id") or u.get("active_company_id")
+        upd["active_company_id"] = active if active in company_ids else (company_ids[0] if company_ids else None)
+    elif req.get("active_company_id"):
+        if req["active_company_id"] not in (u.get("company_ids") or []):
+            raise HTTPException(status_code=400, detail="Aktif şirket, kullanıcının şirketlerinden biri olmalı.")
+        upd["active_company_id"] = req["active_company_id"]
+    if req.get("password"):
+        if len(str(req["password"])) < 6:
+            raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+        upd["password_hash"] = hash_password(str(req["password"]))
+    if not upd:
+        return _user_row(u, comps)
+    await _db.users.update_one({"_id": user_id}, {"$set": {**upd, "updated_at": _now()}})
+    return _user_row(await _db.users.find_one({"_id": user_id}), comps)
+
+
+@router.delete("/system/users/{user_id}")
+async def system_delete_user(user_id: str, admin: dict = Depends(require_super_admin)):
+    u = await _db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if u.get("email") == "admin@nexus.com":
+        raise HTTPException(status_code=400, detail="Ana yönetici silinemez.")
+    if (admin.get("_id") or admin.get("id")) == user_id:
+        raise HTTPException(status_code=400, detail="Kendi hesabınızı silemezsiniz.")
+    if u.get("is_super_admin") and await _super_admin_count() <= 1:
+        raise HTTPException(status_code=400, detail="Son platform yöneticisi silinemez.")
+    await _db.users.delete_one({"_id": user_id})
+    return {"status": "success"}
+
+
 @router.get("/system/upgrade-requests")
 async def list_requests(status: Optional[str] = None, _: dict = Depends(require_super_admin)):
     q = {"status": status} if status else {}

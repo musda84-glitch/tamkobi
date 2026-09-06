@@ -384,6 +384,14 @@ def project_doc(doc: dict, projection: Optional[dict]) -> dict:
     return out
 
 
+def normalize_sort(sort, direction=1):
+    if not sort:
+        return None
+    if isinstance(sort, str):
+        return [(sort, direction)]
+    return sort
+
+
 def sort_docs(docs: List[dict], key) -> List[dict]:
     if not key:
         return docs
@@ -540,8 +548,11 @@ class MySQLCollection:
                 if tuple(scalar_at(o, f) for f in spec) == key and all(v is not MISSING for v in key):
                     raise DuplicateKeyError(f"duplicate key {spec}={key} on {self.name}")
 
-    async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None):
+    async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None, sort=None, skip=0):
         docs = await self._load_filtered(query)
+        docs = sort_docs(docs, normalize_sort(sort))
+        if skip:
+            docs = docs[skip:]
         if not docs:
             return None
         return project_doc(docs[0], projection)
@@ -845,8 +856,11 @@ class SyncMySQLCollection:
             )
         return doc
 
-    def find_one(self, query=None, projection=None):
+    def find_one(self, query=None, projection=None, sort=None, skip=0):
         docs = self._load_filtered(query)
+        docs = sort_docs(docs, normalize_sort(sort))
+        if skip:
+            docs = docs[skip:]
         return project_doc(docs[0], projection) if docs else None
 
     def find(self, query=None, projection=None):

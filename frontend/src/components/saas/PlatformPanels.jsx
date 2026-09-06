@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Save, Loader2, Send, Mail, MessageCircle, Bell, CreditCard } from "lucide-react";
+import { Save, Loader2, Send, Mail, MessageCircle, Bell, CreditCard, KeyRound } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtTL, fmtDate, StatCard, Toggle, inputCls } from "./saasUi";
 
@@ -45,6 +45,33 @@ export const RemindersPanel = () => {
   );
 };
 
+const ChangePasswordCard = () => {
+  const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (f.new_password !== f.new_password2) { toast.error("Yeni şifreler eşleşmiyor."); return; }
+    setBusy(true);
+    try {
+      await axios.post(`${API_URL}/auth/change-password`, { current_password: f.current_password, new_password: f.new_password }, { withCredentials: true });
+      setF({ current_password: "", new_password: "", new_password2: "" });
+      toast.success("Şifreniz güncellendi.");
+    } catch (err) { toast.error(err.response?.data?.detail || "Şifre değiştirilemedi."); } finally { setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="change-password-card">
+      <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-amber-500" /> Hesap şifresi</h3>
+      <p className="text-[11px] text-slate-500">Platform yönetim hesabınızın şifresini buradan değiştirin. Mevcut şifre doğrulanır; yeni şifre en az 6 karakter olmalıdır.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div><label className="block font-semibold text-slate-700 mb-1">Mevcut şifre</label><input type="password" required value={f.current_password} onChange={(e) => setF({ ...f, current_password: e.target.value })} className={inputCls} data-testid="chg-current-password" autoComplete="current-password" /></div>
+        <div><label className="block font-semibold text-slate-700 mb-1">Yeni şifre</label><input type="password" required minLength={6} value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} className={inputCls} data-testid="chg-new-password" autoComplete="new-password" /></div>
+        <div><label className="block font-semibold text-slate-700 mb-1">Yeni şifre (tekrar)</label><input type="password" required value={f.new_password2} onChange={(e) => setF({ ...f, new_password2: e.target.value })} className={inputCls} data-testid="chg-new-password2" autoComplete="new-password" /></div>
+      </div>
+      <div className="flex justify-end"><button type="submit" disabled={busy} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="chg-password-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Şifreyi Değiştir</button></div>
+    </form>
+  );
+};
+
 export const PlatformSettingsPanel = () => {
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -52,7 +79,9 @@ export const PlatformSettingsPanel = () => {
   if (!s) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
   const save = async (e) => { e.preventDefault(); setBusy(true); try { const r = await axios.put(`${API_URL}/system/settings`, { ...s, reminder_days: String(s.reminder_days_text ?? s.reminder_days.join(",")).split(",").map((x) => x.trim()).filter(Boolean) }); setS({ ...s, ...r.data, reminder_days_text: undefined }); toast.success("Platform ayarları kaydedildi."); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); } };
   return (
-    <form onSubmit={save} className="space-y-4 text-xs max-w-3xl" data-testid="saas-settings">
+    <div className="space-y-4 text-xs max-w-3xl">
+    <ChangePasswordCard />
+    <form onSubmit={save} className="space-y-4" data-testid="saas-settings">
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <h3 className="font-bold text-slate-900 text-sm">Hatırlatma & Gönderim</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -76,6 +105,7 @@ export const PlatformSettingsPanel = () => {
       <PaytrSettings />
       <div className="flex justify-end"><button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="set-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
+    </div>
   );
 };
 

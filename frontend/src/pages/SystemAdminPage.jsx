@@ -10,6 +10,7 @@ import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { PlansPanel } from "../components/saas/PlansPanel";
 import { RequestsPanel } from "../components/saas/RequestsPanel";
 import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
+import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -23,7 +24,13 @@ export default function SystemAdminPage() {
   const [openId, setOpenId] = useState(null);
   const load = useCallback(async () => {
     try {
-      const [o, c, p, m, r] = await Promise.all([axios.get(`${API_URL}/system/overview`), axios.get(`${API_URL}/system/companies`), axios.get(`${API_URL}/system/plans`), axios.get(`${API_URL}/system/modules`), axios.get(`${API_URL}/system/upgrade-requests`)]);
+      const [o, c, p, m, r] = await Promise.all([
+        axios.get(`${API_URL}/system/overview`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/companies`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/plans`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/modules`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/upgrade-requests`, { withCredentials: true }),
+      ]);
       setOverview(o.data); setCompanies(c.data); setPlans(p.data); setCatalog(m.data); setRequests(r.data);
     } catch (e) { toast.error(e.response?.data?.detail || "Sistem verileri alınamadı."); }
   }, []);
@@ -40,6 +47,7 @@ export default function SystemAdminPage() {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {pathname === "/sistem" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {pathname === "/sistem/sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {pathname === "/sistem/kullanicilar" && <PlatformUsersPanel />}
           {pathname === "/sistem/paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {pathname === "/sistem/moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
           {pathname === "/sistem/talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
