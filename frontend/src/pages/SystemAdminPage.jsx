@@ -23,16 +23,17 @@ export default function SystemAdminPage() {
   const [requests, setRequests] = useState([]);
   const [openId, setOpenId] = useState(null);
   const load = useCallback(async () => {
-    try {
-      const [o, c, p, m, r] = await Promise.all([
-        axios.get(`${API_URL}/system/overview`, { withCredentials: true }),
-        axios.get(`${API_URL}/system/companies`, { withCredentials: true }),
-        axios.get(`${API_URL}/system/plans`, { withCredentials: true }),
-        axios.get(`${API_URL}/system/modules`, { withCredentials: true }),
-        axios.get(`${API_URL}/system/upgrade-requests`, { withCredentials: true }),
-      ]);
-      setOverview(o.data); setCompanies(c.data); setPlans(p.data); setCatalog(m.data); setRequests(r.data);
-    } catch (e) { toast.error(e.response?.data?.detail || "Sistem verileri alınamadı."); }
+    const cred = { withCredentials: true };
+    const grab = async (path, set) => {
+      try { const r = await axios.get(`${API_URL}${path}`, cred); set(r.data); return true; } catch (e) { toast.error(e.response?.data?.detail || "Sistem verileri alınamadı."); return false; }
+    };
+    await Promise.all([
+      grab("/system/overview", setOverview),
+      grab("/system/companies", setCompanies),
+      grab("/system/plans", setPlans),
+      grab("/system/modules", setCatalog),
+      grab("/system/upgrade-requests", setRequests),
+    ]);
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
