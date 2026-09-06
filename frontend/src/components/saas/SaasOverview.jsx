@@ -1,5 +1,6 @@
 import React from "react";
-import { Building2, Users, Wallet, AlertTriangle, Inbox } from "lucide-react";
+import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe } from "lucide-react";
+import { Link } from "react-router-dom";
 import { fmtTL, fmtDate, StatCard, StatusBadge, PlanChip } from "./saasUi";
 
 export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => {
@@ -8,6 +9,10 @@ export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => 
   const usage = Object.entries(data.module_usage).sort((a, b) => b[1] - a[1]);
   return (
     <div className="space-y-5 text-xs" data-testid="saas-overview">
+      <Link to="/sistem/web" className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 hover:bg-emerald-100/70" data-testid="overview-go-web">
+        <span className="font-semibold text-emerald-900 inline-flex items-center gap-2"><Globe className="w-4 h-4" /> TamKobi müşteri sitesi yayında — vitrini yönetmek için tıklayın</span>
+        <span className="text-emerald-800 font-bold">Web Sitesi →</span>
+      </Link>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Müşteri Şirket" value={data.companies} sub={`${data.by_status.active || 0} aktif · ${data.by_status.trial || 0} deneme`} testId="stat-companies" />
         <StatCard label="Toplam Kullanıcı" value={data.users} testId="stat-users" />

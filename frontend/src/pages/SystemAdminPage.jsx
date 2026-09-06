@@ -11,6 +11,7 @@ import { PlansPanel } from "../components/saas/PlansPanel";
 import { RequestsPanel } from "../components/saas/RequestsPanel";
 import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
+import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -47,6 +48,7 @@ export default function SystemAdminPage() {
         </div>
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {pathname === "/sistem" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
+          {pathname === "/sistem/web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
           {pathname === "/sistem/sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
           {pathname === "/sistem/kullanicilar" && <PlatformUsersPanel />}
           {pathname === "/sistem/paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
