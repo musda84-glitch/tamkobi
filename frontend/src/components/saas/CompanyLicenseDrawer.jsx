@@ -1,27 +1,36 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+
+const cred = { withCredentials: true };
 
 export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onChanged }) => {
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState("");
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteName, setDeleteName] = useState("");
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
   const groups = groupByCategory(catalog);
+  const isLive = lic.status === "active" || lic.status === "trial";
+  const applyLicense = (licRes) => {
+    setD((prev) => ({ ...prev, license: licRes }));
+    setF((prev) => ({ ...prev, status: licRes.status }));
+  };
   const save = async () => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
-  const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
-  const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
+  const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
+  const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
   const siblings = d.license_companies || [];
   const limit = Number(lic.company_limit || 0);
   const canAddSibling = !limit || siblings.length < limit;
@@ -29,21 +38,76 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
     if (!newCo.name.trim()) return;
     setBusy("co");
     try {
-      await axios.post(`${API_URL}/system/companies/${companyId}/companies`, newCo);
+      await axios.post(`${API_URL}/system/companies/${companyId}/companies`, newCo, cred);
       toast.success("Lisans altına yeni şirket eklendi. Verileri diğer şirketlerden ayrıdır.");
       setNewCo({ name: "", tax_number: "", city: "" });
       await load();
       onChanged();
     } catch (e) { toast.error(e.response?.data?.detail || "Şirket eklenemedi."); } finally { setBusy(""); }
   };
+  const setActive = async (active) => {
+    setBusy(active ? "on" : "off");
+    try {
+      const r = await axios.post(`${API_URL}/system/companies/${companyId}/activation`, { active }, cred);
+      applyLicense(r.data);
+      toast.success(active ? "Şirket aktif." : "Şirket pasife alındı — modüller kilitli.");
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Durum değiştirilemedi."); } finally { setBusy(""); }
+  };
+  const remove = async () => {
+    if (deleteName.trim() !== (d.name || "").trim()) {
+      toast.error("Onay için şirket adını birebir yazın.");
+      return;
+    }
+    setBusy("del");
+    try {
+      await axios.delete(`${API_URL}/system/companies/${companyId}`, cred);
+      toast.success(`${d.name} silindi.`);
+      onChanged();
+      onClose();
+    } catch (e) { toast.error(e.response?.data?.detail || "Şirket silinemedi."); } finally { setBusy(""); }
+  };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
-        <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10">
-          <div><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
-          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
+        <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
+          <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-2.5 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn"><Power className="w-3.5 h-3.5" /> Aktif</button>
+            <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-2.5 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn">Pasif</button>
+            <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
+          </div>
         </div>
         <div className="p-5 space-y-5">
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Şirket işlemleri</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Pasif (askıda) şirkette tüm modüller kilitlenir. Silme geri alınamaz.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn-body"><Power className="w-3.5 h-3.5" /> Aktif</button>
+                <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-3 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn-body">Pasif</button>
+                {d.protected ? (
+                  <span className="text-[10px] text-slate-400 font-semibold" data-testid="company-delete-protected">Demo şirket silinemez</span>
+                ) : (
+                  <button type="button" onClick={() => setConfirmDelete(true)} disabled={!!busy} className="px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-60" data-testid="company-delete-btn"><Trash2 className="w-3.5 h-3.5" /> Şirketi Sil</button>
+                )}
+              </div>
+            </div>
+            {confirmDelete && !d.protected && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 space-y-2" data-testid="company-delete-confirm">
+                <div className="font-bold text-rose-800">Bu işlem geri alınamaz</div>
+                <p className="text-[11px] text-rose-700">Faturalar, stok, cari, kullanıcılar ve lisans kalıcı olarak silinir. Onaylamak için şirket adını yazın: <b>{d.name}</b></p>
+                <input value={deleteName} onChange={(e) => setDeleteName(e.target.value)} className={inputCls} placeholder="Şirket adı" data-testid="company-delete-confirm-name" />
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => { setConfirmDelete(false); setDeleteName(""); }} className="px-3 py-1.5 border rounded-lg font-semibold" data-testid="company-delete-cancel">Vazgeç</button>
+                  <button type="button" onClick={remove} disabled={busy === "del"} className="px-3 py-1.5 bg-rose-600 text-white rounded-lg font-bold inline-flex items-center gap-1 disabled:opacity-60" data-testid="company-delete-confirm-btn">{busy === "del" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Kalıcı olarak sil</button>
+                </div>
+              </div>
+            )}
+          </section>
+
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
             <h3 className="font-bold text-slate-900 text-sm">Lisans</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
