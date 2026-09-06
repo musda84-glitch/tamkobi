@@ -15,13 +15,18 @@ export const WebsiteAdminPanel = ({ plans, onChanged }) => {
   const [busy, setBusy] = useState("");
   const load = useCallback(async () => {
     try {
-      const [s, p] = await Promise.all([
-        axios.get(`${API_URL}/system/settings`, cred),
-        axios.get(`${API_URL}/public/plans`),
-      ]);
+      const s = await axios.get(`${API_URL}/system/settings`, cred);
       setSettings(s.data);
+    } catch {
+      setSettings({ brand_name: "TamKobi", public_url: "" });
+      toast.error("Site ayarları alınamadı.");
+    }
+    try {
+      const p = await axios.get(`${API_URL}/public/plans`);
       setPublicPlans(p.data);
-    } catch { toast.error("Site bilgisi alınamadı."); }
+    } catch {
+      setPublicPlans({ plans: [], trial_days: 14 });
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
   if (!settings) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;

@@ -81,6 +81,7 @@ export default function App() {
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/edoc-inbox" element={<EdocInboxPage />} />
             <Route path="/sistem/giris" element={<SystemLoginPage />} />
+            <Route path="/sistem/web" element={<SystemAdminPage />} />
             <Route path="/sistem" element={<SystemAdminPage />} />
             <Route path="/sistem/:section" element={<SystemAdminPage />} />
             <Route path="/fiyatlar" element={<PricingPage />} />

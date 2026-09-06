@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
@@ -16,6 +16,8 @@ import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
   const { pathname } = useLocation();
+  const { section } = useParams();
+  const page = (section || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -38,7 +40,7 @@ export default function SystemAdminPage() {
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const title = (SYSTEM_NAV.find(([p]) => p === pathname) || SYSTEM_NAV[0])[1];
+  const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
   return (
     <SystemLayout pendingCount={overview?.pending_requests || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
@@ -47,16 +49,16 @@ export default function SystemAdminPage() {
           {overview && <div className="flex gap-2 text-xs">{[["Şirket", overview.companies], ["Müşteri kullanıcı", overview.users], ["Panel", overview.platform_admins ?? "—"], ["MRR", `${(overview.mrr || 0).toLocaleString("tr-TR")} ₺`]].map(([l, v]) => <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-200"><div className="text-[10px] text-slate-400">{l}</div><div className="font-bold">{v}</div></div>)}</div>}
         </div>
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
-          {pathname === "/sistem" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
-          {pathname === "/sistem/web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
-          {pathname === "/sistem/sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
-          {pathname === "/sistem/kullanicilar" && <PlatformUsersPanel />}
-          {pathname === "/sistem/paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
-          {pathname === "/sistem/moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
-          {pathname === "/sistem/talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
-          {pathname === "/sistem/odemeler" && <PaymentsPanel />}
-          {pathname === "/sistem/hatirlatmalar" && <RemindersPanel />}
-          {pathname === "/sistem/ayarlar" && <PlatformSettingsPanel />}
+          {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
+          {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
+          {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {page === "kullanicilar" && <PlatformUsersPanel />}
+          {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
+          {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
+          {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
+          {page === "odemeler" && <PaymentsPanel />}
+          {page === "hatirlatmalar" && <RemindersPanel />}
+          {page === "ayarlar" && <PlatformSettingsPanel />}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
