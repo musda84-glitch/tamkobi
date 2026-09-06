@@ -128,6 +128,23 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 user = await get_user_from_token(token, _db)
             except HTTPException:
                 user = None
+        if user and not user.get("is_super_admin"):
+            cid = request.query_params.get("company_id")
+            if not cid:
+                parts = path.strip("/").split("/")
+                if len(parts) >= 3 and parts[0] == "api" and parts[1] == "companies":
+                    cid = parts[2]
+            if not cid:
+                allowed = [c for c in (user.get("company_ids") or []) if c]
+                cid = user.get("active_company_id") if user.get("active_company_id") in allowed else (allowed[0] if allowed else None)
+                if cid and "company_id" not in request.query_params:
+                    from urllib.parse import parse_qsl, urlencode
+                    q = dict(parse_qsl(request.scope.get("query_string", b"").decode(), keep_blank_values=True))
+                    q["company_id"] = cid
+                    request.scope["query_string"] = urlencode(q).encode()
+            if cid and cid not in (user.get("company_ids") or []):
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "Bu şirket hesabına erişiminiz yok."}, status_code=403)
         module = module_for_path(path)
         if _license_guard and module:
             blocked = await _license_guard(request, user, module)

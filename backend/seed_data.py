@@ -40,7 +40,8 @@ async def seed_all_data(db):
         "email": "info@nexus.com",
         "currency": "TRY",
         "e_invoice_alias": "urn:mail:nexusefatura@gib.gov.tr",
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "license_id": company_id,
     }
     company2 = {
         "_id": company_id_2,
@@ -53,7 +54,8 @@ async def seed_all_data(db):
         "email": "b2b@nexusglobal.com",
         "currency": "TRY",
         "e_invoice_alias": "urn:mail:nexusb2b@gib.gov.tr",
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "license_id": company_id_2,
     }
     await db.companies.insert_many([company1, company2])
 

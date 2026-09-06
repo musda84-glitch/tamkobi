@@ -190,11 +190,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
     response.set_cookie(key="access_token", value=token, httponly=True, max_age=86400*7, path="/")
     response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, max_age=86400*30, path="/")
 
-    companies = await db.companies.find({"_id": {"$in": user.get("company_ids", [])}}).to_list(100)
-    if not companies:
-        first_comp = await db.companies.find_one({})
-        if first_comp:
-            companies = [first_comp]
+    companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
 
     return {
         "token": token,
@@ -659,7 +655,9 @@ async def register(req: RegisterRequest, response: Response):
         phone="0850 000 00 00",
         email=email
     )
-    await db.companies.insert_one(new_company.to_mongo())
+    mongo = new_company.to_mongo()
+    mongo["license_id"] = company_id
+    await db.companies.insert_one(mongo)
 
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     new_user = User(
@@ -691,7 +689,7 @@ async def register(req: RegisterRequest, response: Response):
 async def get_me(request: Request, user: dict = Depends(get_current_user)):
     user_id = str(user.get("_id", user.get("id")))
     authenticated = bool(request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer "))
-    companies = await db.companies.find({}).to_list(100)
+    companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
     role_doc = await rbac.role_for(user)
     return {
         "user": {
@@ -715,6 +713,8 @@ async def switch_company(req: Dict[str, str], user: dict = Depends(get_current_u
     new_comp_id = req.get("company_id")
     if not new_comp_id:
         raise HTTPException(status_code=400, detail="Şirket ID gereklidir.")
+    if new_comp_id not in (user.get("company_ids") or []):
+        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
     await db.users.update_one({"email": user["email"]}, {"$set": {"active_company_id": new_comp_id}})
     return {"status": "success", "active_company_id": new_comp_id}
 
