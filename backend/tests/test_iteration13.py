@@ -102,9 +102,9 @@ class TestUsersInvites:
         r = requests.get(f"{API}/users", params={"company_id": TEST_COMPANY_ID}, timeout=30)
         assert r.status_code == 200, r.text
         d = r.json()
-        assert len(d["users"]) >= 4, len(d["users"])
+        assert len(d["users"]) >= 3, len(d["users"])
         emails = [u["email"] for u in d["users"]]
-        assert ADMIN_EMAIL in emails
+        assert ADMIN_EMAIL not in emails, "platform staff must not appear in company user lists"
         assert all("password_hash" not in u for u in d["users"])
         assert all("role_name" in u and "is_active" in u for u in d["users"])
         assert isinstance(d["invites"], list)
@@ -195,9 +195,7 @@ class TestUsersInvites:
         assert r.status_code == 200
 
     def test_main_admin_cannot_be_deleted(self):
-        d = requests.get(f"{API}/users", params={"company_id": TEST_COMPANY_ID}, timeout=30).json()
-        admin = [u for u in d["users"] if u["email"] == ADMIN_EMAIL][0]
-        r = requests.delete(f"{API}/users/{admin['id']}", timeout=30)
+        r = requests.delete(f"{API}/users/usr_admin_01", timeout=30)
         assert r.status_code == 400, r.text
 
 

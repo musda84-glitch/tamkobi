@@ -142,10 +142,15 @@ async def guard(request: Request, user: Optional[dict], module: Optional[str]):
     return JSONResponse({"detail": msg, "code": "module_disabled", "module": module, "plan": lic["plan_name"], "status": lic["status"]}, status_code=403)
 
 
+def tenant_user_query(company_id: str) -> dict:
+    """Company staff only — platform (super) admins are not tenant seats."""
+    return {"company_ids": company_id, "is_super_admin": {"$ne": True}}
+
+
 async def check_user_limit(company_id: str):
     lic = await effective(company_id)
     limit = int(lic.get("user_limit") or 0)
-    if limit and await _db.users.count_documents({"company_ids": company_id}) >= limit:
+    if limit and await _db.users.count_documents(tenant_user_query(company_id)) >= limit:
         raise HTTPException(status_code=403, detail=f"Kullanıcı limitine ulaşıldı ({limit}). Paketinizi yükseltin ({lic['plan_name']}).")
 
 
@@ -166,13 +171,13 @@ async def require_super_admin(request: Request) -> dict:
 
 async def _usage(company_id: str) -> Dict[str, Any]:
     last = await _db.activity_logs.find_one({"company_id": company_id}, sort=[("created_at", -1)])
-    return {"users": await _db.users.count_documents({"company_ids": company_id}), "invoices": await _db.invoices.count_documents({"company_id": company_id}), "contacts": await _db.contacts.count_documents({"company_id": company_id}),
+    return {"users": await _db.users.count_documents(tenant_user_query(company_id)), "invoices": await _db.invoices.count_documents({"company_id": company_id}), "contacts": await _db.contacts.count_documents({"company_id": company_id}),
             "products": await _db.products.count_documents({"company_id": company_id}), "orders": await _db.orders.count_documents({"company_id": company_id}), "last_activity": (last or {}).get("created_at")}
 
 
 async def _company_row(c: dict) -> Dict[str, Any]:
     lic = await effective(c["_id"])
-    admin = await _db.users.find_one({"company_ids": c["_id"], "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
+    admin = await _db.users.find_one({**tenant_user_query(c["_id"]), "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
     return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
 
 
@@ -192,7 +197,7 @@ async def overview(_: dict = Depends(require_super_admin)):
     module_usage = {k: sum(1 for r in rows if r["license"]["modules"].get(k)) for k in _ALL}
     expiring = sorted([r for r in rows if r["license"]["days_left"] is not None and r["license"]["days_left"] <= 7], key=lambda r: r["license"]["days_left"])
     pending = await _db.upgrade_requests.count_documents({"status": "pending"})
-    return {"companies": len(rows), "users": await _db.users.count_documents({}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
+    return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
 
 
 @router.get("/system/modules")
@@ -256,7 +261,7 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     row = await _company_row(c)
-    row["users"] = [{"id": u["_id"], "name": u.get("name"), "email": u.get("email"), "role": u.get("role"), "is_active": u.get("is_active", True), "last_login_at": u.get("last_login_at")} for u in await _db.users.find({"company_ids": company_id}, {"password_hash": 0}).to_list(200)]
+    row["users"] = [{"id": u["_id"], "name": u.get("name"), "email": u.get("email"), "role": u.get("role"), "is_active": u.get("is_active", True), "last_login_at": u.get("last_login_at")} for u in await _db.users.find(tenant_user_query(company_id), {"password_hash": 0}).to_list(200)]
     row["requests"] = [_clean(r) for r in await _db.upgrade_requests.find({"company_id": company_id}).sort("created_at", -1).to_list(20)]
     return row
 
@@ -336,9 +341,6 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
     return await effective(company_id)
 
 
-ROLE_CODES = [r["code"] for r in rbac.DEFAULT_ROLES]
-
-
 def _user_row(u: dict, companies_by_id: Dict[str, dict]) -> Dict[str, Any]:
     cids = list(u.get("company_ids") or [])
     return {
@@ -367,7 +369,7 @@ async def _super_admin_count() -> int:
 @router.get("/system/users")
 async def system_list_users(q: Optional[str] = None, _: dict = Depends(require_super_admin)):
     comps = await _companies_map()
-    rows = [_user_row(u, comps) for u in await _db.users.find({}).sort("name", 1).to_list(2000)]
+    rows = [_user_row(u, comps) for u in await _db.users.find({"is_super_admin": True}).sort("name", 1).to_list(2000)]
     if q:
         ql = q.strip().lower()
         rows = [u for u in rows if ql in (u.get("name") or "").lower() or ql in (u.get("email") or "").lower()]
@@ -385,29 +387,18 @@ async def system_create_user(req: Dict[str, Any], _: dict = Depends(require_supe
         raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
     if await _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
-    role = req.get("role") or "admin"
-    if role not in ROLE_CODES:
-        raise HTTPException(status_code=400, detail="Geçersiz rol.")
     comps = await _companies_map()
-    company_ids = [cid for cid in (req.get("company_ids") or []) if cid in comps]
-    is_super = bool(req.get("is_super_admin"))
-    if not company_ids and not is_super:
-        raise HTTPException(status_code=400, detail="En az bir şirket seçin (veya platform yöneticisi işaretleyin).")
-    for cid in company_ids:
-        await rbac.ensure_roles(cid)
-        if not is_super:
-            await check_user_limit(cid)
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     doc = {
         "_id": uid,
         "email": email,
         "password_hash": hash_password(pwd),
         "name": name,
-        "role": role,
-        "company_ids": company_ids,
-        "active_company_id": company_ids[0] if company_ids else None,
+        "role": "admin",
+        "company_ids": [],
+        "active_company_id": None,
         "is_active": req.get("is_active", True) is not False,
-        "is_super_admin": is_super,
+        "is_super_admin": True,
         "preferences": {},
         "created_at": _now(),
     }
@@ -418,8 +409,8 @@ async def system_create_user(req: Dict[str, Any], _: dict = Depends(require_supe
 @router.put("/system/users/{user_id}")
 async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = Depends(require_super_admin)):
     u = await _db.users.find_one({"_id": user_id})
-    if not u:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if not u or not u.get("is_super_admin"):
+        raise HTTPException(status_code=404, detail="Panel yöneticisi bulunamadı.")
     comps = await _companies_map()
     upd: Dict[str, Any] = {}
     if "name" in req:
@@ -435,38 +426,13 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
         if other and other["_id"] != user_id:
             raise HTTPException(status_code=400, detail="Bu e-posta başka bir kullanıcıya ait.")
         upd["email"] = email
-    if "role" in req:
-        if req["role"] not in ROLE_CODES:
-            raise HTTPException(status_code=400, detail="Geçersiz rol.")
-        if u.get("email") == "admin@nexus.com" and req["role"] != "admin":
-            raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
-        upd["role"] = req["role"]
     if "is_active" in req:
         active = bool(req["is_active"])
-        if not active and u.get("is_super_admin") and await _super_admin_count() <= 1:
+        if not active and await _super_admin_count() <= 1:
             raise HTTPException(status_code=400, detail="Son platform yöneticisi pasifleştirilemez.")
         upd["is_active"] = active
-    if "is_super_admin" in req:
-        flag = bool(req["is_super_admin"])
-        if not flag and u.get("is_super_admin") and await _super_admin_count() <= 1:
-            raise HTTPException(status_code=400, detail="Son platform yöneticisinin yetkisi alınamaz.")
-        upd["is_super_admin"] = flag
-    if "company_ids" in req:
-        company_ids = [cid for cid in (req.get("company_ids") or []) if cid in comps]
-        will_super = upd.get("is_super_admin", u.get("is_super_admin"))
-        if not company_ids and not will_super:
-            raise HTTPException(status_code=400, detail="En az bir şirket seçin (veya platform yöneticisi işaretleyin).")
-        for cid in company_ids:
-            await rbac.ensure_roles(cid)
-            if cid not in (u.get("company_ids") or []) and not will_super:
-                await check_user_limit(cid)
-        upd["company_ids"] = company_ids
-        active = req.get("active_company_id") or u.get("active_company_id")
-        upd["active_company_id"] = active if active in company_ids else (company_ids[0] if company_ids else None)
-    elif req.get("active_company_id"):
-        if req["active_company_id"] not in (u.get("company_ids") or []):
-            raise HTTPException(status_code=400, detail="Aktif şirket, kullanıcının şirketlerinden biri olmalı.")
-        upd["active_company_id"] = req["active_company_id"]
+    if "is_super_admin" in req and not bool(req["is_super_admin"]):
+        raise HTTPException(status_code=400, detail="Panel yöneticisinin yetkisi bu ekrandan alınamaz. Şirket kullanıcıları Firma Ayarları’ndan yönetilir.")
     if req.get("password"):
         if len(str(req["password"])) < 6:
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
@@ -480,8 +446,8 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
 @router.delete("/system/users/{user_id}")
 async def system_delete_user(user_id: str, admin: dict = Depends(require_super_admin)):
     u = await _db.users.find_one({"_id": user_id})
-    if not u:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if not u or not u.get("is_super_admin"):
+        raise HTTPException(status_code=404, detail="Panel yöneticisi bulunamadı.")
     if u.get("email") == "admin@nexus.com":
         raise HTTPException(status_code=400, detail="Ana yönetici silinemez.")
     if (admin.get("_id") or admin.get("id")) == user_id:
@@ -520,7 +486,7 @@ async def my_license(company_id: str = "comp_nexus_main_01"):
     lic = await effective(company_id)
     plans = [{**_clean(p), "modules": p["modules"]} for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     pending = await _db.upgrade_requests.find_one({"company_id": company_id, "status": "pending"})
-    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents({"company_ids": company_id}), "pending_request": _clean(pending) if pending else None}
+    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "pending_request": _clean(pending) if pending else None}
 
 
 @router.post("/license/upgrade-request")

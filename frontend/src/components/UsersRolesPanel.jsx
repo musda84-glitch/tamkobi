@@ -169,6 +169,7 @@ export const UsersRolesPanel = ({ companyId }) => {
   if (!data || !rolesData) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
   return (
     <div className="space-y-4" data-testid="users-roles-panel">
+      <p className="text-[11px] text-slate-500 -mt-1" data-testid="ur-company-users-note">Bu listedeki kullanıcılar şirketinizin personelidir. TamKobi panel yöneticileri burada görünmez; onlar platform ekibidir.</p>
       <div className="flex gap-1 border-b">{[["users", "Kullanıcılar", data.users.length], ["roles", "Roller & Yetkiler", rolesData.roles.length], ["log", "İşlem Günlüğü"]].map(([k, l, n]) => <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500"}`} data-testid={`ur-tab-${k}`}>{l}{n !== undefined && <span className="ml-1 text-[10px] bg-slate-100 px-1.5 rounded-full">{n}</span>}</button>)}</div>
       {tab === "users" && <UsersTab companyId={companyId} roles={rolesData.roles} data={data} reload={reload} />}
       {tab === "roles" && <RolesTab companyId={companyId} rolesData={rolesData} reload={reload} />}

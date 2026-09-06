@@ -158,7 +158,7 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
 
 # ---------------- Reminders ----------------
 async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[str, Any]:
-    admins = await _db.users.find({"company_ids": company["_id"], "role": "admin"}, {"email": 1, "phone": 1, "name": 1}).to_list(20)
+    admins = await _db.users.find({"company_ids": company["_id"], "role": "admin", "is_super_admin": {"$ne": True}}, {"email": 1, "phone": 1, "name": 1}).to_list(20)
     end = (lic.get("trial_ends_at") if lic["status"] == "trial" else lic.get("expires_at")) or ""
     brand = st.get("brand_name", "NexusHesap")
     if kind == "expired":
