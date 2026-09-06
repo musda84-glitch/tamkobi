@@ -37,6 +37,11 @@ DEFAULT_PLANS = [
 ]
 STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
+PROTECTED_COMPANY_IDS = frozenset({"comp_nexus_main_01", "comp_nexus_b2b_02"})
+_SKIP_ON_COMPANY_DELETE = frozenset({
+    "saas_plans", "platform_settings", "users", "companies", "company_licenses", "login_attempts",
+})
+PROTECTED_USER_EMAILS = frozenset({"admin@nexus.com"})
 
 
 def init(db, current_user_dep):
@@ -173,7 +178,38 @@ async def _usage(company_id: str) -> Dict[str, Any]:
 async def _company_row(c: dict) -> Dict[str, Any]:
     lic = await effective(c["_id"])
     admin = await _db.users.find_one({"company_ids": c["_id"], "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
-    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
+    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "protected": c["_id"] in PROTECTED_COMPANY_IDS, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
+
+
+def _restore_active_status(lic: Optional[dict]) -> str:
+    """Pasiften çıkınca deneme süresi duruyorsa trial, aksi halde active."""
+    lic = lic or {}
+    end = lic.get("trial_ends_at")
+    if end:
+        try:
+            if datetime.fromisoformat(end) > datetime.now(timezone.utc):
+                return "trial"
+        except (TypeError, ValueError):
+            pass
+    return "active"
+
+
+async def _detach_company_users(company_id: str) -> Dict[str, int]:
+    deleted = detached = 0
+    users = await _db.users.find({"company_ids": company_id}).to_list(2000)
+    for u in users:
+        remaining = [x for x in (u.get("company_ids") or []) if x != company_id]
+        protect = bool(u.get("is_super_admin")) or (u.get("email") or "").strip().lower() in PROTECTED_USER_EMAILS
+        if not remaining and not protect:
+            await _db.users.delete_one({"_id": u["_id"]})
+            deleted += 1
+            continue
+        upd: Dict[str, Any] = {"company_ids": remaining, "updated_at": _now()}
+        if u.get("active_company_id") == company_id:
+            upd["active_company_id"] = remaining[0] if remaining else None
+        await _db.users.update_one({"_id": u["_id"]}, {"$set": upd})
+        detached += 1
+    return {"deleted": deleted, "detached": detached}
 
 
 # ---------------- System endpoints ----------------
@@ -283,6 +319,40 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     await rbac.ensure_roles(cid)
     invalidate(cid)
     return await _company_row(await _db.companies.find_one({"_id": cid}))
+
+
+@router.delete("/system/companies/{company_id}")
+async def delete_company(company_id: str, _: dict = Depends(require_super_admin)):
+    c = await _db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    if company_id in PROTECTED_COMPANY_IDS:
+        raise HTTPException(status_code=400, detail="Platform demo şirketleri silinemez.")
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    if st.get("sender_company_id") == company_id:
+        raise HTTPException(status_code=400, detail="Platform gönderici şirketi silinemez. Önce ayarlardan başka bir gönderici seçin.")
+    users = await _detach_company_users(company_id)
+    collections = 0
+    names = await _db.list_collection_names()
+    for name in names:
+        if name in _SKIP_ON_COMPANY_DELETE:
+            continue
+        collections += int((await _db[name].delete_many({"company_id": company_id})).deleted_count or 0)
+    await _db.company_licenses.delete_one({"_id": company_id})
+    await _db.companies.delete_one({"_id": company_id})
+    invalidate(company_id)
+    return {"status": "success", "id": company_id, "name": c.get("name"), "users": users, "deleted_docs": collections}
+
+
+@router.post("/system/companies/{company_id}/activation")
+async def set_company_activation(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    if not await _db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    lic = await _db.company_licenses.find_one({"_id": company_id}) or {}
+    status = _restore_active_status(lic) if bool(req.get("active", True)) else "suspended"
+    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {"status": status, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now()}}, upsert=True)
+    invalidate(company_id)
+    return await effective(company_id)
 
 
 @router.put("/system/companies/{company_id}/license")
