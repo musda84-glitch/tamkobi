@@ -1,7 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 
-export const siteBrand = (name) => (name || "Takibi").trim() || "Takibi";
+export const siteBrand = (name) => (name || "TamKobi").trim() || "TamKobi";
 
 export const BrandMark = ({ name, testId = "site-brand" }) => {
   const brand = siteBrand(name);

@@ -11,7 +11,7 @@ const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigi
 export default function PricingPage() {
   const [d, setD] = useState(null);
   const [yearly, setYearly] = useState(false);
-  useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => setD(r.data)).catch(() => setD({ plans: [], catalog: [], trial_days: 14, brand_name: "Takibi" })); }, []);
+  useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => setD(r.data)).catch(() => setD({ plans: [], catalog: [], trial_days: 14, brand_name: "TamKobi" })); }, []);
   const brand = siteBrand(d?.brand_name);
   const groups = d ? groupByCategory(d.catalog || []) : {};
   const plans = d?.plans || [];
@@ -29,7 +29,7 @@ export default function PricingPage() {
       />
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-6">
         <div className="max-w-2xl">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">takibi.com · Bulut ERP</div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">tamkobi.com · Bulut ERP</div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
           <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Yönetim panelinden yayınlanan paketler burada görünür. {d?.trial_days || 14} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
         </div>
