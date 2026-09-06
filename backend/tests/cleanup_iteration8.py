@@ -1,6 +1,6 @@
 """Iteration 8 cleanup: remove test production orders/work orders, restore stock & prices, delete TEST_ artifacts."""
 from dotenv import dotenv_values
-from pymongo import MongoClient
+from mysql_store import SyncMySQLClient as MongoClient
 
 env = dotenv_values("/app/backend/.env")
 db = MongoClient(env["MONGO_URL"])[env["DB_NAME"]]

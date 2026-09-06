@@ -7,7 +7,7 @@ import time
 import pytest
 import requests
 import openpyxl
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 import asyncio
 from dotenv import dotenv_values
 

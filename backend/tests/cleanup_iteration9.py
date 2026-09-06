@@ -8,7 +8,7 @@ import asyncio
 import sys
 
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 env = dotenv_values("/app/backend/.env")
 SEED_STOCK = {"prod_01": 143.0, "prod_raw_01": 450, "prod_raw_02": 520, "prod_raw_03": 380}

@@ -34,7 +34,7 @@ def report():
 
 def cleanup():
     import asyncio
-    from motor.motor_asyncio import AsyncIOMotorClient
+    from mysql_store import MySQLClient as AsyncIOMotorClient
     from dotenv import dotenv_values as dv
     be = dv("/app/backend/.env")
 

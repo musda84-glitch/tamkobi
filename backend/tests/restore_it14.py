@@ -1,7 +1,7 @@
 """Restore state after iteration-14 test leftovers (orphan bank tx + dispatch/invoice created by a failed run)."""
 import asyncio, os
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 env = dotenv_values("/app/backend/.env")
 db = AsyncIOMotorClient(os.environ.get("MONGO_URL") or env["MONGO_URL"])[os.environ.get("DB_NAME") or env["DB_NAME"]]

@@ -3,7 +3,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 load_dotenv("/app/backend/.env")
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 COMP = "comp_nexus_main_01"
 

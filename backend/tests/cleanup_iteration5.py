@@ -1,6 +1,6 @@
 """Cleanup of iteration-5 test artefacts."""
 import asyncio
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 from dotenv import dotenv_values
 
 e = dotenv_values('/app/backend/.env')

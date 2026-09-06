@@ -3,7 +3,7 @@ import os
 import time
 import pytest
 import requests
-from pymongo import MongoClient
+from mysql_store import SyncMySQLClient as MongoClient
 
 _url = os.environ.get("REACT_APP_BACKEND_URL")
 if not _url:

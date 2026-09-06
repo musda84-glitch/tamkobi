@@ -4,7 +4,7 @@ import asyncio
 
 import requests
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 env = dotenv_values("/app/backend/.env")
 fe = dotenv_values("/app/frontend/.env")

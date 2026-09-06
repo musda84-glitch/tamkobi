@@ -3,7 +3,7 @@ import os
 import requests
 import pytest
 from dotenv import dotenv_values
-from pymongo import MongoClient
+from mysql_store import SyncMySQLClient as MongoClient
 
 _fenv = dotenv_values("/app/frontend/.env")
 _benv = dotenv_values("/app/backend/.env")

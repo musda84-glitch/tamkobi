@@ -4,7 +4,7 @@ import os
 import sys
 
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 env = dotenv_values("/app/backend/.env")
 MONGO = os.environ.get("MONGO_URL") or env["MONGO_URL"]
