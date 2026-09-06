@@ -13,11 +13,17 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 
-export default function SystemAdminPage() {
+const navTitle = (pathname, page) => {
+  const hit = SYSTEM_NAV.find(([p]) => p === pathname.replace(/\/+$/, "") || p === `/sistem/${page}` || (p === "/sistem" && !page));
+  return (hit || SYSTEM_NAV[0])[1];
+};
+
+export default function SystemAdminPage({ section: sectionFromRoute }) {
   const { user, authenticated, refreshLicense } = useAuth();
   const { pathname } = useLocation();
-  const { section } = useParams();
-  const page = (section || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
+  const { section: sectionParam } = useParams();
+  const fromPath = pathname.replace(/\/+$/, "").split("/")[2] || "";
+  const page = String(sectionFromRoute !== undefined ? sectionFromRoute : (sectionParam || fromPath || "")).toLowerCase();
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -40,7 +46,19 @@ export default function SystemAdminPage() {
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
+  const title = navTitle(pathname, page);
+  const panels = {
+    "": <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />,
+    web: <WebsiteAdminPanel plans={plans} onChanged={changed} />,
+    sirketler: <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />,
+    kullanicilar: <PlatformUsersPanel />,
+    paketler: <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />,
+    moduller: <ModuleCatalog catalog={catalog} plans={plans} />,
+    talepler: <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />,
+    odemeler: <PaymentsPanel />,
+    hatirlatmalar: <RemindersPanel />,
+    ayarlar: <PlatformSettingsPanel />,
+  };
   return (
     <SystemLayout pendingCount={overview?.pending_requests || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
@@ -49,16 +67,7 @@ export default function SystemAdminPage() {
           {overview && <div className="flex gap-2 text-xs">{[["Şirket", overview.companies], ["Müşteri kullanıcı", overview.users], ["Panel", overview.platform_admins ?? "—"], ["MRR", `${(overview.mrr || 0).toLocaleString("tr-TR")} ₺`]].map(([l, v]) => <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-200"><div className="text-[10px] text-slate-400">{l}</div><div className="font-bold">{v}</div></div>)}</div>}
         </div>
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
-          {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
-          {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
-          {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
-          {page === "kullanicilar" && <PlatformUsersPanel />}
-          {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
-          {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
-          {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
-          {page === "odemeler" && <PaymentsPanel />}
-          {page === "hatirlatmalar" && <RemindersPanel />}
-          {page === "ayarlar" && <PlatformSettingsPanel />}
+          {panels[page] || <div className="text-sm text-slate-600">Bu bölüm bulunamadı.</div>}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>

@@ -9,9 +9,10 @@ import { Toggle, inputCls, PlanChip } from "./saasUi";
 const cred = { withCredentials: true };
 const previewPath = "/fiyatlar";
 
-export const WebsiteAdminPanel = ({ plans, onChanged }) => {
+export const WebsiteAdminPanel = ({ plans: plansProp, onChanged }) => {
   const [settings, setSettings] = useState(null);
   const [publicPlans, setPublicPlans] = useState(null);
+  const [ownPlans, setOwnPlans] = useState([]);
   const [busy, setBusy] = useState("");
   const load = useCallback(async () => {
     try {
@@ -27,12 +28,19 @@ export const WebsiteAdminPanel = ({ plans, onChanged }) => {
     } catch {
       setPublicPlans({ plans: [], trial_days: 14 });
     }
+    try {
+      const all = await axios.get(`${API_URL}/system/plans`, cred);
+      setOwnPlans(Array.isArray(all.data) ? all.data : []);
+    } catch {
+      setOwnPlans([]);
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
   if (!settings) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;
   const brand = settings.brand_name || "TamKobi";
   const liveUrl = (settings.public_url || "").replace(/\/$/, "") || window.location.origin;
-  const published = (plans || []).filter((p) => p.is_public).length;
+  const plans = (plansProp && plansProp.length ? plansProp : ownPlans) || [];
+  const published = plans.filter((p) => p.is_public).length;
   const saveBrand = async (e) => {
     e.preventDefault();
     setBusy("save");
