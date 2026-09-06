@@ -1516,24 +1516,37 @@ async def create_invoice(invoice: Invoice):
     invoice.withholding_amount = round(invoice.vat_total * float(invoice.withholding_rate or 0), 2)
     invoice.grand_total = round(invoice.subtotal + invoice.vat_total - invoice.withholding_amount, 2)
 
-    if invoice.status in ["approved", "sent_to_gib"]:
-        balance_change = invoice.grand_total if invoice.invoice_type == "sales" else -invoice.grand_total
-        await db.contacts.update_one(
-            {"_id": invoice.contact_id},
-            {"$inc": {"balance": balance_change}}
-        )
-
-        if invoice.invoice_type == "sales":
-            for item in invoice.items:
-                if item.product_id:
-                    await db.products.update_one(
-                        {"_id": item.product_id},
-                        {"$inc": {"stock_quantity": -item.quantity}}
-                    )
-
     doc = invoice.to_mongo()
+    if invoice.status in ["approved", "sent_to_gib"]:
+        await _apply_invoice_effects(doc)
+        doc["effects_applied"] = True
     await db.invoices.insert_one(doc)
     return clean_doc(doc)
+
+
+async def _apply_invoice_effects(inv: dict):
+    """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. Taslaklar için çağrılmaz."""
+    if inv.get("contact_id"):
+        change = float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else -float(inv.get("grand_total", 0))
+        await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
+    if inv.get("invoice_type") == "sales":
+        for item in inv.get("items", []):
+            pid = item.get("product_id") if isinstance(item, dict) else item.product_id
+            qty = item.get("quantity") if isinstance(item, dict) else item.quantity
+            if pid:
+                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+
+
+@api_router.post("/invoices/{invoice_id}/approve")
+async def approve_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("status") != "draft":
+        return {"status": "success", "message": "Fatura zaten onaylı."}
+    await _apply_invoice_effects(inv)
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "effects_applied": True, "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"), "approved_at": datetime.now(timezone.utc).isoformat()}})
+    return {"status": "success", "message": "Fatura onaylandı; cari bakiyesi ve stok işlendi."}
 
 @api_router.get("/gib/lookup")
 async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_01"):
@@ -1561,7 +1574,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="Kesilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "general_discount_rate", "general_discount_amount"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount"}}
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
         items = allowed.get("items", inv.get("items", []))
         items_sum = sum(float(i.get("total", 0)) for i in items)
@@ -1571,11 +1584,21 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         factor = (items_sum - gd) / items_sum if items_sum else 1
         subtotal = items_sum - gd
         vat_total = sum(float(i.get("total", 0)) * factor * float(i.get("vat_rate", 20)) / 100 for i in items)
-        allowed.update({"discount_total": gd, "general_discount_amount": gd, "subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "grand_total": round(subtotal + vat_total, 2)})
-        if inv.get("contact_id") and inv.get("invoice_type") == "sales":
+        allowed.update({"discount_total": gd, "general_discount_amount": gd, "subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "withholding_amount": round(vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2), "grand_total": round(subtotal + vat_total - vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2)})
+        if inv.get("effects_applied") and inv.get("contact_id") and inv.get("invoice_type") == "sales":
             await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["grand_total"] - inv.get("grand_total", 0)}})
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
     return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
+
+@api_router.delete("/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="Kesilmiş/onaylı fatura silinemez. Muhasebe bütünlüğü için iptal ya da iade faturası düzenleyin.")
+    tid = await trash.soft_delete("invoices", inv, "invoice", f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺", note="Taslak fatura")
+    return {"status": "success", "trash_id": tid, "message": "Taslak fatura çöp kutusuna taşındı (30 gün içinde geri alınabilir)."}
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
@@ -1585,6 +1608,9 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("status") == "draft" and not inv.get("effects_applied"):
+        await _apply_invoice_effects(inv)
+        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
 
     if inv.get("e_type") == "paper":
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})

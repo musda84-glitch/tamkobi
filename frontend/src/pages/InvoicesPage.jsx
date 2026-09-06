@@ -22,8 +22,7 @@ import {
   MessageSquare,
   MoreVertical,
   MousePointerClick,
-  FileCheck2
-} from "lucide-react";
+  FileCheck2, Pencil, Trash2, CheckCircle } from "lucide-react";
 import { InvoiceContextMenu, E_TYPE_LABELS } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
@@ -207,6 +206,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     return { itemsSum, lineDiscount, gd, subtotal, vat, withholding, grandTotal: subtotal + vat - withholding };
   };
 
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const openEditInvoice = (inv) => {
+    setEditingInvoice(inv);
+    setGdMode(inv.general_discount_rate ? "percent" : "amount");
+    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
+    setShowNewModal(true);
+  };
+  const handleDeleteInvoice = async (inv) => {
+    if (!window.confirm(`${inv.invoice_number} numaralı taslak fatura çöp kutusuna taşınsın mı?`)) return;
+    try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
   const handleCreateInvoice = async (e) => {
     e.preventDefault();
     if (!formData.contact_id) {
@@ -227,8 +237,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         status: formData.invoice_type === "dispatch" ? "draft" : (formData.status || "draft"),
         gib_status: (formData.status || "draft") === "draft" ? "Taslak" : "Onaylandı"
       };
+      if (editingInvoice) {
+        const { company_id, invoice_type, gib_status, ...upd } = payload;
+        await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
+        if (payload.status === "approved") await axios.post(`${API_URL}/invoices/${editingInvoice.id}/approve`);
+        toast.success("Taslak fatura güncellendi.");
+        setEditingInvoice(null);
+      } else {
       await axios.post(`${API_URL}/invoices`, payload);
       toast.success(payload.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura başarıyla oluşturuldu ve cariye işlendi.");
+      }
       setShowNewModal(false);
       loadData();
     } catch (err) {
@@ -398,8 +416,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center w-[220px] min-w-[220px]">
-                      <div className="grid grid-cols-6 gap-1 justify-items-center items-center">
+                    <td className="px-4 py-3 text-center w-[260px] min-w-[260px]">
+                      <div className="grid grid-cols-7 gap-1 justify-items-center items-center">
+                        {inv.status === "draft" ? (
+                          <div className="flex items-center gap-0.5">
+                            <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="Taslağı sil (çöp kutusu)" data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                            <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
+                          </div>
+                        ) : <span className="w-7" />}
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -476,7 +501,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           <div className="bg-white rounded-2xl max-w-6xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Yeni Fatura Düzenle</h2>
+                <h2 className="text-lg font-bold text-slate-900">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
                 <p className="text-xs text-slate-500">E-Fatura & E-Arşiv Standartlarına Uygun</p>
               </div>
               <button onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-slate-600">
