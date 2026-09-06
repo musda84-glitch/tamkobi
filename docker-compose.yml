@@ -1,25 +1,64 @@
+version: "3.8"
+
 services:
   mysql:
     image: mysql:8.0
     container_name: tamkobi-mysql
-    restart: unless-stopped
+    restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: tamkobi
-      MYSQL_DATABASE: tamkobi
-      MYSQL_USER: tamkobi
-      MYSQL_PASSWORD: tamkobi
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-tamkobi}
+      MYSQL_DATABASE: ${DB_NAME:-tamkobi}
+      MYSQL_USER: ${MYSQL_USER:-tamkobi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
     ports:
       - "3306:3306"
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
     volumes:
-      - tamkobi_mysql:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
       - ./backend/schema.mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-utamkobi", "-ptamkobi"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:-tamkobi}"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 15s
+      start_period: 25s
+
+  backend:
+    build: ./backend
+    container_name: tamkobi-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Compose network hostname is `mysql`, not 127.0.0.1
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: ${MYSQL_USER:-tamkobi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
+      MYSQL_DATABASE: ${DB_NAME:-tamkobi}
+      DATABASE_URL: mysql://${MYSQL_USER:-tamkobi}:${MYSQL_PASSWORD:-tamkobi}@mysql:3306/${DB_NAME:-tamkobi}
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PUBLIC_APP_URL: http://localhost:3000
+      REACT_APP_BACKEND_URL: http://localhost:8000
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: ""
+    container_name: tamkobi-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
 
 volumes:
-  tamkobi_mysql:
+  mysql_data:
