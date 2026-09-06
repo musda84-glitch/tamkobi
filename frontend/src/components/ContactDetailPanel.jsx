@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -103,6 +103,17 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
 
   if (!data) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
   const { contact: c, summary: s } = data;
+  const bal = Number(c.balance) || 0;
+  const invoiced = Number(s.total_invoiced) || 0;
+  const paid = Number(s.total_paid) || 0;
+  const open = Number(s.open_amount) || 0;
+  const summaryDiverge = Math.abs(Math.abs(bal) - Math.abs(open)) > 0.5;
+  const summaryCards = [
+    { key: "balance", label: "Cari hesap", hint: bal > 0 ? "Müşteri size borçlu" : bal < 0 ? "Siz bu cariye borçlusunuz" : "Hesap denk — borç yok", badge: bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Kapalı", value: bal, cls: bal > 0 ? "text-emerald-700" : bal < 0 ? "text-rose-700" : "text-slate-800", title: "Satış, alış ve kasa/banka hareketlerinin net bakiyesi. Artı = alacak, eksi = borç." },
+    { key: "invoiced", label: "Satış faturaları", hint: "Onaylı satışların toplamı", badge: null, value: invoiced, cls: "text-slate-900", title: "Taslaklar hariç kesilmiş satış faturalarının tutarı." },
+    { key: "paid", label: "Tahsil edilen", hint: "Bu faturalara yazılan tahsilat", badge: null, value: paid, cls: "text-emerald-700", title: "Satış faturalarına işlenmiş tahsilat. Kasa hareketi faturaya bağlanmadıysa cari hesaba yansır, buraya yansımaz." },
+    { key: "open", label: "Kalan alacak", hint: "Fatura − tahsilat", badge: open > 0 ? "Açık" : "Kapalı", value: open, cls: open > 0 ? "text-rose-700" : "text-slate-800", title: "Satış faturası toplamı eksi tahsilat. Cari hesaptan farklı olabilir (alış faturası veya bağlanmamış ödeme)." },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
@@ -133,10 +144,24 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 px-6 py-3 bg-slate-50 border-b text-xs">
-          {[["Cari Bakiye", c.balance, c.balance > 0 ? "text-emerald-700" : c.balance < 0 ? "text-rose-700" : "text-slate-700"], ["Toplam Fatura", s.total_invoiced, "text-slate-900"], ["Tahsil Edilen", s.total_paid, "text-emerald-700"], ["Açık Bakiye", s.open_amount, "text-rose-700"]].map(([l, v, cls]) => (
-            <div key={l} className="bg-white border border-slate-200 rounded-xl p-2.5" data-testid={`detail-summary-${l}`}><div className="text-[10px] uppercase text-slate-400 font-semibold">{l}</div><div className={`font-bold ${cls}`}>{fmt(v)} ₺</div></div>
-          ))}
+        <div className="px-6 py-3 bg-slate-50 border-b text-xs space-y-2" data-testid="contact-summary-strip">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {summaryCards.map((card) => (
+              <div key={card.key} className="bg-white border border-slate-200 rounded-xl p-2.5" title={card.title} data-testid={`detail-summary-${card.key}`}>
+                <div className="flex items-center justify-between gap-1">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{card.label}</div>
+                  <Info className="w-3 h-3 text-slate-300 shrink-0" aria-hidden="true" />
+                </div>
+                <div className={`font-bold text-sm mt-0.5 ${card.cls}`}>{fmt(card.value)} ₺{card.badge ? <span className="ml-1.5 text-[10px] font-semibold text-slate-400">{card.badge}</span> : null}</div>
+                <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">{card.hint}</div>
+              </div>
+            ))}
+          </div>
+          {summaryDiverge && (
+            <p className="text-[11px] text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5" data-testid="contact-summary-note">
+              <b>Cari hesap</b> alış faturası ve kasa hareketlerini de içerir; <b>kalan alacak</b> yalnızca satış faturaları − tahsilattır. Bu yüzden iki tutar aynı olmayabilir.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-1 px-6 border-b">
