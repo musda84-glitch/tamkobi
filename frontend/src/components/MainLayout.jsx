@@ -76,7 +76,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
               <Sparkles className="w-4 h-4" />
             </div>
-            <span>Nexus<span className="text-emerald-400">Hesap</span></span>
+            <span>Tam<span className="text-emerald-400">Kobi</span></span>
             <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
           </Link>
           <button onClick={() => setMobileMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white">
@@ -164,7 +164,6 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         </nav>
 
         {/* User Card & Logout */}
-        {user?.is_super_admin && <Link to="/sistem" className="mx-3 mb-2 flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-semibold text-amber-300 border border-amber-500/20 hover:bg-amber-950/40" data-testid="sidebar-system-panel-link"><ShieldCheck className="w-3.5 h-3.5" /> Platform Paneli (ayrı giriş)</Link>}
         <div className="p-3 border-t border-slate-800 bg-slate-950/40 flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center font-bold text-xs text-white">

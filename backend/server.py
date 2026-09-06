@@ -65,11 +65,28 @@ db = client[DB_NAME]
 
 app = FastAPI(title="NexusHesap Cloud ERP & CRM & Muhasebe API")
 
-# Setup CORS
+# Setup CORS — localhost and 127.0.0.1 are different origins (cookies do not follow).
+def _cors_origins():
+    listed = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+    for extra in (
+        "http://localhost",
+        "http://127.0.0.1",
+        "http://localhost:80",
+        "http://127.0.0.1:80",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ):
+        if extra not in listed:
+            listed.append(extra)
+    return listed
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=[o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -188,8 +205,8 @@ async def login(req: LoginRequest, request: Request, response: Response):
     token = create_access_token(user_id, email, user.get("role", "admin"))
     refresh_tok = create_refresh_token(user_id)
 
-    response.set_cookie(key="access_token", value=token, httponly=True, max_age=86400*7, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, max_age=86400*30, path="/")
+    response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400*7, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400*30, path="/")
 
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
 
