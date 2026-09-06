@@ -108,7 +108,7 @@ def test_safe_real_run_manual_channel():
         # Mongo cleanup
         try:
             import asyncio
-            from motor.motor_asyncio import AsyncIOMotorClient
+            from mysql_store import MySQLClient as AsyncIOMotorClient
             mongo_url = os.environ.get("MONGO_URL")
             db_name = os.environ.get("DB_NAME")
             if mongo_url and db_name:

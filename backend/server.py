@@ -95,6 +95,7 @@ async def startup_event():
     asyncio.get_event_loop().create_task(pricing.scheduler_loop())
     try:
         await db._ensure()
+        logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
         await seed_all_data(db)
         await seed_partners(db)
         await saas.seed()

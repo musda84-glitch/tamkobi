@@ -46,6 +46,9 @@ class DeleteResult:
 def mysql_settings_from_env() -> Dict[str, Any]:
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     if url.startswith("mysql"):
+        # Accept mysql://, mysql+pymysql://, mysql+aiomysql://
+        if url.startswith("mysql+"):
+            url = "mysql://" + url.split("://", 1)[1]
         parsed = urlparse(url)
         db = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
         return {
@@ -760,3 +763,239 @@ class MySQLClient:
     async def close_async(self):
         for d in self._named.values():
             await d.close()
+
+
+def _sync_connect(settings: dict):
+    import pymysql
+    return pymysql.connect(
+        host=settings["host"],
+        port=int(settings["port"]),
+        user=settings["user"],
+        password=settings["password"],
+        database=settings["db"],
+        charset=settings.get("charset") or "utf8mb4",
+        autocommit=True,
+    )
+
+
+class SyncMySQLCursor:
+    def __init__(self, coll: "SyncMySQLCollection", query, projection):
+        self._coll = coll
+        self._query = query or {}
+        self._projection = projection
+        self._sort = None
+        self._limit = None
+        self._skip = 0
+
+    def sort(self, key, direction=1):
+        self._sort = [(key, direction)] if isinstance(key, str) else key
+        return self
+
+    def limit(self, n: int):
+        self._limit = n
+        return self
+
+    def skip(self, n: int):
+        self._skip = n
+        return self
+
+    def to_list(self, length=None):
+        docs = self._coll._load_filtered(self._query)
+        docs = sort_docs(docs, self._sort)
+        if self._skip:
+            docs = docs[self._skip :]
+        if self._limit is not None:
+            docs = docs[: self._limit]
+        if length is not None:
+            docs = docs[:length]
+        return [project_doc(d, self._projection) for d in docs]
+
+    def __iter__(self):
+        return iter(self.to_list(None))
+
+
+class SyncMySQLCollection:
+    def __init__(self, db: "SyncMySQLDatabase", name: str):
+        self._db = db
+        self.name = name
+
+    def _load_all(self):
+        self._db._ensure()
+        with self._db._conn.cursor() as cur:
+            cur.execute("SELECT doc FROM docs WHERE collection=%s", (self.name,))
+            return [loads(r[0]) for r in cur.fetchall()]
+
+    def _load_filtered(self, query):
+        docs = self._load_all()
+        if not query:
+            return docs
+        if list(query.keys()) == ["_id"] and not isinstance(query.get("_id"), dict):
+            return [d for d in docs if d.get("_id") == query["_id"]]
+        return [d for d in docs if match_query(d, query)]
+
+    def _save(self, doc: dict):
+        self._db._ensure()
+        doc = copy.deepcopy(doc)
+        if not doc.get("_id"):
+            doc["_id"] = str(uuid.uuid4())
+        with self._db._conn.cursor() as cur:
+            cur.execute(
+                "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
+                (self.name, str(doc["_id"]), dumps(doc)),
+            )
+        return doc
+
+    def find_one(self, query=None, projection=None):
+        docs = self._load_filtered(query)
+        return project_doc(docs[0], projection) if docs else None
+
+    def find(self, query=None, projection=None):
+        return SyncMySQLCursor(self, query, projection)
+
+    def insert_one(self, doc: dict):
+        doc = copy.deepcopy(doc)
+        if not doc.get("_id"):
+            doc["_id"] = str(uuid.uuid4())
+        self._save(doc)
+        return InsertOneResult(doc["_id"])
+
+    def insert_many(self, docs, ordered=True):
+        return InsertManyResult([self.insert_one(d).inserted_id for d in docs])
+
+    def update_one(self, query, update, upsert=False):
+        docs = self._load_filtered(query)
+        if not docs:
+            if not upsert:
+                return UpdateResult(0, 0, None)
+            new_doc = apply_update({}, update, query, is_insert=True)
+            if not new_doc.get("_id"):
+                new_doc["_id"] = str(uuid.uuid4())
+            for k, v in (query or {}).items():
+                if not str(k).startswith("$") and not isinstance(v, dict) and k not in new_doc:
+                    _set_path(new_doc, k, v)
+            self._save(new_doc)
+            return UpdateResult(0, 1, new_doc["_id"])
+        old = docs[0]
+        new_doc = apply_update(old, update, query, is_insert=False)
+        changed = new_doc != old
+        if changed:
+            self._save(new_doc)
+        return UpdateResult(1, 1 if changed else 0, None)
+
+    def update_many(self, query, update, upsert=False):
+        docs = self._load_filtered(query)
+        if not docs:
+            return self.update_one(query, update, upsert=upsert) if upsert else UpdateResult(0, 0, None)
+        modified = 0
+        for old in docs:
+            new_doc = apply_update(old, update, query, is_insert=False)
+            if new_doc != old:
+                self._save(new_doc)
+                modified += 1
+        return UpdateResult(len(docs), modified, None)
+
+    def replace_one(self, query, replacement, upsert=False):
+        replacement = copy.deepcopy(replacement)
+        docs = self._load_filtered(query)
+        if not docs:
+            if not upsert:
+                return UpdateResult(0, 0, None)
+            if not replacement.get("_id"):
+                replacement["_id"] = str(uuid.uuid4())
+            self._save(replacement)
+            return UpdateResult(0, 1, replacement["_id"])
+        replacement["_id"] = docs[0].get("_id")
+        self._save(replacement)
+        return UpdateResult(1, 1, None)
+
+    def delete_one(self, query):
+        docs = self._load_filtered(query)
+        if not docs:
+            return DeleteResult(0)
+        self._db._ensure()
+        with self._db._conn.cursor() as cur:
+            cur.execute("DELETE FROM docs WHERE collection=%s AND id=%s", (self.name, str(docs[0]["_id"])))
+            return DeleteResult(cur.rowcount)
+
+    def delete_many(self, query):
+        docs = self._load_filtered(query)
+        if not docs:
+            return DeleteResult(0)
+        self._db._ensure()
+        ids = [str(d["_id"]) for d in docs]
+        with self._db._conn.cursor() as cur:
+            placeholders = ",".join(["%s"] * len(ids))
+            cur.execute(
+                f"DELETE FROM docs WHERE collection=%s AND id IN ({placeholders})",
+                (self.name, *ids),
+            )
+            return DeleteResult(cur.rowcount)
+
+    def count_documents(self, query=None):
+        return len(self._load_filtered(query))
+
+    def distinct(self, key, query=None):
+        seen = []
+        for d in self._load_filtered(query):
+            for v in values_at(d, key) or []:
+                if v not in seen:
+                    seen.append(v)
+        return seen
+
+    def create_index(self, keys, unique=False, **_kwargs):
+        return keys if isinstance(keys, str) else "_".join(k[0] if isinstance(k, (list, tuple)) else k for k in keys)
+
+
+class SyncMySQLDatabase:
+    def __init__(self, settings: Optional[dict] = None):
+        self._settings = settings or mysql_settings_from_env()
+        self._conn = None
+        self._cols = {}
+        self.name = self._settings.get("db", "tamkobi")
+
+    def _ensure(self):
+        if self._conn is None:
+            self._conn = _sync_connect(self._settings)
+            with self._conn.cursor() as cur:
+                for stmt in [s.strip() for s in SCHEMA_SQL.split(";") if s.strip()]:
+                    cur.execute(stmt)
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
+
+    def __getitem__(self, name: str) -> SyncMySQLCollection:
+        if name not in self._cols:
+            self._cols[name] = SyncMySQLCollection(self, name)
+        return self._cols[name]
+
+    def list_collection_names(self):
+        self._ensure()
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT collection FROM docs")
+            return [r[0] for r in cur.fetchall()]
+
+    def close(self):
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+
+class SyncMySQLClient:
+    """Drop-in stand-in for pymongo.MongoClient."""
+
+    def __init__(self, *_args, **_kwargs):
+        self._db = SyncMySQLDatabase()
+        self._named = {self._db.name: self._db}
+
+    def __getitem__(self, name: str) -> SyncMySQLDatabase:
+        if name not in self._named:
+            settings = mysql_settings_from_env()
+            settings["db"] = name
+            self._named[name] = SyncMySQLDatabase(settings)
+        return self._named[name]
+
+    def close(self):
+        for d in self._named.values():
+            d.close()

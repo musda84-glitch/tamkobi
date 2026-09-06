@@ -1,14 +1,24 @@
-"""Database factory — TamKobi uses MySQL (JSON document tables)."""
+"""Database factory — TamKobi uses MySQL 8 (JSON document tables)."""
 from typing import Optional
-from mysql_store import MySQLClient, MySQLDatabase, mysql_settings_from_env
+
+from mysql_store import (
+    MySQLClient,
+    MySQLDatabase,
+    SyncMySQLClient,
+    SyncMySQLDatabase,
+    mysql_settings_from_env,
+)
+
 
 def get_client() -> MySQLClient:
     return MySQLClient()
 
+
 def get_database(name: Optional[str] = None) -> MySQLDatabase:
-    client = get_client()
     settings = mysql_settings_from_env()
-    return client[name or settings["db"]]
-    client = get_client()
+    return get_client()[name or settings["db"]]
+
+
+def get_sync_database(name: Optional[str] = None) -> SyncMySQLDatabase:
     settings = mysql_settings_from_env()
-    return client[name or settings["db"]]
+    return SyncMySQLClient()[name or settings["db"]]

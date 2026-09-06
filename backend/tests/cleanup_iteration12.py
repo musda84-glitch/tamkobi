@@ -3,7 +3,7 @@ created by test_iteration12.py and revert the bank account balance delta."""
 import asyncio
 
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 env = dotenv_values("/app/backend/.env")
 

@@ -4,7 +4,7 @@ import asyncio
 import pytest
 import requests
 from dotenv import dotenv_values
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 
 from conftest import API, BASE_URL
 

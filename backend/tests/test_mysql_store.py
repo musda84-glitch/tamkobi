@@ -75,6 +75,7 @@ def test_project_and_sort():
 
 
 def test_mysql_settings_from_url(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("MYSQL_URL", "mysql://alice:s3cret@db.example:3307/nexus")
     s = mysql_settings_from_env()
     assert s["host"] == "db.example"
@@ -82,3 +83,13 @@ def test_mysql_settings_from_url(monkeypatch):
     assert s["user"] == "alice"
     assert s["password"] == "s3cret"
     assert s["db"] == "nexus"
+
+
+def test_database_url_sqlalchemy_style(monkeypatch):
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://bob:pw@127.0.0.1:3306/tamkobi")
+    s = mysql_settings_from_env()
+    assert s["host"] == "127.0.0.1"
+    assert s["user"] == "bob"
+    assert s["password"] == "pw"
+    assert s["db"] == "tamkobi"

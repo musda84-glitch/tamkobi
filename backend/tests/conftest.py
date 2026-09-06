@@ -4,8 +4,8 @@ import os
 import requests
 from dotenv import dotenv_values
 
-_frontend_env = dotenv_values("/app/frontend/.env")
-_backend_env = dotenv_values("/app/backend/.env")
+_frontend_env = dotenv_values("/app/frontend/.env") or dotenv_values("/workspace/frontend/.env") or {}
+_backend_env = dotenv_values("/app/backend/.env") or dotenv_values("/workspace/backend/.env") or {}
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL") or _frontend_env.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:

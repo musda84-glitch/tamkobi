@@ -1,6 +1,6 @@
 """Iteration 15 cleanup: loan-related residue + bank_01 balance restore."""
 from dotenv import dotenv_values
-from pymongo import MongoClient
+from mysql_store import SyncMySQLClient as MongoClient
 
 e = dotenv_values("/app/backend/.env")
 db = MongoClient(e["MONGO_URL"])[e["DB_NAME"]]

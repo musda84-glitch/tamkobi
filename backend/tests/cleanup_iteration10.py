@@ -1,7 +1,7 @@
 """Iteration 10 cleanup: remove TEST_it10 order + its auto invoice and any leftover cargo_integrations."""
 import asyncio
 import sys
-from motor.motor_asyncio import AsyncIOMotorClient
+from mysql_store import MySQLClient as AsyncIOMotorClient
 from dotenv import dotenv_values
 
 env = dotenv_values("/app/backend/.env")
