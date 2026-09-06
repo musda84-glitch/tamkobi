@@ -230,7 +230,7 @@ async def update_company(company_id: str, req: Dict[str, Any]):
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
-B2B_DEFAULTS = {"enabled": True, "login_method": "link", "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
+B2B_DEFAULTS = {"enabled": True, "login_method": "both", "allow_ai_cart": True, "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
 
 @api_router.get("/companies/{company_id}/b2b-settings")
 async def get_b2b_settings(company_id: str):
@@ -949,6 +949,9 @@ async def b2b_login(req: Dict[str, Any]):
 @api_router.post("/public/b2b/{token}/ai-cart")
 async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     c = await _b2b_contact(token)
+    b2b_st = {**B2B_DEFAULTS, **((await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}).get("b2b_settings") or {})}
+    if b2b_st.get("allow_ai_cart") is False:
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
