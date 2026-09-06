@@ -23,7 +23,13 @@ export default function SystemAdminPage() {
   const [openId, setOpenId] = useState(null);
   const load = useCallback(async () => {
     try {
-      const [o, c, p, m, r] = await Promise.all([axios.get(`${API_URL}/system/overview`), axios.get(`${API_URL}/system/companies`), axios.get(`${API_URL}/system/plans`), axios.get(`${API_URL}/system/modules`), axios.get(`${API_URL}/system/upgrade-requests`)]);
+      const [o, c, p, m, r] = await Promise.all([
+        axios.get(`${API_URL}/system/overview`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/companies`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/plans`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/modules`, { withCredentials: true }),
+        axios.get(`${API_URL}/system/upgrade-requests`, { withCredentials: true }),
+      ]);
       setOverview(o.data); setCompanies(c.data); setPlans(p.data); setCatalog(m.data); setRequests(r.data);
     } catch (e) { toast.error(e.response?.data?.detail || "Sistem verileri alınamadı."); }
   }, []);

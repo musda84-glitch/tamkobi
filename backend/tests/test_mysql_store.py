@@ -74,6 +74,17 @@ def test_project_and_sort():
     assert p["name"] == "B" and "n" not in p and p["_id"] == "2"
 
 
+def test_normalize_sort_for_find_one():
+    from mysql_store import normalize_sort
+    assert normalize_sort([("created_at", -1)]) == [("created_at", -1)]
+    assert normalize_sort("name", -1) == [("name", -1)]
+    newest = sort_docs(
+        [{"_id": "a", "created_at": "2020"}, {"_id": "b", "created_at": "2024"}],
+        normalize_sort([("created_at", -1)]),
+    )
+    assert newest[0]["_id"] == "b"
+
+
 def test_mysql_settings_from_url(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("MYSQL_URL", "mysql://alice:s3cret@db.example:3307/nexus")
