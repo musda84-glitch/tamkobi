@@ -1177,8 +1177,9 @@ async def get_contact_overview(contact_id: str):
     quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
-    total_invoiced = sum(i.get("grand_total", 0) for i in invoices if i.get("invoice_type") == "sales")
-    total_paid = sum(i.get("paid_amount", 0) for i in invoices if i.get("invoice_type") == "sales")
+    sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
+    total_invoiced = sum(i.get("grand_total", 0) or 0 for i in sales)
+    total_paid = sum(i.get("paid_amount", 0) or 0 for i in sales)
     return {
         "contact": clean_doc(contact),
         "summary": {"invoice_count": len(invoices), "draft_count": sum(1 for i in invoices if i.get("status") == "draft"), "total_invoiced": total_invoiced,
