@@ -30,10 +30,10 @@ _STANDARD = _STARTER + ["/installments", "/loans", "/projects", "/orders", "/com
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_PLANS = [
-    {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
-    {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
-    {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
-    {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
+    {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
+    {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
+    {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
+    {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
 ]
 STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
@@ -56,11 +56,47 @@ def catalog():
     return [{"key": k, "label": l, "category": CATEGORIES.get(k, "Genel"), "description": DESCRIPTIONS.get(k, ""), "is_core": k in CORE_MODULES} for k, l in rbac.MODULES]
 
 
+async def license_id_of(company_id: str) -> str:
+    c = await _db.companies.find_one({"_id": company_id}, {"license_id": 1})
+    return (c or {}).get("license_id") or company_id
+
+
+async def companies_on_license(license_id: str) -> list:
+    rows = await _db.companies.find({"$or": [{"license_id": license_id}, {"_id": license_id}]}).to_list(200)
+    seen, out = set(), []
+    for r in rows:
+        rid = r["_id"]
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(r)
+    return out
+
+
+def user_company_ids(user: Optional[dict]) -> list:
+    return [c for c in ((user or {}).get("company_ids") or []) if c]
+
+
+def user_may_access_company(user: Optional[dict], company_id: str) -> bool:
+    """Tenant isolation: a signed-in non-platform user may only touch assigned companies."""
+    if not user or user.get("is_super_admin"):
+        return True
+    return company_id in user_company_ids(user)
+
+
 async def seed():
     for p in DEFAULT_PLANS:
         await _db.saas_plans.update_one({"_id": p["_id"]}, {"$setOnInsert": {**p, "created_at": _now()}}, upsert=True)
-    async for c in _db.companies.find({}, {"_id": 1}):
-        await _db.company_licenses.update_one({"_id": c["_id"]}, {"$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "started_at": _now(), "expires_at": None, "trial_ends_at": None, "module_overrides": {}, "user_limit": None, "notes": "Mevcut müşteri (otomatik)", "created_at": _now()}}, upsert=True)
+        cur = await _db.saas_plans.find_one({"_id": p["_id"]})
+        if cur is not None and cur.get("company_limit") is None:
+            await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"company_limit": p.get("company_limit", 1)}})
+    async for c in _db.companies.find({}, {"_id": 1, "license_id": 1}):
+        if not c.get("license_id"):
+            await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"license_id": c["_id"]}})
+        lid = c.get("license_id") or c["_id"]
+        if lid != c["_id"]:
+            continue
+        await _db.company_licenses.update_one({"_id": c["_id"]}, {"$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "started_at": _now(), "expires_at": None, "trial_ends_at": None, "module_overrides": {}, "user_limit": None, "company_limit": None, "notes": "Mevcut müşteri (otomatik)", "created_at": _now()}}, upsert=True)
     for email, name in ((os.environ.get("SUPER_ADMIN_EMAIL", "").strip().lower(), "Platform Yöneticisi"), ("admin@nexus.com", None)):
         if not email:
             continue
@@ -91,10 +127,13 @@ async def seed():
 
 # ---------------- Effective license ----------------
 async def effective(company_id: str) -> Dict[str, Any]:
-    hit = _cache.get(company_id)
+    lid = await license_id_of(company_id)
+    hit = _cache.get(lid)
     if hit and hit[0] > time.time():
-        return hit[1]
-    lic = await _db.company_licenses.find_one({"_id": company_id})
+        res = dict(hit[1])
+        res["company_id"] = company_id
+        return res
+    lic = await _db.company_licenses.find_one({"_id": lid}) or await _db.company_licenses.find_one({"_id": company_id})
     plan = await _db.saas_plans.find_one({"_id": (lic or {}).get("plan_id")}) if lic else None
     now = _now()
     status = (lic or {}).get("status", "active")
@@ -115,16 +154,24 @@ async def effective(company_id: str) -> Dict[str, Any]:
     days_left = None
     if end:
         days_left = max(0, -(-int((datetime.fromisoformat(end) - datetime.now(timezone.utc)).total_seconds()) // 86400))
-    res = {"company_id": company_id, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
-           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0), "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
+    siblings = await companies_on_license(lid)
+    plan_company_limit = int((plan or {}).get("company_limit") or 0)
+    lic_company_limit = (lic or {}).get("company_limit")
+    company_limit = int(lic_company_limit) if lic_company_limit is not None else plan_company_limit
+    res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
+           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
+           "company_limit": company_limit, "company_count": len(siblings),
+           "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly")}
-    _cache[company_id] = (time.time() + CACHE_TTL, res)
+    _cache[lid] = (time.time() + CACHE_TTL, dict(res))
     return res
 
 
 def invalidate(company_id: Optional[str] = None):
     if company_id:
         _cache.pop(company_id, None)
+        # siblings share the license cache key
+        _cache.clear()
     else:
         _cache.clear()
 
@@ -154,6 +201,41 @@ async def check_user_limit(company_id: str):
         raise HTTPException(status_code=403, detail=f"Kullanıcı limitine ulaşıldı ({limit}). Paketinizi yükseltin ({lic['plan_name']}).")
 
 
+async def check_company_limit(company_id: str):
+    lic = await effective(company_id)
+    limit = int(lic.get("company_limit") or 0)
+    if limit and int(lic.get("company_count") or 0) >= limit:
+        raise HTTPException(status_code=403, detail=f"Şirket limitine ulaşıldı ({limit}). Paketiniz ({lic['plan_name']}) bu kadar yasal şirket açmaya izin veriyor. Yükseltin veya mevcut şirketi kullanın.")
+
+
+async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], attach_user: Optional[dict] = None) -> dict:
+    """Open another isolated legal entity under the same subscription/license."""
+    parent = await _db.companies.find_one({"_id": parent_company_id})
+    if not parent:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    await check_company_limit(parent_company_id)
+    name = (req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Şirket ünvanı gerekli.")
+    lid = await license_id_of(parent_company_id)
+    cid = f"comp_{uuid.uuid4().hex[:8]}"
+    await _db.companies.insert_one({
+        "_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "",
+        "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "",
+        "email": req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
+        "license_id": lid, "created_at": _now(),
+    })
+    await rbac.ensure_roles(cid)
+    admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
+    ids = {u["_id"] for u in admins}
+    if attach_user and not attach_user.get("is_super_admin") and (attach_user.get("_id") or attach_user.get("id")):
+        ids.add(attach_user.get("_id") or attach_user.get("id"))
+    for uid in ids:
+        await _db.users.update_one({"_id": uid}, {"$addToSet": {"company_ids": cid}})
+    invalidate(lid)
+    return await _db.companies.find_one({"_id": cid})
+
+
 async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14):
     await _db.company_licenses.update_one({"_id": company_id}, {"$setOnInsert": {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}}, upsert=True)
     invalidate(company_id)
@@ -177,8 +259,10 @@ async def _usage(company_id: str) -> Dict[str, Any]:
 
 async def _company_row(c: dict) -> Dict[str, Any]:
     lic = await effective(c["_id"])
-    admin = await _db.users.find_one({**tenant_user_query(c["_id"]), "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
-    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
+    admin = await _db.users.find_one({**tenant_user_query(c["_id"]), "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1}) or await _db.users.find_one({"company_ids": c["_id"], "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
+    lid = lic.get("license_id") or c["_id"]
+    siblings = [{"id": s["_id"], "name": s.get("name"), "tax_number": s.get("tax_number"), "city": s.get("city"), "primary": s["_id"] == lid} for s in await companies_on_license(lid)]
+    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "license_companies": siblings, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
 
 
 # ---------------- System endpoints ----------------
@@ -189,10 +273,13 @@ async def overview(_: dict = Depends(require_super_admin)):
     by_status: Dict[str, int] = {}
     by_plan: Dict[str, int] = {}
     mrr = 0.0
+    billed = set()
     for r in rows:
         l = r["license"]; by_status[l["status"]] = by_status.get(l["status"], 0) + 1
         by_plan[l["plan_name"]] = by_plan.get(l["plan_name"], 0) + 1
-        if l["status"] == "active" and l["plan_id"] in plans:
+        lid = l.get("license_id") or r["id"]
+        if l["status"] == "active" and l["plan_id"] in plans and lid not in billed:
+            billed.add(lid)
             p = plans[l["plan_id"]]; mrr += float(p.get("price_yearly", 0)) / 12 if l.get("billing_period") == "yearly" else float(p.get("price_monthly", 0))
     module_usage = {k: sum(1 for r in rows if r["license"]["modules"].get(k)) for k in _ALL}
     expiring = sorted([r for r in rows if r["license"]["days_left"] is not None and r["license"]["days_left"] <= 7], key=lambda r: r["license"]["days_left"])
@@ -220,7 +307,7 @@ def _plan_payload(req: Dict[str, Any], base: Optional[dict] = None) -> Dict[str,
     if not name:
         raise HTTPException(status_code=400, detail="Paket adı gerekli.")
     return {"name": name, "tagline": (req.get("tagline") if "tagline" in req else b.get("tagline", "")) or "", "price_monthly": float(req.get("price_monthly", b.get("price_monthly", 0)) or 0), "price_yearly": float(req.get("price_yearly", b.get("price_yearly", 0)) or 0),
-            "user_limit": int(req.get("user_limit", b.get("user_limit", 0)) or 0), "modules": mods, "color": req.get("color", b.get("color", "slate")), "sort": int(req.get("sort", b.get("sort", 99)) or 99), "is_public": bool(req.get("is_public", b.get("is_public", True))), "is_popular": bool(req.get("is_popular", b.get("is_popular", False)))}
+            "user_limit": int(req.get("user_limit", b.get("user_limit", 0)) or 0), "company_limit": int(req.get("company_limit", b.get("company_limit", 1)) or 0), "modules": mods, "color": req.get("color", b.get("color", "slate")), "sort": int(req.get("sort", b.get("sort", 99)) or 99), "is_public": bool(req.get("is_public", b.get("is_public", True))), "is_popular": bool(req.get("is_popular", b.get("is_popular", False)))}
 
 
 @router.post("/system/plans")
@@ -266,6 +353,12 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     return row
 
 
+@router.post("/system/companies/{company_id}/companies")
+async def system_add_licensed_company(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    doc = await add_licensed_company(company_id, req)
+    return await _company_row(doc)
+
+
 @router.post("/system/companies")
 async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
     name = (req.get("name") or "").strip(); email = (req.get("admin_email") or "").strip().lower(); pwd = req.get("admin_password") or ""
@@ -279,7 +372,7 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     if not await _db.saas_plans.find_one({"_id": plan_id}):
         raise HTTPException(status_code=400, detail="Geçersiz paket.")
     cid = f"comp_{uuid.uuid4().hex[:8]}"
-    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "created_at": _now()})
+    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now()})
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": (req.get("admin_name") or name).strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
     trial_days = int(req.get("trial_days") or 0)
@@ -294,6 +387,7 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
 async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    lid = await license_id_of(company_id)
     upd: Dict[str, Any] = {}
     if "plan_id" in req:
         if not await _db.saas_plans.find_one({"_id": req["plan_id"]}):
@@ -310,16 +404,18 @@ async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends
         upd["notes"] = req["notes"] or ""
     if "user_limit" in req:
         upd["user_limit"] = int(req["user_limit"]) if req["user_limit"] not in (None, "") else None
+    if "company_limit" in req:
+        upd["company_limit"] = int(req["company_limit"]) if req["company_limit"] not in (None, "") else None
     if "module_overrides" in req:
         upd["module_overrides"] = {k: bool(v) for k, v in (req["module_overrides"] or {}).items() if k in _ALL and v is not None}
     if "extend_days" in req:
-        lic = await _db.company_licenses.find_one({"_id": company_id}) or {}
+        lic = await _db.company_licenses.find_one({"_id": lid}) or {}
         key = "trial_ends_at" if (upd.get("status") or lic.get("status")) == "trial" else "expires_at"
         cur = lic.get(key)
         start = max(datetime.now(timezone.utc), datetime.fromisoformat(cur)) if cur else datetime.now(timezone.utc)
         upd[key] = (start + timedelta(days=int(req["extend_days"]))).isoformat()
-    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {**upd, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now()}}, upsert=True)
-    invalidate(company_id)
+    await _db.company_licenses.update_one({"_id": lid}, {"$set": {**upd, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now()}}, upsert=True)
+    invalidate(lid)
     return await effective(company_id)
 
 
@@ -328,7 +424,8 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
     key = "/" + module_key.lstrip("/")
     if key not in _ALL:
         raise HTTPException(status_code=400, detail="Bilinmeyen ya da çekirdek modül.")
-    lic = await _db.company_licenses.find_one({"_id": company_id}) or {}
+    lid = await license_id_of(company_id)
+    lic = await _db.company_licenses.find_one({"_id": lid}) or {}
     plan = await _db.saas_plans.find_one({"_id": lic.get("plan_id")}) or {"modules": _ALL}
     ov = dict(lic.get("module_overrides") or {})
     enabled = bool(req.get("enabled"))
@@ -336,8 +433,8 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
         ov.pop(key, None)
     else:
         ov[key] = enabled
-    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {"module_overrides": ov, "updated_at": _now()}, "$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "created_at": _now()}}, upsert=True)
-    invalidate(company_id)
+    await _db.company_licenses.update_one({"_id": lid}, {"$set": {"module_overrides": ov, "updated_at": _now()}, "$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "created_at": _now()}}, upsert=True)
+    invalidate(lid)
     return await effective(company_id)
 
 
@@ -483,12 +580,51 @@ async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(re
 
 
 # ---------------- Customer-facing ----------------
+async def _request_user(request: Request) -> dict:
+    try:
+        return await _current_user(request)
+    except HTTPException:
+        return {}
+
+
+def _require_company_access(user: dict, company_id: str):
+    if not user_may_access_company(user, company_id):
+        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+
+
 @router.get("/license/me")
-async def my_license(company_id: str = "comp_nexus_main_01"):
+async def my_license(request: Request, company_id: str = "comp_nexus_main_01"):
+    _require_company_access(await _request_user(request), company_id)
     lic = await effective(company_id)
     plans = [{**_clean(p), "modules": p["modules"]} for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     pending = await _db.upgrade_requests.find_one({"company_id": company_id, "status": "pending"})
-    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "pending_request": _clean(pending) if pending else None}
+    sibs = [{"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city")} for c in await companies_on_license(lic.get("license_id") or company_id)]
+    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "companies": sibs, "pending_request": _clean(pending) if pending else None}
+
+
+@router.get("/license/companies")
+async def license_companies(request: Request, company_id: str = "comp_nexus_main_01"):
+    _require_company_access(await _request_user(request), company_id)
+    lic = await effective(company_id)
+    return {"license_id": lic.get("license_id"), "company_limit": lic.get("company_limit") or 0, "company_count": lic.get("company_count") or 0, "companies": [{"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city")} for c in await companies_on_license(lic.get("license_id") or company_id)]}
+
+
+@router.post("/license/companies")
+async def create_license_company(req: Dict[str, Any], request: Request):
+    parent = req.get("company_id") or "comp_nexus_main_01"
+    user = {}
+    try:
+        user = await _current_user(request)
+    except HTTPException:
+        user = {}
+    if not user_may_access_company(user, parent):
+        raise HTTPException(status_code=403, detail="Bu lisans altında şirket açma yetkiniz yok.")
+    if user and user.get("role") not in (None, "admin") and not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Yeni şirket yalnızca şirket yöneticisi açabilir.")
+    doc = await add_licensed_company(parent, req, attach_user=user)
+    if user and not user.get("is_super_admin") and (user.get("_id") or user.get("id")):
+        await _db.users.update_one({"_id": user.get("_id") or user.get("id")}, {"$set": {"active_company_id": doc["_id"]}})
+    return {"id": doc["_id"], "name": doc.get("name"), "license_id": doc.get("license_id"), "license": await effective(doc["_id"])}
 
 
 @router.post("/license/upgrade-request")

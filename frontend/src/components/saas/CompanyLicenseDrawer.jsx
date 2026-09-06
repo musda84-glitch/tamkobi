@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
 
@@ -9,7 +9,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
@@ -17,10 +18,24 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const groups = groupByCategory(catalog);
   const save = async () => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit) }); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
+  const siblings = d.license_companies || [];
+  const limit = Number(lic.company_limit || 0);
+  const canAddSibling = !limit || siblings.length < limit;
+  const addSibling = async () => {
+    if (!newCo.name.trim()) return;
+    setBusy("co");
+    try {
+      await axios.post(`${API_URL}/system/companies/${companyId}/companies`, newCo);
+      toast.success("Lisans altına yeni şirket eklendi. Verileri diğer şirketlerden ayrıdır.");
+      setNewCo({ name: "", tax_number: "", city: "" });
+      await load();
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Şirket eklenemedi."); } finally { setBusy(""); }
+  };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
@@ -38,6 +53,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
               <div><label className="block font-semibold text-slate-700 mb-1">Deneme Bitiş</label><input type="date" value={f.trial_ends_at} onChange={(e) => setF({ ...f, trial_ends_at: e.target.value })} className={inputCls} data-testid="lic-trial-end" /></div>
               <div><label className="block font-semibold text-slate-700 mb-1">Lisans Bitiş (boş = süresiz)</label><input type="date" value={f.expires_at} onChange={(e) => setF({ ...f, expires_at: e.target.value })} className={inputCls} data-testid="lic-expires" /></div>
               <div><label className="block font-semibold text-slate-700 mb-1">Kullanıcı Limiti (boş = paket: {plan?.user_limit || "∞"})</label><input type="number" min={0} value={f.user_limit} onChange={(e) => setF({ ...f, user_limit: e.target.value })} className={inputCls} data-testid="lic-user-limit" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Şirket Limiti (boş = paket: {plan?.company_limit || "∞"})</label><input type="number" min={0} value={f.company_limit} onChange={(e) => setF({ ...f, company_limit: e.target.value })} className={inputCls} data-testid="lic-company-limit" /></div>
               <div className="sm:col-span-3"><label className="block font-semibold text-slate-700 mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inputCls} data-testid="lic-notes" /></div>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -62,6 +78,24 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
                     </li>); })}</ul>
                 </div>))}
             </div>
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid="drawer-license-companies">
+            <h3 className="font-bold text-slate-900 text-sm mb-1 flex items-center gap-1.5"><Building2 className="w-4 h-4 text-slate-400" /> Lisans şirketleri ({siblings.length}{limit ? `/${limit}` : ""})</h3>
+            <p className="text-[10px] text-slate-500 mb-3">Aynı pakette birden fazla tüzel kişi. Her şirketin carisi, faturası ve stoğu ayrıdır; müşteri hesapları birbirini görmez.</p>
+            <ul className="divide-y mb-3">{siblings.map((c) => (
+              <li key={c.id} className="py-1.5 flex items-center justify-between gap-2" data-testid={`drawer-co-${c.id}`}>
+                <span className="font-semibold text-slate-800 truncate">{c.name}</span>
+                {c.primary || c.id === companyId ? <span className="text-[10px] font-black text-amber-700">ANA</span> : <span className="text-[10px] text-slate-400">Şube</span>}
+              </li>
+            ))}</ul>
+            {canAddSibling ? (
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+                <input className={inputCls + " sm:col-span-2"} placeholder="Yeni şirket unvanı" value={newCo.name} onChange={(e) => setNewCo({ ...newCo, name: e.target.value })} data-testid="drawer-new-co-name" />
+                <input className={inputCls} placeholder="VKN" value={newCo.tax_number} onChange={(e) => setNewCo({ ...newCo, tax_number: e.target.value })} data-testid="drawer-new-co-tax" />
+                <button type="button" disabled={!!busy || !newCo.name.trim()} onClick={addSibling} className="px-3 py-2 bg-amber-400 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-1 disabled:opacity-40" data-testid="drawer-new-co-submit">{busy === "co" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Şirket ekle</button>
+              </div>
+            ) : <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Paket şirket limiti doldu. Limit alanını yükseltin veya üst pakete geçin.</p>}
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">

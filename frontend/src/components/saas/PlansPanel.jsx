@@ -33,7 +33,7 @@ export const PlansPanel = ({ plans, catalog, onChanged }) => {
             <div className="flex items-center justify-between"><PlanChip name={p.name} color={p.color} /><span className="text-[10px] text-slate-500">{p.company_count} şirket</span></div>
             <div className="text-[11px] text-slate-500 mt-2 min-h-[28px]">{p.tagline}</div>
             <div className="text-xl font-bold text-slate-900 mt-1">{fmtTL(p.price_monthly)}<span className="text-[10px] font-normal text-slate-500">/ay</span></div>
-            <div className="text-[10px] text-slate-500">{fmtTL(p.price_yearly)}/yıl · {p.user_limit ? `${p.user_limit} kullanıcı` : "sınırsız kullanıcı"} · {p.modules.length}/{catalog.filter((m) => !m.is_core).length} modül</div>
+            <div className="text-[10px] text-slate-500">{fmtTL(p.price_yearly)}/yıl · {p.user_limit ? `${p.user_limit} kullanıcı` : "sınırsız kullanıcı"} · {p.company_limit ? `${p.company_limit} şirket` : "sınırsız şirket"} · {p.modules.length}/{catalog.filter((m) => !m.is_core).length} modül</div>
             <label className={`mt-2 flex items-center gap-2 font-semibold ${p.is_public ? "text-emerald-700" : "text-slate-500"}`}>
               <Toggle on={!!p.is_public} onChange={(v) => publish(p, v)} testId={`plan-publish-${p.id}`} />
               <span>{p.is_public ? "Sitede yayınlı" : "Gizli"}</span>
@@ -48,7 +48,7 @@ export const PlansPanel = ({ plans, catalog, onChanged }) => {
 };
 
 const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
-  const [f, setF] = useState({ name: plan.name || "", tagline: plan.tagline || "", price_monthly: plan.price_monthly ?? 0, price_yearly: plan.price_yearly ?? 0, user_limit: plan.user_limit ?? 0, modules: plan.modules || [], color: plan.color || "slate", sort: plan.sort ?? 99, is_public: plan.is_public ?? true, is_popular: plan.is_popular ?? false });
+  const [f, setF] = useState({ name: plan.name || "", tagline: plan.tagline || "", price_monthly: plan.price_monthly ?? 0, price_yearly: plan.price_yearly ?? 0, user_limit: plan.user_limit ?? 0, company_limit: plan.company_limit ?? 1, modules: plan.modules || [], color: plan.color || "slate", sort: plan.sort ?? 99, is_public: plan.is_public ?? true, is_popular: plan.is_popular ?? false });
   const [busy, setBusy] = useState(false);
   const groups = groupByCategory(catalog);
   const toggleMod = (k) => setF({ ...f, modules: f.modules.includes(k) ? f.modules.filter((x) => x !== k) : [...f.modules, k] });
@@ -64,7 +64,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div><label className="block font-semibold text-slate-700 mb-1">Paket Adı</label><input required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inputCls} data-testid="plan-name" /></div>
           <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Slogan</label><input value={f.tagline} onChange={(e) => setF({ ...f, tagline: e.target.value })} className={inputCls} data-testid="plan-tagline" /></div>
-          {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}
+          {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}{num("company_limit", "Şirket Limiti (0 = sınırsız)")}
           <div><label className="block font-semibold text-slate-700 mb-1">Renk</label><div className="flex gap-1.5">{Object.keys(PLAN_COLORS).map((c) => <button type="button" key={c} onClick={() => setF({ ...f, color: c })} className={`w-7 h-7 rounded-lg ${PLAN_COLORS[c]} ${f.color === c ? "ring-2 ring-offset-1 ring-slate-900" : ""}`} data-testid={`plan-color-${c}`} />)}</div></div>
           {num("sort", "Sıra")}
           <div className="flex items-center gap-4 pt-5"><label className="flex items-center gap-2"><Toggle on={f.is_public} onChange={(v) => setF({ ...f, is_public: v })} testId="plan-public" /> <span>tamkobi.com’da yayınla</span></label><label className="flex items-center gap-2"><Toggle on={f.is_popular} onChange={(v) => setF({ ...f, is_popular: v })} testId="plan-popular" /> <span>Popüler</span></label></div>

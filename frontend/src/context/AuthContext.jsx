@@ -154,7 +154,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

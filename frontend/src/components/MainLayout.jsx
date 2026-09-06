@@ -100,7 +100,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
           {companyMenuOpen && (
             <div className="absolute top-16 left-3 right-3 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 z-50 text-xs">
-              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Şirket Değiştir</div>
+              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Hesabınızdaki şirketler</div>
               {companies.map((c) => (
                 <button
                   key={c.id || c._id}
