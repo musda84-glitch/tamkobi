@@ -12,8 +12,9 @@ from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Query, Form
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
+
+from mysql_store import MySQLClient
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -54,10 +55,11 @@ import saas_docs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
 
-# MongoDB connection
-MONGO_URL = os.environ.get("MONGO_URL")
-DB_NAME = os.environ.get("DB_NAME")
-client = AsyncIOMotorClient(MONGO_URL)
+# MySQL connection (JSON document store; Motor-compatible API)
+from mysql_store import mysql_settings_from_env
+_mysql_cfg = mysql_settings_from_env()
+DB_NAME = _mysql_cfg["db"]
+client = MySQLClient()
 db = client[DB_NAME]
 
 app = FastAPI(title="NexusHesap Cloud ERP & CRM & Muhasebe API")
@@ -92,6 +94,7 @@ def clean_docs(docs: list) -> list:
 async def startup_event():
     asyncio.get_event_loop().create_task(pricing.scheduler_loop())
     try:
+        await db._ensure()
         await seed_all_data(db)
         await seed_partners(db)
         await saas.seed()
@@ -5393,4 +5396,4 @@ async def root():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    await client.close_async()

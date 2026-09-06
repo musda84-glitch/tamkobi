@@ -3,8 +3,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from fastapi import Request, HTTPException, Depends
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from typing import Optional
+from typing import Optional, Any
 
 JWT_ALGORITHM = "HS256"
 
@@ -39,7 +38,7 @@ def create_refresh_token(user_id: str) -> str:
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-async def get_user_from_token(token: str, db: AsyncIOMotorDatabase) -> dict:
+async def get_user_from_token(token: str, db: Any) -> dict:
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":

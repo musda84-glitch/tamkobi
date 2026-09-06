@@ -1,0 +1,18 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: tamkobi
+      MYSQL_DATABASE: tamkobi
+      MYSQL_USER: tamkobi
+      MYSQL_PASSWORD: tamkobi
+    ports:
+      - "3306:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - tamkobi_mysql:/var/lib/mysql
+      - ./backend/schema.mysql.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+
+volumes:
+  tamkobi_mysql:
