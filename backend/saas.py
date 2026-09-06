@@ -428,6 +428,8 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
         upd["email"] = email
     if "is_active" in req:
         active = bool(req["is_active"])
+        if not active and u.get("email") == "admin@nexus.com":
+            raise HTTPException(status_code=400, detail="Ana yönetici pasifleştirilemez.")
         if not active and await _super_admin_count() <= 1:
             raise HTTPException(status_code=400, detail="Son platform yöneticisi pasifleştirilemez.")
         upd["is_active"] = active
