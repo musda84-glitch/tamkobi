@@ -10,6 +10,7 @@ import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { PlansPanel } from "../components/saas/PlansPanel";
 import { RequestsPanel } from "../components/saas/RequestsPanel";
 import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
+import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -46,6 +47,7 @@ export default function SystemAdminPage() {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {pathname === "/sistem" && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {pathname === "/sistem/sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {pathname === "/sistem/kullanicilar" && <PlatformUsersPanel />}
           {pathname === "/sistem/paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {pathname === "/sistem/moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
           {pathname === "/sistem/talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
