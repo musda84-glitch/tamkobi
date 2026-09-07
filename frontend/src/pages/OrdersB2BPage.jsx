@@ -36,6 +36,7 @@ import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModa
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
+import { orderGross, lineGross } from "../utils/orderMoney";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -98,11 +99,11 @@ export default function OrdersB2BPage() {
   const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
   const visibleOrders = useMemo(() => {
     const list = applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF);
-    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
+    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: orderGross(o), order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
     return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
   }, [orders, customerFilter, ordF, sort]);
   const SortTh = ({ k, children, className = "" }) => <th className={`px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>{children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span></th>;
-  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
+  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + orderGross(o), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -333,7 +334,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="order_number">Sipariş No & Kanal</SortTh>
                   <SortTh k="customer_name">Müşteri / Alıcı</SortTh>
                   <SortTh k="items">Ürünler</SortTh>
-                  <SortTh k="total_amount" className="text-right">Tutar</SortTh>
+                  <SortTh k="total_amount" className="text-right">Tutar<span className="block text-[9px] font-semibold text-slate-400 normal-case tracking-normal">KDV dahil</span></SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
                   <th className="px-4 py-3 text-center w-[380px] min-w-[380px]">İşlemler</th>
                 </tr>
@@ -362,15 +363,15 @@ export default function OrdersB2BPage() {
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${lineGross({ ...it, quantity: 1, total: it.unit_price }).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
                             </div>))}
                           </div>
                           {items.length > 2 && <button type="button" onClick={() => setExpandedItems(open ? null : ord.id)} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
                         </div>); })()}
                     </td>
-                    <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {ord.total_amount?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                    <td className="px-4 py-3 text-right font-bold text-slate-900" data-testid={`order-total-${ord.order_number}`}>
+                      {orderGross(ord).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺
                     </td>
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
