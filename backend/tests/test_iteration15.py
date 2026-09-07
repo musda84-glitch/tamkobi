@@ -1,14 +1,16 @@
 """Iteration 15: expense budgets, dashboard overview, loans (AI plan extract + installment pay), credit-card statement import."""
 import os
 import time
+from pathlib import Path
 
 import pytest
 import requests
 
 from conftest import API, TEST_COMPANY_ID
 
-PDF_LOAN = "/app/backend/tests/sample_loan_plan.pdf"
-PDF_INVOICE = "/app/backend/tests/sample_supplier_invoice.pdf"
+_FIXTURES = Path(__file__).resolve().parent
+PDF_LOAN = str(_FIXTURES / "sample_loan_plan.pdf")
+PDF_INVOICE = str(_FIXTURES / "sample_supplier_invoice.pdf")
 BANK_01 = "bank_01"
 BANK_01_BASELINE = 249812.5
 
