@@ -421,6 +421,7 @@ class Order(BaseDocument):
     is_invoiced: bool = False
     invoice_id: Optional[str] = None
     order_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    cancel_request: Optional[Dict[str, Any]] = None
 
 # Üretim & Reçete (BOM)
 class RecipeItem(BaseModel):

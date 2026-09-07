@@ -417,7 +417,15 @@ export default function OrdersB2BPage() {
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
-                      {ord.cancel_request?.status === "pending" && <div className="mt-1 text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>}
+                      {ord.cancel_request?.status === "pending" && (
+                        <div className="mt-1 space-y-1">
+                          <div className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>
+                          <div className="flex flex-wrap gap-1">
+                            <button type="button" onClick={() => resolveCancel(ord, "accept")} className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600 text-white hover:bg-emerald-700" data-testid={`accept-cancel-btn-${ord.order_number}`}>Onayla</button>
+                            <button type="button" onClick={() => resolveCancel(ord, "reject")} className="px-2 py-0.5 rounded-md text-[10px] font-bold border border-rose-200 text-rose-700 hover:bg-rose-50" data-testid={`reject-cancel-btn-${ord.order_number}`}>Reddet</button>
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_32px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
@@ -479,8 +487,8 @@ export default function OrdersB2BPage() {
                             {[
                               [ScanLine, "Depoda topla / sevk", () => navigate(`/sevk?order=${ord.id || ord._id}`), `pick-order-btn-${ord.order_number}`, !["shipped", "completed", "cancelled", "returned"].includes(ord.order_status)],
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
-                              [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-btn-${ord.order_number}`, ord.cancel_request?.status === "pending"],
-                              [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-btn-${ord.order_number}`, ord.cancel_request?.status === "pending"],
+                              [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-menu-${ord.order_number}`, ord.cancel_request?.status === "pending"],
+                              [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-menu-${ord.order_number}`, ord.cancel_request?.status === "pending"],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
                               [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, true],
