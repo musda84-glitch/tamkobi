@@ -1209,10 +1209,29 @@ async def b2b_portal(token: str):
         o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
-    return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
+    return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city"), "has_password": bool(c.get("b2b_password_hash"))},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
             "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
             "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
+
+@api_router.post("/public/b2b/{token}/change-password")
+async def b2b_change_password(token: str, req: Dict[str, Any]):
+    c = await _b2b_contact(token)
+    current = str(req.get("current_password") or "")
+    new_pw = str(req.get("new_password") or "").strip()
+    if len(new_pw) < 6:
+        raise HTTPException(status_code=400, detail="Yeni şifre en az 6 karakter olmalı.")
+    stored = c.get("b2b_password_hash") or ""
+    if stored:
+        if not current or not verify_password(current, stored):
+            raise HTTPException(status_code=400, detail="Mevcut şifre hatalı.")
+        if verify_password(new_pw, stored):
+            raise HTTPException(status_code=400, detail="Yeni şifre mevcut şifreyle aynı olamaz.")
+    await db.contacts.update_one(
+        {"_id": c["_id"]},
+        {"$set": {"b2b_password_hash": hash_password(new_pw), "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "success", "message": "Şifreniz güncellendi."}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):

@@ -1,12 +1,31 @@
-import React from "react";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock } from "lucide-react";
+import React, { useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock, KeyRound, Loader2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { API_URL } from "../context/AuthContext";
 
 export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
-export const B2BHeader = ({ company, contact }) => {
+export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   const bal = contact.balance || 0;
+  const [open, setOpen] = useState(false);
+  const hasPassword = contact.has_password !== false;
+  const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
+  const [busy, setBusy] = useState(false);
+  const close = () => { setOpen(false); setF({ current_password: "", new_password: "", new_password2: "" }); };
+  const submit = async (e) => {
+    e.preventDefault();
+    if (f.new_password !== f.new_password2) { toast.error("Yeni şifreler eşleşmiyor."); return; }
+    setBusy(true);
+    try {
+      await axios.post(`${API_URL}/public/b2b/${token}/change-password`, { current_password: f.current_password, new_password: f.new_password });
+      toast.success("Şifreniz güncellendi.");
+      close();
+      onPasswordChanged?.();
+    } catch (err) { toast.error(err.response?.data?.detail || "Şifre değiştirilemedi."); } finally { setBusy(false); }
+  };
   return (
     <header className="bg-slate-900 text-white" data-testid="b2b-header">
       <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -15,10 +34,32 @@ export const B2BHeader = ({ company, contact }) => {
           <div className="min-w-0"><div className="font-bold leading-tight text-sm sm:text-base truncate">{company.name} <span className="text-[10px] bg-emerald-600 rounded px-1.5 py-0.5 ml-1 align-middle">B2B</span></div><div className="text-[11px] sm:text-xs text-slate-400 truncate">{[company.phone, company.email].filter(Boolean).join(" • ")}</div></div>
         </div>
         <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs">
-          <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
+          <div className="min-w-0">
+            <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
+            {token && (
+              <button type="button" onClick={() => setOpen(true)} className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white underline decoration-dotted" data-testid="b2b-change-password-btn">
+                <KeyRound className="w-3 h-3" /> Şifre değiştir
+              </button>
+            )}
+          </div>
           <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} ₺ {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
         </div>
       </div>
+      {open && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={close} data-testid="b2b-change-password-overlay">
+          <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white text-slate-900 w-full max-w-md rounded-2xl p-5 space-y-3 shadow-2xl" data-testid="b2b-change-password-modal">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-emerald-600" /> Şifre değiştir</h3>
+              <button type="button" onClick={close} className="p-1.5 text-slate-400 hover:text-slate-700" aria-label="Kapat" data-testid="b2b-change-password-close"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-[11px] text-slate-500">{hasPassword ? "Mevcut şifrenizi doğrulayın; yeni şifre en az 6 karakter olmalıdır." : "Bu hesap için ilk şifrenizi belirleyin (en az 6 karakter)."}</p>
+            {hasPassword && <div><label className="block text-xs font-semibold mb-1">Mevcut şifre</label><input type="password" required value={f.current_password} onChange={(e) => setF({ ...f, current_password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="b2b-chg-current-password" autoComplete="current-password" /></div>}
+            <div><label className="block text-xs font-semibold mb-1">Yeni şifre</label><input type="password" required minLength={6} value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="b2b-chg-new-password" autoComplete="new-password" /></div>
+            <div><label className="block text-xs font-semibold mb-1">Yeni şifre (tekrar)</label><input type="password" required value={f.new_password2} onChange={(e) => setF({ ...f, new_password2: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="b2b-chg-new-password2" autoComplete="new-password" /></div>
+            <button type="submit" disabled={busy} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-chg-password-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} {busy ? "Kaydediliyor…" : "Şifreyi Kaydet"}</button>
+          </form>
+        </div>
+      )}
     </header>
   );
 };
