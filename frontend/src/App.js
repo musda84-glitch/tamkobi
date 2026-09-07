@@ -19,6 +19,7 @@ import MyAttendancePage from "./pages/MyAttendancePage";
 import AIAssistantPage from "./pages/AIAssistantPage";
 import CommunicationPage from "./pages/CommunicationPage";
 import SettingsPage from "./pages/SettingsPage";
+import AccountPage from "./pages/AccountPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import InstallmentsPage from "./pages/InstallmentsPage";
 import QuoteApprovalPage from "./pages/QuoteApprovalPage";
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="/mesai" element={<MyAttendancePage />} />
             <Route path="/ai-advisor" element={<AIAssistantPage />} />
             <Route path="/communication" element={<CommunicationPage />} />
+            <Route path="/hesap" element={<AccountPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />

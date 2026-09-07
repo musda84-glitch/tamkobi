@@ -233,7 +233,7 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
     await rbac.ensure_roles(cid)
     admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
     ids = {u["_id"] for u in admins}
-    if attach_user and not attach_user.get("is_super_admin") and (attach_user.get("_id") or attach_user.get("id")):
+    if attach_user and (attach_user.get("_id") or attach_user.get("id")):
         ids.add(attach_user.get("_id") or attach_user.get("id"))
     for uid in ids:
         await _db.users.update_one({"_id": uid}, {"$addToSet": {"company_ids": cid}})
@@ -692,7 +692,7 @@ async def create_license_company(req: Dict[str, Any], request: Request):
     if user and user.get("role") not in (None, "admin") and not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Yeni şirket yalnızca şirket yöneticisi açabilir.")
     doc = await add_licensed_company(parent, req, attach_user=user)
-    if user and not user.get("is_super_admin") and (user.get("_id") or user.get("id")):
+    if user and (user.get("_id") or user.get("id")):
         await _db.users.update_one({"_id": user.get("_id") or user.get("id")}, {"$set": {"active_company_id": doc["_id"]}})
     return {"id": doc["_id"], "name": doc.get("name"), "license_id": doc.get("license_id"), "license": await effective(doc["_id"])}
 
