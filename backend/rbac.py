@@ -268,6 +268,40 @@ async def update_user(user_id: str, req: Dict[str, Any]):
     return _clean(await _db.users.find_one({"_id": user_id}))
 
 
+@router.post("/users")
+async def create_company_user(req: Dict[str, Any]):
+    """Create a company user immediately with a password (no e-mail invite)."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    email = (req.get("email") or "").strip().lower()
+    name = (req.get("name") or "").strip() or (email.split("@")[0] if email else "")
+    pwd = req.get("password") or ""
+    role = req.get("role") or "sales"
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Geçerli bir e-posta girin.")
+    if not name:
+        raise HTTPException(status_code=400, detail="Ad soyad girin.")
+    if len(pwd) < 6:
+        raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+    if await _db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı kullanıcı zaten var.")
+    await ensure_roles(company_id)
+    import saas
+    await saas.check_user_limit(company_id)
+    if not await _db.roles.find_one({"company_id": company_id, "code": role}):
+        raise HTTPException(status_code=400, detail="Geçersiz rol.")
+    user_id = f"usr_{uuid.uuid4().hex[:8]}"
+    doc = {"_id": user_id, "email": email, "password_hash": hash_password(pwd), "name": name, "role": role,
+           "company_ids": [company_id], "active_company_id": company_id, "is_active": True,
+           "employee_id": req.get("employee_id"), "phone": req.get("phone") or "", "preferences": {}, "created_at": _now()}
+    await _db.users.insert_one(doc)
+    await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})
+    if req.get("employee_id"):
+        await _db.employees.update_one({"_id": req["employee_id"]}, {"$set": {"user_id": user_id, "email": email}})
+    names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
+    out = _clean(dict(doc))
+    return {**out, "role_name": names.get(role, role), "is_active": True, "message": f"{name} eklendi. {email} ile giriş yapabilir."}
+
+
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: str):
     u = await _db.users.find_one({"_id": user_id})
