@@ -1205,6 +1205,38 @@ async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
         saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
     return {"saved": saved, "count": len(saved)}
 
+def _b2b_gross(amount, vat_rate, includes_vat) -> float:
+    n = round(float(amount or 0), 2)
+    if includes_vat:
+        return n
+    return round(n * (1 + float(vat_rate or 0) / 100), 2)
+
+
+def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
+    sale = round(float(p.get("sale_price", 0) or 0), 2)
+    price = round(sale * (1 - float(disc or 0) / 100), 2)
+    vat = p.get("vat_rate", 20)
+    includes = bool(p.get("price_includes_vat"))
+    track = p.get("track_stock", True)
+    qty = float(p.get("stock_quantity", 0) or 0)
+    return {
+        "id": p["_id"],
+        "name": p.get("name"),
+        "sku": p.get("sku"),
+        "category": p.get("category"),
+        "unit": p.get("unit"),
+        "image_url": p.get("image_url"),
+        "list_price": sale,
+        "price": price,
+        "list_price_gross": _b2b_gross(sale, vat, includes),
+        "price_gross": _b2b_gross(price, vat, includes),
+        "price_includes_vat": includes,
+        "vat_rate": vat,
+        "in_stock": (qty > 0) if track else True,
+        "stock_quantity": qty if track else None,
+    }
+
+
 async def _b2b_contact(token: str) -> Dict[str, Any]:
     c = await db.contacts.find_one({"b2b_token": token})
     if not c or not c.get("b2b_enabled", False):
@@ -1220,7 +1252,9 @@ async def b2b_portal(token: str):
         raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
     disc = float(c.get("b2b_discount", 0) or bs.get("default_discount", 0) or 0)
     prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}).to_list(5000)
-    products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
+    products = [_b2b_catalog_product(p, disc) for p in prods]
+    if not bs.get("show_prices", True):
+        products = [{**p, "price": None, "list_price": None, "price_gross": None, "list_price_gross": None} for p in products]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
     shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
     for o in orders:
@@ -1229,8 +1263,8 @@ async def b2b_portal(token: str):
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
-            "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
-            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
+            "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
+            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "allow_ai_cart", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -1243,10 +1277,18 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         if not p or q <= 0:
             continue
         price = round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2)
-        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""), quantity=int(q), unit_price=price, total=round(price * q, 2)))
+        vat_rate = float(p.get("vat_rate", 20) or 0)
+        includes = bool(p.get("price_includes_vat"))
+        line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
+        items.append(OrderItem(
+            product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""),
+            quantity=int(q), unit_price=price, total=round(price * q, 2),
+            vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
+        ))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     total = round(sum(i.total for i in items), 2)
+    grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
     if not _bs.get("allow_orders", True):
@@ -1258,6 +1300,11 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
     doc["source"] = "b2b_portal"
+    doc["grand_total"] = grand_total
+    doc["vat_total"] = round(grand_total - sum(
+        (i.total / (1 + float(i.vat_rate or 0) / 100) if i.price_includes_vat and i.vat_rate else i.total)
+        for i in items
+    ), 2)
     await db.orders.insert_one(doc)
     await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": c["company_id"], "type": "b2b_order", "title": f"Yeni B2B siparişi {doc['order_number']}", "message": f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", "ref_type": "order", "ref_id": doc["_id"], "is_read": False, "created_at": datetime.now(timezone.utc).isoformat()})
     return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
