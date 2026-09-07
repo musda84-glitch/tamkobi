@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Users, Plus, ArrowDownRight, ArrowUpRight, PieChart, X, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PartnerTxTable } from "./PartnerTxTable";
+import { CashApprovalsBanner } from "./CashApprovalsBanner";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
@@ -56,8 +57,12 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const saveTx = async (e) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/banking/partners/transactions`, { ...txForm, amount: Number(txForm.amount), account_id: txForm.account_id || firstAcc });
-      toast.success(txForm.type === "capital_in" ? "Sermaye girişi kaydedildi." : "Para çekişi kaydedildi.");
+      const res = await axios.post(`${API_URL}/banking/partners/transactions`, { ...txForm, amount: Number(txForm.amount), account_id: txForm.account_id || firstAcc });
+      if (res.data?.status === "pending_approval") {
+        toast.success(res.data.message);
+      } else {
+        toast.success(txForm.type === "capital_in" ? "Sermaye girişi kaydedildi." : "Para çekişi kaydedildi.");
+      }
       setModal(null); setTxForm({ ...txForm, amount: "", description: "" }); load(); onCashChanged?.();
     } catch (err) { toast.error(err.response?.data?.detail || "İşlem kaydedilemedi."); }
   };
@@ -77,6 +82,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   return (
     <div className="space-y-5" data-testid="partners-panel">
+      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${txs[0]?.id || ""}-${modal || ""}`} onChanged={() => { load(); onCashChanged?.(); }} />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>

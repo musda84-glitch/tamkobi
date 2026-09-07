@@ -190,7 +190,24 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
     counts = {}
     async for u in _db.users.find({"company_ids": company_id, "is_super_admin": {"$ne": True}}, {"role": 1}):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
-    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    policies = {"cash_dual_approval": bool(company.get("cash_dual_approval"))}
+    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "policies": policies, "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
+
+
+@router.put("/roles/policies")
+async def update_company_policies(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    company = await _db.companies.find_one({"_id": company_id})
+    if not company:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    upd: Dict[str, Any] = {}
+    if "cash_dual_approval" in req:
+        upd["cash_dual_approval"] = bool(req["cash_dual_approval"])
+    if upd:
+        await _db.companies.update_one({"_id": company_id}, {"$set": {**upd, "updated_at": _now()}})
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    return {"status": "success", "policies": {"cash_dual_approval": bool(company.get("cash_dual_approval"))}}
 
 
 @router.post("/roles")
