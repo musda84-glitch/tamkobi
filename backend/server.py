@@ -2201,6 +2201,24 @@ async def create_bank_account(account: BankAccount):
     await db.bank_accounts.insert_one(doc)
     return clean_doc(doc)
 
+@api_router.put("/banking/accounts/{account_id}")
+async def update_bank_account(account_id: str, req: Dict[str, Any]):
+    acc = await db.bank_accounts.find_one({"_id": account_id})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    allowed_keys = ("bank_name", "account_name", "account_number", "iban", "currency", "type", "pos_commission_rate", "card_limit")
+    allowed = {k: v for k, v in req.items() if k in allowed_keys and v is not None}
+    if "type" in allowed and allowed["type"] not in ("bank", "cash_box", "pos", "credit_card"):
+        raise HTTPException(status_code=400, detail="Geçersiz hesap türü.")
+    if "current_balance" in req:
+        if await db.bank_transactions.count_documents({"$or": [{"account_id": account_id}, {"target_account_id": account_id}]}):
+            raise HTTPException(status_code=400, detail="Hareketi olan hesabın bakiyesi buradan değiştirilemez.")
+        allowed["current_balance"] = float(req["current_balance"] or 0)
+    if not allowed:
+        return clean_doc(acc)
+    await db.bank_accounts.update_one({"_id": account_id}, {"$set": allowed})
+    return clean_doc(await db.bank_accounts.find_one({"_id": account_id}))
+
 @api_router.get("/banking/transactions")
 async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01", account_id: Optional[str] = None):
     query = {"company_id": company_id}
@@ -3611,7 +3629,9 @@ async def delete_bank_account(account_id: str):
     acc = await db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
-    if await db.bank_transactions.count_documents({"account_id": account_id}):
+    if await db.bank_connections.find_one({"linked_account_id": account_id}):
+        raise HTTPException(status_code=400, detail="Entegre hesap silinemez; önce banka bağlantısını kaldırın.")
+    if await db.bank_transactions.count_documents({"$or": [{"account_id": account_id}, {"target_account_id": account_id}]}):
         raise HTTPException(status_code=400, detail="Hareketi olan hesap silinemez; önce hareketleri kontrol edin.")
     await trash.soft_delete("bank_accounts", acc, "bank_account", acc.get("account_name"), note=f"Bakiye: {float(acc.get('current_balance') or 0):,.2f} ₺")
     return {"status": "success", "message": "Hesap çöp kutusuna taşındı."}
