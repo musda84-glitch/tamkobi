@@ -3235,9 +3235,15 @@ async def scan_stock_count(count_id: str, req: Dict[str, Any]):
     product = await db.products.find_one({"barcode": barcode, "company_id": doc["company_id"]})
     variant = None
     if not product:
+        product = await db.products.find_one({"sku": barcode, "company_id": doc["company_id"]})
+    if not product:
         product = await db.products.find_one({"variants.barcode": barcode, "company_id": doc["company_id"]})
         if product:
             variant = next((v for v in product.get("variants", []) if v.get("barcode") == barcode), None)
+    if not product:
+        product = await db.products.find_one({"variants.sku": barcode, "company_id": doc["company_id"]})
+        if product:
+            variant = next((v for v in product.get("variants", []) if v.get("sku") == barcode), None)
     if not product:
         raise HTTPException(status_code=404, detail=f"Barkod bulunamadı: {barcode}")
     items = doc.get("items", [])

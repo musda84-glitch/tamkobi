@@ -37,7 +37,8 @@ import {
   MonitorPlay,
   BarChart3,
   Trash2,
-  Inbox
+  Inbox,
+  ClipboardList
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
@@ -48,7 +49,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/sayim": ClipboardList, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const [dragIdx, setDragIdx] = useState(null);
@@ -56,7 +57,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const publicSite = location.pathname === "/" && !authenticated;
   if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
-  const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
+  const routeKey = location.pathname === "/sayim" ? "/stock" : location.pathname;
+  const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);
 
   const roleLabels = {
