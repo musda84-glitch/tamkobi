@@ -86,7 +86,15 @@ export default function OrdersB2BPage() {
     try { const r = await axios.post(`${API_URL}/orders/auto-contacts`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" }); toast.success(r.data.message); loadData(); }
     catch (err) { toast.error(err.response?.data?.detail || "Cariler eşlenemedi."); } finally { setAutoBusy(false); }
   };
-  const approve = (ord) => setApproveOrder(ord);
+  const approve = async (ord) => {
+    try {
+      await axios.post(`${API_URL}/orders/${ord.id}/approve`, {});
+      toast.success(`${ord.order_number} onaylandı.`);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Onaylanamadı.");
+    }
+  };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
   const [editTpl, setEditTpl] = useState(false);
