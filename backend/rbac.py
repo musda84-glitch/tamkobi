@@ -16,7 +16,7 @@ _mail_account: Optional[Callable[..., Awaitable[dict]]] = None
 _current_user = None
 
 MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"), ("/cheques", "Çek / Senet"),
-           ("/stock", "Stoklar & Ürünler"), ("/projects", "Teklif / Proje / Keşif"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/warehouses", "Depo"),
+           ("/stock", "Stoklar & Ürünler"), ("/quotes", "Teklifler"), ("/projects", "Projeler"), ("/surveys", "Keşifler"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/warehouses", "Depo"),
            ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
            ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
 LEVELS = ("none", "view", "edit")
@@ -48,7 +48,7 @@ def _all(level: str) -> Dict[str, str]:
 DEFAULT_ROLES = [
     {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("edit")},
     {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/cheques": "edit", "/reports": "edit", "/accountant": "edit", "/settings": "none", "/production": "none", "/atolye": "none"}},
-    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/dispatches": "edit", "/contacts": "edit", "/projects": "edit", "/orders": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/ecommerce": "view", "/cargo": "edit"}},
+    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/dispatches": "edit", "/contacts": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit", "/orders": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/ecommerce": "view", "/cargo": "edit"}},
     {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/warehouses": "edit", "/orders": "edit", "/cargo": "edit", "/dispatches": "edit"}},
     {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/stock": "view", "/warehouses": "view"}},
     {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/contacts": "view", "/banking": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view"}},
@@ -57,7 +57,7 @@ DEFAULT_ROLES = [
 # API path prefix -> module key (longest prefix wins)
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
                   ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
-                  ("/api/warehouses", "/warehouses"), ("/api/quotes", "/projects"), ("/api/projects", "/projects"), ("/api/surveys", "/projects"), ("/api/integrations/ecommerce", "/ecommerce"),
+                  ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/edocs", "/invoices"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
@@ -104,6 +104,8 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p.setdefault("/expenses", p.get("/banking", "none"))
         p.setdefault("/loans", p.get("/banking", "none"))
         p.setdefault("/cheques", p.get("/banking", "none"))
+        p.setdefault("/quotes", p.get("/projects", "none"))
+        p.setdefault("/surveys", p.get("/projects", "none"))
         p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
         p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}

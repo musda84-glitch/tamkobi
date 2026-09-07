@@ -19,14 +19,15 @@ CACHE_TTL = 15
 
 CORE_MODULES = {"/", "/settings", "/trash"}
 CATEGORIES = {"/invoices": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
-              "/stock": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/projects": "Satış", "/orders": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
+              "/stock": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
 DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv, gelen e-belge kutusu", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre, bakiye, B2B portal", "/installments": "Taksitli satış ve ödeme planları",
                 "/banking": "Banka, kasa, POS, virman, canlı banka eşleme", "/expenses": "Masraf ve bütçe yönetimi", "/loans": "Kredi ve kredi kartı takibi", "/cheques": "Alınan/verilen çek ve senet girişi, tahsil, ciro, karşılıksız", "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları", "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/warehouses": "Çoklu depo, transfer, stok sayımı", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri", "/projects": "Teklif, proje ve keşif yönetimi",
+                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/warehouses": "Çoklu depo, transfer, stok sayımı", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri",
+                "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme", "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı", "/surveys": "Keşif, ölçü ve teklife dönüştürme",
                 "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, puantaj, vardiya, izin", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
 
 _STARTER = ["/invoices", "/dispatches", "/contacts", "/banking", "/expenses", "/stock", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/projects", "/orders", "/communication", "/accountant"]
+_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/communication", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_PLANS = [
@@ -98,6 +99,23 @@ async def seed():
         cur = await _db.saas_plans.find_one({"_id": p["_id"]})
         if cur and "/loans" in (cur.get("modules") or []) and "/cheques" not in (cur.get("modules") or []):
             await _db.saas_plans.update_one({"_id": p["_id"]}, {"$push": {"modules": "/cheques"}})
+        cur = await _db.saas_plans.find_one({"_id": p["_id"]})
+        mods = list((cur or {}).get("modules") or [])
+        if "/projects" in mods:
+            extra = [m for m in ("/quotes", "/surveys") if m not in mods]
+            if extra:
+                await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"modules": mods + extra}})
+    async for lic in _db.company_licenses.find({}):
+        ov = dict(lic.get("module_overrides") or {})
+        if "/projects" not in ov:
+            continue
+        changed = False
+        for k in ("/quotes", "/surveys"):
+            if k not in ov:
+                ov[k] = ov["/projects"]
+                changed = True
+        if changed:
+            await _db.company_licenses.update_one({"_id": lic["_id"]}, {"$set": {"module_overrides": ov}})
     async for c in _db.companies.find({}, {"_id": 1, "license_id": 1}):
         if not c.get("license_id"):
             await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"license_id": c["_id"]}})

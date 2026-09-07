@@ -70,7 +70,9 @@ export default function App() {
             <Route path="/communication" element={<CommunicationPage />} />
             <Route path="/hesap" element={<AccountPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/quotes" element={<ProjectsPage section="quotes" />} />
+            <Route path="/projects" element={<ProjectsPage section="projects" />} />
+            <Route path="/surveys" element={<ProjectsPage section="surveys" />} />
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />
             <Route path="/teklif/:token" element={<QuoteApprovalPage />} />
