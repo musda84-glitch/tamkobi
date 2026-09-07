@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
+import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
