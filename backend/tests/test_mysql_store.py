@@ -80,6 +80,18 @@ def test_set_on_insert_and_nested():
     assert out2["preferences"]["theme"] == "dark"
 
 
+def test_upsert_keeps_filter_id():
+    from mysql_store import new_upsert_doc
+    doc = new_upsert_doc(
+        {"$set": {"plan_id": "plan_standard", "status": "trial"}, "$setOnInsert": {"created_at": "now"}},
+        {"_id": "comp_abc"},
+    )
+    assert doc["_id"] == "comp_abc"
+    assert doc["plan_id"] == "plan_standard"
+    assert doc["status"] == "trial"
+    assert doc["created_at"] == "now"
+
+
 def test_project_and_sort():
     docs = [{"_id": "2", "name": "B", "n": 2}, {"_id": "1", "name": "A", "n": 1}]
     s = sort_docs(docs, [("n", 1)])
