@@ -52,6 +52,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import gib_credits
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1856,6 +1857,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     if inv.get("e_type") == "paper":
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})
         return {"status": "success", "message": "Kağıt fatura olarak kesildi. Matbu belgeyi yazdırabilirsiniz.", "tracking_id": None}
+    remaining = await gib_credits.consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
     tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     await db.invoices.update_one(
         {"_id": invoice_id},
@@ -1868,7 +1870,8 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     return {
         "status": "success",
         "message": f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}",
-        "tracking_id": tracking_id
+        "tracking_id": tracking_id,
+        "gib_credits_left": remaining,
     }
 
 @api_router.post("/invoices/{invoice_id}/record-payment")
@@ -5704,6 +5707,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
+gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
@@ -5756,6 +5760,7 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(saas_billing.router)
+app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
 

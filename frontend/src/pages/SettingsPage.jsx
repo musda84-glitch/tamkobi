@@ -195,7 +195,7 @@ export default function SettingsPage() {
   useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [companyId]);
   return (
     <div className="space-y-6" data-testid="settings-page">
-      <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>
+      <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Hesabınız altındaki şirket bilgileri, form şablonları ve entegrasyonlar. GİB kontör almak için <button type="button" className="font-semibold text-emerald-700 underline" onClick={() => navigate("/hesap?tab=kontor")}>Hesap → GİB Kontör</button>.</p></div>
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
           {TABS.map(([k, l, Icon]) => (
