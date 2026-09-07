@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -89,6 +89,15 @@ export default function OrdersB2BPage() {
   const approve = (ord) => setApproveOrder(ord);
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
+  const resolveCancel = async (ord, action) => {
+    const ok = window.confirm(action === "accept" ? `${ord.order_number} iptal edilsin mi?` : `${ord.order_number} iptal talebi reddedilsin mi?`);
+    if (!ok) return;
+    try {
+      const r = await axios.post(`${API_URL}/orders/${ord.id}/resolve-cancel-request`, { action });
+      toast.success(r.data.message);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "İşlem yapılamadı."); }
+  };
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams] = useSearchParams();
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
@@ -391,9 +400,11 @@ export default function OrdersB2BPage() {
                         <option value="preparing">Hazırlanıyor</option>
                         <option value="shipped">Kargolandı</option>
                         <option value="completed">Tamamlandı</option>
+                        <option value="cancelled">İptal</option>
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
+                      {ord.cancel_request?.status === "pending" && <div className="mt-1 text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>}
                     </td>
                     <td className="px-4 py-3 text-center w-[380px] min-w-[380px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
@@ -445,6 +456,8 @@ export default function OrdersB2BPage() {
                             <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
                               {[
                                 [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
+                                [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", ord.cancel_request?.status === "pending"],
+                                [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", ord.cancel_request?.status === "pending"],
                                 [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", !["returned"].includes(ord.order_status)],
                                 [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, "hover:bg-orange-50 hover:text-orange-700", true],
                                 [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", true],
