@@ -1202,11 +1202,20 @@ async def b2b_portal(token: str):
         raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
     disc = float(c.get("b2b_discount", 0) or bs.get("default_discount", 0) or 0)
     prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}).to_list(5000)
-    products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
+    products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "barcode": p.get("barcode") or "", "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
     shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
+    pidx = {p["id"]: p for p in products}
     for o in orders:
         o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
+        for it in o.get("items") or []:
+            p = pidx.get(it.get("product_id")) or {}
+            if not it.get("image_url"):
+                it["image_url"] = p.get("image_url")
+            if not it.get("barcode"):
+                it["barcode"] = p.get("barcode") or ""
+            if not it.get("sku"):
+                it["sku"] = p.get("sku") or ""
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
@@ -1225,7 +1234,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         if not p or q <= 0:
             continue
         price = round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2)
-        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""), quantity=int(q), unit_price=price, total=round(price * q, 2)))
+        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku") or "", barcode=p.get("barcode") or "", quantity=int(q), unit_price=price, total=round(price * q, 2)))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     total = round(sum(i.total for i in items), 2)
@@ -1235,7 +1244,8 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     if float(_bs.get("min_order_amount", 0) or 0) > total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
-    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
+    cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), customer_order_number=cust_no, channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
     doc = order.to_mongo()
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")

@@ -391,6 +391,7 @@ class OrderItem(BaseModel):
     product_id: str
     product_name: str
     sku: str
+    barcode: Optional[str] = ""
     quantity: int
     unit_price: float
     total: float
@@ -398,6 +399,7 @@ class OrderItem(BaseModel):
 class Order(BaseDocument):
     company_id: str
     order_number: Optional[str] = None
+    customer_order_number: Optional[str] = ""
     channel: str = "manual"  # manual, b2b, trendyol, hepsiburada, amazon, shopify
     customer_name: str
     customer_email: Optional[str] = None
