@@ -90,13 +90,21 @@ export default function B2BPortalPage() {
             <div className="flex-1 min-w-0 space-y-3">
               {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
               <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
-              <div className="grid grid-cols-2 gap-2.5 sm:gap-3">{prods.map((p) => {
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">{prods.map((p) => {
                 const gross = b2bGross(p);
                 const listGross = b2bGross(p, "list_price");
                 const vatLabel = Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz";
                 return (
                   <div key={p.id} className="bg-white rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2" data-testid={`b2b-product-${p.sku}`}>
-                    <div className="aspect-[4/3] w-full bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden">{p.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" className="h-full w-full object-contain" /> : <Package className="w-8 h-8 text-slate-300" />}</div>
+                    <div
+                      className="relative w-full overflow-hidden rounded-xl bg-slate-50"
+                      style={{ aspectRatio: "800 / 600" }}
+                      data-testid={`b2b-image-${p.sku}`}
+                    >
+                      {p.image_url
+                        ? <img src={resolveImageUrl(p.image_url)} alt="" width={800} height={600} className="absolute inset-0 h-full w-full object-contain" />
+                        : <div className="absolute inset-0 flex items-center justify-center"><Package className="w-12 h-12 text-slate-300" /></div>}
+                    </div>
                     <div className="min-w-0 flex-1"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
                     <div className="flex items-end justify-between gap-1">
                       <div className="min-w-0">
