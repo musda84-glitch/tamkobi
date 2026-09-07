@@ -52,6 +52,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import order_pick
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -5697,6 +5698,7 @@ trash.init(db)
 migration.init(db)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace})
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
+order_pick.init(db, {"create_production_order": create_production_order})
 
 async def _restore_bank_tx(doc, _related):
     await _reverse_tx_effects(doc, +1)
@@ -5741,6 +5743,7 @@ app.include_router(saas.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
+app.include_router(order_pick.router)
 
 @app.get("/")
 async def root():

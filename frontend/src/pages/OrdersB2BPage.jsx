@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, ScanLine } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -292,6 +292,7 @@ export default function OrdersB2BPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button onClick={() => navigate("/sevk")} className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="open-pick-kiosk-btn"><ScanLine className="w-4 h-4" /> Depo Sevkiyatı</button>
           <button onClick={() => setNewOrder(true)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="new-order-btn"><Plus className="w-4 h-4" /> Yeni Sipariş</button>
           <button onClick={() => setAutoShip(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /> Toplu Kargola</button>
           <button onClick={() => setAiImport(true)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /> AI ile Yükle (PDF/Excel)</button>
@@ -444,6 +445,7 @@ export default function OrdersB2BPage() {
                           {moreMenu === ord.id && (
                             <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
                               {[
+                                [ScanLine, "Depoda topla / sevk", () => navigate(`/sevk?order=${ord.id || ord._id}`), `pick-order-btn-${ord.order_number}`, "hover:bg-emerald-50 hover:text-emerald-800", !["shipped", "completed", "cancelled", "returned"].includes(ord.order_status)],
                                 [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
                                 [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", !["returned"].includes(ord.order_status)],
                                 [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, "hover:bg-orange-50 hover:text-orange-700", true],
