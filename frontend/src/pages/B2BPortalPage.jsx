@@ -119,17 +119,23 @@ export default function B2BPortalPage() {
                         <button onClick={() => setQty(p.id, cart[p.id] + 1)} className="p-2.5" aria-label="Artır" data-testid={`b2b-inc-${p.sku}`}><Plus className="w-4 h-4" /></button>
                       </div>
                     ) : (
-                      <div className="flex gap-1">
-                        <input
-                          type="number"
-                          min={1}
-                          value={draftQty[p.id] ?? 1}
-                          onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: Math.max(1, parseInt(e.target.value || "1", 10) || 1) }))}
-                          className="w-14 border rounded-xl text-center text-xs font-bold"
-                          data-testid={`b2b-add-qty-${p.sku}`}
-                          aria-label="Adet"
-                        />
-                        <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 flex items-center justify-center gap-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5" /> Sepete Ekle</button>
+                      <div className="flex items-stretch gap-1.5">
+                        <label className="flex flex-col items-stretch justify-center w-[3.35rem] sm:w-16 shrink-0 rounded-xl border-2 border-slate-300 bg-slate-50 px-0.5">
+                          <span className="text-[9px] font-semibold text-slate-400 text-center leading-none pt-1">Adet</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={draftQty[p.id] ?? "1"}
+                            onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: e.target.value.replace(/\D/g, "") }))}
+                            onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: String(Math.max(1, parseInt(dq[p.id], 10) || 1)) }))}
+                            onKeyDown={(e) => { if (e.key === "Enter") addWithQty(p.id); }}
+                            className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-1 outline-none"
+                            data-testid={`b2b-add-qty-${p.sku}`}
+                            aria-label="Adet"
+                          />
+                        </label>
+                        <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 min-w-0 flex items-center justify-center gap-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5" /> Sepete Ekle</button>
                       </div>
                     )}
                   </div>
