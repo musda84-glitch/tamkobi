@@ -49,6 +49,7 @@ export default function B2BPortalPage() {
   useEffect(() => {
     const packed = {};
     Object.entries(cart).forEach(([id, qty]) => { packed[id] = { qty, note: lineNotes[id] || "" }; });
+    Object.entries(lineNotes).forEach(([id, n]) => { if (!packed[id] && n) packed[id] = { qty: 0, note: n }; });
     localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(packed));
   }, [cart, lineNotes, token]);
   if (err) return <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6"><div className="bg-white rounded-2xl p-8 shadow-xl text-center font-bold text-slate-800" data-testid="b2b-error">{err}</div></div>;
@@ -105,13 +106,17 @@ export default function B2BPortalPage() {
                       </div>
                       <span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span>
                     </div>
-                    <input
-                      value={lineNotes[p.id] || ""}
-                      onChange={(e) => setLineNotes((n) => ({ ...n, [p.id]: e.target.value }))}
-                      placeholder="Sipariş stok notu"
-                      className="w-full border rounded-lg px-2 py-1 text-[10px] text-slate-700"
-                      data-testid={`b2b-item-note-${p.sku}`}
-                    />
+                    <label className="block">
+                      <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
+                      <textarea
+                        rows={2}
+                        value={lineNotes[p.id] || ""}
+                        onChange={(e) => setLineNotes((n) => ({ ...n, [p.id]: e.target.value }))}
+                        placeholder="Fişte stok açıklamasının altında basılır"
+                        className="w-full border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none"
+                        data-testid={`b2b-item-note-${p.sku}`}
+                      />
+                    </label>
                     {cart[p.id] ? (
                       <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl p-0.5">
                         <button onClick={() => setQty(p.id, cart[p.id] - 1)} className="p-2.5" aria-label="Azalt" data-testid={`b2b-dec-${p.sku}`}><Minus className="w-4 h-4" /></button>
