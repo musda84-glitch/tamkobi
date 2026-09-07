@@ -15,11 +15,13 @@ import {
   History,
   CheckCircle2,
   Users,
-  Link2
+  Link2,
+  Printer
 } from "lucide-react";
 import { PartnersPanel } from "../components/PartnersPanel";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
+import { AccountStatementPrint } from "../components/AccountStatementPrint";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -38,6 +40,7 @@ export default function BankingPage() {
   const [transactions, setTransactions] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [stmtAccount, setStmtAccount] = useState(null);
+  const [printTx, setPrintTx] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Modals
@@ -270,15 +273,26 @@ export default function BankingPage() {
               <button onClick={() => setSelectedAccountId(null)} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> Tüm Hesaplar</button>
             )}
           </div>
-          {selectedAccount ? (
-            <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
-              <span className="text-slate-500">{visibleTx.length} hareket</span>
-              <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-              <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-            </div>
-          ) : (
-            <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedAccount ? (
+              <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
+                <span className="text-slate-500">{visibleTx.length} hareket</span>
+                <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+              </div>
+            ) : (
+              <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
+            )}
+            <button
+              type="button"
+              onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40"
+              disabled={!visibleTx.length}
+              data-testid="print-statements-btn"
+            >
+              <Printer className="w-3.5 h-3.5" /> Ekstreleri Yazdır
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -323,6 +337,15 @@ export default function BankingPage() {
           </table>
         </div>
       </div>
+      {printTx && (
+        <AccountStatementPrint
+          company={activeCompany}
+          account={selectedAccount || null}
+          title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : "Son Finansal Hareketler"}
+          transactions={visibleTx}
+          onClose={() => setPrintTx(false)}
+        />
+      )}
       </>)}
 
       {/* VIRMAN MODAL */}
