@@ -18,7 +18,7 @@ const accountLabel = (a) => {
   return `${name} (${fmt(a.current_balance)} ₺)`;
 };
 
-export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", emptyLabel, disabled = false, required = false }) => {
+export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", emptyLabel, disabled = false, required = false, includePartners = true }) => {
   const [liveAccounts, setLiveAccounts] = useState(accounts || []);
   const [partners, setPartners] = useState([]);
   useEffect(() => { if (accounts?.length) setLiveAccounts(accounts); }, [accounts]);
@@ -26,21 +26,25 @@ export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, test
     if (!companyId) return undefined;
     let cancelled = false;
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => { if (!cancelled) setLiveAccounts(r.data || []); }).catch(() => { if (!cancelled) setLiveAccounts(accounts || []); });
-    axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => { if (!cancelled) setPartners((r.data || []).filter((p) => p.is_active !== false)); }).catch(() => { if (!cancelled) setPartners([]); });
+    if (includePartners) {
+      axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => { if (!cancelled) setPartners((r.data || []).filter((p) => p.is_active !== false)); }).catch(() => { if (!cancelled) setPartners([]); });
+    } else {
+      setPartners([]);
+    }
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId, includePartners]);
   const grouped = TYPE_ORDER.map((t) => [t, liveAccounts.filter((a) => a.type === t)]).filter(([, list]) => list.length);
   const other = liveAccounts.filter((a) => !TYPE_ORDER.includes(a.type));
   if (other.length) grouped.push(["other", other]);
   return (
     <select value={value || ""} onChange={(e) => onChange(e.target.value)} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium ${className}`} data-testid={testId} disabled={disabled} required={required && !emptyLabel}>
-      {emptyLabel && <option value="">{emptyLabel}</option>}
+      {emptyLabel !== undefined && emptyLabel !== false && <option value="">{emptyLabel}</option>}
       {grouped.map(([t, list]) => (
         <optgroup key={t} label={TYPE_LABEL[t] || t}>
           {list.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountLabel(a)}</option>)}
         </optgroup>
       ))}
-      {partners.length > 0 && (
+      {includePartners && partners.length > 0 && (
         <optgroup label="Ortaklar Hesabı">
           {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent} • {fmt(p.balance)} ₺)</option>)}
         </optgroup>

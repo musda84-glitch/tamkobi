@@ -7,6 +7,7 @@ import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -155,7 +156,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     if (!payItem) return;
     setBusyPay(true);
     try {
-      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { account_id: payAccountId });
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
       toast.success(res.data.message);
       setPayItem(null);
       afterMoney();
@@ -192,8 +193,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             )}
             {tab === "docs" && <Docs card={card} companyId={companyId} reload={reload} />}
             {tab === "salary" && (
-              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
-                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td></tr>)}</tbody></table>
+              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th><th className="text-right">Ödeme</th></tr></thead>
+                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td><td className="text-right">{p.status !== "paid" ? <button type="button" onClick={() => setPayItem(p)} className="px-2 py-0.5 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`emp-card-pay-${p.period}`}>Öde</button> : <span className="text-emerald-700 font-semibold">Ödendi</span>}</td></tr>)}</tbody></table>
             )}
             {tab === "leaves" && (
               <div className="space-y-3"><div className="grid grid-cols-3 gap-2"><Stat label="Yıllık Hak" value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
@@ -220,9 +221,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               <p><strong>{payItem.employee_name || e.full_name}</strong> için <strong>{payItem.period}</strong> dönemi <strong>{fmt(payItem.final_payable ?? payItem.net_salary)} ₺</strong> maaş ödemesi yapılacaktır.</p>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
-                <select value={payAccountId} onChange={(ev) => setPayAccountId(ev.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="emp-card-salary-account">
-                  {accounts.map((b) => <option key={b.id || b._id} value={b.id || b._id}>{b.account_name || b.bank_name} ({fmt(b.current_balance)} ₺)</option>)}
-                </select>
+                <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAccountId} onChange={setPayAccountId} includePartners={false} testId="emp-card-salary-account" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
