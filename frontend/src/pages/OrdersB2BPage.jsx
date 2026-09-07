@@ -36,6 +36,12 @@ import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModa
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -133,11 +139,8 @@ export default function OrdersB2BPage() {
   }, [activeCompany]);
   useEffect(() => { loadData(); }, [loadData]);
 
-  const [invChooser, setInvChooser] = useState(null);
-  const [moreMenu, setMoreMenu] = useState(null);
   const [expandedItems, setExpandedItems] = useState(null);
   const handleConvertToInvoice = async (orderId, eType) => {
-    setInvChooser(null);
     try {
       const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`, eType ? { e_type: eType } : {});
       toast.success(res.data.message);
@@ -325,7 +328,7 @@ export default function OrdersB2BPage() {
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
             <table className="w-full text-left text-xs text-slate-600">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
@@ -335,7 +338,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="items">Ürünler</SortTh>
                   <SortTh k="total_amount" className="text-right">Tutar</SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
-                  <th className="px-4 py-3 text-center w-[380px] min-w-[380px]">İşlemler</th>
+                  <th className="px-4 py-3 pr-6 text-center w-[380px] min-w-[380px]">İşlemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -395,28 +398,36 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 text-center w-[380px] min-w-[380px]">
+                    <td className="px-4 py-3 pr-6 text-center w-[380px] min-w-[380px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
-                          <div className="relative inline-block justify-self-center">
-                          {invChooser === ord.id && (
-                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-52 text-left" data-testid={`inv-type-chooser-${ord.order_number}`} onMouseLeave={() => setInvChooser(null)}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm"
+                                title="Tek Tıkla E-Faturaya Dönüştür"
+                                data-testid={`convert-inv-btn-${ord.order_number}`}
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Faturala ▾</span>
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={20} className="z-[80] w-52 rounded-xl p-1.5" data-testid={`inv-type-chooser-${ord.order_number}`}>
                               <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Nasıl kesilsin?</div>
-                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => <button key={k} onClick={() => handleConvertToInvoice(ord.id || ord._id, k)} className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-50" data-testid={`inv-type-${k}-${ord.order_number}`}><div className="text-xs font-semibold text-slate-800">{l}</div><div className="text-[10px] text-slate-400">{sub}</div></button>)}
-                              {ord.order_status === "pending" && <button onClick={() => { setInvChooser(null); setApproveOrder(ord); }} className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-emerald-50 border-t mt-1 text-xs font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>Önce Onayla + Kargo</button>}
-                            </div>
-                          )}
-                          <button
-                            onClick={() => setInvChooser(invChooser === ord.id ? null : ord.id)}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm"
-                            title="Tek Tıkla E-Faturaya Dönüştür"
-                            data-testid={`convert-inv-btn-${ord.order_number}`}
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Faturala ▾</span>
-                          </button>
-                          </div>
+                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => (
+                                <DropdownMenuItem key={k} onSelect={() => handleConvertToInvoice(ord.id || ord._id, k)} className="flex-col items-start gap-0 py-1.5" data-testid={`inv-type-${k}-${ord.order_number}`}>
+                                  <span className="text-xs font-semibold text-slate-800">{l}</span>
+                                  <span className="text-[10px] text-slate-400">{sub}</span>
+                                </DropdownMenuItem>
+                              ))}
+                              {ord.order_status === "pending" && (
+                                <DropdownMenuItem onSelect={() => setApproveOrder(ord)} className="border-t mt-1 rounded-lg font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>
+                                  Önce Onayla + Kargo
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         ) : (
                           <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-1 rounded text-center">
                             Faturalandı
@@ -439,22 +450,22 @@ export default function OrdersB2BPage() {
                           </button>
                         )}
                         {["pending", "new"].includes(ord.order_status) ? <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
-                        <div className="relative inline-block justify-self-center">
-                          <button onClick={() => setMoreMenu(moreMenu === ord.id ? null : ord.id)} className={`p-1.5 rounded-lg transition ${moreMenu === ord.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
-                          {moreMenu === ord.id && (
-                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
-                              {[
-                                [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
-                                [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", !["returned"].includes(ord.order_status)],
-                                [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, "hover:bg-orange-50 hover:text-orange-700", true],
-                                [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", true],
-                                [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, "hover:bg-violet-50 hover:text-violet-700", true],
-                              ].filter((it) => it[5]).map(([Ico, label, fn, tid, cls]) => (
-                                <button key={tid} onClick={() => { setMoreMenu(null); fn(); }} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-700 transition ${cls}`} data-testid={tid}><Ico className="w-4 h-4 shrink-0" /><span className="truncate">{label}</span></button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" side="bottom" sideOffset={8} collisionPadding={20} className="z-[80] w-56 rounded-xl p-1.5" data-testid={`order-more-menu-${ord.order_number}`}>
+                            {[
+                              [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
+                              [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
+                              [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
+                              [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, true],
+                              [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, true],
+                            ].filter((it) => it[4]).map(([Ico, label, fn, tid]) => (
+                              <DropdownMenuItem key={tid} onSelect={fn} className="gap-2 text-xs font-medium" data-testid={tid}><Ico className="w-4 h-4 shrink-0 text-slate-500" /><span className="truncate">{label}</span></DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>
