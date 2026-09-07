@@ -17,7 +17,6 @@ import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock], ["cheques", "Çek / Senet", ScrollText]];
