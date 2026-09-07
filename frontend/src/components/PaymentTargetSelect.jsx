@@ -5,6 +5,10 @@ import { API_URL } from "../context/AuthContext";
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
 const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS" };
 
+/** Company credit cards are spend-only; tahsilat goes to kasa / bank / POS. */
+export const collectableAccounts = (accounts) => (accounts || []).filter((a) => a.type !== "credit_card");
+export const isCreditCard = (a) => a?.type === "credit_card";
+
 export const splitPaymentTarget = (value) => (value?.startsWith("partner:") ? { partner_id: value.slice(8) } : { account_id: value });
 
 export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "" }) => {

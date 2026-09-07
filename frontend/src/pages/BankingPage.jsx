@@ -136,7 +136,7 @@ export default function BankingPage() {
     }
   };
 
-  const totalLiquidity = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
   const visibleTx = selectedAccountId ? transactions.filter(tx => tx.account_id === selectedAccountId || tx.target_account_id === selectedAccountId) : transactions;
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
@@ -219,22 +219,23 @@ export default function BankingPage() {
               tabIndex={0}
               key={accId}
               onClick={() => setSelectedAccountId(isSelected ? null : accId)}
-              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : 'border-slate-200/90'}`}
-              title="Hesap hareketlerini görmek için tıklayın"
+              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : isCard ? 'border-fuchsia-200/90' : 'border-slate-200/90'}`}
+              title={isCard ? "Şirket kredi kartı — tahsilat için kullanılamaz" : "Hesap hareketlerini görmek için tıklayın"}
               data-testid={`bank-card-${accId}`}
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className={`p-2 rounded-xl ${
-                    isBank ? 'bg-blue-50 text-blue-600' : isCash ? 'bg-emerald-50 text-emerald-600' : 'bg-purple-50 text-purple-600'
+                    isBank ? 'bg-blue-50 text-blue-600' : isCash ? 'bg-emerald-50 text-emerald-600' : isCard ? 'bg-fuchsia-50 text-fuchsia-600' : 'bg-purple-50 text-purple-600'
                   }`}>
                     {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
                   </div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
+                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded flex items-center gap-1 ${isCard ? "text-fuchsia-700 bg-fuchsia-100" : "text-slate-400 bg-slate-100"}`}>
                     {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
                   </span>
                 </div>
                 {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" title="Bu hesap banka API'sine bağlı; manuel işlem yapılamaz, hareketler bankadan çekilir" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider} · manuel işlem kapalı</div>}
+                {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
 
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
@@ -248,7 +249,7 @@ export default function BankingPage() {
 
               <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                 <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">
                     {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
                   </div>
@@ -344,7 +345,7 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-source-select"
                 >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
+                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
                       {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
                     </option>
