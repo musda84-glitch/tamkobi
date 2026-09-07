@@ -53,7 +53,7 @@ export default function OrderPickKioskPage() {
 
   const scan = async (raw) => {
     const c = String(raw || code).trim();
-    if (!c || !ses) return;
+    if (!c || !ses || busy) return;
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: 1 });
@@ -68,9 +68,10 @@ export default function OrderPickKioskPage() {
   };
 
   const bump = async (item, delta) => {
-    const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) || 0) + delta));
+    if (busy) return;
+    const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) or 0) + delta));
     try {
-      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, picked_qty: next });
+      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, line_index: item.line_index, picked_qty: next });
       setSes(r.data);
     } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); }
   };
@@ -131,7 +132,7 @@ export default function OrderPickKioskPage() {
         <div className="text-right"><div className="text-lg font-black">{pct}%</div><div className="text-[10px] text-slate-400">{prog.picked}/{prog.ordered}</div></div>
       </div>
       <form className="bg-white border-b p-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); scan(); }}>
-        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="numeric" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
+        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
