@@ -5,6 +5,41 @@ import { statusTr } from "../utils/labels";
 
 export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
+/** KDV dahil birim fiyat. price_gross yoksa vat_rate + price_includes_vat ile hesaplanır. */
+export const b2bGross = (p, field = "price") => {
+  if (!p || p[field] == null || p[field] === "") return 0;
+  if (field === "price" && p.price_gross != null && p.price_gross !== "") return Number(p.price_gross) || 0;
+  if (field === "list_price" && p.list_price_gross != null && p.list_price_gross !== "") return Number(p.list_price_gross) || 0;
+  const n = Number(p[field]) || 0;
+  const r = Number(p.vat_rate) || 0;
+  if (p.price_includes_vat) return n;
+  return Math.round(n * (1 + r / 100) * 100) / 100;
+};
+
+export const b2bNet = (p) => {
+  if (!p || p.price == null || p.price === "") return 0;
+  const n = Number(p.price) || 0;
+  const r = Number(p.vat_rate) || 0;
+  if (p.price_includes_vat && r) return Math.round((n / (1 + r / 100)) * 100) / 100;
+  return n;
+};
+
+export const b2bOrderGross = (o) => {
+  if (!o) return 0;
+  if (o.grand_total != null && o.grand_total !== "") return Number(o.grand_total) || 0;
+  const items = o.items || [];
+  if (items.some((it) => it.vat_rate != null || it.price_includes_vat)) {
+    return items.reduce((s, it) => {
+      const stored = (Number(it.unit_price) || 0) * (Number(it.quantity) || 0);
+      const vat = Number(it.vat_rate) || 0;
+      if (it.price_includes_vat) return s + stored;
+      return s + stored * (1 + vat / 100);
+    }, 0);
+  }
+  return Number(o.total_amount) || 0;
+};
+
+
 export const B2BHeader = ({ company, contact }) => {
   const bal = contact.balance || 0;
   return (
@@ -26,9 +61,9 @@ export const B2BHeader = ({ company, contact }) => {
 export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "" }) => (
   <>
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
-    <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l) => <div key={l.p.id} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}${suffix}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{l.p.name}</div><div className="text-slate-400">{l.qty} × {fmt(l.p.price)} ₺</div></div><b className="whitespace-nowrap">{fmt(l.p.price * l.qty)} ₺</b><button onClick={() => setQty(l.p.id, 0)} className="text-rose-500 p-1.5" aria-label="Kaldır"><Trash2 className="w-4 h-4" /></button></div>)}</div>
+    <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l) => <div key={l.p.id} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}${suffix}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{l.p.name}</div><div className="text-slate-400">{l.qty} × {fmt(b2bGross(l.p))} ₺</div>{l.note ? <div className="text-[10px] text-slate-500 italic truncate">{l.note}</div> : null}</div><b className="whitespace-nowrap">{fmt(b2bGross(l.p) * l.qty)} ₺</b><button onClick={() => setQty(l.p.id, 0)} className="text-rose-500 p-1.5" aria-label="Kaldır"><Trash2 className="w-4 h-4" /></button></div>)}</div>
     {lines.length > 0 && <>
-      <div className="text-xs space-y-1 border-t pt-2"><div className="flex justify-between text-slate-500"><span>Ara Toplam</span><span>{fmt(sub)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(vat)} ₺</span></div><div className="flex justify-between font-black text-base border-t pt-1"><span>Toplam</span><span data-testid={`b2b-cart-total${suffix}`}>{fmt(sub + vat)} ₺</span></div></div>
+      <div className="text-xs space-y-1 border-t pt-2"><div className="flex justify-between text-slate-500"><span>Ara Toplam</span><span>{fmt(sub)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(vat)} ₺</span></div><div className="flex justify-between font-black text-base border-t pt-1"><span>Toplam (KDV dahil)</span><span data-testid={`b2b-cart-total${suffix}`}>{fmt(sub + vat)} ₺</span></div></div>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu (teslimat, adres…)" className="w-full border rounded-xl p-2.5 text-sm sm:text-xs" data-testid={`b2b-note${suffix}`} />
       <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
     </>}
@@ -89,10 +124,10 @@ export const OrdersList = ({ orders }) => (
       <div key={o.id} className="p-3 text-xs space-y-1" data-testid={`b2b-order-${o.order_number}`}>
         <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{o.order_number}</span><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></div>
         <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</div>
-        <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(o.total_amount)} ₺</span></div>
+        <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(b2bOrderGross(o))} ₺</span></div>
         <TrackingCard t={o.tracking} orderNumber={o.order_number} />
       </div>))}</div>
-    {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="p-3"><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></td><td className="p-3 min-w-[260px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td></tr>)}</tbody></table>}
+    {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))} ₺</td><td className="p-3"><span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span></td><td className="p-3 min-w-[260px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td></tr>)}</tbody></table>}
   </div>
 );
 
