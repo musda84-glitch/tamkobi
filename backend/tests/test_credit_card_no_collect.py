@@ -42,3 +42,23 @@ class TestCreditCardNoCollect:
             "description": "spend ok", "source": "manual",
         }, timeout=20)
         assert ok.status_code in (200, 201), ok.text[:300]
+
+    def test_sales_invoice_payment_rejected_on_credit_card(self):
+        s = _admin()
+        name = f"CCINV-{uuid.uuid4().hex[:6]}"
+        created = s.post(f"{API}/banking/accounts", json={
+            "company_id": COMPANY, "type": "credit_card", "bank_name": "Test Kart",
+            "account_name": name, "currency": "TRY", "current_balance": 0,
+        }, timeout=20)
+        assert created.status_code in (200, 201), created.text[:300]
+        cid = created.json()["id"]
+        inv = s.post(f"{API}/invoices", json={
+            "company_id": COMPANY, "contact_id": "cnt_01", "contact_name": "TEST Cari",
+            "invoice_type": "sales", "status": "approved",
+            "items": [{"name": "TEST_CC", "quantity": 1, "unit_price": 80, "vat_rate": 20, "total": 80}],
+        }, timeout=20)
+        assert inv.status_code == 200, inv.text[:300]
+        iid = inv.json().get("id") or inv.json().get("_id")
+        bad = s.post(f"{API}/invoices/{iid}/record-payment", json={"amount": 20, "account_id": cid}, timeout=20)
+        assert bad.status_code == 400, bad.text[:300]
+        assert "tahsilat" in (bad.json().get("detail") or "").lower()

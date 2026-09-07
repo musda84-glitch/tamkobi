@@ -3,8 +3,9 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
-const TYPE_ORDER = ["cash_box", "bank", "pos"];
-const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", other: "Diğer Hesaplar" };
+const COLLECT_TYPES = ["cash_box", "bank", "pos"];
+const SPEND_TYPES = ["cash_box", "bank", "pos", "credit_card"];
+const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", credit_card: "Kredi Kartı (masraf)", other: "Diğer Hesaplar" };
 
 /** Company credit cards are spend-only; tahsilat goes to kasa / bank / POS. */
 export const collectableAccounts = (accounts) => (accounts || []).filter((a) => a.type !== "credit_card");
@@ -22,23 +23,26 @@ const accountLabel = (a) => {
   return `${name} (${fmt(a.current_balance)} ₺)`;
 };
 
-export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", emptyLabel, disabled = false, required = false, includePartners = true }) => {
-  const [liveAccounts, setLiveAccounts] = useState(accounts || []);
+export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", emptyLabel, disabled = false, required = false, includePartners = true, collectableOnly = false }) => {
+  const hideCards = collectableOnly || (Array.isArray(accounts) && accounts.length > 0 && !accounts.some((a) => a.type === "credit_card"));
+  const apply = (list) => (hideCards ? collectableAccounts(list) : (list || []));
+  const [liveAccounts, setLiveAccounts] = useState(apply(accounts));
   const [partners, setPartners] = useState([]);
-  useEffect(() => { if (accounts?.length) setLiveAccounts(accounts); }, [accounts]);
+  useEffect(() => { if (accounts?.length) setLiveAccounts(apply(accounts)); }, [accounts, hideCards]);
   useEffect(() => {
     if (!companyId) return undefined;
     let cancelled = false;
-    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => { if (!cancelled) setLiveAccounts(r.data || []); }).catch(() => { if (!cancelled) setLiveAccounts(accounts || []); });
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => { if (!cancelled) setLiveAccounts(apply(r.data || [])); }).catch(() => { if (!cancelled) setLiveAccounts(apply(accounts)); });
     if (includePartners) {
       axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => { if (!cancelled) setPartners((r.data || []).filter((p) => p.is_active !== false)); }).catch(() => { if (!cancelled) setPartners([]); });
     } else {
       setPartners([]);
     }
     return () => { cancelled = true; };
-  }, [companyId, includePartners]);
-  const grouped = TYPE_ORDER.map((t) => [t, liveAccounts.filter((a) => a.type === t)]).filter(([, list]) => list.length);
-  const other = liveAccounts.filter((a) => !TYPE_ORDER.includes(a.type));
+  }, [companyId, includePartners, hideCards]);
+  const typeOrder = hideCards ? COLLECT_TYPES : SPEND_TYPES;
+  const grouped = typeOrder.map((t) => [t, liveAccounts.filter((a) => a.type === t)]).filter(([, list]) => list.length);
+  const other = liveAccounts.filter((a) => !typeOrder.includes(a.type));
   if (other.length) grouped.push(["other", other]);
   return (
     <select value={value || ""} onChange={(e) => onChange(e.target.value)} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium ${className}`} data-testid={testId} disabled={disabled} required={required && !emptyLabel}>
