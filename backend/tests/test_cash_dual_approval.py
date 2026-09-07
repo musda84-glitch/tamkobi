@@ -1,4 +1,6 @@
 """Dual approval for non-integrated cash/bank operations (company policy)."""
+import uuid
+
 import pytest
 import requests
 
@@ -6,10 +8,6 @@ from conftest import API, TEST_COMPANY_ID
 
 ADMIN_EMAIL = "admin@nexus.com"
 ADMIN_PASS = "admin123"
-ACC_EMAIL = "muhasebe@nexus.com"
-ACC_PASS = "muhasebe123"
-DEPO_EMAIL = "depo@nexus.com"
-DEPO_PASS = "depo123"
 CID = TEST_COMPANY_ID
 
 
@@ -20,14 +18,42 @@ def _login(email, password):
     return s
 
 
-@pytest.fixture
+def _ensure_user(admin, email, password, role, name):
+    r = requests.post(f"{API}/auth/login", json={"email": email, "password": password}, timeout=20)
+    if r.status_code == 200:
+        return _login(email, password)
+    inv = admin.post(
+        f"{API}/users/invite",
+        json={"company_id": CID, "email": email, "name": name, "role": role, "base_url": "http://127.0.0.1"},
+        timeout=20,
+    )
+    if inv.status_code != 200:
+        users = admin.get(f"{API}/users", params={"company_id": CID}, timeout=20).json().get("users") or []
+        u = next((x for x in users if x.get("email") == email), None)
+        assert u, inv.text
+        pw = admin.put(f"{API}/users/{u['id']}", json={"password": password}, timeout=20)
+        assert pw.status_code == 200, pw.text
+        return _login(email, password)
+    token = inv.json()["id"]
+    s = requests.Session()
+    acc = s.post(f"{API}/public/invites/{token}/accept", json={"password": password, "name": name}, timeout=20)
+    assert acc.status_code == 200, acc.text
+    return s
+
+
+@pytest.fixture(scope="module")
 def admin():
     return _login(ADMIN_EMAIL, ADMIN_PASS)
 
 
-@pytest.fixture
-def accountant():
-    return _login(ACC_EMAIL, ACC_PASS)
+@pytest.fixture(scope="module")
+def accountant(admin):
+    return _ensure_user(admin, f"dual_acc_{uuid.uuid4().hex[:8]}@nexus.test", "dualpass1", "accountant", "Dual Onayci")
+
+
+@pytest.fixture(scope="module")
+def warehouse(admin):
+    return _ensure_user(admin, f"dual_wh_{uuid.uuid4().hex[:8]}@nexus.test", "dualpass1", "warehouse", "Dual Depo")
 
 
 @pytest.fixture
@@ -68,7 +94,7 @@ def test_flag_off_distribute_still_immediate(admin):
     assert r.json().get("pay_now") is True
 
 
-def test_pay_now_queues_requester_cannot_approve(admin, accountant, policy_on):
+def test_pay_now_queues_requester_cannot_approve(admin, accountant, warehouse, policy_on):
     accs = admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json()
     acc = next(a for a in accs if a["id"] == "bank_03")
     before = acc["current_balance"]
@@ -97,8 +123,7 @@ def test_pay_now_queues_requester_cannot_approve(admin, accountant, policy_on):
     acc_row = next(x for x in pending if x["id"] == rid)
     assert acc_row["can_approve"] is True
 
-    depo = _login(DEPO_EMAIL, DEPO_PASS)
-    blocked = depo.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
+    blocked = warehouse.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
     assert blocked.status_code == 403, blocked.text
 
     ok = accountant.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
