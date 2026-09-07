@@ -794,7 +794,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
         {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
-        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/projects"},
+        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/quotes"},
         {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
         {"key": "leaves", "label": "Bekleyen izin talebi", "count": await db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}), "path": "/personnel"},
     ]

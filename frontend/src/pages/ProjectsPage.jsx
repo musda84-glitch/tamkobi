@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
+import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -48,10 +48,17 @@ const ItemsEditor = ({ items, setItems, products }) => {
   );
 };
 
-export default function ProjectsPage() {
+const PAGE_META = {
+  quotes: { title: "Teklifler", hint: "Satış teklifi, müşteri onayı ve faturaya çevirme", kind: "quote" },
+  projects: { title: "Projeler", hint: "İş / saha projesi, bütçe ve bağlı teklifler", kind: "project" },
+  surveys: { title: "Keşifler", hint: "Saha keşfi, ölçü ve teklife dönüştürme", kind: "survey" },
+};
+
+export default function ProjectsPage({ section = "quotes" }) {
   const { activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-  const [tab, setTab] = useState("quotes");
+  const tab = ["quotes", "projects", "surveys"].includes(section) ? section : "quotes";
+  const meta = PAGE_META[tab];
   const [quotes, setQuotes] = useState([]); const [projects, setProjects] = useState([]); const [surveys, setSurveys] = useState([]);
   const [contacts, setContacts] = useState([]); const [products, setProducts] = useState([]);
   const [form, setForm] = useState(null);
@@ -100,23 +107,20 @@ export default function ProjectsPage() {
   const visibleQuotes = showArchived ? quotes : activeQuotes;
   const visibleSurveys = showArchived ? surveys : activeSurveys;
   const hiddenCount = tab === "quotes" ? quotes.length - activeQuotes.length : tab === "surveys" ? surveys.length - activeSurveys.length : 0;
-  const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, projects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
-  const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
+  const kind = meta.kind;
 
   return (
-    <div className="space-y-6" data-testid="projects-page">
+    <div className="space-y-6" data-testid={`${tab}-page`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Teklif / Proje / Keşif</h1><p className="text-xs sm:text-sm text-slate-500">Keşif → Teklif → Fatura akışı, görsel ekleme ve yazdırma</p></div>
+        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">{meta.title}</h1><p className="text-xs sm:text-sm text-slate-500">{meta.hint}</p></div>
         <button onClick={() => openForm(kind)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold" data-testid={`new-${kind}-btn`}><Plus className="w-4 h-4" /> {kind === "quote" ? "Yeni Teklif" : kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</button>
       </div>
-      <div className="flex items-center gap-1 border-b border-slate-200">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
-        {tab !== "projects" && (
-          <label className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500 pb-1 cursor-pointer" data-testid="show-archived-toggle">
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="rounded" />
-            {tab === "quotes" ? "Gönderilen / sonuçlanan teklifleri göster" : "Yapılan keşifleri göster"} ({hiddenCount})
-          </label>
-        )}
-      </div>
+      {tab !== "projects" && (
+        <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer" data-testid="show-archived-toggle">
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="rounded" />
+          {tab === "quotes" ? "Gönderilen / sonuçlanan teklifleri göster" : "Yapılan keşifleri göster"} ({hiddenCount})
+        </label>
+      )}
       {tab !== "projects" && !showArchived && hiddenCount > 0 && <p className="text-[11px] text-slate-400 -mt-3" data-testid="archived-hint">{hiddenCount} kayıt gizlendi — gönderilen teklifler ve yapılan keşifler ilgili carinin müşteri panelinde görünür.</p>}
 
       {tab === "quotes" && (
