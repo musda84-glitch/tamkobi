@@ -69,7 +69,7 @@ export default function OrderPickKioskPage() {
 
   const bump = async (item, delta) => {
     if (busy) return;
-    const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) or 0) + delta));
+    const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) || 0) + delta));
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, line_index: item.line_index, picked_qty: next });
       setSes(r.data);
