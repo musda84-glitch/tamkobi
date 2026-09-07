@@ -1232,6 +1232,40 @@ async def _b2b_contact(token: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
     return c
 
+async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[OrderItem]:
+    disc = float(contact.get("b2b_discount", 0) or 0)
+    items: List[OrderItem] = []
+    for it in raw_items or []:
+        p = await db.products.find_one({"_id": it.get("product_id"), "company_id": contact["company_id"]})
+        q = float(it.get("quantity", 0) or 0)
+        if not p or q <= 0:
+            continue
+        price = round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2)
+        vat_rate = float(p.get("vat_rate", 20) or 0)
+        includes = bool(p.get("price_includes_vat"))
+        line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
+        items.append(OrderItem(
+            product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""),
+            quantity=int(q), unit_price=price, total=round(price * q, 2),
+            vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
+        ))
+    return items
+
+async def _b2b_owned_order(token: str, order_id: str) -> tuple:
+    c = await _b2b_contact(token)
+    o = await db.orders.find_one({"_id": order_id, "company_id": c["company_id"]})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("contact_id") != c["_id"] and o.get("customer_name") != c.get("name"):
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    return c, o
+
+async def _notify_company(company_id: str, typ: str, title: str, message: str, ref_id: str):
+    await db.notifications.insert_one({
+        "_id": str(uuid.uuid4()), "company_id": company_id, "type": typ, "title": title, "message": message,
+        "ref_type": "order", "ref_id": ref_id, "is_read": False, "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
 @api_router.get("/public/b2b/{token}")
 async def b2b_portal(token: str):
     c = await _b2b_contact(token)
@@ -1258,22 +1292,7 @@ async def b2b_portal(token: str):
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)
-    disc = float(c.get("b2b_discount", 0) or 0)
-    items = []
-    for it in req.get("items", []):
-        p = await db.products.find_one({"_id": it.get("product_id"), "company_id": c["company_id"]})
-        q = float(it.get("quantity", 0))
-        if not p or q <= 0:
-            continue
-        price = round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2)
-        vat_rate = float(p.get("vat_rate", 20) or 0)
-        includes = bool(p.get("price_includes_vat"))
-        line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
-        items.append(OrderItem(
-            product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""),
-            quantity=int(q), unit_price=price, total=round(price * q, 2),
-            vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
-        ))
+    items = await _b2b_build_items(c, req.get("items", []))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     total = round(sum(i.total for i in items), 2)
@@ -1295,8 +1314,63 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         for i in items
     ), 2)
     await db.orders.insert_one(doc)
-    await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": c["company_id"], "type": "b2b_order", "title": f"Yeni B2B siparişi {doc['order_number']}", "message": f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", "ref_type": "order", "ref_id": doc["_id"], "is_read": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", doc["_id"])
     return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
+
+@api_router.put("/public/b2b/{token}/orders/{order_id}")
+async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
+    c, o = await _b2b_owned_order(token, order_id)
+    if o.get("order_status") not in ("pending", "new"):
+        raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler düzenlenebilir.")
+    if o.get("is_invoiced") or o.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
+    items = await _b2b_build_items(c, req.get("items", []))
+    if not items:
+        raise HTTPException(status_code=400, detail="Siparişte en az bir ürün olmalı.")
+    total = round(sum(i.total for i in items), 2)
+    grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
+    vat_total = round(grand_total - sum(
+        (i.total / (1 + float(i.vat_rate or 0) / 100) if i.price_includes_vat and i.vat_rate else i.total)
+        for i in items
+    ), 2)
+    _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    if float(_bs.get("min_order_amount", 0) or 0) > total:
+        raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
+    update: Dict[str, Any] = {"items": [it.model_dump() for it in items], "total_amount": total, "grand_total": grand_total, "vat_total": vat_total, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if "note" in req:
+        update["notes"] = req.get("note") or ""
+    await db.orders.update_one({"_id": order_id}, {"$set": update})
+    updated = await db.orders.find_one({"_id": order_id})
+    await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {total:,.2f} ₺ olacak şekilde düzenledi.", order_id)
+    return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
+
+@api_router.delete("/public/b2b/{token}/orders/{order_id}")
+async def b2b_delete_order(token: str, order_id: str):
+    c, o = await _b2b_owned_order(token, order_id)
+    if o.get("order_status") not in ("pending", "new"):
+        raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
+    if o.get("is_invoiced") or o.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
+    await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺")
+    await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {o.get('order_number')}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
+    return {"status": "success", "message": f"{o.get('order_number')} silindi."}
+
+@api_router.post("/public/b2b/{token}/orders/{order_id}/cancel-request")
+async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = None):
+    c, o = await _b2b_owned_order(token, order_id)
+    if o.get("order_status") not in ("approved", "preparing"):
+        raise HTTPException(status_code=400, detail="İptal talebi yalnızca onaylanmış siparişler için gönderilebilir. Beklemedeki siparişi silebilirsiniz.")
+    existing = o.get("cancel_request") or {}
+    if existing.get("status") == "pending":
+        return {"status": "exists", "order": clean_doc(o), "message": "İptal talebiniz zaten iletildi."}
+    req = req or {}
+    cr = {"status": "pending", "reason": (req.get("reason") or "").strip(), "at": datetime.now(timezone.utc).isoformat()}
+    await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
+    updated = await db.orders.find_one({"_id": order_id})
+    why = f" Gerekçe: {cr['reason']}" if cr["reason"] else ""
+    await _notify_company(c["company_id"], "b2b_cancel_request", f"İptal talebi {updated.get('order_number')}", f"{c.get('name')} onaylı sipariş için iptal talebi gönderdi.{why}", order_id)
+    return {"status": "success", "order": clean_doc(updated), "message": "İptal talebiniz iletildi."}
 
 @api_router.get("/contacts/flags")
 async def contact_flags(company_id: Optional[str] = "comp_nexus_main_01", days: int = 7):
@@ -3607,6 +3681,29 @@ async def delete_order(order_id: str):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
     await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺")
     return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
+
+@api_router.post("/orders/{order_id}/resolve-cancel-request")
+async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    cr = o.get("cancel_request") or {}
+    if cr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen iptal talebi yok.")
+    req = req or {}
+    action = (req.get("action") or "").strip().lower()
+    now = datetime.now(timezone.utc).isoformat()
+    if action == "accept":
+        if o.get("is_invoiced") or o.get("invoice_id"):
+            raise HTTPException(status_code=400, detail="Faturalanmış sipariş iptal edilemez.")
+        cr.update({"status": "accepted", "resolved_at": now, "resolve_note": req.get("note") or ""})
+        await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "cancelled", "cancelled_at": now, "cancel_request": cr}})
+        return {"status": "success", "message": f"{o.get('order_number')} iptal edildi.", "order_status": "cancelled"}
+    if action == "reject":
+        cr.update({"status": "rejected", "resolved_at": now, "resolve_note": req.get("note") or ""})
+        await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
+        return {"status": "success", "message": "İptal talebi reddedildi."}
+    raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
 
 @api_router.post("/orders/{order_id}/approve")
 async def approve_order(order_id: str, req: Dict[str, Any] = None):
