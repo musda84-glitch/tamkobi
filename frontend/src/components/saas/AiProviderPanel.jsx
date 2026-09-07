@@ -92,7 +92,7 @@ export const AiProviderPanel = () => {
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
-          Aktif: <b>{d.provider_label}</b> · danışman <b>{d.advisor_label}</b> · ayrıştırma <b>{d.extract_label}</b>
+          Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={test} disabled={busy || !(d.has_key || d.has_env_key)} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
