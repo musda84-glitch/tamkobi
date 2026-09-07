@@ -23,10 +23,14 @@ def sanitize_card_fields(doc: Dict[str, Any]) -> Dict[str, Any]:
     expiry = doc.get("card_expiry")
     if expiry not in (None, ""):
         m = re.search(r"(\d{1,2})\s*[/\-.]\s*(\d{2,4})", str(expiry))
+        digits = re.sub(r"\D", "", str(expiry))
         if m:
             mm = int(m.group(1))
             yy = m.group(2)[-2:]
             doc["card_expiry"] = f"{mm:02d}/{yy}" if 1 <= mm <= 12 else None
+        elif len(digits) >= 4:
+            mm = int(digits[:2])
+            doc["card_expiry"] = f"{mm:02d}/{digits[2:4]}" if 1 <= mm <= 12 else None
         else:
             doc["card_expiry"] = None
     holder = doc.get("card_holder")

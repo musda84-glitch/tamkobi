@@ -543,9 +543,11 @@ export default function BankingPage() {
                         maxLength={5}
                         value={newAccount.card_expiry}
                         onChange={(e) => {
-                          let v = e.target.value.replace(/[^\d/]/g, "");
-                          if (v.length === 2 && newAccount.card_expiry.length === 1) v = `${v}/`;
-                          setNewAccount({ ...newAccount, card_expiry: v.slice(0, 5) });
+                          const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
+                          let v = digits;
+                          if (digits.length >= 3) v = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+                          else if (digits.length === 2 && String(newAccount.card_expiry || "").replace(/\D/g, "").length === 1) v = `${digits}/`;
+                          setNewAccount({ ...newAccount, card_expiry: v });
                         }}
                         className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
                         data-testid="card-expiry-input"

@@ -340,6 +340,7 @@ def test_match_statement_contact_and_sanitize():
     assert d["card_expiry"] == "03/27"
     assert "cvv" not in d
     assert d["card_holder"] == "Ali"
+    assert sanitize_card_fields({"card_expiry": "1228"})["card_expiry"] == "12/28"
 
 
 # ---------------- Balance restore verification ----------------
