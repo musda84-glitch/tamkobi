@@ -30,3 +30,7 @@ def test_b2b_order_stores_customer_number_and_line_codes():
     assert hit.get("customer_order_number") == cust_no
     lit = hit["items"][0]
     assert lit.get("sku") or lit.get("barcode") or prod.get("sku") or prod.get("barcode")
+    if prod.get("barcode"):
+        assert lit.get("barcode") == prod["barcode"]
+    if prod.get("image_url"):
+        assert lit.get("image_url") == prod["image_url"]
