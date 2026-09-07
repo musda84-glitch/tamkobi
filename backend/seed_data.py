@@ -782,6 +782,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 4,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         },
         {
@@ -798,6 +799,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 2,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         },
         {
@@ -814,6 +816,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 0,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         }
     ]
@@ -857,3 +860,14 @@ async def seed_all_data(db):
     await db.payrolls.insert_many(payrolls)
 
     print("Successfully seeded NexusHesap full demo data.")
+
+
+DEMO_SHOPFLOOR_PIN = "1234"
+
+
+async def seed_shopfloor_pins(db):
+    """Demo personeline atölye şifresi (1234) — yalnızca henüz şifresi yoksa."""
+    for eid in ("emp_01", "emp_02", "emp_03"):
+        emp = await db.employees.find_one({"_id": eid})
+        if emp and not emp.get("shopfloor_pin_hash"):
+            await db.employees.update_one({"_id": eid}, {"$set": {"shopfloor_pin_hash": hash_password(DEMO_SHOPFLOOR_PIN)}})
