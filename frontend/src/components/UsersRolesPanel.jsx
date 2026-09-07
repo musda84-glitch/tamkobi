@@ -10,6 +10,7 @@ const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-
 const UsersTab = ({ companyId, roles, reload, data }) => {
   const { user: me } = useAuth();
   const [inv, setInv] = useState({ name: "", email: "", role: "sales" });
+  const [manual, setManual] = useState({ name: "", email: "", password: "", role: "sales" });
   const [busy, setBusy] = useState(false);
   const [pwdFor, setPwdFor] = useState(null);
   const [pwd, setPwd] = useState("");
@@ -20,6 +21,14 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
       toast[r.data.mail.status === "sent" ? "success" : "info"](r.data.mail.detail);
       setInv({ name: "", email: "", role: "sales" }); reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Davet gönderilemedi."); } finally { setBusy(false); }
+  };
+  const createManual = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/users`, { ...manual, company_id: companyId });
+      toast.success(r.data.message || "Kullanıcı eklendi.");
+      setManual({ name: "", email: "", password: "", role: "sales" }); reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kullanıcı eklenemedi."); } finally { setBusy(false); }
   };
   const patch = async (u, body, ok) => { try { await axios.put(`${API_URL}/users/${u.id}`, body); toast.success(ok); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } };
   const del = async (u) => { if (!window.confirm(`${u.name} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/users/${u.id}`); toast.success("Kullanıcı silindi."); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
@@ -32,6 +41,14 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
         <div className="md:col-span-2"><label className="block font-semibold mb-1">E-posta</label><input type="email" required value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-email" /></div>
         <div><label className="block font-semibold mb-1">Rol</label><select value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
         <button disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center justify-center gap-1" data-testid="invite-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Davet Gönder</button>
+      </form>
+      <form onSubmit={createManual} className="bg-white border border-slate-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-6 gap-2 items-end text-xs" data-testid="user-manual-form">
+        <div className="md:col-span-6 font-bold text-slate-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-slate-700" /> Manuel kullanıcı ekle (şifre siz belirlersiniz, hemen giriş yapabilir)</div>
+        <div><label className="block font-semibold mb-1">Ad Soyad</label><input required value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="manual-user-name" /></div>
+        <div className="md:col-span-2"><label className="block font-semibold mb-1">E-posta</label><input type="email" required value={manual.email} onChange={(e) => setManual({ ...manual, email: e.target.value })} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="manual-user-email" /></div>
+        <div><label className="block font-semibold mb-1">Şifre</label><input type="password" required minLength={6} value={manual.password} onChange={(e) => setManual({ ...manual, password: e.target.value })} placeholder="En az 6 karakter" className="w-full border rounded-lg p-2 bg-slate-50" data-testid="manual-user-password" /></div>
+        <div><label className="block font-semibold mb-1">Rol</label><select value={manual.role} onChange={(e) => setManual({ ...manual, role: e.target.value })} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="manual-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
+        <button disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center justify-center gap-1" data-testid="manual-user-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />} Kullanıcıyı Ekle</button>
       </form>
       {data.invites.length > 0 && (
         <div className="space-y-1.5" data-testid="pending-invites">
