@@ -16,8 +16,8 @@ AI_PROVIDERS = {
             {"id": "gpt-4.1", "vendor": "openai", "label": "GPT-4.1"},
             {"id": "claude-sonnet-4-6", "vendor": "anthropic", "label": "Claude Sonnet 4.6"},
             {"id": "claude-opus-4-6", "vendor": "anthropic", "label": "Claude Opus 4.6"},
-            {"id": "gemini-2.5-pro", "vendor": "google", "label": "Gemini 2.5 Pro"},
-            {"id": "gemini-2.5-flash", "vendor": "google", "label": "Gemini 2.5 Flash"},
+            {"id": "gemini-2.5-pro", "vendor": "gemini", "label": "Gemini 2.5 Pro"},
+            {"id": "gemini-2.5-flash", "vendor": "gemini", "label": "Gemini 2.5 Flash"},
         ],
     },
     "openai": {
@@ -41,8 +41,8 @@ AI_PROVIDERS = {
         "label": "Google Gemini",
         "hint": "Doğrudan Google AI Studio / Gemini API anahtarı.",
         "models": [
-            {"id": "gemini-2.5-pro", "vendor": "google", "label": "Gemini 2.5 Pro"},
-            {"id": "gemini-2.5-flash", "vendor": "google", "label": "Gemini 2.5 Flash"},
+            {"id": "gemini-2.5-pro", "vendor": "gemini", "label": "Gemini 2.5 Pro"},
+            {"id": "gemini-2.5-flash", "vendor": "gemini", "label": "Gemini 2.5 Flash"},
         ],
     },
 }
@@ -55,13 +55,23 @@ AI_DEFAULTS = {
 }
 
 
+# LlmChat.with_model vendor ids (Google's SDK name is "gemini", not "google").
+SDK_VENDORS = {"openai": "openai", "anthropic": "anthropic", "google": "gemini"}
+
+
 def vendor_for_model(model: str) -> str:
     m = (model or "").lower()
     if m.startswith("claude"):
         return "anthropic"
     if m.startswith("gemini"):
-        return "google"
+        return "gemini"
     return "openai"
+
+
+def sdk_vendor(provider: str, model: str) -> str:
+    if provider in SDK_VENDORS:
+        return SDK_VENDORS[provider]
+    return vendor_for_model(model)
 
 
 def _model_ids(provider: str) -> list:
@@ -138,9 +148,7 @@ async def make_chat(session_id: str, system_message: str, purpose: str = "extrac
     if not key:
         raise RuntimeError("Yapay zeka API anahtarı yapılandırılmamış. Platform Yönetimi → AI Entegrasyonu ekranından anahtar girin.")
     model = cfg["advisor_model"] if purpose == "advisor" else cfg["extract_model"]
-    vendor = vendor_for_model(model)
-    if cfg["provider"] in ("openai", "anthropic", "google"):
-        vendor = cfg["provider"]
+    vendor = sdk_vendor(cfg.get("provider") or "emergent", model)
     return LlmChat(api_key=key, session_id=session_id, system_message=system_message).with_model(vendor, model)
 
 

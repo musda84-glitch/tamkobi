@@ -1,7 +1,23 @@
 """Platform-wide AI provider settings (super admin)."""
 import os
+import sys
 
 import requests
+
+_BACKEND = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, _BACKEND)
+sys.path.insert(0, os.path.join(_BACKEND, "docker", "stubs"))
+import ai_service
+
+
+def test_gemini_sdk_vendor_is_gemini_not_google():
+    assert ai_service.vendor_for_model("gemini-2.5-pro") == "gemini"
+    assert ai_service.vendor_for_model("gemini-2.5-flash") == "gemini"
+    assert ai_service.sdk_vendor("google", "gemini-2.5-flash") == "gemini"
+    assert ai_service.sdk_vendor("emergent", "gemini-2.5-pro") == "gemini"
+    assert ai_service.sdk_vendor("openai", "gpt-4o") == "openai"
+    assert ai_service.sdk_vendor("anthropic", "claude-sonnet-4-6") == "anthropic"
+
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
 API = BASE_URL + "/api"
