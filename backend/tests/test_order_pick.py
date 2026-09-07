@@ -75,3 +75,34 @@ class TestOrderPickKiosk:
         prod = s.post(f"{API}/order-picks/{oid}/to-production", timeout=20)
         assert prod.status_code == 200, prod.text[:300]
         assert "skipped" in prod.json() or "created" in prod.json()
+        again = s.post(f"{API}/order-picks/{oid}/to-production", timeout=20)
+        assert again.status_code == 200
+        assert again.json().get("created") == []
+
+    def test_variant_scan_hits_matching_line(self):
+        s = _admin()
+        sku_a, sku_b = f"VA{uuid.uuid4().hex[:6]}", f"VB{uuid.uuid4().hex[:6]}"
+        bar_a, bar_b = f"869{uuid.uuid4().int % 10**10:010d}", f"868{uuid.uuid4().int % 10**10:010d}"
+        p = s.post(f"{API}/products", json={
+            "company_id": COMPANY, "name": "Varyant Üst", "sku": f"P{uuid.uuid4().hex[:6]}",
+            "sale_price": 10, "stock_quantity": 20,
+            "variants": [{"sku": sku_a, "barcode": bar_a, "name": "Kırmızı"}, {"sku": sku_b, "barcode": bar_b, "name": "Mavi"}],
+        }, timeout=20)
+        assert p.status_code in (200, 201), p.text[:300]
+        pid = p.json()["id"]
+        o = s.post(f"{API}/orders", json={
+            "company_id": COMPANY, "channel": "manual", "customer_name": "Varyant Test",
+            "shipping_address": "Depo", "city": "İstanbul", "total_amount": 20, "order_status": "approved",
+            "items": [
+                {"product_id": pid, "product_name": "Varyant Üst Kırmızı", "sku": sku_a, "barcode": bar_a, "quantity": 1, "unit_price": 10, "total": 10},
+                {"product_id": pid, "product_name": "Varyant Üst Mavi", "sku": sku_b, "barcode": bar_b, "quantity": 1, "unit_price": 10, "total": 10},
+            ],
+        }, timeout=20)
+        assert o.status_code in (200, 201), o.text[:400]
+        oid = o.json()["id"]
+        s.get(f"{API}/order-picks/{oid}", timeout=20)
+        first = s.post(f"{API}/order-picks/{oid}/scan", json={"barcode": bar_b}, timeout=20)
+        assert first.status_code == 200, first.text[:300]
+        items = first.json()["items"]
+        assert items[0]["picked_qty"] == 0
+        assert items[1]["picked_qty"] == 1

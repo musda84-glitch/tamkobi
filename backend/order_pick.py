@@ -10,16 +10,18 @@ import attendance
 router = APIRouter(prefix="/api")
 _db = None
 _create_production_order = None
+_push_order_to_shopphp = None
 
 PICKABLE = {"pending", "approved", "preparing", "new"}
 DONE_PICK = {"shipped", "completed", "cancelled", "returned", "partially_returned"}
 
 
 def init(db, deps: Optional[dict] = None):
-    global _db, _create_production_order
+    global _db, _create_production_order, _push_order_to_shopphp
     _db = db
     if deps:
         _create_production_order = deps.get("create_production_order")
+        _push_order_to_shopphp = deps.get("push_order_to_shopphp")
 
 
 def _now() -> str:
@@ -56,23 +58,44 @@ async def _product_by_code(company_id: str, code: str) -> Optional[dict]:
     return p
 
 
+def _variant_codes_for_line(it: dict, prod: Optional[dict]) -> List[str]:
+    """Only attach variant barcodes that belong to this order line, not every sibling SKU."""
+    extra = []
+    variants = (prod or {}).get("variants") or []
+    if not variants:
+        return extra
+    vid = it.get("variant_id") or it.get("variantId")
+    line_codes = {_norm(it.get("barcode")), _norm(it.get("sku")), _norm(it.get("variant_sku")), _norm(it.get("variant_barcode"))} - {""}
+    picked = []
+    if vid:
+        picked = [v for v in variants if str(v.get("id") or v.get("_id") or "") == str(vid)]
+    if not picked and line_codes:
+        picked = [v for v in variants if _norm(v.get("barcode")) in line_codes or _norm(v.get("sku")) in line_codes]
+    for v in picked:
+        if v.get("barcode"):
+            extra.append(str(v["barcode"]))
+        if v.get("sku"):
+            extra.append(str(v["sku"]))
+    return extra
+
+
 async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
     out = []
-    for it in order_items or []:
+    for idx, it in enumerate(order_items or []):
         pid = it.get("product_id")
         prod = await _db.products.find_one({"_id": pid}) if pid else None
         if not prod:
             prod = await _product_by_code(company_id, it.get("sku") or "") or await _product_by_code(company_id, it.get("barcode") or "")
-        barcode = it.get("barcode") or (prod or {}).get("barcode") or ""
-        sku = it.get("sku") or (prod or {}).get("sku") or ""
-        extra = []
-        for v in (prod or {}).get("variants") or []:
-            if v.get("barcode"):
-                extra.append(str(v["barcode"]))
-            if v.get("sku"):
-                extra.append(str(v["sku"]))
+        barcode = it.get("barcode") or it.get("variant_barcode") or ""
+        sku = it.get("sku") or it.get("variant_sku") or ""
+        if not barcode:
+            barcode = (prod or {}).get("barcode") or ""
+        if not sku:
+            sku = (prod or {}).get("sku") or ""
+        extra = _variant_codes_for_line(it, prod)
         ordered = float(it.get("quantity") or 0)
         out.append({
+            "line_index": idx,
             "product_id": pid or (prod or {}).get("_id"),
             "product_name": it.get("product_name") or it.get("name") or (prod or {}).get("name") or "Kalem",
             "sku": sku,
@@ -166,14 +189,25 @@ async def open_pick(order_id: str):
     return _public(ses, o)
 
 
+def _line_codes(it: dict) -> List[str]:
+    return [_norm(c) for c in (it.get("codes") or [])] + [_norm(it.get("barcode")), _norm(it.get("sku"))]
+
+
+def _incomplete(it: dict) -> bool:
+    return float(it.get("picked_qty") or 0) + 1e-9 < float(it.get("ordered_qty") or 0)
+
+
 def _match_line(items: list, code: str, product: Optional[dict]) -> Optional[dict]:
     n = _norm(code)
-    for it in items:
-        codes = [_norm(c) for c in (it.get("codes") or [])] + [_norm(it.get("barcode")), _norm(it.get("sku"))]
-        if n and n in codes:
-            return it
-        if product and it.get("product_id") and str(it["product_id"]) == str(product.get("_id")):
-            return it
+    exact = [it for it in items if n and n in _line_codes(it)]
+    if exact:
+        return next((it for it in exact if _incomplete(it)), exact[0])
+    if product:
+        pid = str(product.get("_id"))
+        cands = [it for it in items if it.get("product_id") and str(it["product_id"]) == pid]
+        if len(cands) == 1:
+            return cands[0]
+        # Several lines share a parent SKU (variants). Do not guess.
     return None
 
 
@@ -190,6 +224,8 @@ async def scan_pick(order_id: str, req: Dict[str, Any]):
     if not code:
         raise HTTPException(status_code=400, detail="Barkod boş.")
     prod = await _product_by_code(o["company_id"], code)
+    # Reload so overlapping scans do not clobber each other with a stale items array.
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
     line = _match_line(ses["items"], code, prod)
     if not line:
         raise HTTPException(status_code=404, detail=f"Bu barkod siparişte yok: {code}")
@@ -214,8 +250,19 @@ async def adjust_pick(order_id: str, req: Dict[str, Any]):
     ses = await _session_for(o, create=True)
     pid = str(req.get("product_id") or "")
     name = str(req.get("product_name") or "")
+    idx = req.get("line_index")
     qty = float(req.get("picked_qty") if req.get("picked_qty") is not None else 0)
-    line = next((i for i in ses["items"] if (pid and str(i.get("product_id")) == pid) or (name and i.get("product_name") == name)), None)
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+    line = None
+    if idx is not None:
+        try:
+            line = ses["items"][int(idx)]
+        except (IndexError, TypeError, ValueError):
+            line = None
+    if not line:
+        line = next((i for i in ses["items"] if (pid and str(i.get("product_id")) == pid and (not name or i.get("product_name") == name)) or (name and i.get("product_name") == name and not pid)), None)
+        if not line:
+            line = next((i for i in ses["items"] if (pid and str(i.get("product_id")) == pid) or (name and i.get("product_name") == name)), None)
     if not line:
         raise HTTPException(status_code=404, detail="Kalem bulunamadı.")
     ordered = float(line.get("ordered_qty") or 0)
@@ -251,6 +298,8 @@ async def send_missing_to_production(order_id: str):
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     created, skipped = [], []
+    existing = list(ses.get("production_orders") or [])
+    existing_pids = {str(c.get("product_id")) for c in existing if c.get("product_id")}
     for i in ses["items"]:
         miss = float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0)
         if miss <= 1e-9:
@@ -258,6 +307,9 @@ async def send_missing_to_production(order_id: str):
         pid = i.get("product_id")
         if not pid:
             skipped.append({"product_name": i["product_name"], "reason": "stok kartı yok"})
+            continue
+        if str(pid) in existing_pids:
+            skipped.append({"product_name": i["product_name"], "reason": "zaten üretime alındı"})
             continue
         try:
             po = await _create_production_order({
@@ -267,11 +319,14 @@ async def send_missing_to_production(order_id: str):
                 "source": "sales_order",
                 "notes": f"Sipariş {o.get('order_number')} eksik {miss:g} adet",
             })
-            created.append({"product_name": i["product_name"], "qty": miss, "order_code": po.get("order_code")})
+            row = {"product_id": pid, "product_name": i["product_name"], "qty": miss, "order_code": po.get("order_code")}
+            created.append(row)
+            existing.append(row)
+            existing_pids.add(str(pid))
         except HTTPException as e:
             skipped.append({"product_name": i["product_name"], "reason": str(e.detail)})
     if created:
-        await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"production_orders": created, "updated_at": _now()}})
+        await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"production_orders": existing, "updated_at": _now()}})
         await attendance.notify_managers(
             o["company_id"], "order_pick_production",
             f"Üretime alındı: {o.get('order_number')}",
@@ -301,5 +356,10 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
     order_status = {"ready": "preparing", "partial": "preparing", "ship": "shipped"}[mode]
     await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"status": pick_status, "completed_at": _now(), "updated_at": _now(), "complete_mode": mode}})
     await _db.orders.update_one({"_id": order_id}, {"$set": {"pick_status": pick_status, "order_status": order_status, "picked_at": _now()}})
+    if mode == "ship" and _push_order_to_shopphp:
+        try:
+            await _push_order_to_shopphp({**o, "order_status": order_status}, reason="status")
+        except Exception:
+            pass
     labels = {"ready": "Sipariş depoda hazır.", "partial": "Kısmi teslim kaydedildi; kalan kalemler sonra toplanabilir.", "ship": "Sipariş sevk edildi."}
     return {**_public(ses, {**o, "order_status": order_status}), "message": labels[mode]}
