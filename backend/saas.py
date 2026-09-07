@@ -54,6 +54,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _as_dt(value) -> Optional[datetime]:
+    """Parse stored license dates (ISO string, Zulu, or naive datetime)."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        s = str(value).strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _as_iso(value) -> Optional[str]:
+    dt = _as_dt(value)
+    return dt.isoformat() if dt else None
+
+
 def _clean(d: dict) -> dict:
     d = dict(d); d["id"] = d.pop("_id"); return d
 
@@ -161,11 +183,13 @@ async def effective(company_id: str) -> Dict[str, Any]:
         return res
     lic = await _db.company_licenses.find_one({"_id": lid}) or await _db.company_licenses.find_one({"_id": company_id})
     plan = await _db.saas_plans.find_one({"_id": (lic or {}).get("plan_id")}) if lic else None
-    now = _now()
+    now_dt = datetime.now(timezone.utc)
     status = (lic or {}).get("status", "active")
-    if status == "trial" and lic.get("trial_ends_at") and lic["trial_ends_at"] < now:
+    trial_end = _as_dt((lic or {}).get("trial_ends_at"))
+    expires = _as_dt((lic or {}).get("expires_at"))
+    if status == "trial" and trial_end and trial_end < now_dt:
         status = "expired"
-    if status == "active" and lic and lic.get("expires_at") and lic["expires_at"] < now:
+    if status == "active" and expires and expires < now_dt:
         status = "expired"
     locked = status in ("suspended", "expired", "cancelled")
     base = set(plan["modules"]) if plan else set(_ALL)
@@ -176,10 +200,10 @@ async def effective(company_id: str) -> Dict[str, Any]:
         if ov is not None and k not in CORE_MODULES and not locked:
             on = bool(ov)
         mods[k] = on
-    end = (lic or {}).get("trial_ends_at") if status == "trial" else (lic or {}).get("expires_at")
+    end_dt = trial_end if status == "trial" else expires
     days_left = None
-    if end:
-        days_left = max(0, -(-int((datetime.fromisoformat(end) - datetime.now(timezone.utc)).total_seconds()) // 86400))
+    if end_dt:
+        days_left = max(0, -(-int((end_dt - now_dt).total_seconds()) // 86400))
     siblings = await companies_on_license(lid)
     plan_company_limit = int((plan or {}).get("company_limit") or 0)
     lic_company_limit = (lic or {}).get("company_limit")
@@ -263,8 +287,38 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
 
 
 async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14):
-    await _db.company_licenses.update_one({"_id": company_id}, {"$setOnInsert": {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}}, upsert=True)
-    invalidate(company_id)
+    """Start or refresh a trial on the shared parent license. Do not overwrite a paid active plan."""
+    lid = await license_id_of(company_id)
+    existing = await _db.company_licenses.find_one({"_id": lid}) or {}
+    paid_until = _as_dt(existing.get("expires_at"))
+    if existing.get("status") == "active" and existing.get("plan_id") and (
+        existing.get("last_payment_at") or (paid_until and paid_until > datetime.now(timezone.utc))
+    ):
+        invalidate(lid)
+        return
+    trial_end = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    await _db.company_licenses.update_one(
+        {"_id": lid},
+        {
+            "$set": {
+                "plan_id": plan_id,
+                "status": "trial",
+                "trial_ends_at": trial_end,
+                "expires_at": None,
+                "notes": f"{days} gün deneme",
+                "updated_at": _now(),
+            },
+            "$setOnInsert": {
+                "started_at": _now(),
+                "created_at": _now(),
+                "module_overrides": {},
+                "user_limit": None,
+                "company_id": lid,
+            },
+        },
+        upsert=True,
+    )
+    invalidate(lid)
 
 
 # ---------------- Super admin dependency ----------------
@@ -294,13 +348,9 @@ async def _company_row(c: dict) -> Dict[str, Any]:
 def _restore_active_status(lic: Optional[dict]) -> str:
     """Pasiften çıkınca deneme süresi duruyorsa trial, aksi halde active."""
     lic = lic or {}
-    end = lic.get("trial_ends_at")
-    if end:
-        try:
-            if datetime.fromisoformat(end) > datetime.now(timezone.utc):
-                return "trial"
-        except (TypeError, ValueError):
-            pass
+    end = _as_dt(lic.get("trial_ends_at"))
+    if end and end > datetime.now(timezone.utc):
+        return "trial"
     return "active"
 
 
@@ -467,10 +517,11 @@ async def delete_company(company_id: str, _: dict = Depends(require_super_admin)
 async def set_company_activation(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    lic = await _db.company_licenses.find_one({"_id": company_id}) or {}
+    lid = await license_id_of(company_id)
+    lic = await _db.company_licenses.find_one({"_id": lid}) or {}
     status = _restore_active_status(lic) if bool(req.get("active", True)) else "suspended"
-    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {"status": status, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now()}}, upsert=True)
-    invalidate(company_id)
+    await _db.company_licenses.update_one({"_id": lid}, {"$set": {"status": status, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
+    invalidate(lid)
     return await effective(company_id)
 
 
@@ -479,18 +530,23 @@ async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     lid = await license_id_of(company_id)
+    existing = await _db.company_licenses.find_one({"_id": lid}) or {}
     upd: Dict[str, Any] = {}
     if "plan_id" in req:
         if not await _db.saas_plans.find_one({"_id": req["plan_id"]}):
             raise HTTPException(status_code=400, detail="Geçersiz paket.")
         upd["plan_id"] = req["plan_id"]
+        if req["plan_id"] != existing.get("plan_id") and "module_overrides" not in req:
+            upd["module_overrides"] = {}
     if "status" in req:
         if req["status"] not in STATUSES:
             raise HTTPException(status_code=400, detail="Geçersiz durum.")
         upd["status"] = req["status"]
-    for k in ("trial_ends_at", "expires_at", "billing_period"):
+    for k in ("trial_ends_at", "expires_at"):
         if k in req:
-            upd[k] = req[k] or None
+            upd[k] = _as_iso(req[k]) if req[k] else None
+    if "billing_period" in req:
+        upd["billing_period"] = req["billing_period"] or "monthly"
     if "notes" in req:
         upd["notes"] = req["notes"] or ""
     if "user_limit" in req:
@@ -500,12 +556,12 @@ async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends
     if "module_overrides" in req:
         upd["module_overrides"] = {k: bool(v) for k, v in (req["module_overrides"] or {}).items() if k in _ALL and v is not None}
     if "extend_days" in req:
-        lic = await _db.company_licenses.find_one({"_id": lid}) or {}
-        key = "trial_ends_at" if (upd.get("status") or lic.get("status")) == "trial" else "expires_at"
-        cur = lic.get(key)
-        start = max(datetime.now(timezone.utc), datetime.fromisoformat(cur)) if cur else datetime.now(timezone.utc)
+        key = "trial_ends_at" if (upd.get("status") or existing.get("status")) == "trial" else "expires_at"
+        cur = _as_dt(existing.get(key))
+        now_dt = datetime.now(timezone.utc)
+        start = max(now_dt, cur) if cur else now_dt
         upd[key] = (start + timedelta(days=int(req["extend_days"]))).isoformat()
-    await _db.company_licenses.update_one({"_id": lid}, {"$set": {**upd, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now()}}, upsert=True)
+    await _db.company_licenses.update_one({"_id": lid}, {"$set": {**upd, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
     invalidate(lid)
     return await effective(company_id)
 
@@ -664,8 +720,9 @@ async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(re
         raise HTTPException(status_code=400, detail="Geçersiz durum.")
     await _db.upgrade_requests.update_one({"_id": req_id}, {"$set": {"status": status, "admin_note": req.get("note") or "", "resolved_at": _now()}})
     if status == "approved" and r.get("plan_id") and req.get("apply", True):
-        await _db.company_licenses.update_one({"_id": r["company_id"]}, {"$set": {"plan_id": r["plan_id"], "status": "active", "updated_at": _now()}}, upsert=True)
-        invalidate(r["company_id"])
+        lid = await license_id_of(r["company_id"])
+        await _db.company_licenses.update_one({"_id": lid}, {"$set": {"plan_id": r["plan_id"], "status": "active", "module_overrides": {}, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
+        invalidate(lid)
     await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {req.get('note') or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
     return _clean(await _db.upgrade_requests.find_one({"_id": req_id}))
 

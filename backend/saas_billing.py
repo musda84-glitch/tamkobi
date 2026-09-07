@@ -83,15 +83,28 @@ async def _apply_payment(tx: dict):
     if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
         await gib_credits.apply_purchase(tx)
         return
-    lic = await _db.company_licenses.find_one({"_id": tx["company_id"]}) or {}
-    cur = lic.get("expires_at")
+    cid = tx["company_id"]
+    lid = await saas.license_id_of(cid)
+    lic = await _db.company_licenses.find_one({"_id": lid}) or await _db.company_licenses.find_one({"_id": cid}) or {}
     start = datetime.now(timezone.utc)
-    if lic.get("status") == "active" and lic.get("plan_id") == tx["plan_id"] and cur and datetime.fromisoformat(cur) > start:
-        start = datetime.fromisoformat(cur)
-    ends = (start + timedelta(days=PERIOD_DAYS[tx["period"]])).isoformat()
-    await _db.company_licenses.update_one({"_id": tx["company_id"]}, {"$set": {"plan_id": tx["plan_id"], "status": "active", "billing_period": tx["period"], "expires_at": ends, "trial_ends_at": None, "last_payment_at": _now(), "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "module_overrides": {}}}, upsert=True)
-    await _db.upgrade_requests.update_many({"company_id": tx["company_id"], "status": "pending"}, {"$set": {"status": "approved", "admin_note": "Online ödeme ile aktif edildi", "resolved_at": _now()}})
-    saas.invalidate(tx["company_id"])
+    cur = saas._as_dt(lic.get("expires_at"))
+    if lic.get("status") == "active" and lic.get("plan_id") == tx["plan_id"] and cur and cur > start:
+        start = cur
+    period = tx.get("period") if tx.get("period") in PERIOD_DAYS else "monthly"
+    ends = (start + timedelta(days=PERIOD_DAYS[period])).isoformat()
+    fields = {
+        "plan_id": tx["plan_id"], "status": "active", "billing_period": period,
+        "expires_at": ends, "trial_ends_at": None, "last_payment_at": _now(), "updated_at": _now(),
+    }
+    if lic.get("plan_id") != tx["plan_id"]:
+        fields["module_overrides"] = {}
+    await _db.company_licenses.update_one(
+        {"_id": lid},
+        {"$set": fields, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "module_overrides": {}, "company_id": lid}},
+        upsert=True,
+    )
+    await _db.upgrade_requests.update_many({"company_id": cid, "status": "pending"}, {"$set": {"status": "approved", "admin_note": "Online ödeme ile aktif edildi", "resolved_at": _now()}})
+    saas.invalidate(lid)
     try:
         import saas_extras
         await saas_extras.issue_subscription_invoice(tx)

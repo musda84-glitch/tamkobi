@@ -5,7 +5,7 @@ export const fmtDate = (s) => (s ? new Date(s).toLocaleDateString("tr-TR") : "�
 export const PLAN_COLORS = { slate: "bg-slate-700 text-white", emerald: "bg-emerald-600 text-white", indigo: "bg-indigo-600 text-white", amber: "bg-amber-400 text-slate-900", rose: "bg-rose-600 text-white" };
 export const STATUS_STYLES = { trial: "bg-sky-50 text-sky-700 border-sky-200", active: "bg-emerald-50 text-emerald-700 border-emerald-200", suspended: "bg-amber-50 text-amber-700 border-amber-200", expired: "bg-rose-50 text-rose-700 border-rose-200", cancelled: "bg-slate-100 text-slate-500 border-slate-200" };
 export const STATUS_LABELS = { trial: "Deneme", active: "Aktif", suspended: "Askıda", expired: "Süresi Doldu", cancelled: "İptal" };
-export const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400/40";
+export const inputCls = "w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400/40 [color-scheme:light]";
 
 export const StatusBadge = ({ status, testId }) => (
   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${STATUS_STYLES[status] || STATUS_STYLES.cancelled}`} data-testid={testId}>

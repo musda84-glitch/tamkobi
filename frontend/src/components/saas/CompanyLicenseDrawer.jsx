@@ -7,6 +7,18 @@ import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STAT
 
 const cred = { withCredentials: true };
 
+const dateInputValue = (iso) => {
+  const m = String(iso || "").match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+};
+
+const toIsoEndOfDay = (dateStr) => {
+  if (!dateStr) return null;
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 23, 59, 59)).toISOString();
+};
+
 export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onChanged }) => {
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
@@ -14,7 +26,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: dateInputValue(l.trial_ends_at), expires_at: dateInputValue(l.expires_at), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
@@ -27,7 +39,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   };
   const save = async () => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: toIsoEndOfDay(f.trial_ends_at), expires_at: toIsoEndOfDay(f.expires_at), user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
@@ -69,7 +81,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 text-slate-900 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
         <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
           <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -122,7 +134,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <span className="text-slate-500 flex items-center gap-1"><CalendarPlus className="w-3.5 h-3.5" /> Hızlı uzat:</span>
-              {[7, 30, 365].map((n) => <button key={n} onClick={() => extend(n)} disabled={!!busy} className="px-2.5 py-1.5 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`lic-extend-${n}`}>+{n} gün</button>)}
+              {[7, 30, 365].map((n) => <button key={n} type="button" onClick={() => extend(n)} disabled={!!busy} className="px-2.5 py-1.5 border border-slate-300 rounded-lg font-semibold text-slate-800 bg-white hover:bg-slate-100 disabled:opacity-50" data-testid={`lic-extend-${n}`}>+{n} gün</button>)}
               <button onClick={save} disabled={busy === "save"} className="ml-auto px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="lic-save">{busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
             </div>
             {lic.days_left !== null && lic.days_left !== undefined && <div className={`rounded-lg px-3 py-2 ${lic.days_left <= 7 ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-600"}`}>Bitiş: {fmtDate(lic.trial_ends_at || lic.expires_at)} · <b>{lic.days_left} gün</b> kaldı</div>}
