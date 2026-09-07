@@ -1222,6 +1222,7 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
         "category": p.get("category"),
         "unit": p.get("unit"),
         "image_url": p.get("image_url"),
+        "barcode": p.get("barcode") or "",
         "list_price": sale,
         "price": price,
         "list_price_gross": _b2b_gross(sale, vat, includes),
@@ -1253,6 +1254,7 @@ async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[Ord
         line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
         items.append(OrderItem(
             product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""),
+            barcode=p.get("barcode") or "",
             quantity=int(q), unit_price=price, total=round(price * q, 2),
             vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
         ))
@@ -1287,8 +1289,17 @@ async def b2b_portal(token: str):
         products = [{**p, "price": None, "list_price": None, "price_gross": None, "list_price_gross": None} for p in products]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
     shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
+    pidx = {p["id"]: p for p in products}
     for o in orders:
         o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
+        for it in o.get("items") or []:
+            p = pidx.get(it.get("product_id")) or {}
+            if not it.get("image_url"):
+                it["image_url"] = p.get("image_url")
+            if not it.get("barcode"):
+                it["barcode"] = p.get("barcode") or ""
+            if not it.get("sku"):
+                it["sku"] = p.get("sku") or ""
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city"), "has_password": bool(c.get("b2b_password_hash"))},
@@ -1329,7 +1340,8 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     if float(_bs.get("min_order_amount", 0) or 0) > total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
-    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
+    cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), customer_order_number=cust_no, channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
     doc = order.to_mongo()
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
@@ -1366,6 +1378,8 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     update: Dict[str, Any] = {"items": [it.model_dump() for it in items], "total_amount": total, "grand_total": grand_total, "vat_total": vat_total, "updated_at": datetime.now(timezone.utc).isoformat()}
     if "note" in req:
         update["notes"] = req.get("note") or ""
+    if "customer_order_number" in req or "po_number" in req:
+        update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
     await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {total:,.2f} ₺ olacak şekilde düzenledi.", order_id)

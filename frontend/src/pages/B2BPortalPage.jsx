@@ -41,6 +41,7 @@ export default function B2BPortalPage() {
   });
   const [draftQty, setDraftQty] = useState({});
   const [note, setNote] = useState("");
+  const [customerOrderNo, setCustomerOrderNo] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [sheet, setSheet] = useState(false);
@@ -67,17 +68,18 @@ export default function B2BPortalPage() {
       const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, {
         items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: (l.note || "").trim() })),
         note,
+        customer_order_number: customerOrderNo.trim(),
       });
-      setDone(r.data.order); setCart({}); setLineNotes({}); setNote(""); setSheet(false); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" });
+      setDone(r.data.order); setCart({}); setLineNotes({}); setNote(""); setCustomerOrderNo(""); setSheet(false); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş gönderilemedi."); } finally { setBusy(false); }
   };
-  const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy };
+  const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy, customerOrderNo, setCustomerOrderNo };
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
       <B2BHeader company={d.company} contact={d.contact} token={token} onPasswordChanged={load} />
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
         <div className="grid grid-cols-4 sm:flex gap-1 bg-white rounded-xl p-1 border" data-testid="b2b-tabs">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => setTab(k)} className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`b2b-tab-${k}`}><Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" /><span className="text-center">{l}{k === "orders" && d.orders.length > 0 && ` (${d.orders.length})`}</span></button>)}</div>
-        {done && <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs sm:text-sm text-emerald-800 flex items-start gap-2" data-testid="b2b-order-success"><CheckCircle2 className="w-5 h-5 shrink-0" /><span>Siparişiniz alındı: <b>{done.order_number}</b> — {fmt(b2bOrderGross(done))} ₺. Onaylandığında kargo takip numarası burada görünecek.</span></div>}
+        {done && <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs sm:text-sm text-emerald-800 flex items-start gap-2" data-testid="b2b-order-success"><CheckCircle2 className="w-5 h-5 shrink-0" /><span>Siparişiniz alındı: <b>{done.order_number}</b>{done.customer_order_number ? <> · sizin no <b>{done.customer_order_number}</b></> : null} — {fmt(b2bOrderGross(done))} ₺. Onaylandığında kargo takip numarası burada görünecek.</span></div>}
         {tab === "catalog" && (
           <div className="space-y-3">
             {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
@@ -161,7 +163,7 @@ export default function B2BPortalPage() {
           </div>
           </div>
         )}
-        {tab === "orders" && <OrdersList orders={d.orders} token={token} products={d.products} onChanged={load} />}
+        {tab === "orders" && <OrdersList orders={d.orders} token={token} products={d.products} company={d.company} onChanged={load} />}
         {tab === "statement" && <StatementList invoices={d.invoices} company={d.company} balance={d.contact.balance} />}
         {tab === "installments" && <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">{d.installments.length === 0 && <div className="p-8 text-center text-slate-400">Bekleyen taksit yok.</div>}{d.installments.map((i) => <div key={i.id} className={`p-3 flex items-center gap-3 ${i.is_overdue ? "bg-rose-50/60" : ""}`}><CalendarClock className={`w-4 h-4 shrink-0 ${i.is_overdue ? "text-rose-600" : "text-slate-400"}`} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{i.invoice_number} • {i.label}</div><div className="text-slate-500">Vade {i.due_date}{i.is_overdue ? ` — ${-i.days_left} gün gecikti` : ` — ${i.days_left} gün kaldı`}</div></div><b className="text-sm whitespace-nowrap">{fmt(i.amount - (i.paid_amount || 0))} ₺</b></div>)}</div>}
       </div>

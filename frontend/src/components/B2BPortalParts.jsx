@@ -6,6 +6,7 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 
 export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
@@ -100,13 +101,14 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   );
 };
 
-export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "" }) => (
+export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", customerOrderNo, setCustomerOrderNo }) => (
   <>
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
     <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l) => <div key={l.p.id} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}${suffix}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{l.p.name}</div><div className="text-slate-400">{l.qty} × {fmt(b2bGross(l.p))} ₺</div>{l.note ? <div className="text-[10px] text-slate-500 italic truncate">{l.note}</div> : null}</div><b className="whitespace-nowrap">{fmt(b2bGross(l.p) * l.qty)} ₺</b><button onClick={() => setQty(l.p.id, 0)} className="text-rose-500 p-1.5" aria-label="Kaldır"><Trash2 className="w-4 h-4" /></button></div>)}</div>
     {lines.length > 0 && <>
       <div className="text-xs space-y-1 border-t pt-2"><div className="flex justify-between text-slate-500"><span>Ara Toplam</span><span>{fmt(sub)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(vat)} ₺</span></div><div className="flex justify-between font-black text-base border-t pt-1"><span>Toplam (KDV dahil)</span><span data-testid={`b2b-cart-total${suffix}`}>{fmt(sub + vat)} ₺</span></div></div>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu (teslimat, adres…)" className="w-full border rounded-xl p-2.5 text-sm sm:text-xs" data-testid={`b2b-note${suffix}`} />
+      {setCustomerOrderNo && <input value={customerOrderNo || ""} onChange={(e) => setCustomerOrderNo(e.target.value)} placeholder="Sizin sipariş numaranız (isteğe bağlı)" maxLength={80} className="w-full border rounded-xl p-2.5 text-sm sm:text-xs font-mono" data-testid={`b2b-customer-order-no${suffix}`} />}
       <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
     </>}
   </>
@@ -169,8 +171,9 @@ const OrderStatusBadge = ({ o }) => (
   </div>
 );
 
-const OrderActions = ({ o, onEdit, onDelete, onCancel, busy }) => (
+const OrderActions = ({ o, onPreview, onEdit, onDelete, onCancel, busy }) => (
   <div className="flex flex-wrap gap-1.5" data-testid={`b2b-order-actions-${o.order_number}`}>
+    {onPreview && <PreviewOrderBtn onClick={() => onPreview(o)} orderNumber={o.order_number} />}
     {pendingStatus(o.order_status) && (
       <>
         <button type="button" onClick={() => onEdit(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold disabled:opacity-50" data-testid={`b2b-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
@@ -187,6 +190,7 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
   useEscape(onClose);
   const [lines, setLines] = useState(() => (order.items || []).map((i) => ({ product_id: i.product_id, product_name: i.product_name, sku: i.sku, quantity: i.quantity, unit_price: i.unit_price })));
   const [note, setNote] = useState(order.notes || "");
+  const [customerOrderNo, setCustomerOrderNo] = useState(order.customer_order_number || "");
   const [addId, setAddId] = useState("");
   const [busy, setBusy] = useState(false);
   const setQty = (pid, qty) => setLines((ls) => ls.map((l) => l.product_id === pid ? { ...l, quantity: qty } : l).filter((l) => l.quantity > 0));
@@ -205,7 +209,7 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
     if (!lines.length) { toast.error("Siparişte en az bir ürün olmalı."); return; }
     setBusy(true);
     try {
-      const r = await axios.put(`${API_URL}/public/b2b/${token}/orders/${order.id}`, { items: lines.map((l) => ({ product_id: l.product_id, quantity: l.quantity })), note });
+      const r = await axios.put(`${API_URL}/public/b2b/${token}/orders/${order.id}`, { items: lines.map((l) => ({ product_id: l.product_id, quantity: l.quantity })), note, customer_order_number: customerOrderNo.trim() });
       toast.success(r.data.message);
       onDone();
       onClose();
@@ -235,6 +239,7 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
             <button type="button" onClick={addLine} disabled={!addId} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-40" data-testid="b2b-edit-add-btn">Ekle</button>
           </div>
         )}
+        <input value={customerOrderNo} onChange={(e) => setCustomerOrderNo(e.target.value)} placeholder="Sizin sipariş numaranız (isteğe bağlı)" maxLength={80} className="w-full border rounded-xl p-2.5 font-mono" data-testid="b2b-edit-customer-order-no" />
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu" className="w-full border rounded-xl p-2.5" data-testid="b2b-edit-note" />
         <div className="flex items-center justify-between border-t pt-2"><b>Toplam {fmt(total)} ₺</b><div className="flex gap-2"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">Vazgeç</button><button type="button" onClick={save} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="b2b-edit-save">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Kaydet"}</button></div></div>
       </div>
@@ -266,9 +271,10 @@ const CancelRequestModal = ({ order, token, onClose, onDone }) => {
   );
 };
 
-export const OrdersList = ({ orders, token, products, onChanged }) => {
+export const OrdersList = ({ orders, token, products, company, onChanged }) => {
   const [edit, setEdit] = useState(null);
   const [cancel, setCancel] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const remove = async (o) => {
     if (!window.confirm(`${o.order_number} silinsin mi? Beklemedeki sipariş çöp kutusuna taşınır.`)) return;
@@ -285,12 +291,14 @@ export const OrdersList = ({ orders, token, products, onChanged }) => {
       <div className="md:hidden divide-y">{orders.map((o) => (
         <div key={o.id} className="p-3 text-xs space-y-2" data-testid={`b2b-order-${o.order_number}`}>
           <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{o.order_number}</span><OrderStatusBadge o={o} /></div>
+          {o.customer_order_number ? <div className="text-slate-500">Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
           <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</div>
           <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(b2bOrderGross(o))} ₺</span></div>
           <TrackingCard t={o.tracking} orderNumber={o.order_number} />
-          <OrderActions o={o} onEdit={setEdit} onDelete={remove} onCancel={setCancel} busy={busyId === o.id} />
+          <OrderActions o={o} onPreview={setPreview} onEdit={setEdit} onDelete={remove} onCancel={setCancel} busy={busyId === o.id} />
         </div>))}</div>
-      {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th><Th>İşlem</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id} data-testid={`b2b-order-row-${o.order_number}`}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))} ₺</td><td className="p-3"><OrderStatusBadge o={o} /></td><td className="p-3 min-w-[220px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td><td className="p-3"><OrderActions o={o} onEdit={setEdit} onDelete={remove} onCancel={setCancel} busy={busyId === o.id} /></td></tr>)}</tbody></table>}
+      {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th><Th>İşlem</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id} data-testid={`b2b-order-row-${o.order_number}`}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 font-mono text-slate-600">{o.customer_order_number || "—"}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))} ₺</td><td className="p-3"><OrderStatusBadge o={o} /></td><td className="p-3 min-w-[220px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td><td className="p-3"><OrderActions o={o} onPreview={setPreview} onEdit={setEdit} onDelete={remove} onCancel={setCancel} busy={busyId === o.id} /></td></tr>)}</tbody></table>}
+      {preview && <B2BOrderPreview order={preview} products={products} company={company} onClose={() => setPreview(null)} />}
       {edit && <EditOrderModal order={edit} products={products} token={token} onClose={() => setEdit(null)} onDone={onChanged} />}
       {cancel && <CancelRequestModal order={cancel} token={token} onClose={() => setCancel(null)} onDone={onChanged} />}
     </div>
