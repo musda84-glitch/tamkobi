@@ -208,7 +208,7 @@ class Invoice(BaseDocument):
 # Banka, Kasa, POS
 class BankAccount(BaseDocument):
     company_id: str
-    type: str = "bank"  # bank, cash_box, pos
+    type: str = "bank"  # bank, cash_box, pos, credit_card
     bank_name: str
     account_name: str
     account_number: Optional[str] = None
@@ -216,6 +216,10 @@ class BankAccount(BaseDocument):
     currency: str = "TRY"
     current_balance: float = 0.0
     pos_commission_rate: Optional[float] = 0.0
+    card_holder: Optional[str] = None
+    card_last4: Optional[str] = None
+    card_expiry: Optional[str] = None
+    card_limit: Optional[float] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class BankTransaction(BaseDocument):

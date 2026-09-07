@@ -185,6 +185,10 @@ class TestLoans:
 # ---------------- Credit card account + statement import ----------------
 class TestCreditCard:
     acc_id = None
+    detail_id = None
+    contact_id = None
+    expense_ids = []
+    tx_ids = []
 
     def test_01_create_credit_card_account(self, api):
         r = api.post(f"{API}/banking/accounts", json={"company_id": TEST_COMPANY_ID, "type": "credit_card", "bank_name": "IT15 Bank",
@@ -222,10 +226,118 @@ class TestCreditCard:
                      files={"file": ("x.png", b"\x89PNG\r\n", "image/png")}, timeout=60)
         assert r.status_code == 400, r.status_code
 
-    def test_05_cleanup_account(self, api):
-        r = api.delete(f"{API}/banking/accounts/{TestCreditCard.acc_id}", timeout=60)
-        # endpoint yoksa mongo cleanup ayrı scriptte yapılır
-        assert r.status_code in (200, 204, 404, 405), r.status_code
+    def test_05_card_details_sanitized(self, api):
+        r = api.post(f"{API}/banking/accounts", json={
+            "company_id": TEST_COMPANY_ID, "type": "credit_card", "bank_name": "IT15 Garanti",
+            "account_name": "IT15 Kart Detay", "currency": "TRY", "current_balance": 0,
+            "card_holder": "MUSTAFA BAL", "card_last4": "4111111111111234",
+            "card_expiry": "7/28", "card_limit": 25000, "cvv": "999",
+        }, timeout=60)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        TestCreditCard.detail_id = d["id"]
+        assert d["card_holder"] == "MUSTAFA BAL"
+        assert d["card_last4"] == "1234"
+        assert d["card_expiry"] == "07/28"
+        assert float(d["card_limit"]) == 25000
+        assert "cvv" not in d and "card_number" not in d
+        stored = _account(api, d["id"])
+        assert stored["card_last4"] == "1234"
+        assert "cvv" not in stored
+
+    def test_06_put_card_fields(self, api):
+        acc_id = TestCreditCard.detail_id or TestCreditCard.acc_id
+        r = api.put(f"{API}/banking/accounts/{acc_id}", json={"card_last4": "00009999", "card_expiry": "01-29", "card_limit": 10000}, timeout=60)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["card_last4"] == "9999"
+        assert d["card_expiry"] == "01/29"
+        assert float(d["card_limit"]) == 10000
+
+    def test_07_confirm_matches_expense_and_contact(self, api):
+        cr = api.post(f"{API}/contacts", json={
+            "company_id": TEST_COMPANY_ID, "type": "supplier", "name": "IT15 Kart Cari Lojistik A.Ş.",
+            "tax_number_or_id": "2222222222",
+        }, timeout=60)
+        assert cr.status_code == 200, cr.text
+        contact = cr.json()
+        TestCreditCard.contact_id = contact["id"]
+        bal0 = float(contact.get("balance") or 0)
+        acc_id = TestCreditCard.acc_id
+        body = {
+            "statement": {"bank": "IT15 Bank", "card_last4": "4242", "total_debt": 430.5, "due_date": "2026-09-20", "limit": 15000},
+            "lines": [
+                {"date": "2026-09-01", "description": "SHELL ISTANBUL YAKIT", "amount": 850, "category": "Yakıt", "kind": "masraf", "included": True},
+                {"date": "2026-09-02", "description": "IT15 Kart Cari Lojistik fatura", "amount": 1200, "category": "Kargo / Nakliye", "kind": "cari_odeme", "contact_id": contact["id"], "included": True},
+                {"date": "2026-09-03", "description": "iade", "amount": -50, "category": "Diğer", "kind": "islem", "included": True},
+                {"date": "2026-09-01", "description": "SHELL ISTANBUL YAKIT", "amount": 850, "category": "Yakıt", "kind": "masraf", "included": True},
+            ],
+        }
+        r = api.post(f"{API}/banking/accounts/{acc_id}/import-statement/confirm", json=body, timeout=60)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["inserted"] == 3, d
+        assert d["expenses_created"] == 1, d
+        assert d["contacts_matched"] == 1, d
+        TestCreditCard.expense_ids = [x["expense_id"] for x in d["details"] if x.get("expense_id")]
+        TestCreditCard.tx_ids = [x["tx_id"] for x in d["details"] if x.get("tx_id")]
+        stored = _account(api, acc_id)
+        assert stored["card_last4"] == "4242"
+        assert float(stored["current_balance"]) == pytest.approx(-430.5)
+        assert float(stored["card_limit"]) == 15000
+        er = api.get(f"{API}/expenses?company_id={TEST_COMPANY_ID}&q=SHELL ISTANBUL", timeout=60)
+        assert er.status_code == 200, er.text
+        exps = er.json()["expenses"]
+        hit = next((e for e in exps if e.get("id") in TestCreditCard.expense_ids or "SHELL" in (e.get("description") or "")), None)
+        assert hit, exps[:3]
+        assert hit["payment_status"] == "paid"
+        assert hit["source"] == "card_statement"
+        txs = api.get(f"{API}/banking/transactions?company_id={TEST_COMPANY_ID}&account_id={acc_id}", timeout=60).json()
+        # paid expense must not duplicate a second bank outflow for the same spend
+        expense_sources = [t for t in txs if t.get("source") == "expense" and "SHELL" in (t.get("description") or "")]
+        assert expense_sources == [], expense_sources
+        c2 = next(c for c in api.get(f"{API}/contacts?company_id={TEST_COMPANY_ID}", timeout=60).json() if c["id"] == contact["id"])
+        assert float(c2["balance"]) == pytest.approx(bal0 + 1200)
+        r2 = api.post(f"{API}/banking/accounts/{acc_id}/import-statement/confirm", json=body, timeout=60)
+        assert r2.status_code == 200
+        assert r2.json()["inserted"] == 0
+
+    def test_08_confirm_unknown_account(self, api):
+        r = api.post(f"{API}/banking/accounts/nope-404/import-statement/confirm", json={"lines": []}, timeout=60)
+        assert r.status_code == 404
+
+    def test_09_cleanup_account(self, api):
+        for eid in getattr(TestCreditCard, "expense_ids", []) or []:
+            api.delete(f"{API}/expenses/{eid}", timeout=60)
+        for tid in getattr(TestCreditCard, "tx_ids", []) or []:
+            api.delete(f"{API}/banking/transactions/{tid}", timeout=60)
+        if getattr(TestCreditCard, "contact_id", None):
+            api.delete(f"{API}/contacts/{TestCreditCard.contact_id}", timeout=60)
+        for acc_id in (TestCreditCard.acc_id, getattr(TestCreditCard, "detail_id", None)):
+            if not acc_id:
+                continue
+            txs = api.get(f"{API}/banking/transactions?company_id={TEST_COMPANY_ID}&account_id={acc_id}", timeout=60)
+            if txs.status_code == 200:
+                for t in txs.json():
+                    api.delete(f"{API}/banking/transactions/{t['id']}", timeout=60)
+            r = api.delete(f"{API}/banking/accounts/{acc_id}", timeout=60)
+            assert r.status_code in (200, 204, 404, 405, 400), r.status_code
+
+
+def test_match_statement_contact_and_sanitize():
+    from card_match import match_statement_contact, sanitize_card_fields
+    contacts = [
+        {"_id": "c1", "name": "ABC Lojistik A.Ş.", "tax_number_or_id": "1111111111"},
+        {"_id": "c2", "name": "Shell", "tax_number_or_id": ""},
+    ]
+    assert match_statement_contact("SHELL ISTANBUL 05", contacts)["_id"] == "c2"
+    assert match_statement_contact("ABC LOJISTIK FATURA", contacts)["_id"] == "c1"
+    assert match_statement_contact("random market 99", contacts) is None
+    d = sanitize_card_fields({"card_last4": "4111111111119999", "card_expiry": "3/27", "cvv": "123", "card_holder": "  Ali  "})
+    assert d["card_last4"] == "9999"
+    assert d["card_expiry"] == "03/27"
+    assert "cvv" not in d
+    assert d["card_holder"] == "Ali"
 
 
 # ---------------- Balance restore verification ----------------
