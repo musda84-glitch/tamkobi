@@ -190,7 +190,7 @@ export default function BankingPage() {
     }
   };
 
-  const totalLiquidity = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
   const grouped = ACCOUNT_GROUPS.map((g) => {
     const items = accounts.filter((a) => a.type === g.type);
@@ -286,6 +286,7 @@ export default function BankingPage() {
                   <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
                   <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
                 </div>
+                {g.type === "credit_card" && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">Tahsilat kapalı · masraf / ekstre</div>}
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
                   <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
@@ -293,7 +294,7 @@ export default function BankingPage() {
               </div>
               <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
                 <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Toplam Bakiye</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
@@ -336,12 +337,13 @@ export default function BankingPage() {
                       </div>
                     </div>
                     {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider}</div>}
+                    {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
                     {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {acc.iban && acc.iban !== "-" && <div className="text-[11px] font-mono text-slate-400 truncate">{acc.iban}</div>}
                   </div>
                   <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                     <div>
-                      <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
+                      <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
                       <div className="text-lg font-bold text-slate-900 tracking-tight">{money(acc.current_balance)} ₺</div>
                     </div>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{isSelected ? "Hareketler ↓" : "Hareketleri Gör"}</span>
@@ -437,7 +439,7 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-source-select"
                 >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
+                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
                       {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
                     </option>

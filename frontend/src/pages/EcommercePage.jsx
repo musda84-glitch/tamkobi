@@ -278,7 +278,7 @@ export default function EcommercePage() {
                 <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
                 <select value={selectedConfig.settlement_account_id || ""} onChange={(e) => setSelectedConfig({ ...selectedConfig, settlement_account_id: e.target.value || null })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="ecom-settlement-select">
                   <option value="">Hesap seçilmedi — fatura yalnızca "ödendi" işaretlenir</option>
-                  {accounts.map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
+                  {accounts.filter((a) => a.type !== "credit_card").map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
                 </select>
                 <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; kesintiler "Pazaryeri Komisyonu" masrafına yazılır.</p>
               </div>

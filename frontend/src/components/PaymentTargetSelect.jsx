@@ -3,8 +3,12 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
-const TYPE_ORDER = ["cash_box", "bank", "pos", "credit_card"];
-const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", credit_card: "Kredi Kartı", other: "Diğer Hesaplar" };
+const TYPE_ORDER = ["cash_box", "bank", "pos"];
+const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", other: "Diğer Hesaplar" };
+
+/** Company credit cards are spend-only; tahsilat goes to kasa / bank / POS. */
+export const collectableAccounts = (accounts) => (accounts || []).filter((a) => a.type !== "credit_card");
+export const isCreditCard = (a) => a?.type === "credit_card";
 
 export const splitPaymentTarget = (value) => {
   if (!value) return {};

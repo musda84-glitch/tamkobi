@@ -2071,6 +2071,8 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
         await bank_guard.assert_manual_allowed(db, account_id)
         is_sales = inv.get("invoice_type") == "sales"
+        if is_sales:
+            await bank_guard.assert_collection_allowed(db, account_id)
         
         await db.bank_accounts.update_one(
             {"_id": account_id},
@@ -2230,6 +2232,8 @@ async def pay_installment(inst_id: str, req: Dict[str, Any]):
             if not acc:
                 raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
             await bank_guard.assert_manual_allowed(db, acc["_id"])
+            if is_recv:
+                await bank_guard.assert_collection_allowed(db, acc["_id"])
             tx = BankTransaction(company_id=inst["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
                                  amount=amount, description=f"{inst.get('contact_name')} • Açık bakiye {inst['label']}", contact_id=inst["contact_id"], contact_name=inst.get("contact_name"))
             await db.bank_transactions.insert_one(tx.to_mongo())
@@ -2410,6 +2414,8 @@ async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01
 @api_router.post("/banking/transactions")
 async def create_bank_transaction(tx: BankTransaction):
     await bank_guard.assert_manual_allowed(db, tx.account_id)
+    if tx.type == "inflow":
+        await bank_guard.assert_collection_allowed(db, tx.account_id)
     doc = tx.to_mongo()
     await db.bank_transactions.insert_one(doc)
 
@@ -2461,6 +2467,10 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
         if not acc:
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         allowed["account_name"] = acc.get("account_name")
+    new_type = allowed.get("type", tx.get("type"))
+    new_acc = allowed.get("account_id", tx.get("account_id"))
+    if new_type == "inflow":
+        await bank_guard.assert_collection_allowed(db, new_acc)
     await _reverse_tx_effects(tx, -1)
     new_tx = {**tx, **allowed}
     await _reverse_tx_effects(new_tx, +1)
@@ -4341,6 +4351,7 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
         if await bank_guard.get_connection_for_account(db, account_id):
             raise HTTPException(status_code=400, detail="Entegre (API bağlı) hesaba otomatik hakediş yazılamaz; ödemeler banka senkronuyla gelir. Manuel bir kasa/banka hesabı seçin.")
+        await bank_guard.assert_collection_allowed(db, account_id)
         name = acc.get("account_name")
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"settlement_account_id": account_id, "settlement_account_name": name}})
     return {"status": "success", "settlement_account_id": account_id, "settlement_account_name": name, "message": f"Hakediş hesabı: {name}" if name else "Hakediş hesabı kaldırıldı; faturalar yalnızca 'ödendi' işaretlenir."}
@@ -4354,7 +4365,7 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     if not cfg or not cfg.get("settlement_account_id"):
         return None
     acc = await db.bank_accounts.find_one({"_id": cfg["settlement_account_id"]})
-    if not acc:
+    if not acc or acc.get("type") == "credit_card":
         return None
     p = _order_profit(order, _channel_fees(cfg, channel), {})
     deductions = round(p["commission"] + p["commission_vat"] + p["service_fee"] + p["cargo_fee"], 2)
