@@ -16,7 +16,7 @@ export const SystemLayout = ({ children, pendingCount = 0 }) => {
       <aside className="w-64 shrink-0 border-r border-white/5 bg-[#0e1422] flex flex-col">
         <div className="h-16 px-5 flex items-center gap-2.5 border-b border-white/5">
           <div className="w-8 h-8 rounded-lg bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-4 h-4" /></div>
-          <div><div className="font-bold text-sm leading-tight">Nexus<span className="text-amber-400">Panel</span></div><div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div></div>
+          <div><div className="font-bold text-sm leading-tight" data-testid="sys-brand">Tam<span className="text-amber-400">Kobi</span></div><div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div></div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {SYSTEM_NAV.map(([path, label, Icon]) => { const active = location.pathname.replace(/\/+$/, "") === path; return (
