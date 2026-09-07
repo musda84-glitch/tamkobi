@@ -1,9 +1,9 @@
 import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe } from "lucide-react";
+import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
-export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
+export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/ai", "AI Entegrasyonu", Sparkles], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
 
 export const SystemLayout = ({ children, pendingCount = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
