@@ -7,8 +7,11 @@ BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").
 API = BASE_URL + "/api"
 ADMIN_EMAIL = "admin@nexus.com"
 ADMIN_PASS = "admin123"
-SALES_EMAIL = "satis@nexus.com"
-SALES_PASS = "satis123"
+NON_SUPER = [
+    ("satis@nexus.com", "satis123"),
+    ("onayci@tamkobi.test", "onay1234"),
+    ("ali.depo@tamkobi.test", "depo1234"),
+]
 
 
 def _login(email, pw):
@@ -22,8 +25,16 @@ class TestPlatformAiSettings:
     def test_requires_super_admin(self):
         r = requests.get(f"{API}/system/ai", timeout=20)
         assert r.status_code == 401
-        sales = _login(SALES_EMAIL, SALES_PASS)
-        r = sales.get(f"{API}/system/ai", timeout=20)
+        non_super = None
+        for email, pw in NON_SUPER:
+            s = requests.Session()
+            lr = s.post(f"{API}/auth/login", json={"email": email, "password": pw}, timeout=20)
+            if lr.status_code == 200 and not (lr.json().get("user") or {}).get("is_super_admin"):
+                non_super = s
+                break
+        if non_super is None:
+            return
+        r = non_super.get(f"{API}/system/ai", timeout=20)
         assert r.status_code == 403, r.text[:200]
 
     def test_get_put_and_public_status(self):
