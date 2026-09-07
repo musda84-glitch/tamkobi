@@ -377,6 +377,7 @@ async def create_quote(req: Dict[str, Any]):
     items = req.get("items") or []
     if not items:
         raise HTTPException(status_code=400, detail="En az bir kalem ekleyin.")
+    await _fill_stock_codes(company_id, items)
     subtotal, vat_total, grand_total = _calc_items(items)
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "quote_number": await _next_number("TKF", db.quotes), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
            "title": req.get("title") or "Fiyat Teklifi", "items": items, "subtotal": subtotal, "vat_total": vat_total, "grand_total": grand_total, "currency": "TRY",
@@ -517,6 +518,7 @@ async def update_quote(quote_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {"title", "items", "valid_until", "notes", "terms", "status", "contact_id", "contact_name", "images", "project_id"}}
     if "items" in allowed:
+        await _fill_stock_codes(q.get("company_id"), allowed["items"])
         allowed["subtotal"], allowed["vat_total"], allowed["grand_total"] = _calc_items(allowed["items"])
     await db.quotes.update_one({"_id": quote_id}, {"$set": allowed})
     return clean_doc(await db.quotes.find_one({"_id": quote_id}))
@@ -539,7 +541,9 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
     req = req or {}
     inv_count = await db.invoices.count_documents({})
     items = [{"product_id": it.get("product_id"), "name": it.get("name"), "quantity": it.get("quantity"), "unit": it.get("unit", "Adet"), "unit_price": it.get("unit_price"),
-              "vat_rate": it.get("vat_rate", 20), "discount_rate": it.get("discount_rate", 0), "total": it.get("total")} for it in q.get("items", [])]
+              "vat_rate": it.get("vat_rate", 20), "discount_rate": it.get("discount_rate", 0), "total": it.get("total"),
+              "sku": it.get("sku") or "", "barcode": it.get("barcode") or ""} for it in q.get("items", [])]
+    await _fill_stock_codes(q["company_id"], items)
     inv = {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "invoice_number": f"NX{datetime.now(timezone.utc).year}{str(inv_count + 1).zfill(8)}", "contact_id": q.get("contact_id"),
            "contact_name": q.get("contact_name"), "invoice_type": "sales", "e_type": req.get("e_type", "e_archive"), "items": items, "subtotal": q["subtotal"], "vat_total": q["vat_total"],
            "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
@@ -1645,6 +1649,50 @@ async def quick_stock_adjust(req: Dict[str, Any]):
 
     return {"status": "success", "new_stock": new_qty, "new_variant_stock": new_variant_stock}
 
+def _line_get(it, key, default=""):
+    if isinstance(it, dict):
+        val = it.get(key)
+    else:
+        val = getattr(it, key, None)
+    return val if val not in (None, "") else default
+
+def _line_set(it, key, val):
+    if isinstance(it, dict):
+        it[key] = val
+    else:
+        setattr(it, key, val)
+
+async def _fill_stock_codes(company_id: str, items: list):
+    """Copy product SKU / barcode onto document lines when missing (print + scan)."""
+    if not items:
+        return items
+    pids = []
+    for it in items:
+        pid = _line_get(it, "product_id")
+        if pid:
+            pids.append(pid)
+    products = {p["_id"]: p for p in await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10)} if pids else {}
+    for it in items:
+        p = products.get(_line_get(it, "product_id"))
+        if not p:
+            continue
+        sku = _line_get(it, "sku")
+        barcode = _line_get(it, "barcode")
+        src = p
+        name = _line_get(it, "name") or _line_get(it, "product_name")
+        for v in p.get("variants") or []:
+            if (sku and v.get("sku") == sku) or (barcode and v.get("barcode") == barcode) or (sku and v.get("barcode") == sku):
+                src = v
+                break
+            if name and v.get("sku") and v.get("sku") in name:
+                src = v
+                break
+        if not sku:
+            _line_set(it, "sku", src.get("sku") or p.get("sku") or "")
+        if not barcode:
+            _line_set(it, "barcode", src.get("barcode") or p.get("barcode") or "")
+    return items
+
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
 async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None):
@@ -1692,7 +1740,7 @@ async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, 
     items = []
     for it in d.get("items", []):
         vat = int(it.get("vat_rate") or 0) or int((products.get(it.get("product_id")) or {}).get("vat_rate") or 20)
-        items.append(InvoiceItem(product_id=it.get("product_id"), name=it.get("name") or "Kalem", quantity=float(it.get("quantity") or 1), unit=it.get("unit") or "Adet", unit_price=float(it.get("unit_price") or 0), vat_rate=vat, discount_rate=float(it.get("discount_rate") or 0), total=float(it.get("total") or 0)))
+        items.append(InvoiceItem(product_id=it.get("product_id"), name=it.get("name") or "Kalem", quantity=float(it.get("quantity") or 1), unit=it.get("unit") or "Adet", unit_price=float(it.get("unit_price") or 0), vat_rate=vat, discount_rate=float(it.get("discount_rate") or 0), total=float(it.get("total") or 0), sku=it.get("sku") or "", barcode=it.get("barcode") or ""))
     if not items:
         raise HTTPException(status_code=400, detail="İrsaliyede kalem yok.")
     if not d.get("contact_id"):
@@ -1709,6 +1757,7 @@ async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, 
 
 @api_router.post("/invoices")
 async def create_invoice(invoice: Invoice):
+    await _fill_stock_codes(invoice.company_id, invoice.items)
     if not invoice.invoice_number:
         if invoice.invoice_type == "dispatch":
             invoice.invoice_number = await _next_number("IRS", db.invoices)
@@ -1799,6 +1848,8 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
     allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount"}}
+    if "items" in allowed:
+        await _fill_stock_codes(inv.get("company_id"), allowed["items"])
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
         items = allowed.get("items", inv.get("items", []))
         items_sum = sum(float(i.get("total", 0)) for i in items)
@@ -4715,6 +4766,7 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
 
 @api_router.post("/orders")
 async def create_order(order: Order):
+    await _fill_stock_codes(order.company_id, order.items)
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
 
@@ -4754,8 +4806,11 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
             "unit_price": itm.get("unit_price", 0),
             "vat_rate": 20,
             "discount_percent": 0.0,
-            "total": itm.get("total", 0)
+            "total": itm.get("total", 0),
+            "sku": itm.get("sku") or "",
+            "barcode": itm.get("barcode") or "",
         })
+    await _fill_stock_codes(order.get("company_id"), inv_items)
 
     subtotal = sum(i["total"] for i in inv_items) / 1.20
     vat_total = sum(i["total"] for i in inv_items) - subtotal
@@ -5609,7 +5664,7 @@ async def ai_invoice_confirm(req: Dict[str, Any]):
         if not cc:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         contact_name = cc["name"]
-    items = [InvoiceItem(product_id=it.get("product_id"), name=it["name"], quantity=float(it["quantity"]), unit=it.get("unit") or "Adet", unit_price=float(it["unit_price"]), vat_rate=int(it.get("vat_rate", 20)), discount_rate=float(it.get("discount_rate") or 0), total=float(it["total"])) for it in d.get("items", []) if it.get("name")]
+    items = [InvoiceItem(product_id=it.get("product_id"), name=it["name"], quantity=float(it["quantity"]), unit=it.get("unit") or "Adet", unit_price=float(it["unit_price"]), vat_rate=int(it.get("vat_rate", 20)), discount_rate=float(it.get("discount_rate") or 0), total=float(it["total"]), sku=it.get("sku") or "", barcode=it.get("barcode") or "") for it in d.get("items", []) if it.get("name")]
     if not items:
         raise HTTPException(status_code=400, detail="En az bir fatura kalemi gerekli.")
     inv = Invoice(company_id=company_id, invoice_type="purchase", e_type="paper", contact_id=contact_id, contact_name=contact_name, contact_tax_id=str(sup.get("tax_number") or ""), issue_date=d.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),

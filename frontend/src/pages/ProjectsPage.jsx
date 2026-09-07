@@ -36,7 +36,7 @@ const ItemsEditor = ({ items, setItems, products }) => {
     <div className="space-y-1.5">
       {items.map((it, i) => (
         <div key={i} className="grid grid-cols-12 gap-1.5 items-center">
-          <div className="col-span-5"><SearchSelect value={it.product_id} options={products} placeholder={it.name || "Ürün seç veya yaz"} getLabel={(p) => p.name} getSub={(p) => `${p.sku} • ${fmt(p.sale_price)} ₺`} getImage={(p) => p.image_url} onChange={(id, p) => setItems(items.map((x, idx) => (idx === i ? { ...x, product_id: id, name: p.name, unit_price: p.sale_price, vat_rate: p.vat_rate, unit: p.unit } : x)))} testId={`q-item-${i}`} /></div>
+          <div className="col-span-5"><SearchSelect value={it.product_id} options={products} placeholder={it.name || "Ürün seç veya yaz"} getLabel={(p) => p.name} getSub={(p) => `${p.sku} • ${fmt(p.sale_price)} ₺`} getImage={(p) => p.image_url} onChange={(id, p) => setItems(items.map((x, idx) => (idx === i ? { ...x, product_id: id, name: p.name, unit_price: p.sale_price, vat_rate: p.vat_rate, unit: p.unit, sku: p.sku || "", barcode: p.barcode || "" } : x)))} testId={`q-item-${i}`} /></div>
           <input value={it.name} onChange={(e) => upd(i, "name", e.target.value)} placeholder="Açıklama" className="col-span-3 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-name-${i}`} />
           <input type="number" value={it.quantity} onChange={(e) => upd(i, "quantity", Number(e.target.value))} className="col-span-1 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-qty-${i}`} />
           <input type="number" value={it.unit_price} onChange={(e) => upd(i, "unit_price", Number(e.target.value))} className="col-span-2 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-price-${i}`} />

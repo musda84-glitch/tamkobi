@@ -16,7 +16,7 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
   const [items, setItems] = useState([{ product_id: "", product_name: "", sku: "", quantity: 1, unit_price: 0 }]);
   const [busy, setBusy] = useState(false);
   const pickContact = (id) => { const c = contacts.find((x) => (x.id || x._id) === id); setF({ ...f, contact_id: id, customer_name: c?.name || f.customer_name, customer_phone: c?.phone || f.customer_phone, customer_email: c?.email || f.customer_email, shipping_address: c?.address || f.shipping_address, city: c?.city || f.city }); };
-  const pickProduct = (i, id) => { const p = products.find((x) => (x.id || x._id) === id); setItems(items.map((it, k) => (k === i ? { ...it, product_id: id, product_name: p?.name || it.product_name, sku: p?.sku || "", unit_price: p?.sale_price ?? it.unit_price } : it))); };
+  const pickProduct = (i, id) => { const p = products.find((x) => (x.id || x._id) === id); setItems(items.map((it, k) => (k === i ? { ...it, product_id: id, product_name: p?.name || it.product_name, sku: p?.sku || "", barcode: p?.barcode || "", unit_price: p?.sale_price ?? it.unit_price } : it))); };
   const total = items.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0);
   const save = async () => {
     if (!f.customer_name.trim()) { toast.error("Müşteri adı gerekli."); return; }
@@ -25,7 +25,7 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/orders`, { company_id: companyId, channel: f.channel, customer_name: f.customer_name.trim(), customer_phone: f.customer_phone, customer_email: f.customer_email, shipping_address: f.shipping_address || "-", city: f.city || "-", order_status: "pending", contact_id: f.contact_id || null, notes: f.notes,
-        items: valid.map((it) => ({ product_id: it.product_id || "", product_name: it.product_name, sku: it.sku || "", quantity: Number(it.quantity), unit_price: Number(it.unit_price), total: Number(it.quantity) * Number(it.unit_price) })), total_amount: total });
+        items: valid.map((it) => ({ product_id: it.product_id || "", product_name: it.product_name, sku: it.sku || "", barcode: it.barcode || "", quantity: Number(it.quantity), unit_price: Number(it.unit_price), total: Number(it.quantity) * Number(it.unit_price) })), total_amount: total });
       toast.success(`Sipariş oluşturuldu: ${r.data.order_number}`); onSaved(); onClose();
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş oluşturulamadı."); } finally { setBusy(false); }
   };
