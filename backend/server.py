@@ -3513,6 +3513,29 @@ async def delete_order(order_id: str):
     await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺")
     return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
 
+@api_router.post("/orders/{order_id}/resolve-cancel-request")
+async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    cr = o.get("cancel_request") or {}
+    if cr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen iptal talebi yok.")
+    req = req or {}
+    action = (req.get("action") or "").strip().lower()
+    now = datetime.now(timezone.utc).isoformat()
+    if action == "accept":
+        if o.get("is_invoiced") or o.get("invoice_id"):
+            raise HTTPException(status_code=400, detail="Faturalanmış sipariş iptal edilemez.")
+        cr.update({"status": "accepted", "resolved_at": now, "resolve_note": req.get("note") or ""})
+        await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "cancelled", "cancelled_at": now, "cancel_request": cr}})
+        return {"status": "success", "message": f"{o.get('order_number')} iptal edildi.", "order_status": "cancelled"}
+    if action == "reject":
+        cr.update({"status": "rejected", "resolved_at": now, "resolve_note": req.get("note") or ""})
+        await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
+        return {"status": "success", "message": "İptal talebi reddedildi."}
+    raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
+
 @api_router.post("/orders/{order_id}/approve")
 async def approve_order(order_id: str, req: Dict[str, Any] = None):
     o = await db.orders.find_one({"_id": order_id})

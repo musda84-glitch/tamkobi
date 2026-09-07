@@ -87,6 +87,15 @@ export default function OrdersB2BPage() {
     catch (err) { toast.error(err.response?.data?.detail || "Cariler eşlenemedi."); } finally { setAutoBusy(false); }
   };
   const approve = (ord) => setApproveOrder(ord);
+  const resolveCancel = async (ord, action) => {
+    const ok = window.confirm(action === "accept" ? `${ord.order_number} iptal edilsin mi?` : `${ord.order_number} iptal talebi reddedilsin mi?`);
+    if (!ok) return;
+    try {
+      const r = await axios.post(`${API_URL}/orders/${ord.id}/resolve-cancel-request`, { action });
+      toast.success(r.data.message);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "İşlem yapılamadı."); }
+  };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
   const [editTpl, setEditTpl] = useState(false);
@@ -394,6 +403,15 @@ export default function OrdersB2BPage() {
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
+                      {ord.cancel_request?.status === "pending" && (
+                        <div className="mt-1 space-y-1">
+                          <div className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>
+                          <div className="flex flex-wrap gap-1">
+                            <button type="button" onClick={() => resolveCancel(ord, "accept")} className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600 text-white hover:bg-emerald-700" data-testid={`accept-cancel-btn-${ord.order_number}`}>Onayla</button>
+                            <button type="button" onClick={() => resolveCancel(ord, "reject")} className="px-2 py-0.5 rounded-md text-[10px] font-bold border border-rose-200 text-rose-700 hover:bg-rose-50" data-testid={`reject-cancel-btn-${ord.order_number}`}>Reddet</button>
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center w-[380px] min-w-[380px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
