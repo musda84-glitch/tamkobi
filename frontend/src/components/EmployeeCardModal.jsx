@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
+import { QuickPayModal } from "./QuickPayModal";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -103,22 +104,78 @@ const UserTab = ({ card, reload }) => {
   );
 };
 
-export const EmployeeCardModal = ({ employee, companyId, onClose }) => {
-  useEscape(onClose);
+export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp, onClose, onChanged }) => {
   const [tab, setTab] = useState("summary");
   const [card, setCard] = useState(null);
   const id = employee.id || employee._id;
   const [schedule, setSchedule] = useState(null);
+  const [accounts, setAccounts] = useState(accountsProp || []);
+  const [quickPay, setQuickPay] = useState(null);
+  const [payItem, setPayItem] = useState(null);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [busyPay, setBusyPay] = useState(false);
+  useEscape(() => {
+    if (quickPay) return;
+    if (payItem) { setPayItem(null); return; }
+    onClose();
+  });
   const reload = useCallback(() => axios.get(`${API_URL}/personnel/employees/${id}/card`).then((r) => setCard(r.data)).catch(() => toast.error("Personel kartı yüklenemedi.")), [id]);
   useEffect(() => { reload(); axios.get(`${API_URL}/companies/${companyId}/work-schedule`).then((r) => setSchedule(r.data.schedule)).catch(() => {}); }, [reload, companyId]);
+  useEffect(() => {
+    if (accountsProp?.length) { setAccounts(accountsProp); return; }
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
+  }, [accountsProp, companyId]);
+  useEffect(() => { if (!payAccountId && accounts[0]) setPayAccountId(accounts[0].id || accounts[0]._id); }, [accounts, payAccountId]);
   const e = card?.employee || employee;
+  const payStub = () => ({
+    employee_id: e.id || e._id,
+    employee_name: e.full_name,
+    period: card?.payrolls?.[0]?.period || new Date().toISOString().slice(0, 7),
+  });
+  const afterMoney = () => { reload(); onChanged?.(); };
+  const openSalaryPay = async () => {
+    let item = (card?.payrolls || []).find((p) => p.status !== "paid");
+    if (!item) {
+      setBusyPay(true);
+      try {
+        const period = new Date().toISOString().slice(0, 7);
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
+        const r = await axios.get(`${API_URL}/personnel/employees/${id}/card`);
+        setCard(r.data);
+        item = (r.data.payrolls || []).find((p) => p.status !== "paid");
+        if (!item) { toast.success("Bu dönemin maaşı zaten ödenmiş."); return; }
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Bordro hazırlanamadı.");
+        return;
+      } finally { setBusyPay(false); }
+    }
+    setPayItem(item);
+  };
+  const confirmSalaryPay = async () => {
+    if (!payItem) return;
+    setBusyPay(true);
+    try {
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { account_id: payAccountId });
+      toast.success(res.data.message);
+      setPayItem(null);
+      afterMoney();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Maaş ödemesi gerçekleştirilemedi.");
+    } finally { setBusyPay(false); }
+  };
+  const btn = "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap";
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
-        <div className="flex items-start justify-between p-5 border-b">
-          <div className="flex items-center gap-3"><div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-lg">{e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
-            <div><h3 className="text-base font-bold text-slate-900" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">Başlangıç: {e.start_date} · TCKN: {e.tc_kimlik}</div></div></div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
+        <div className="flex items-start justify-between p-5 border-b gap-3">
+          <div className="flex items-center gap-3 min-w-0"><div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-lg shrink-0">{e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
+            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">Başlangıç: {e.start_date} · TCKN: {e.tc_kimlik}</div></div></div>
+          <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
+            <button type="button" onClick={() => setQuickPay("advance")} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
+            <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>
+            <button type="button" onClick={() => setQuickPay("expense")} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
+          </div>
         </div>
         <div className="flex gap-1 px-5 border-b overflow-x-auto">{TABS.map(([k, l, I]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`emp-tab-${k}`}><I className="w-3.5 h-3.5" /> {l}</button>)}</div>
         <div className="p-5 overflow-y-auto text-xs">
@@ -151,6 +208,30 @@ export const EmployeeCardModal = ({ employee, companyId, onClose }) => {
           </>)}
         </div>
       </div>
+      {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
+      {payItem && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-base font-bold text-slate-900">Maaş Ödemesi</h3>
+              <button type="button" onClick={() => setPayItem(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="text-xs text-slate-700 space-y-3">
+              <p><strong>{payItem.employee_name || e.full_name}</strong> için <strong>{payItem.period}</strong> dönemi <strong>{fmt(payItem.final_payable ?? payItem.net_salary)} ₺</strong> maaş ödemesi yapılacaktır.</p>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
+                <select value={payAccountId} onChange={(ev) => setPayAccountId(ev.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="emp-card-salary-account">
+                  {accounts.map((b) => <option key={b.id || b._id} value={b.id || b._id}>{b.account_name || b.bank_name} ({fmt(b.current_balance)} ₺)</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => setPayItem(null)} className="px-3 py-1.5 border rounded-lg text-xs">İptal</button>
+              <button type="button" onClick={confirmSalaryPay} disabled={busyPay || !payAccountId} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="emp-card-salary-confirm">Ödemeyi Tamamla</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
