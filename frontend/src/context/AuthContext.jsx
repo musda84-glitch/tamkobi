@@ -30,6 +30,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Raporlar", path: "/reports", badge: "Excel" },
     { label: "Banka & Kasa & POS", path: "/banking" },
     { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
+    { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
     { label: "Teklifler", path: "/quotes" },
     { label: "Projeler", path: "/projects" },
     { label: "Keşifler", path: "/surveys" },
@@ -46,9 +47,12 @@ export const AuthProvider = ({ children }) => {
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" };
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sayim": "/stock" };
   const perms = user?.permissions;
-  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
+  const can = (path, level = "view") => {
+    const key = path === "/sayim" ? "/stock" : path;
+    return !perms || user?.role === "admin" || (level === "view" ? perms[key] !== "none" : perms[key] === "edit");
+  };
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));

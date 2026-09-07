@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { ClipboardList, Plus, Scan, CheckCircle2, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Link } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { ScanButton } from "./CameraScanner";
 
@@ -54,7 +55,10 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
     <div className="space-y-4" data-testid="stock-count-panel">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2"><div className="p-2 rounded-xl bg-violet-50 text-violet-600"><ClipboardList className="w-5 h-5" /></div><div><h2 className="text-base font-bold text-slate-900">Barkodlu Stok Sayımı</h2><p className="text-xs text-slate-500">Sayım oturumu aç, barkod okut, farkları gör ve stoğu tek tıkla güncelle</p></div></div>
-        <button onClick={() => setShowNew(true)} className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="new-stock-count-btn"><Plus className="w-4 h-4" /> Yeni Sayım</button>
+        <div className="flex items-center gap-2">
+          <Link to="/sayim" className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="open-count-kiosk-btn">Telefon / Tablet</Link>
+          <button onClick={() => setShowNew(true)} className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="new-stock-count-btn"><Plus className="w-4 h-4" /> Yeni Sayım</button>
+        </div>
       </div>
 
       {showNew && (
