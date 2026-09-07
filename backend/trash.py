@@ -10,7 +10,7 @@ _db = None
 _hooks: Dict[str, Callable[[dict, list], Awaitable[None]]] = {}
 RETENTION_DAYS = 30
 
-TYPE_LABELS = {"contact": "Cari Hesap", "product": "Ürün / Stok Kartı", "order": "Sipariş", "quote": "Teklif", "project": "Proje", "survey": "Keşif", "expense": "Masraf", "loan": "Kredi",
+TYPE_LABELS = {"contact": "Cari Hesap", "product": "Ürün / Stok Kartı", "order": "Sipariş", "quote": "Teklif", "project": "Proje", "survey": "Keşif", "expense": "Masraf", "loan": "Kredi", "cheque": "Çek / Senet",
                "bank_transaction": "Banka / Kasa Hareketi", "bank_account": "Banka / Kasa Hesabı", "partner": "Ortak", "partner_transaction": "Ortak Hareketi", "leave": "İzin Talebi", "bonus": "Prim / Avans / 2. Maaş",
                "recipe": "Reçete (BOM)", "production_order": "Üretim Emri", "stock_count": "Stok Sayımı", "shift": "Vardiya", "shift_template": "Vardiya Şablonu"}
 PREVIEW_FIELDS = ("name", "customer_name", "contact_name", "partner_name", "employee_name", "product_name", "sku", "barcode", "order_number", "quote_number", "project_number", "survey_number", "expense_number",

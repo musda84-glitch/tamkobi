@@ -43,6 +43,7 @@ import cargo_providers
 import rbac
 import expenses
 import finance
+import cheques
 import attendance
 import trash
 import migration
@@ -793,6 +794,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         {"key": "due_today", "label": "Bugün vadesi gelen fatura", "count": sum(1 for i in invs if i.get("due_date") == today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
+        {"key": "cheques", "label": "Vadesi gelen çek/senet", "count": await db.cheques.count_documents({"company_id": company_id, "status": "open", "due_date": {"$lte": today}}), "path": "/cheques"},
         {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
         {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/projects"},
         {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
@@ -1342,6 +1344,7 @@ async def get_contact_overview(contact_id: str):
     wa = await db.whatsapp_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"contact_id": contact_id}).sort("due_date", 1).to_list(200)]
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
     total_invoiced = sum(i.get("grand_total", 0) or 0 for i in sales)
@@ -1351,7 +1354,7 @@ async def get_contact_overview(contact_id: str):
         "summary": {"invoice_count": len(invoices), "draft_count": sum(1 for i in invoices if i.get("status") == "draft"), "total_invoiced": total_invoiced,
                     "total_paid": total_paid, "open_amount": total_invoiced - total_paid, "order_count": len(orders), "overdue_count": sum(1 for i in invoices if i.get("payment_status") != "paid" and i.get("invoice_type") == "sales")},
         "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm,
-        "quotes": clean_docs(quotes), "surveys": clean_docs(surveys)
+        "quotes": clean_docs(quotes), "surveys": clean_docs(surveys), "cheques": clean_docs(cheques_rows)
     }
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
@@ -5692,6 +5695,7 @@ saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
+cheques.init(db)
 attendance.init(db, get_current_user)
 trash.init(db)
 migration.init(db)
@@ -5725,13 +5729,14 @@ async def _restore_expense(doc, _related):
 async def _restore_recipe(doc, _related):
     await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})
 
-for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe)):
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque)):
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
 app.include_router(finance.router)
+app.include_router(cheques.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)
 app.include_router(migration.router)

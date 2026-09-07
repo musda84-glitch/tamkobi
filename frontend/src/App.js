@@ -30,6 +30,7 @@ import InviteAcceptPage from "./pages/InviteAcceptPage";
 import LoginPage from "./pages/LoginPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoansPage from "./pages/LoansPage";
+import ChequesPage from "./pages/ChequesPage";
 import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/dispatches" element={<DispatchesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/loans" element={<LoansPage />} />
+            <Route path="/cheques" element={<ChequesPage />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/edoc-inbox" element={<EdocInboxPage />} />
             <Route path="/sistem/giris" element={<SystemLoginPage />} />

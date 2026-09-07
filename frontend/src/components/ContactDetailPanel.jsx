@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -18,7 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock], ["cheques", "Çek / Senet", ScrollText]];
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
@@ -113,6 +113,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     { key: "invoiced", label: "Satış faturaları", hint: "Onaylı satışların toplamı", badge: null, value: invoiced, cls: "text-slate-900", title: "Taslaklar hariç kesilmiş satış faturalarının tutarı." },
     { key: "paid", label: "Tahsil edilen", hint: "Bu faturalara yazılan tahsilat", badge: null, value: paid, cls: "text-emerald-700", title: "Satış faturalarına işlenmiş tahsilat. Kasa hareketi faturaya bağlanmadıysa cari hesaba yansır, buraya yansımaz." },
     { key: "open", label: "Kalan alacak", hint: "Fatura − tahsilat", badge: open > 0 ? "Açık" : "Kapalı", value: open, cls: open > 0 ? "text-rose-700" : "text-slate-800", title: "Satış faturası toplamı eksi tahsilat. Cari hesaptan farklı olabilir (alış faturası veya bağlanmamış ödeme)." },
+    { key: "cheques", label: "Çek / senet", hint: "Açık alınan − verilen", badge: (Number(c.cheque_bond_balance) || 0) !== 0 ? "Portföy" : null, value: Number(c.cheque_bond_balance) || 0, cls: "text-indigo-700", title: "Açık alınan çek/senet eksi açık verilen. Tahsil, ciro veya ödeme sonrası düşer." },
   ];
 
   return (
@@ -145,7 +146,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         </div>
 
         <div className="px-6 py-3 bg-slate-50 border-b text-xs space-y-2" data-testid="contact-summary-strip">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {summaryCards.map((card) => (
               <div key={card.key} className="bg-white border border-slate-200 rounded-xl p-2.5" title={card.title} data-testid={`detail-summary-${card.key}`}>
                 <div className="flex items-center justify-between gap-1">
@@ -167,7 +168,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         <div className="flex items-center gap-1 px-6 border-b">
           {TABS.map(([k, l, Icon]) => (
             <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
-              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
+              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "cheques" ? (data.cheques || []).length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
             </button>
           ))}
         </div>
@@ -210,6 +211,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 </div>
               ))}
             </div>
+          )}
+          {tab === "cheques" && (
+            <table className="w-full text-left" data-testid="detail-cheques">
+              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {!(data.cheques || []).length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
+                {(data.cheques || []).map((ch) => <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}><td className="py-2 font-mono font-semibold">{ch.number}</td><td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td><td className="py-2 font-mono">{ch.due_date}</td><td className="py-2"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100">{ch.status_label || ch.status}</span></td><td className="py-2 text-right font-bold">{fmt(ch.amount)} ₺</td></tr>)}
+              </tbody>
+            </table>
           )}
           {tab === "payments" && (
             <table className="w-full text-left">
