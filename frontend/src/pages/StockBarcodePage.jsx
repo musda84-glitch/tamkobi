@@ -253,7 +253,7 @@ export default function StockBarcodePage() {
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
-      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
+      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} company={activeCompany} onClose={() => setLabelQuickProduct(null)} onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }} />}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
