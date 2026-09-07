@@ -2,9 +2,17 @@
 import pytest
 import requests
 
+from rbac import module_for_path
 from conftest import API, TEST_COMPANY_ID
 
 CID = TEST_COMPANY_ID
+
+
+def test_stock_count_api_maps_to_stock_module():
+    assert module_for_path("/api/warehouses/stock-counts") == "/stock"
+    assert module_for_path("/api/warehouses/stock-counts/abc/scan") == "/stock"
+    assert module_for_path("/api/warehouses") == "/warehouses"
+    assert module_for_path("/api/warehouses/transfers") == "/warehouses"
 
 
 @pytest.fixture
