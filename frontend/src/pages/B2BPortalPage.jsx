@@ -79,17 +79,18 @@ export default function B2BPortalPage() {
         <div className="grid grid-cols-4 sm:flex gap-1 bg-white rounded-xl p-1 border" data-testid="b2b-tabs">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => setTab(k)} className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`b2b-tab-${k}`}><Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" /><span className="text-center">{l}{k === "orders" && d.orders.length > 0 && ` (${d.orders.length})`}</span></button>)}</div>
         {done && <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs sm:text-sm text-emerald-800 flex items-start gap-2" data-testid="b2b-order-success"><CheckCircle2 className="w-5 h-5 shrink-0" /><span>Siparişiniz alındı: <b>{done.order_number}</b> — {fmt(b2bOrderGross(done))} ₺. Onaylandığında kargo takip numarası burada görünecek.</span></div>}
         {tab === "catalog" && (
-          <div className="flex flex-col lg:flex-row gap-4">
-            <aside className="w-full lg:w-44 shrink-0" data-testid="b2b-categories">
-              <div className="bg-white rounded-2xl border p-2 lg:sticky lg:top-4 flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible">
-                {cats.map((c) => (
-                  <button key={c} onClick={() => setCat(c)} className={`shrink-0 lg:w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold border ${cat === c ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{c === "all" ? "Tümü" : c}</button>
-                ))}
-              </div>
-            </aside>
-            <div className="flex-1 min-w-0 space-y-3">
-              {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
-              <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
+          <div className="space-y-3">
+            {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
+            <div className="flex gap-3 sm:gap-4 items-start">
+              <aside className="w-32 sm:w-44 shrink-0" data-testid="b2b-categories">
+                <div className="bg-white rounded-2xl border p-2 sticky top-4 flex flex-col gap-1">
+                  {cats.map((c) => (
+                    <button key={c} onClick={() => setCat(c)} className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold border ${cat === c ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{c === "all" ? "Tümü" : c}</button>
+                  ))}
+                </div>
+              </aside>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">{prods.map((p) => {
                 const gross = b2bGross(p);
                 const listGross = b2bGross(p, "list_price");
@@ -161,6 +162,7 @@ export default function B2BPortalPage() {
               <div className="font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})</div>
               <CartBody {...cartProps} />
             </div>
+          </div>
           </div>
         )}
         {tab === "orders" && <OrdersList orders={d.orders} />}
