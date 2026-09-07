@@ -38,6 +38,7 @@ import {
   BarChart3,
   Trash2,
   ScrollText,
+  Inbox,
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
