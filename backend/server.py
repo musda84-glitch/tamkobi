@@ -34,6 +34,7 @@ from ai_service import get_financial_ai_advice, extract_invoice_from_text, extra
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
 import bank_guard
+import cash_approval
 import marketplace_providers
 from zoneinfo import ZoneInfo
 import httpx
@@ -2277,8 +2278,7 @@ async def delete_bank_transaction(tx_id: str):
     await trash.soft_delete("bank_transactions", tx, "bank_transaction", f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺", note=f"{tx.get('account_name')} · {tx.get('date')}")
     return {"status": "success", "message": "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."}
 
-@api_router.post("/banking/virman")
-async def perform_virman(req: Dict[str, Any]):
+async def _execute_virman(req: Dict[str, Any]):
     source_id = req.get("source_account_id")
     target_id = req.get("target_account_id")
     amount = float(req.get("amount", 0))
@@ -2292,6 +2292,8 @@ async def perform_virman(req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Kaynak veya hedef hesap bulunamadı.")
     await bank_guard.assert_manual_allowed(db, source_id)
     await bank_guard.assert_manual_allowed(db, target_id)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
 
     await db.bank_accounts.update_one({"_id": source_id}, {"$inc": {"current_balance": -amount}})
     await db.bank_accounts.update_one({"_id": target_id}, {"$inc": {"current_balance": amount}})
@@ -2314,6 +2316,23 @@ async def perform_virman(req: Dict[str, Any]):
     })
 
     return {"status": "success", "message": f"{amount:,.2f} TL tutarındaki virman işlemi tamamlandı."}
+
+
+@api_router.post("/banking/virman")
+async def perform_virman(req: Dict[str, Any], request: Request):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    if float(req.get("amount") or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    user = await get_current_user(request)
+    pending = await cash_approval.maybe_queue(
+        db, company_id=company_id, kind="virman", payload=req,
+        account_ids=[req.get("source_account_id"), req.get("target_account_id")],
+        summary=f"Virman {float(req.get('amount') or 0):,.2f} ₺",
+        user=user,
+    )
+    if pending:
+        return pending
+    return await _execute_virman(req)
 
 # ----------------- ORTAKLAR HESABI -----------------
 @api_router.get("/banking/partners")
@@ -2375,6 +2394,7 @@ async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type:
     acc = await db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+    await bank_guard.assert_manual_allowed(db, account_id)
     inflow = tx_type == "capital_in"
     await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount if inflow else -amount}})
     await db.bank_transactions.insert_one({
@@ -2439,8 +2459,7 @@ async def delete_partner_transaction(tx_id: str):
     await trash.soft_delete("partner_transactions", tx, "partner_transaction", f"{tx.get('partner_name')} · {PARTNER_TX_LABELS.get(tx.get('type'), tx.get('type'))} · {float(tx.get('amount') or 0):,.2f} ₺", note=tx.get("date") or "")
     return {"status": "success", "message": "Hareket çöp kutusuna taşındı; ortak ve hesap bakiyeleri geri alındı."}
 
-@api_router.post("/banking/partners/transactions")
-async def create_partner_transaction(req: Dict[str, Any]):
+async def _execute_partner_tx(req: Dict[str, Any]):
     partner = await db.partners.find_one({"_id": req.get("partner_id")})
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
@@ -2463,8 +2482,30 @@ async def create_partner_transaction(req: Dict[str, Any]):
     await db.partner_transactions.insert_one(doc)
     return clean_doc(doc)
 
-@api_router.post("/banking/partners/distribute-profit")
-async def distribute_profit(req: Dict[str, Any]):
+
+@api_router.post("/banking/partners/transactions")
+async def create_partner_transaction(req: Dict[str, Any], request: Request):
+    partner = await db.partners.find_one({"_id": req.get("partner_id")})
+    if not partner:
+        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+    if req.get("type") not in ("capital_in", "withdrawal"):
+        raise HTTPException(status_code=400, detail="Geçersiz işlem türü.")
+    if float(req.get("amount") or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    user = await get_current_user(request)
+    label = PARTNER_TX_LABELS.get(req.get("type"), req.get("type") or "İşlem")
+    pending = await cash_approval.maybe_queue(
+        db, company_id=partner["company_id"], kind="partner_tx", payload=req,
+        account_ids=[req.get("account_id")],
+        summary=f"{partner.get('name')}: {label} {float(req.get('amount') or 0):,.2f} ₺",
+        user=user,
+    )
+    if pending:
+        return pending
+    return await _execute_partner_tx(req)
+
+
+async def _execute_distribute_profit(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     total_profit = float(req.get("total_profit", 0))
     if total_profit <= 0:
@@ -2485,6 +2526,7 @@ async def distribute_profit(req: Dict[str, Any]):
         acc = await db.bank_accounts.find_one({"_id": account_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Kaynak hesap bulunamadı.")
+        await bank_guard.assert_manual_allowed(db, account_id)
         if acc.get("current_balance", 0) < total_profit:
             raise HTTPException(status_code=400, detail="Kaynak hesap bakiyesi yetersiz.")
 
@@ -2505,6 +2547,124 @@ async def distribute_profit(req: Dict[str, Any]):
         results.append({"partner_name": p["name"], "share_percent": p.get("share_percent"), "amount": share})
     return {"status": "success", "period": period, "total_profit": total_profit, "pay_now": pay_now, "distribution": results,
             "message": f"{total_profit:,.2f} ₺ kâr {len(partners)} ortağa {'ödendi' if pay_now else 'tahakkuk ettirildi'}."}
+
+
+@api_router.post("/banking/partners/distribute-profit")
+async def distribute_profit(req: Dict[str, Any], request: Request):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    pay_now = bool(req.get("pay_now", False))
+    if float(req.get("total_profit") or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Dağıtılacak kâr sıfırdan büyük olmalıdır.")
+    user = await get_current_user(request)
+    if pay_now:
+        pending = await cash_approval.maybe_queue(
+            db, company_id=company_id, kind="distribute_profit", payload=req,
+            account_ids=[req.get("account_id")],
+            summary=f"Kâr payı dağıtımı {float(req.get('total_profit') or 0):,.2f} ₺ (hemen öde)",
+            user=user,
+        )
+        if pending:
+            return pending
+    return await _execute_distribute_profit(req)
+
+
+CASH_APPROVAL_EXECUTORS = {
+    "virman": _execute_virman,
+    "partner_tx": _execute_partner_tx,
+    "distribute_profit": _execute_distribute_profit,
+}
+
+
+@api_router.get("/banking/cash-approvals")
+async def list_cash_approvals(request: Request, company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = "pending"):
+    user = await get_current_user(request)
+    query: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        query["status"] = status
+    rows = await db.cash_approval_requests.find(query).sort("created_at", -1).to_list(100)
+    allowed = await cash_approval.can_approve(db, user, company_id)
+    actor = cash_approval.uid(user)
+    out = []
+    for r in rows:
+        row = cash_approval.public_row(r, user)
+        row["can_approve"] = bool(allowed and r.get("status") == "pending" and r.get("requested_by") != actor)
+        out.append(row)
+    return out
+
+
+@api_router.post("/banking/cash-approvals/{req_id}/approve")
+async def approve_cash_request(req_id: str, request: Request):
+    user = await get_current_user(request)
+    doc = await db.cash_approval_requests.find_one({"_id": req_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Onay talebi bulunamadı.")
+    if doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
+    if not await cash_approval.can_approve(db, user, doc["company_id"]):
+        raise HTTPException(status_code=403, detail="Bu işlemi onaylama yetkiniz yok.")
+    if cash_approval.uid(user) == doc.get("requested_by"):
+        raise HTTPException(status_code=400, detail="Kendi işleminizi onaylayamazsınız; diğer yöneticinin onayı gerekir.")
+    executor = CASH_APPROVAL_EXECUTORS.get(doc.get("kind"))
+    if not executor:
+        raise HTTPException(status_code=400, detail="Bilinmeyen işlem türü.")
+    claimed = await db.cash_approval_requests.update_one(
+        {"_id": req_id, "status": "pending"},
+        {"$set": {"status": "approved", "approved_by": cash_approval.uid(user), "approved_by_name": user.get("name"), "approved_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if not claimed.modified_count:
+        raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
+    try:
+        result = await executor(doc.get("payload") or {})
+    except Exception:
+        await db.cash_approval_requests.update_one({"_id": req_id}, {"$set": {"status": "pending", "approved_by": None, "approved_by_name": None, "approved_at": None}})
+        raise
+    await db.notifications.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": doc["company_id"],
+        "type": "cash_approval",
+        "title": "Kasa/banka işlemi onaylandı",
+        "message": f"{user.get('name')}: {doc.get('summary')} uygulandı.",
+        "ref_type": "cash_approval",
+        "ref_id": req_id,
+        "link": "/banking?tab=partners" if doc.get("kind") != "virman" else "/banking",
+        "is_read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"status": "success", "message": "İşlem onaylandı ve uygulandı.", "result": result}
+
+
+@api_router.post("/banking/cash-approvals/{req_id}/reject")
+async def reject_cash_request(req_id: str, request: Request):
+    user = await get_current_user(request)
+    doc = await db.cash_approval_requests.find_one({"_id": req_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Onay talebi bulunamadı.")
+    if doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
+    if not await cash_approval.can_approve(db, user, doc["company_id"]):
+        raise HTTPException(status_code=403, detail="Bu işlemi reddetme yetkiniz yok.")
+    if cash_approval.uid(user) == doc.get("requested_by"):
+        raise HTTPException(status_code=400, detail="Kendi işleminizi reddedemezsiniz; diğer yöneticinin kararı gerekir.")
+    claimed = await db.cash_approval_requests.update_one(
+        {"_id": req_id, "status": "pending"},
+        {"$set": {"status": "rejected", "rejected_by": cash_approval.uid(user), "rejected_by_name": user.get("name"), "rejected_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if not claimed.modified_count:
+        raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
+    await db.notifications.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": doc["company_id"],
+        "type": "cash_approval",
+        "title": "Kasa/banka işlemi reddedildi",
+        "message": f"{user.get('name')}: {doc.get('summary')} reddedildi.",
+        "ref_type": "cash_approval",
+        "ref_id": req_id,
+        "link": "/banking?tab=partners" if doc.get("kind") != "virman" else "/banking",
+        "is_read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"status": "success", "message": "Talep reddedildi; para hareket etmedi."}
+
 
 # ----------------- BANKA CANLI VERİ BAĞLANTILARI -----------------
 def _mask_connection(doc: dict) -> dict:

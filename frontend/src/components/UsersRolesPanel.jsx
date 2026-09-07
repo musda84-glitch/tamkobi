@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye } from "lucide-react";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
@@ -91,7 +91,25 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
     try { await axios.put(`${API_URL}/roles/${role.id}`, { name: rename }); toast.success("Rol adı güncellendi."); setRename(null); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
   const del = async () => { if (!window.confirm(`${role.name} rolü silinsin mi?`)) return; try { await axios.delete(`${API_URL}/roles/${role.id}`); toast.success("Rol silindi."); setSel(rolesData.roles[0].id); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const savePolicy = async (key, val) => {
+    try {
+      await axios.put(`${API_URL}/roles/policies`, { company_id: companyId, [key]: val });
+      toast.success(val ? "Politika açıldı." : "Politika kapatıldı.");
+      reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+  };
   return (
+    <div className="space-y-4">
+      <div className="bg-white border border-indigo-200 rounded-xl p-3 text-xs" data-testid="company-policies">
+        <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><UserCheck className="w-3.5 h-3.5 text-indigo-600" /> Firma politikaları</div>
+        <label className="flex items-start gap-2 bg-indigo-50/50 border border-indigo-100 rounded-lg px-2.5 py-2 cursor-pointer" data-testid="policy-row-cash-dual-approval">
+          <input type="checkbox" checked={!!rolesData.policies?.cash_dual_approval} onChange={(e) => savePolicy("cash_dual_approval", e.target.checked)} className="mt-0.5 accent-indigo-600" data-testid="policy-cash-dual-approval" />
+          <span>
+            <span className="font-semibold text-slate-800">Entegre olmayan kasa/banka işlemlerinde diğer yöneticiden onay iste</span>
+            <div className="text-[10px] text-slate-500 leading-tight">Açıkken kâr payı dağıtımı (hemen öde), ortak para koy/çek ve virman hemen uygulanmaz; başka bir Banka &amp; Kasa yetkilisinin onayı gerekir. Entegre hesaplar zaten manuel işleme kapalıdır.</div>
+          </span>
+        </label>
+      </div>
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
       <div className="space-y-2">
         {rolesData.roles.map((r) => <button key={r.id} onClick={() => { setSel(r.id); setRename(null); }} className={`w-full text-left px-3 py-2 rounded-xl border flex justify-between ${r.id === role?.id ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-slate-50"}`} data-testid={`role-btn-${r.code}`}><span className="font-semibold">{r.name}{!r.is_system && <span className="ml-1 text-[9px] opacity-60">özel</span>}</span><span className="opacity-60">{r.user_count} kul.</span></button>)}
@@ -136,6 +154,7 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
           ))}
         </div>
       </div>
+    </div>
     </div>
   );
 };

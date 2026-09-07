@@ -20,6 +20,7 @@ import {
 import { PartnersPanel } from "../components/PartnersPanel";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
+import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -43,6 +44,7 @@ export default function BankingPage() {
   // Modals
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
+  const [cashTick, setCashTick] = useState(0);
 
   // New Account Form
   const [newAccount, setNewAccount] = useState({
@@ -130,6 +132,7 @@ export default function BankingPage() {
       toast.success(res.data.message);
       setShowVirmanModal(false);
       setVirmanForm({ ...virmanForm, amount: "" });
+      setCashTick((n) => n + 1);
       loadBankingData();
     } catch (err) {
       toast.error("Virman işlemi gerçekleştirilemedi.");
@@ -185,6 +188,7 @@ export default function BankingPage() {
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={loadBankingData} />}
 
       {tab === "accounts" && (<>
+      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={() => { setCashTick((n) => n + 1); loadBankingData(); }} />
       {/* Account Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {partnerSummary && partnerSummary.partner_count > 0 && (

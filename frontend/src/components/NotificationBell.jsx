@@ -16,7 +16,8 @@ export const NotificationBell = ({ companyId }) => {
   const openItem = async (n) => {
     if (!n.is_read) { await axios.post(`${API_URL}/notifications/${n.id}/read`).catch(() => {}); load(); }
     setOpen(false);
-    if (n.ref_type === "quote") navigate("/projects");
+    if (n.link) navigate(n.link);
+    else if (n.ref_type === "quote") navigate("/projects");
   };
   return (
     <div className="relative" ref={ref}>
