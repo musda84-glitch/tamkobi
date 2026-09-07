@@ -17,6 +17,7 @@ export default function ShopFloorPage() {
   const [pendingEmp, setPendingEmp] = useState(null);
   const [pin, setPin] = useState("");
   const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockErr, setUnlockErr] = useState("");
   const [kiosk, setKiosk] = useState(false);
   const [finishing, setFinishing] = useState(null);
   const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
@@ -36,22 +37,22 @@ export default function ShopFloorPage() {
   useEffect(() => { localStorage.setItem("nx_station", station); }, [station]);
 
   const requestOperator = (name) => {
-    if (!name) { setOperator(""); setPendingEmp(null); setPin(""); return; }
+    if (!name) { setOperator(""); setPendingEmp(null); setPin(""); setUnlockErr(""); return; }
     if (name === operator) return;
     const emp = employees.find((e) => e.full_name === name);
     if (!emp) return;
-    setPendingEmp(emp); setPin("");
+    setPendingEmp(emp); setPin(""); setUnlockErr("");
   };
-  const cancelUnlock = () => { setPendingEmp(null); setPin(""); };
+  const cancelUnlock = () => { setPendingEmp(null); setPin(""); setUnlockErr(""); };
   const unlockOperator = async (e) => {
     e.preventDefault();
     if (!pendingEmp) return;
-    setUnlockBusy(true);
+    setUnlockBusy(true); setUnlockErr("");
     try {
       const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-unlock`, { company_id: companyId, employee_id: pendingEmp.id, password: pin });
       setOperator(r.data.operator_name); setPendingEmp(null); setPin("");
       toast.success(`${r.data.operator_name} olarak giriş yapıldı.`);
-    } catch (err) { toast.error(err.response?.data?.detail || "Şifre doğrulanamadı."); }
+    } catch (err) { const msg = err.response?.data?.detail || "Şifre doğrulanamadı."; setUnlockErr(msg); toast.error(msg); setPin(""); }
     finally { setUnlockBusy(false); }
   };
 
@@ -149,7 +150,7 @@ export default function ShopFloorPage() {
               <label className="block text-xs font-semibold mb-1">Şifre</label>
               <input type="password" autoFocus value={pin} onChange={(e) => setPin(e.target.value)} className="w-full border-2 rounded-xl p-3 text-lg font-semibold tracking-widest" required minLength={4} data-testid="shopfloor-pin-input" />
             </div>
-            <p className="text-[11px] text-slate-400">Atölye şifresi personel kartından belirlenir. Sistem kullanıcısı bağlıysa o hesabın şifresi de geçerlidir.</p>
+            {unlockErr && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="shopfloor-pin-error">{unlockErr}</div>}
             <div className="flex gap-2">
               <button type="button" onClick={cancelUnlock} className="flex-1 py-3 border-2 rounded-xl font-semibold">Vazgeç</button>
               <button type="submit" disabled={unlockBusy || pin.length < 4} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="shopfloor-pin-submit">{unlockBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Giriş</button>
