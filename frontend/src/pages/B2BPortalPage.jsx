@@ -91,68 +91,63 @@ export default function B2BPortalPage() {
               </aside>
               <div className="flex-1 min-w-0 space-y-3">
                 <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
-              <div className="grid grid-cols-1 gap-3">{prods.map((p) => {
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">{prods.map((p) => {
                 const gross = b2bGross(p);
                 const listGross = b2bGross(p, "list_price");
                 const vatLabel = Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz";
                 return (
-                  <div key={p.id} className="bg-white rounded-2xl border p-2.5 flex flex-col sm:flex-row gap-2.5 w-full sm:w-[600px] sm:max-w-[600px] sm:h-[400px] sm:max-h-[400px]" data-testid={`b2b-product-${p.sku}`}>
-                    <div
-                      className="relative w-full sm:w-[55%] sm:max-w-[330px] shrink-0 overflow-hidden rounded-xl bg-slate-50 aspect-[3/2] sm:aspect-auto sm:h-full"
-                      data-testid={`b2b-image-${p.sku}`}
-                    >
+                  <div key={p.id} className="bg-white rounded-2xl border p-2 flex flex-col gap-1.5 min-w-0" data-testid={`b2b-product-${p.sku}`}>
+                    <div className="relative aspect-[3/2] overflow-hidden rounded-xl bg-slate-50" data-testid={`b2b-image-${p.sku}`}>
                       {p.image_url
-                        ? <img src={resolveImageUrl(p.image_url)} alt="" width={600} height={400} className="absolute inset-0 h-full w-full object-contain" />
-                        : <div className="absolute inset-0 flex items-center justify-center"><Package className="w-10 h-10 text-slate-300" /></div>}
+                        ? <img src={resolveImageUrl(p.image_url)} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                        : <div className="absolute inset-0 flex items-center justify-center"><Package className="w-7 h-7 text-slate-300" /></div>}
                     </div>
-                    <div className="min-w-0 flex-1 flex flex-col gap-1.5 sm:h-full sm:min-h-0">
-                      <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
-                      <div className="flex items-end justify-between gap-1">
-                        <div className="min-w-0">
-                          <div className="text-sm sm:text-base font-black text-slate-900 whitespace-nowrap">{fmt(gross)} ₺</div>
-                          {gross < listGross && <div className="text-[10px] text-slate-400 line-through">{fmt(listGross)} ₺</div>}
-                          <div className="text-[10px] text-slate-400">{vatLabel} • {p.unit}</div>
-                        </div>
-                        <span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span>
+                    <div className="min-w-0"><div className="text-[11px] font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
+                    <div className="flex items-end justify-between gap-1">
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-slate-900 whitespace-nowrap">{fmt(gross)} ₺</div>
+                        {gross < listGross && <div className="text-[10px] text-slate-400 line-through">{fmt(listGross)} ₺</div>}
+                        <div className="text-[10px] text-slate-400">{vatLabel} • {p.unit}</div>
                       </div>
-                      <label className="block flex-1 min-h-0 flex flex-col">
-                        <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
-                        <textarea
-                          rows={2}
-                          value={lineNotes[p.id] || ""}
-                          onChange={(e) => setLineNotes((n) => ({ ...n, [p.id]: e.target.value }))}
-                          placeholder="Fişte stok açıklamasının altında basılır"
-                          className="w-full flex-1 min-h-[3.5rem] border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none"
-                          data-testid={`b2b-item-note-${p.sku}`}
-                        />
-                      </label>
-                      {cart[p.id] ? (
-                        <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl p-0.5 mt-auto">
-                          <button onClick={() => setQty(p.id, cart[p.id] - 1)} className="p-2.5" aria-label="Azalt" data-testid={`b2b-dec-${p.sku}`}><Minus className="w-4 h-4" /></button>
-                          <input type="number" min={1} value={cart[p.id]} onChange={(e) => setQty(p.id, Math.max(0, parseInt(e.target.value || "0", 10) || 0))} className="w-12 bg-transparent text-center font-bold text-sm text-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" data-testid={`b2b-qty-${p.sku}`} />
-                          <button onClick={() => setQty(p.id, cart[p.id] + 1)} className="p-2.5" aria-label="Artır" data-testid={`b2b-inc-${p.sku}`}><Plus className="w-4 h-4" /></button>
-                        </div>
-                      ) : (
-                        <div className="flex items-stretch gap-1.5 mt-auto">
-                          <label className="flex flex-col items-stretch justify-center w-[3.35rem] sm:w-16 shrink-0 rounded-xl border-2 border-slate-300 bg-slate-50 px-0.5">
-                            <span className="text-[9px] font-semibold text-slate-400 text-center leading-none pt-1">Adet</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              value={draftQty[p.id] ?? "1"}
-                              onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: e.target.value.replace(/\D/g, "") }))}
-                              onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: String(Math.max(1, parseInt(dq[p.id], 10) || 1)) }))}
-                              onKeyDown={(e) => { if (e.key === "Enter") addWithQty(p.id); }}
-                              className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-1 outline-none"
-                              data-testid={`b2b-add-qty-${p.sku}`}
-                              aria-label="Adet"
-                            />
-                          </label>
-                          <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 min-w-0 flex items-center justify-center gap-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5" /> Sepete Ekle</button>
-                        </div>
-                      )}
+                      <span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span>
                     </div>
+                    <label className="block">
+                      <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
+                      <textarea
+                        rows={1}
+                        value={lineNotes[p.id] || ""}
+                        onChange={(e) => setLineNotes((n) => ({ ...n, [p.id]: e.target.value }))}
+                        placeholder="Fişte stok açıklamasının altında basılır"
+                        className="w-full min-h-[2rem] border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none"
+                        data-testid={`b2b-item-note-${p.sku}`}
+                      />
+                    </label>
+                    {cart[p.id] ? (
+                      <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl p-0.5 mt-auto">
+                        <button onClick={() => setQty(p.id, cart[p.id] - 1)} className="p-2" aria-label="Azalt" data-testid={`b2b-dec-${p.sku}`}><Minus className="w-3.5 h-3.5" /></button>
+                        <input type="number" min={1} value={cart[p.id]} onChange={(e) => setQty(p.id, Math.max(0, parseInt(e.target.value || "0", 10) || 0))} className="w-10 bg-transparent text-center font-bold text-sm text-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" data-testid={`b2b-qty-${p.sku}`} />
+                        <button onClick={() => setQty(p.id, cart[p.id] + 1)} className="p-2" aria-label="Artır" data-testid={`b2b-inc-${p.sku}`}><Plus className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <div className="flex items-stretch gap-1 mt-auto">
+                        <label className="flex flex-col items-stretch justify-center w-12 shrink-0 rounded-xl border-2 border-slate-300 bg-slate-50 px-0.5">
+                          <span className="text-[8px] font-semibold text-slate-400 text-center leading-none pt-0.5">Adet</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={draftQty[p.id] ?? "1"}
+                            onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: e.target.value.replace(/\D/g, "") }))}
+                            onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: String(Math.max(1, parseInt(dq[p.id], 10) || 1)) }))}
+                            onKeyDown={(e) => { if (e.key === "Enter") addWithQty(p.id); }}
+                            className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-0.5 outline-none"
+                            data-testid={`b2b-add-qty-${p.sku}`}
+                            aria-label="Adet"
+                          />
+                        </label>
+                        <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 min-w-0 flex items-center justify-center gap-0.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5 shrink-0" /> Ekle</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
