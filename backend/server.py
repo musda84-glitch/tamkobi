@@ -566,6 +566,39 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
     await db.quotes.update_one({"_id": quote_id}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
     return {"status": "success", "invoice": clean_doc(inv), "message": f"{q['quote_number']} → {inv['invoice_number']} taslak fatura oluşturuldu."}
 
+@api_router.post("/quotes/{quote_id}/convert-to-project")
+async def convert_quote_to_project(quote_id: str):
+    q = await db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    if q.get("project_id"):
+        raise HTTPException(status_code=400, detail="Bu teklif zaten bir projeye bağlı.")
+    survey = await db.surveys.find_one({"_id": q["survey_id"]}) if q.get("survey_id") else None
+    name = (q.get("title") or "").strip() or f"{q['quote_number']} projesi"
+    project = await create_project({
+        "company_id": q["company_id"],
+        "name": name,
+        "contact_id": q.get("contact_id"),
+        "contact_name": q.get("contact_name"),
+        "status": "planning",
+        "budget": float(q.get("grand_total") or 0),
+        "description": q.get("notes") or "",
+        "address": (survey or {}).get("address") or "",
+        "latitude": (survey or {}).get("latitude"),
+        "longitude": (survey or {}).get("longitude"),
+        "location_url": (survey or {}).get("location_url"),
+    })
+    images = q.get("images") or (survey or {}).get("images") or []
+    extra = {"quote_id": q["_id"], "quote_number": q.get("quote_number"), "survey_id": q.get("survey_id")}
+    if images:
+        extra["images"] = images
+    await db.projects.update_one({"_id": project["id"]}, {"$set": extra})
+    await db.quotes.update_one({"_id": quote_id}, {"$set": {"project_id": project["id"], "project_number": project["project_number"]}})
+    if survey:
+        await db.surveys.update_one({"_id": survey["_id"]}, {"$set": {"project_id": project["id"]}})
+    project = clean_doc(await db.projects.find_one({"_id": project["id"]}))
+    return {"status": "success", "project": project, "message": f"{q['quote_number']} → {project['project_number']} proje oluşturuldu."}
+
 @api_router.get("/projects")
 async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
@@ -643,6 +676,8 @@ async def convert_survey_to_quote(survey_id: str):
     s = await db.surveys.find_one({"_id": survey_id})
     if not s:
         raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
+    if s.get("quote_id"):
+        raise HTTPException(status_code=400, detail="Bu keşif zaten teklife çevrildi.")
     items = [{"name": m.get("name") or "Kalem", "quantity": float(m.get("quantity", 1) or 1), "unit": m.get("unit", "Adet"), "unit_price": float(m.get("unit_price", 0) or 0), "vat_rate": 20, "discount_rate": 0}
              for m in s.get("measurements", [])] or [{"name": "Keşif sonrası işçilik/malzeme", "quantity": 1, "unit": "Adet", "unit_price": 0, "vat_rate": 20, "discount_rate": 0}]
     quote = await create_quote({"company_id": s["company_id"], "contact_id": s.get("contact_id"), "contact_name": s.get("contact_name"), "title": f"{s['survey_number']} keşfine dayalı teklif",

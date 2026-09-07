@@ -49,9 +49,9 @@ const ItemsEditor = ({ items, setItems, products }) => {
 };
 
 const PAGE_META = {
-  quotes: { title: "Teklifler", hint: "Satış teklifi, müşteri onayı ve faturaya çevirme", kind: "quote" },
-  projects: { title: "Projeler", hint: "İş / saha projesi, bütçe ve bağlı teklifler", kind: "project" },
-  surveys: { title: "Keşifler", hint: "Saha keşfi, ölçü ve teklife dönüştürme", kind: "survey" },
+  quotes: { title: "Teklifler", hint: "Keşif sonrası teklif; projeye veya faturaya çevirme", kind: "quote" },
+  projects: { title: "Projeler", hint: "Tekliften oluşan iş / saha projesi, bütçe ve bağlı teklifler", kind: "project" },
+  surveys: { title: "Keşifler", hint: "Önce keşif, sonra teklife dönüştürme", kind: "survey" },
 };
 
 export default function ProjectsPage({ section = "quotes" }) {
@@ -134,12 +134,13 @@ export default function ProjectsPage({ section = "quotes" }) {
                 <td className="px-4 py-2 font-semibold">{q.contact_name || "—"}</td>
                 <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
                 <td className="px-4 py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td>
-                <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
+                <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.project_number && <div className="font-mono text-[10px] text-indigo-700">{q.project_number}</div>}{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
                 <td className="px-4 py-2"><div className="flex justify-end gap-1">
                   <button onClick={() => setPrintDoc({ type: "quote", doc: q })} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır" data-testid={`print-quote-${q.quote_number}`}><Printer className="w-4 h-4" /></button>
                   <button onClick={() => setApprovalQuote(q)} className={`px-2 py-1 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`} title="Mail / SMS / WhatsApp ile onaya gönder" data-testid={`approval-quote-${q.quote_number}`}>{q.approval ? "Onay Durumu" : "Onaya Gönder"}</button>
                   <button onClick={() => setPlanQuote(q)} className={`px-2 py-1 border rounded-lg font-semibold ${q.payment_plan ? "border-violet-300 text-violet-700 bg-violet-50" : "text-slate-600"}`} title="Taksit / Ödeme planı" data-testid={`plan-quote-${q.quote_number}`}>{q.payment_plan ? `${q.payment_plan.rows.length} Taksit` : "Ödeme Planı"}</button>
                   {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`send-quote-${q.quote_number}`}>Gönderildi</button>}
+                  {!q.project_id && <button onClick={() => act(() => axios.post(`${API_URL}/quotes/${q.id}/convert-to-project`), "Proje oluşturuldu.")} className="flex items-center gap-1 px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`quote-to-project-${q.quote_number}`}><Briefcase className="w-3 h-3" /> Projeye Çevir</button>}
                   {!q.invoice_id && <button onClick={() => act(() => axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}), "Fatura oluşturuldu.")} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`convert-quote-${q.quote_number}`}><FileText className="w-3 h-3" /> Faturaya Çevir</button>}
                   {!q.invoice_id && <button onClick={() => setStatus("quotes", q.id, "rejected")} className="px-2 py-1 border rounded-lg text-rose-600" title="Reddedildi" data-testid={`reject-quote-${q.quote_number}`}>Red</button>}
                   <button onClick={() => del("quotes", q.id)} className="p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-quote-${q.quote_number}`}><Trash2 className="w-4 h-4" /></button>
@@ -154,7 +155,7 @@ export default function ProjectsPage({ section = "quotes" }) {
           {projects.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">Henüz proje yok.</div>}
           {projects.map((p) => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
-              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
+              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
               <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
               <ImageStrip entity="project" doc={p} onUpdated={load} />
