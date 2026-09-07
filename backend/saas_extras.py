@@ -187,13 +187,12 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     c = await paytr_conf()
     if not (c["enabled"] and c["merchant_id"] and c["merchant_key"] and c["merchant_salt"]):
         raise HTTPException(status_code=400, detail="PayTR aktif değil; sistem yöneticisi PayTR bilgilerini girmeli.")
-    cid = req.get("company_id") or "comp_nexus_main_01"
-    period = req.get("period") if req.get("period") in saas_billing.PERIOD_DAYS else "monthly"
-    plan = await _db.saas_plans.find_one({"_id": req.get("plan_id")})
+    item = await saas_billing.resolve_checkout_item(req)
+    cid = item["company_id"]
     company = await _db.companies.find_one({"_id": cid})
-    if not plan or not company:
+    if not company:
         raise HTTPException(status_code=400, detail="Paket veya şirket bulunamadı.")
-    amount = float(plan.get("price_yearly" if period == "yearly" else "price_monthly") or 0)
+    amount = float(item["amount"])
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Bu paket için fiyat tanımlı değil.")
     admin = await _db.users.find_one({"company_ids": cid, "role": "admin"}) or {}
@@ -202,13 +201,13 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     fwd = request.headers.get("x-forwarded-for", "")
     ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "0.0.0.0")
     minor = str(int(round(amount * 100)))
-    basket = base64.b64encode(json.dumps([[f"{plan['name']} Paketi – {'Yıllık' if period == 'yearly' else 'Aylık'}", f"{amount:.2f}", 1]], ensure_ascii=False, separators=(",", ":")).encode()).decode()
+    basket = base64.b64encode(json.dumps([[item["label"], f"{amount:.2f}", 1]], ensure_ascii=False, separators=(",", ":")).encode()).decode()
     no_inst, max_inst, cur = "0", c["max_installment"], "TL"
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + no_inst + max_inst + cur + c["test_mode"] + c["merchant_salt"])
     origin = (req.get("origin_url") or str(request.headers.get("origin") or "")).rstrip("/")
     form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": c["test_mode"], "no_installment": no_inst, "max_installment": max_inst, "currency": cur,
             "merchant_ok_url": f"{origin}/odeme/basarili?merchant_oid={oid}", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": (admin.get("name") or company.get("name") or "")[:60], "user_address": (company.get("address") or company.get("city") or "-")[:200], "user_phone": (company.get("phone") or admin.get("phone") or "-")[:20]}
-    await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "provider": "paytr", "merchant_oid": oid, "session_id": oid, "company_id": cid, "plan_id": plan["_id"], "plan_name": plan["name"], "period": period, "amount": amount, "currency": "try", "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
+    await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "provider": "paytr", "merchant_oid": oid, "session_id": oid, "company_id": cid, "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": amount, "currency": "try", "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(PAYTR_TOKEN_URL, data=form)

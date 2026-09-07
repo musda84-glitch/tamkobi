@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 import rbac
+import gib_credits
 import saas
 from auth_utils import hash_password, create_access_token, create_refresh_token
 
@@ -18,7 +19,7 @@ logger = logging.getLogger("NexusERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PERIOD_DAYS = {"monthly": 30, "yearly": 365}
-DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "TamKobi", "currency": "try", "public_url": "https://tamkobi.com"}
+DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "TamKobi", "currency": "try", "public_url": "https://tamkobi.com", "gib_packs": None}
 
 
 def init(db, deps):
@@ -44,31 +45,43 @@ def _checkout(request: Request) -> StripeCheckout:
     return StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{str(request.base_url).rstrip('/')}/api/webhook/stripe")
 
 
-# ---------------- Payments ----------------
-@router.post("/payments/checkout")
-async def create_checkout(req: Dict[str, Any], request: Request):
+async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
     cid = req.get("company_id") or "comp_nexus_main_01"
+    if not await _db.companies.find_one({"_id": cid}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    if req.get("pack_id") or req.get("product_type") == "gib_credits":
+        pack = await gib_credits.get_pack(req.get("pack_id") or req.get("plan_id"))
+        return {"company_id": cid, "product_type": "gib_credits", "pack_id": pack["id"], "plan_id": pack["id"], "plan_name": pack["name"], "credits": pack["credits"], "period": "once", "amount": float(pack["price"]), "label": f"{pack['name']} ({pack['credits']} GİB kontörü)"}
     period = req.get("period") if req.get("period") in PERIOD_DAYS else "monthly"
     plan = await _db.saas_plans.find_one({"_id": req.get("plan_id")})
     if not plan:
         raise HTTPException(status_code=400, detail="Paket bulunamadı.")
-    if not await _db.companies.find_one({"_id": cid}):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     amount = float(plan.get("price_yearly" if period == "yearly" else "price_monthly") or 0)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Bu paket için fiyat tanımlı değil.")
+    return {"company_id": cid, "product_type": "subscription", "pack_id": None, "plan_id": plan["_id"], "plan_name": plan["name"], "credits": 0, "period": period, "amount": amount, "label": f"{plan['name']} Paketi – {'Yıllık' if period == 'yearly' else 'Aylık'}"}
+
+
+# ---------------- Payments ----------------
+@router.post("/payments/checkout")
+async def create_checkout(req: Dict[str, Any], request: Request):
+    item = await resolve_checkout_item(req)
     origin = (req.get("origin_url") or str(request.headers.get("origin") or "")).rstrip("/")
     st = await settings()
     sc = _checkout(request)
-    session = await sc.create_checkout_session(CheckoutSessionRequest(amount=amount, currency=st.get("currency", "try"), success_url=f"{origin}/odeme/basarili?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/odeme/iptal", metadata={"company_id": cid, "plan_id": plan["_id"], "period": period}))
-    await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "session_id": session.session_id, "company_id": cid, "plan_id": plan["_id"], "plan_name": plan["name"], "period": period, "amount": amount, "currency": st.get("currency", "try"), "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
+    meta = {"company_id": item["company_id"], "plan_id": item["plan_id"], "period": item["period"], "product_type": item["product_type"], "pack_id": item.get("pack_id") or "", "credits": str(item.get("credits") or 0)}
+    session = await sc.create_checkout_session(CheckoutSessionRequest(amount=item["amount"], currency=st.get("currency", "try"), success_url=f"{origin}/odeme/basarili?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/odeme/iptal", metadata=meta))
+    await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "session_id": session.session_id, "company_id": item["company_id"], "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": item["amount"], "currency": st.get("currency", "try"), "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
     return {"checkout_url": session.url, "session_id": session.session_id}
 
 
 async def _apply_payment(tx: dict):
-    """Ödeme onaylandı → lisansı aktive et (idempotent)."""
+    """Ödeme onaylandı → lisans veya GİB kontör (idempotent)."""
     r = await _db.payment_transactions.update_one({"_id": tx["_id"], "applied": {"$ne": True}}, {"$set": {"applied": True, "applied_at": _now()}})
     if not r.modified_count:
+        return
+    if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
+        await gib_credits.apply_purchase(tx)
         return
     lic = await _db.company_licenses.find_one({"_id": tx["company_id"]}) or {}
     cur = lic.get("expires_at")
@@ -112,8 +125,14 @@ async def payment_status(session_id: str, request: Request):
             tx = await _mark_paid(session_id, s.payment_status, s.status) or tx
         except Exception as e:  # noqa: BLE001
             logger.warning(f"stripe status: {e}")
-    lic = await saas.effective(tx["company_id"]) if tx.get("applied") else None
-    return {"session_id": session_id, "provider": tx.get("provider", "stripe"), "invoice_number": tx.get("invoice_number"), "invoice_id": tx.get("invoice_id"), "status": tx["status"], "payment_status": tx["payment_status"], "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "license": lic}
+    lic = await saas.effective(tx["company_id"]) if tx.get("applied") and tx.get("product_type") != "gib_credits" else None
+    credits_balance = None
+    if tx.get("product_type") == "gib_credits":
+        try:
+            credits_balance = int((await gib_credits.get_wallet(tx["company_id"])).get("balance") or 0)
+        except Exception:
+            credits_balance = None
+    return {"session_id": session_id, "provider": tx.get("provider", "stripe"), "invoice_number": tx.get("invoice_number"), "invoice_id": tx.get("invoice_id"), "status": tx["status"], "payment_status": tx["payment_status"], "product_type": tx.get("product_type") or "subscription", "plan_name": tx.get("plan_name"), "period": tx.get("period"), "amount": tx.get("amount"), "currency": tx.get("currency"), "company_id": tx["company_id"], "credits": tx.get("credits") or 0, "credits_balance": credits_balance, "license": lic}
 
 
 @router.post("/webhook/stripe")
@@ -142,7 +161,7 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
     s = await settings()
     sender = await _db.mail_accounts.find_one({"company_id": s["sender_company_id"]}, {"email": 1})
     wa = await _db.whatsapp_settings.find_one({"company_id": s["sender_company_id"]}, {"phone_number_id": 1})
-    return {**s, "id": "platform", "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
+    return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
 
 
 @router.put("/system/settings")
@@ -152,6 +171,21 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
         upd["reminder_days"] = sorted({int(x) for x in req["reminder_days"] if str(x).strip().isdigit() and 0 < int(x) <= 60}, reverse=True) or [7, 1]
     if "trial_days" in req:
         upd["trial_days"] = max(0, min(90, int(req["trial_days"] or 0)))
+    if "gib_packs" in req and isinstance(req["gib_packs"], list):
+        cleaned = []
+        for p in req["gib_packs"]:
+            if not isinstance(p, dict) or not p.get("id"):
+                continue
+            cleaned.append({
+                "id": str(p["id"])[:40],
+                "name": (p.get("name") or p["id"])[:80],
+                "credits": max(0, int(p.get("credits") or 0)),
+                "price": max(0.0, float(p.get("price") or 0)),
+                "tagline": (p.get("tagline") or "")[:120],
+                "popular": bool(p.get("popular")),
+            })
+        if cleaned:
+            upd["gib_packs"] = cleaned
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {**upd, "updated_at": _now()}}, upsert=True)
     return await settings()
 
@@ -163,10 +197,10 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     brand = st.get("brand_name", "NexusHesap")
     if kind == "expired":
         title = f"{brand} {'deneme süreniz' if lic['status'] == 'expired' and lic.get('trial_ends_at') else 'lisansınız'} sona erdi"
-        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin süresi doldu; modüller kilitlendi. Kullanmaya devam etmek için Firma Ayarları → Paketim & Modüller ekranından ödeme yapabilir ya da bizimle iletişime geçebilirsiniz."
+        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin süresi doldu; modüller kilitlendi. Kullanmaya devam etmek için Hesap → Paketim ekranından ödeme yapabilir ya da bizimle iletişime geçebilirsiniz."
     else:
         title = f"{brand}: {lic['plan_name']} paketiniz {lic['days_left']} gün içinde sona eriyor"
-        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Firma Ayarları → Paketim & Modüller ekranından yenileyebilirsiniz."
+        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Hesap → Paketim ekranından yenileyebilirsiniz."
     if st.get("support_email") or st.get("support_phone"):
         body += f" Destek: {st.get('support_email', '')} {st.get('support_phone', '')}".rstrip()
     base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
