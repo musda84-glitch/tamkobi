@@ -328,7 +328,7 @@ export default function OrdersB2BPage() {
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto overflow-y-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
+          <div className="overflow-x-auto overflow-y-hidden pr-3 [scrollbar-gutter:stable] [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
             <table className="w-full text-left text-xs text-slate-600">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
@@ -338,7 +338,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="items">Ürünler</SortTh>
                   <SortTh k="total_amount" className="text-right">Tutar</SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
-                  <th className="px-4 py-3 pr-6 text-center w-[380px] min-w-[380px]">İşlemler</th>
+                  <th className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">İşlemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -398,8 +398,8 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 pr-6 text-center w-[380px] min-w-[380px]">
-                      <div className="grid grid-cols-[28px_112px_128px_28px_28px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
+                    <td className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">
+                      <div className="grid grid-cols-[28px_112px_128px_28px_32px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           <DropdownMenu>
@@ -413,7 +413,7 @@ export default function OrdersB2BPage() {
                                 <span>Faturala ▾</span>
                               </button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={20} className="z-[80] w-52 rounded-xl p-1.5" data-testid={`inv-type-chooser-${ord.order_number}`}>
+                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-52 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
                               <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Nasıl kesilsin?</div>
                               {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => (
                                 <DropdownMenuItem key={k} onSelect={() => handleConvertToInvoice(ord.id || ord._id, k)} className="flex-col items-start gap-0 py-1.5" data-testid={`inv-type-${k}-${ord.order_number}`}>
@@ -454,7 +454,7 @@ export default function OrdersB2BPage() {
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" side="bottom" sideOffset={8} collisionPadding={20} className="z-[80] w-56 rounded-xl p-1.5" data-testid={`order-more-menu-${ord.order_number}`}>
+                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
                             {[
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
