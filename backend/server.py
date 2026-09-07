@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from mysql_store import MySQLClient
+import partner_pay
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -1389,6 +1390,15 @@ async def get_contact_overview(contact_id: str):
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
     invoices = await db.invoices.find({"contact_id": contact_id}).sort("issue_date", -1).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).sort("date", -1).to_list(200)
+    for ptx in await db.partner_transactions.find({"contact_id": contact_id}).to_list(200):
+        payments.append({
+            **ptx,
+            "type": "inflow" if ptx.get("type") == "withdrawal" else "outflow",
+            "category": "Cari Tahsilat" if ptx.get("type") == "withdrawal" else "Cari Ödeme",
+            "account_name": ptx.get("account_name") or "Ortaklar Hesabı",
+            "source": "partner",
+        })
+    payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
@@ -1407,6 +1417,24 @@ async def get_contact_overview(contact_id: str):
         "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm,
         "quotes": clean_docs(quotes), "surveys": clean_docs(surveys), "cheques": clean_docs(cheques_rows)
     }
+
+@api_router.post("/contacts/{contact_id}/record-payment")
+async def record_contact_payment(contact_id: str, req: Dict[str, Any]):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    amount = float(req.get("amount") or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    if not req.get("partner_id"):
+        raise HTTPException(status_code=400, detail="Ortak hesabı seçin.")
+    tx_type = req.get("type") or "inflow"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    description = req.get("description") or ("Cari tahsilat" if tx_type == "inflow" else "Cari ödeme")
+    ptype = "withdrawal" if tx_type == "inflow" else "capital_in"
+    name = await partner_pay.move(db, contact["company_id"], req["partner_id"], amount, ptype, f"{contact.get('name')}: {description}", today, extra={"contact_id": contact_id})
+    await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount if tx_type == "inflow" else amount}})
+    return {"status": "success", "via": "partner", "account_name": name}
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]
@@ -3487,9 +3515,17 @@ async def create_bonus(req: Dict[str, Any]):
     if b_type not in labels:
         raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
-    account_id = req.get("account_id")
+    account_id = req.get("account_id") or None
+    partner_id = req.get("partner_id") or None
+    if account_id and partner_id:
+        raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
     account_name, status_val = None, "pending"
-    if account_id:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    bonus_id = str(uuid.uuid4())
+    if partner_id:
+        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {labels[b_type]}", today, extra={"bonus_id": bonus_id})
+        account_name, status_val = f"{pname} (Ortak)", "paid"
+    elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
@@ -3498,10 +3534,10 @@ async def create_bonus(req: Dict[str, Any]):
         await db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
                                                "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
                                                "description": f"{emp['full_name']} - {period} {labels[b_type]}", "source": "manual",
-                                               "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()})
+                                               "date": today, "created_at": datetime.now(timezone.utc).isoformat()})
         account_name, status_val = acc.get("account_name"), "paid"
-    doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
-           "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "account_name": account_name,
+    doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
+           "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
            "status": status_val, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.bonus_payments.insert_one(doc)
     return clean_doc(doc)
@@ -3511,8 +3547,11 @@ async def delete_bonus(bonus_id: str):
     b = await db.bonus_payments.find_one({"_id": bonus_id})
     if not b:
         raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
-    if b.get("account_id") and b.get("status") == "paid":
-        await db.bank_accounts.update_one({"_id": b["account_id"]}, {"$inc": {"current_balance": b["amount"]}})
+    if b.get("status") == "paid":
+        if b.get("partner_id"):
+            await partner_pay.reverse_one(db, {"bonus_id": bonus_id})
+        elif b.get("account_id"):
+            await db.bank_accounts.update_one({"_id": b["account_id"]}, {"$inc": {"current_balance": b["amount"]}})
     await trash.soft_delete("bonus_payments", b, "bonus", f"{b.get('employee_name')} · {b.get('type')} · {float(b.get('amount') or 0):,.2f} ₺", note=b.get("status") or "")
     return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
 
@@ -5401,20 +5440,22 @@ async def generate_payroll(req: Dict[str, Any]):
 
 @api_router.post("/personnel/payrolls/{payroll_id}/pay")
 async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
-    account_id = req.get("account_id")
+    account_id = req.get("account_id") or req.get("bank_account_id")
+    partner_id = req.get("partner_id")
     payroll = await db.payrolls.find_one({"_id": payroll_id})
     if not payroll:
         raise HTTPException(status_code=404, detail="Bordro kaydı bulunamadı.")
+    if account_id and partner_id:
+        raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
 
     amount = payroll.get("final_payable", 0.0)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    paid_from = None
 
-    await db.payrolls.update_one(
-        {"_id": payroll_id},
-        {"$set": {"status": "paid", "paid_date": today}}
-    )
-
-    if account_id:
+    if partner_id:
+        pname = await partner_pay.withdraw(db, payroll.get("company_id"), partner_id, amount, f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi", today, extra={"payroll_id": payroll_id})
+        paid_from = f"{pname} (Ortak)"
+    elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
         await bank_guard.assert_manual_allowed(db, account_id)
@@ -5432,6 +5473,12 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
             "date": today,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
+        paid_from = acc_name
+
+    await db.payrolls.update_one(
+        {"_id": payroll_id},
+        {"$set": {"status": "paid", "paid_date": today, "account_id": account_id, "partner_id": partner_id, "account_name": paid_from}}
+    )
 
     return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
 
@@ -5806,12 +5853,17 @@ async def _restore_leave(doc, _related):
         await db.employees.update_one({"_id": doc["employee_id"]}, {"$inc": {"used_leave_days": float(doc.get("days") or 0)}})
 
 async def _restore_bonus(doc, _related):
-    if doc.get("account_id") and doc.get("status") == "paid":
-        await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -float(doc.get("amount") or 0)}})
+    if doc.get("status") != "paid":
+        return
+    amount = float(doc.get("amount") or 0)
+    if doc.get("partner_id"):
+        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} {doc.get('type_label') or 'Prim'}", extra={"bonus_id": doc["_id"]})
+    elif doc.get("account_id"):
+        await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -amount}})
 
 async def _restore_expense(doc, _related):
-    if doc.get("payment_status") == "paid" and doc.get("account_id") and not doc.get("netted_in_settlement"):
-        await expenses._post_payment(doc, doc["account_id"], doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    if doc.get("payment_status") == "paid" and not doc.get("netted_in_settlement") and (doc.get("account_id") or doc.get("partner_id")):
+        await expenses._post_payment(doc, doc.get("account_id"), doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), partner_id=doc.get("partner_id"))
 
 async def _restore_recipe(doc, _related):
     await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})

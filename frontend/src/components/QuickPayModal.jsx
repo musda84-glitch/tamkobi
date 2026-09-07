@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Receipt, Wallet, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -26,15 +27,16 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
     e.preventDefault(); setBusy(true);
     try {
       if (!isExpense) {
-        await axios.post(`${API_URL}/personnel/bonuses`, { employee_id: p.employee_id, type: "advance", amount: Number(f.amount), account_id: f.account_id || null, period: p.period, note: f.note });
+        await axios.post(`${API_URL}/personnel/bonuses`, { employee_id: p.employee_id, type: "advance", amount: Number(f.amount), period: p.period, note: f.note, ...splitPaymentTarget(f.account_id) });
         toast.success(`${p.employee_name} için avans kaydedildi.`);
       } else if (mode === "existing") {
         if (!selected) throw new Error("Masraf seçin.");
-        if (!f.account_id) throw new Error("Ödeme için kasa/banka seçin.");
-        await axios.post(`${API_URL}/expenses/${selected.id}/pay`, { account_id: f.account_id });
+        const target = splitPaymentTarget(f.account_id);
+        if (!target.account_id && !target.partner_id) throw new Error("Ödeme için kasa/banka veya ortak hesabı seçin.");
+        await axios.post(`${API_URL}/expenses/${selected.id}/pay`, target);
         toast.success(`${selected.expense_number} ödendi (${fmt(selected.total)} ₺).`);
       } else {
-        await axios.post(`${API_URL}/expenses`, { company_id: companyId, description: f.description || `${p.employee_name} masrafı`, category: f.category, amount: Number(f.amount), vat_rate: 0, employee_id: p.employee_id, account_id: f.account_id || null, notes: f.note, date: new Date().toISOString().slice(0, 10) });
+        await axios.post(`${API_URL}/expenses`, { company_id: companyId, description: f.description || `${p.employee_name} masrafı`, category: f.category, amount: Number(f.amount), vat_rate: 0, employee_id: p.employee_id, notes: f.note, date: new Date().toISOString().slice(0, 10), ...splitPaymentTarget(f.account_id) });
         toast.success(`Masraf kaydı oluşturuldu${f.account_id ? " ve ödendi" : ""} — Masraflar modülünde görünür.`);
       }
       onDone?.(); onClose();
@@ -60,8 +62,8 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
           <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="1" required autoFocus value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={`${inputCls} font-bold`} data-testid="quick-pay-amount" /></div>
           {!isExpense && <div><label className="block font-semibold mb-1">Açıklama</label><input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Örn: Maaş avansı" className={inputCls} /></div>}
         </>)}
-        <div><label className="block font-semibold mb-1">Kasa / Banka</label><select value={f.account_id} onChange={(e) => setF({ ...f, account_id: e.target.value })} className={inputCls} data-testid="quick-pay-account"><option value="">{isExpense ? "Şimdi ödenmeyecek (borç olarak kaydet)" : "Hesap seçilmedi (sadece kayıt)"}</option>{accounts.map((b) => <option key={b.id} value={b.id}>{b.account_name} ({fmt(b.current_balance)} ₺)</option>)}</select></div>
-        <div className="text-slate-500">{isExpense ? "Masraflar → personel filtresinde ve personel kartında görünür; ödeme kasa/bankadan düşer." : `${p.period} dönemi · Avans bordroda mahsup olarak görünür.`}</div>
+        <div><label className="block font-semibold mb-1">Kasa / Banka</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={f.account_id} onChange={(v) => setF({ ...f, account_id: v })} testId="quick-pay-account" className="text-xs focus:ring-2 focus:ring-emerald-500 outline-none" emptyLabel={isExpense ? "Şimdi ödenmeyecek (borç olarak kaydet)" : "Hesap seçilmedi (sadece kayıt)"} /></div>
+        <div className="text-slate-500">{isExpense ? "Masraflar → personel filtresinde ve personel kartında görünür; ödeme kasa/banka veya ortaklar hesabından düşer." : `${p.period} dönemi · Avans bordroda mahsup olarak görünür.`}</div>
         <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={busy} className={`px-4 py-1.5 text-white rounded-lg font-semibold ${isExpense ? "bg-sky-600" : "bg-amber-600"}`} data-testid="quick-pay-submit">{busy ? "…" : isExpense && mode === "existing" ? "Öde" : f.account_id ? "Kaydet & Öde" : "Kaydet"}</button></div>
       </form>
     </div>
