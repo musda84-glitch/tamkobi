@@ -7,7 +7,7 @@ import { API_URL } from "../../context/AuthContext";
 import { Toggle, inputCls, PlanChip } from "./saasUi";
 
 const cred = { withCredentials: true };
-const previewPath = "/fiyatlar";
+const previewPath = "/web";
 
 export const WebsiteAdminPanel = ({ plans, onChanged }) => {
   const [settings, setSettings] = useState(null);

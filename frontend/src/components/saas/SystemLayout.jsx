@@ -26,7 +26,7 @@ export const SystemLayout = ({ children, pendingCount = 0 }) => {
             </Link>); })}
         </nav>
         <div className="p-3 border-t border-white/5 space-y-2">
-          <a href="/fiyatlar" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] text-slate-400 hover:bg-white/5 hover:text-white" data-testid="sys-go-site"><Globe className="w-3.5 h-3.5" /> Müşteri sitesini aç</a>
+          <a href="/web" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] text-slate-400 hover:bg-white/5 hover:text-white" data-testid="sys-go-site"><Globe className="w-3.5 h-3.5" /> Müşteri sitesini aç</a>
           <Link to="/" className="flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] text-slate-400 hover:bg-white/5 hover:text-white" data-testid="sys-go-erp"><ExternalLink className="w-3.5 h-3.5" /> ERP uygulamasına git</Link>
           <div className="flex items-center justify-between px-3 py-2 bg-white/5 rounded-xl">
             <div className="min-w-0"><div className="text-xs font-semibold truncate">{user.name}</div><div className="text-[10px] text-amber-400">Süper Admin</div></div>
