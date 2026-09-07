@@ -8,19 +8,19 @@ import { useEscape } from "../utils/useEscape";
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
 
-export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone }) => {
+export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, initialMode }) => {
   useEscape(onClose);
   const isExpense = type === "expense";
-  const [mode, setMode] = useState("existing");
+  const [mode, setMode] = useState(initialMode || "existing");
   const [open, setOpen] = useState([]);
   const [cats, setCats] = useState([]);
   const [f, setF] = useState({ amount: "", account_id: accounts[0]?.id || "", note: "", expense_id: "", category: "Personel Masrafı", description: "" });
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!isExpense) return;
-    axios.get(`${API_URL}/expenses?company_id=${companyId}&employee_id=${p.employee_id}&status=unpaid`).then((r) => { setOpen(r.data.expenses); if (r.data.expenses.length === 0) setMode("new"); if (r.data.expenses[0]) setF((s) => ({ ...s, expense_id: r.data.expenses[0].id })); }).catch(() => setMode("new"));
+    axios.get(`${API_URL}/expenses?company_id=${companyId}&employee_id=${p.employee_id}&status=unpaid`).then((r) => { setOpen(r.data.expenses); if (r.data.expenses.length === 0 && initialMode !== "existing") setMode("new"); if (r.data.expenses[0]) setF((s) => ({ ...s, expense_id: r.data.expenses[0].id })); }).catch(() => { if (initialMode !== "existing") setMode("new"); });
     axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`).then((r) => setCats(r.data)).catch(() => {});
-  }, [isExpense, companyId, p.employee_id]);
+  }, [isExpense, companyId, p.employee_id, initialMode]);
   const selected = open.find((x) => x.id === f.expense_id);
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
@@ -41,9 +41,9 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); onClose(); }}>
       <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 text-xs shadow-2xl" data-testid="quick-pay-modal">
-        <div className="flex items-center justify-between"><div className="font-bold text-slate-900 text-sm flex items-center gap-2">{isExpense ? <Receipt className="w-4 h-4 text-sky-600" /> : <Wallet className="w-4 h-4 text-amber-600" />} {isExpense ? "Masraf Ödemesi" : "Avans Ver"} — {p.employee_name}</div><button type="button" onClick={onClose} className="text-slate-400 flex items-center gap-1" title="Kapat (Esc)"><kbd className="text-[9px] border rounded px-1">ESC</kbd><X className="w-4 h-4" /></button></div>
+        <div className="flex items-center justify-between"><div className="font-bold text-slate-900 text-sm flex items-center gap-2">{isExpense ? <Receipt className="w-4 h-4 text-sky-600" /> : <Wallet className="w-4 h-4 text-amber-600" />} {isExpense ? (initialMode === "new" ? "Masraf Ekle" : "Masraf Ödemesi") : "Avans Ver"} — {p.employee_name}</div><button type="button" onClick={onClose} className="text-slate-400 flex items-center gap-1" title="Kapat (Esc)"><kbd className="text-[9px] border rounded px-1">ESC</kbd><X className="w-4 h-4" /></button></div>
         {isExpense && (
           <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">{[["existing", `Kayıtlı masrafı öde (${open.length})`], ["new", "Yeni masraf gir"]].map(([k, l]) => <button type="button" key={k} onClick={() => setMode(k)} className={`flex-1 py-1.5 rounded-md font-semibold ${mode === k ? "bg-white shadow text-slate-900" : "text-slate-500"}`} data-testid={`quick-pay-mode-${k}`}>{l}</button>)}</div>
         )}
