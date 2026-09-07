@@ -24,6 +24,7 @@ import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
 import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
 import { QuickPayModal } from "../components/QuickPayModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -114,7 +115,7 @@ export default function PersonnelPage() {
     if (!payPayrollItem) return;
     try {
       const res = await axios.post(`${API_URL}/personnel/payrolls/${payPayrollItem.id || payPayrollItem._id}/pay`, {
-        account_id: selectedBankId
+        ...splitPaymentTarget(selectedBankId)
       });
       toast.success(res.data.message);
       setPayPayrollItem(null);
@@ -296,18 +297,15 @@ export default function PersonnelPage() {
                 <strong>{payPayrollItem.employee_name}</strong> için <strong>{payPayrollItem.period}</strong> dönemi <strong>{payPayrollItem.final_payable?.toLocaleString('tr-TR')} ₺</strong> maaş ödemesi yapılacaktır.
               </p>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Ödemenin Yapılacağı Banka Hesabı</label>
-                <select
+                <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
+                <PaymentTargetSelect
+                  companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+                  accounts={bankAccounts}
                   value={selectedBankId}
-                  onChange={(e) => setSelectedBankId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                >
-                  {bankAccounts.map(b => (
-                    <option key={b.id || b._id} value={b.id || b._id}>
-                      {b.bank_name} - {b.account_name} ({b.current_balance?.toLocaleString('tr-TR')} ₺)
-                    </option>
-                  ))}
-                </select>
+                  onChange={setSelectedBankId}
+                  includePartners={false}
+                  testId="salary-pay-account"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
@@ -435,7 +433,7 @@ export default function PersonnelPage() {
           </div>
         </div>
       )}
-      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
+      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
       {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
     </div>
   );

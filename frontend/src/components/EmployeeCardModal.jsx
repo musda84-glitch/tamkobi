@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -73,15 +74,40 @@ const UserTab = ({ card, reload }) => {
   );
 };
 
-export const EmployeeCardModal = ({ employee, companyId, onClose }) => {
-  useEscape(onClose);
+export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp, onClose, onChanged }) => {
   const [tab, setTab] = useState("summary");
   const [card, setCard] = useState(null);
   const id = employee.id || employee._id;
   const [schedule, setSchedule] = useState(null);
+  const [accounts, setAccounts] = useState(accountsProp || []);
+  const [payItem, setPayItem] = useState(null);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [busyPay, setBusyPay] = useState(false);
+  useEscape(() => {
+    if (payItem) { setPayItem(null); return; }
+    onClose();
+  });
   const reload = useCallback(() => axios.get(`${API_URL}/personnel/employees/${id}/card`).then((r) => setCard(r.data)).catch(() => toast.error("Personel kartı yüklenemedi.")), [id]);
   useEffect(() => { reload(); axios.get(`${API_URL}/companies/${companyId}/work-schedule`).then((r) => setSchedule(r.data.schedule)).catch(() => {}); }, [reload, companyId]);
+  useEffect(() => {
+    if (accountsProp?.length) { setAccounts(accountsProp); return; }
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
+  }, [accountsProp, companyId]);
+  useEffect(() => { if (!payAccountId && accounts[0]) setPayAccountId(accounts[0].id || accounts[0]._id); }, [accounts, payAccountId]);
   const e = card?.employee || employee;
+  const confirmSalaryPay = async () => {
+    if (!payItem) return;
+    setBusyPay(true);
+    try {
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
+      toast.success(res.data.message);
+      setPayItem(null);
+      reload();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Maaş ödemesi gerçekleştirilemedi.");
+    } finally { setBusyPay(false); }
+  };
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
@@ -105,8 +131,8 @@ export const EmployeeCardModal = ({ employee, companyId, onClose }) => {
             )}
             {tab === "docs" && <Docs card={card} companyId={companyId} reload={reload} />}
             {tab === "salary" && (
-              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
-                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td></tr>)}</tbody></table>
+              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th><th className="text-right">Ödeme</th></tr></thead>
+                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td><td className="text-right">{p.status !== "paid" ? <button type="button" onClick={() => setPayItem(p)} className="px-2 py-0.5 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`emp-card-pay-${p.period}`}>Öde</button> : <span className="text-emerald-700 font-semibold">Ödendi</span>}</td></tr>)}</tbody></table>
             )}
             {tab === "leaves" && (
               <div className="space-y-3"><div className="grid grid-cols-3 gap-2"><Stat label="Yıllık Hak" value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
@@ -121,6 +147,27 @@ export const EmployeeCardModal = ({ employee, companyId, onClose }) => {
           </>)}
         </div>
       </div>
+      {payItem && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-base font-bold text-slate-900">Maaş Ödemesi</h3>
+              <button type="button" onClick={() => setPayItem(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="text-xs text-slate-700 space-y-3">
+              <p><strong>{payItem.employee_name || e.full_name}</strong> için <strong>{payItem.period}</strong> dönemi <strong>{fmt(payItem.final_payable ?? payItem.net_salary)} ₺</strong> maaş ödemesi yapılacaktır.</p>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
+                <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAccountId} onChange={setPayAccountId} includePartners={false} testId="emp-card-salary-account" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => setPayItem(null)} className="px-3 py-1.5 border rounded-lg text-xs">İptal</button>
+              <button type="button" onClick={confirmSalaryPay} disabled={busyPay || !payAccountId} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="emp-card-salary-confirm">Ödemeyi Tamamla</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -8,6 +8,7 @@ import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { ExportButtons } from "../components/ExportButtons";
 import { BudgetPanel } from "../components/BudgetPanel";
+import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -51,7 +52,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts, contacts, empl
           <div className="flex items-end"><label className="flex items-center gap-2 cursor-pointer bg-slate-50 border rounded-lg p-2 w-full"><input type="checkbox" checked={f.vat_included} onChange={(e) => setF({ ...f, vat_included: e.target.checked })} data-testid="exp-vat-included" /> Tutar KDV dahil</label></div>
           <div className="col-span-2 md:col-span-3 bg-slate-50 rounded-xl p-3 flex justify-between text-slate-600"><span>Net: <b>{fmt(calc.net)} ₺</b></span><span>KDV: <b data-testid="exp-vat-amount">{fmt(calc.vat)} ₺</b></span><span className="text-slate-900">Toplam: <b className="text-rose-600" data-testid="exp-total">{fmt(calc.total)} ₺</b></span></div>
           <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Ödeme (Kasa / Banka) {isEdit && <span className="text-slate-400 font-normal">— ödeme durumu listeden değiştirilir</span>}</label>
-            <select value={f.account_id || ""} onChange={(e) => setF({ ...f, account_id: e.target.value })} className={inputCls} disabled={isEdit && f.payment_status !== "paid"} data-testid="exp-account"><option value="">Henüz ödenmedi (borç olarak kaydet)</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {fmt(a.current_balance)} ₺</option>)}</select></div>
+            <PaymentTargetSelect companyId={companyId} accounts={accounts} value={f.account_id || ""} onChange={(id) => setF({ ...f, account_id: id })} includePartners={false} emptyLabel="Henüz ödenmedi (borç olarak kaydet)" testId="exp-account" className={isEdit && f.payment_status !== "paid" ? "opacity-60 pointer-events-none" : ""} /></div>
           <div className="col-span-2 md:col-span-3 grid grid-cols-2 gap-3">
             <div><label className="block font-semibold mb-1">Tedarikçi (opsiyonel)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Cari ara…" onChange={(id) => setF({ ...f, contact_id: id })} testId="exp-contact" /></div>
             <div><label className="block font-semibold mb-1">Personel (masraf sahibi)</label><select value={f.employee_id || ""} onChange={(e) => setF({ ...f, employee_id: e.target.value })} className={inputCls} data-testid="exp-employee"><option value="">—</option>{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
@@ -151,7 +152,7 @@ export default function ExpensesPage() {
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">
             <div className="font-bold text-slate-900 text-sm flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-600" /> Masrafı Öde · {fmt(payFor.total)} ₺</div>
             <div className="text-slate-500">{payFor.expense_number} — {payFor.description}</div>
-            <select value={payAcc} onChange={(e) => setPayAcc(e.target.value)} className={inputCls} data-testid="exp-pay-account">{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {fmt(a.current_balance)} ₺</option>)}</select>
+            <PaymentTargetSelect companyId={payFor.company_id || companyId} accounts={accounts} value={payAcc} onChange={setPayAcc} includePartners={false} testId="exp-pay-account" />
             <div className="flex justify-end gap-2 pt-2 border-t"><button onClick={() => setPayFor(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={pay} disabled={!payAcc} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="exp-pay-confirm">Öde</button></div>
           </div>
         </div>
