@@ -6,7 +6,7 @@ export const siteBrand = (name) => (name || "TamKobi").trim() || "TamKobi";
 export const BrandMark = ({ name, testId = "site-brand" }) => {
   const brand = siteBrand(name);
   return (
-    <Link to="/" className="font-bold text-lg tracking-tight text-white" data-testid={testId}>
+    <Link to="/web" className="font-bold text-lg tracking-tight text-white" data-testid={testId}>
       {brand}<span className="text-emerald-400">.com</span>
     </Link>
   );
