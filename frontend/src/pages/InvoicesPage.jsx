@@ -416,15 +416,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center w-[260px] min-w-[260px]">
-                      <div className="grid grid-cols-7 gap-1 justify-items-center items-center">
+                    <td className="px-4 py-3 text-center w-[320px] min-w-[320px]">
+                      <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" ? (
-                          <div className="flex items-center gap-0.5">
+                          <>
                             <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                             <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="Taslağı sil (çöp kutusu)" data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                             <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
-                          </div>
-                        ) : <span className="w-7" />}
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-7 h-7" aria-hidden="true" />
+                            <span className="w-7 h-7" aria-hidden="true" />
+                            <span className="w-7 h-7" aria-hidden="true" />
+                          </>
+                        )}
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
