@@ -63,7 +63,7 @@ export const InstallmentRows = ({ rows, accounts, companyId, onPaid, compact = f
           <div className="font-semibold text-emerald-800 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> {paying.label} — {paying.contact_name}</div>
           <div className="grid grid-cols-2 gap-2">
             <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 font-bold" data-testid="installment-pay-amount" />
-            <PaymentTargetSelect companyId={companyId} accounts={accounts} value={account} onChange={setAccount} testId="installment-pay-account" className="!bg-white" />
+            <PaymentTargetSelect companyId={companyId} accounts={accounts} value={account} onChange={setAccount} testId="installment-pay-account" className="!bg-white" collectableOnly={paying.direction !== "payable"} />
           </div>
           <div className="flex justify-end gap-2"><button onClick={() => setPaying(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={pay} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="installment-pay-confirm">Kaydet</button></div>
         </div>

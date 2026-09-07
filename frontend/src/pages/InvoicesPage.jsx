@@ -279,7 +279,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setPaymentAmount("");
       loadData();
     } catch (err) {
-      toast.error("Ödeme kaydedilemedi.");
+      toast.error(err.response?.data?.detail || "Ödeme kaydedilemedi.");
     }
   };
 
@@ -879,8 +879,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Kasa / Banka / POS / Ortak Seçin</label>
-                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" />
+                <label className="block font-semibold text-slate-700 mb-1">{paymentModalInvoice.invoice_type === "sales" ? "Kasa / Banka / POS / Ortak (tahsilat)" : "Kasa / Banka / Kart / Ortak"}</label>
+                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
