@@ -41,6 +41,29 @@ const Docs = ({ card, companyId, reload }) => {
   );
 };
 
+const ShopfloorPinCard = ({ empId, hasPin, reload }) => {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/employees/${empId}/shopfloor-pin`, { password: pin });
+      toast.success(r.data.message); setPin(""); reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <form onSubmit={save} className="border border-slate-200 rounded-xl p-4 space-y-2" data-testid="emp-shopfloor-pin-form">
+      <div className="font-bold text-slate-900 flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-emerald-600" /> Atölye şifresi</div>
+      <p className="text-[11px] text-slate-500">Üretim ekranında operatör seçilirken istenir. {hasPin ? "Kayıtlı bir şifre var — yeni şifre yazarak değiştirin." : "Henüz şifre yok; en az 4 karakter belirleyin."}</p>
+      <div className="flex gap-2">
+        <input type="password" required minLength={4} value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Yeni atölye şifresi" className="flex-1 border rounded-lg p-2" data-testid="emp-shopfloor-pin" />
+        <button disabled={busy || pin.length < 4} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-bold disabled:opacity-50" data-testid="emp-shopfloor-pin-save">{busy ? "…" : "Kaydet"}</button>
+      </div>
+    </form>
+  );
+};
+
 const UserTab = ({ card, reload }) => {
   const { user: me } = useAuth();
   const [roles, setRoles] = useState([]);
@@ -54,22 +77,29 @@ const UserTab = ({ card, reload }) => {
       toast.success(r.data.message); reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); } finally { setBusy(false); }
   };
+  const pinCard = <ShopfloorPinCard empId={card.employee.id} hasPin={!!card.employee.has_shopfloor_pin} reload={reload} />;
   if (card.user) return (
-    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-1" data-testid="emp-user-linked">
-      <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
-      <div><b>E-posta:</b> {card.user.email}</div><div><b>Rol:</b> {card.user.role}</div><div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div><div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
-      <div className="text-slate-500 pt-1">Rol/şifre değişikliği için Firma Ayarları → Kullanıcılar & Roller.</div>
+    <div className="space-y-3">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-1" data-testid="emp-user-linked">
+        <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
+        <div><b>E-posta:</b> {card.user.email}</div><div><b>Rol:</b> {card.user.role}</div><div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div><div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
+        <div className="text-slate-500 pt-1">Rol/şifre değişikliği için Firma Ayarları → Kullanıcılar & Roller. Bağlı hesap şifresi atölye girişinde de geçerlidir.</div>
+      </div>
+      {pinCard}
     </div>
   );
   return (
-    <form onSubmit={create} className="space-y-3 text-xs" data-testid="emp-create-user-form">
-      {card.pending_invite && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Bekleyen davet var: {card.pending_invite.email} — <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline">linki kopyala</button></div>}
-      <div><label className="block font-semibold mb-1">E-posta (giriş adı)</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-email" /></div>
-      <div><label className="block font-semibold mb-1">Rol</label><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
-      <div className="flex gap-2">{[["invite", "E-posta ile davet gönder"], ["password", "Şifreyi ben belirleyeyim"]].map(([k, l]) => <button type="button" key={k} onClick={() => setForm({ ...form, mode: k })} className={`flex-1 border rounded-lg p-2 font-semibold ${form.mode === k ? "bg-slate-900 text-white" : "bg-white"}`} data-testid={`emp-user-mode-${k}`}>{l}</button>)}</div>
-      {form.mode === "password" && <div><label className="block font-semibold mb-1">Şifre (en az 6)</label><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-password" /></div>}
-      <button disabled={busy} className="w-full py-2 bg-emerald-600 text-white rounded-lg font-bold flex items-center justify-center gap-1.5" data-testid="emp-user-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : form.mode === "invite" ? <Mail className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />} {form.mode === "invite" ? "Davet Gönder" : "Kullanıcıyı Oluştur"}</button>
-    </form>
+    <div className="space-y-3">
+      <form onSubmit={create} className="space-y-3 text-xs" data-testid="emp-create-user-form">
+        {card.pending_invite && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Bekleyen davet var: {card.pending_invite.email} — <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline">linki kopyala</button></div>}
+        <div><label className="block font-semibold mb-1">E-posta (giriş adı)</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-email" /></div>
+        <div><label className="block font-semibold mb-1">Rol</label><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
+        <div className="flex gap-2">{[["invite", "E-posta ile davet gönder"], ["password", "Şifreyi ben belirleyeyim"]].map(([k, l]) => <button type="button" key={k} onClick={() => setForm({ ...form, mode: k })} className={`flex-1 border rounded-lg p-2 font-semibold ${form.mode === k ? "bg-slate-900 text-white" : "bg-white"}`} data-testid={`emp-user-mode-${k}`}>{l}</button>)}</div>
+        {form.mode === "password" && <div><label className="block font-semibold mb-1">Şifre (en az 6)</label><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-password" /></div>}
+        <button disabled={busy} className="w-full py-2 bg-emerald-600 text-white rounded-lg font-bold flex items-center justify-center gap-1.5" data-testid="emp-user-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : form.mode === "invite" ? <Mail className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />} {form.mode === "invite" ? "Davet Gönder" : "Kullanıcıyı Oluştur"}</button>
+      </form>
+      {pinCard}
+    </div>
   );
 };
 

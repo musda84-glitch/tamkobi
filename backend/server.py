@@ -29,7 +29,7 @@ from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token
 )
-from seed_data import seed_all_data, seed_partners
+from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
@@ -84,6 +84,8 @@ def clean_doc(doc: dict) -> dict:
         doc["id"] = str(doc.pop("_id"))
     if "b2b_password_hash" in doc:
         doc["has_b2b_password"] = bool(doc.pop("b2b_password_hash"))
+    if "shopfloor_pin_hash" in doc:
+        doc["has_shopfloor_pin"] = bool(doc.pop("shopfloor_pin_hash"))
     doc.pop("password_hash", None)
     return doc
 
@@ -99,6 +101,7 @@ async def startup_event():
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
         await seed_all_data(db)
         await seed_partners(db)
+        await seed_shopfloor_pins(db)
         await saas.seed()
         await db.users.create_index("email", unique=True)
         await db.products.create_index("sku")
@@ -4990,6 +4993,28 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
 async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
     return sorted([s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s])
 
+@api_router.post("/production/work-orders/shopfloor-unlock")
+async def shopfloor_unlock(req: Dict[str, Any]):
+    """Tablet atölye: operatör seçmeden önce personel şifresi / bağlı kullanıcı şifresi doğrulanır."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    emp_id = (req.get("employee_id") or "").strip()
+    password = str(req.get("password") or "")
+    if not emp_id or not password:
+        raise HTTPException(status_code=400, detail="Personel ve şifre gerekli.")
+    emp = await db.employees.find_one({"_id": emp_id, "company_id": company_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Personel bulunamadı.")
+    pin_hash = emp.get("shopfloor_pin_hash") or ""
+    user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
+    user_hash = (user or {}).get("password_hash") or ""
+    if pin_hash and verify_password(password, pin_hash):
+        return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
+    if user and user.get("is_active", True) and user_hash and verify_password(password, user_hash):
+        return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
+    if not pin_hash and not user_hash:
+        raise HTTPException(status_code=400, detail="Bu personel için atölye şifresi tanımlı değil. Personel kartından şifre belirleyin.")
+    raise HTTPException(status_code=401, detail="Şifre hatalı.")
+
 @api_router.post("/production/orders/{order_id}/generate-work-orders")
 async def generate_work_orders_for_order(order_id: str):
     o = await db.production_orders.find_one({"_id": order_id})
@@ -5254,6 +5279,17 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
     inv = await rbac.invite_user({"company_id": emp["company_id"], "email": email, "name": emp["full_name"], "role": role, "employee_id": emp_id, "base_url": req.get("base_url"), "invited_by": req.get("invited_by")}, request)
     await db.employees.update_one({"_id": emp_id}, {"$set": {"email": email}})
     return {"status": "success", "mode": "invite", "invite": inv, "message": inv["mail"]["detail"]}
+
+@api_router.post("/personnel/employees/{emp_id}/shopfloor-pin")
+async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any]):
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    pin = str(req.get("password") or req.get("pin") or "").strip()
+    if len(pin) < 4:
+        raise HTTPException(status_code=400, detail="Atölye şifresi en az 4 karakter olmalı.")
+    await db.employees.update_one({"_id": emp_id}, {"$set": {"shopfloor_pin_hash": hash_password(pin), "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"status": "success", "has_shopfloor_pin": True, "message": "Atölye şifresi kaydedildi."}
 
 @api_router.get("/personnel/payrolls")
 async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
@@ -12,8 +12,11 @@ export default function ShopFloorPage() {
   const [wos, setWos] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [stations, setStations] = useState([]);
-  const [operator, setOperator] = useState(() => localStorage.getItem("nx_operator") || "");
+  const [operator, setOperator] = useState("");
   const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
+  const [pendingEmp, setPendingEmp] = useState(null);
+  const [pin, setPin] = useState("");
+  const [unlockBusy, setUnlockBusy] = useState(false);
   const [kiosk, setKiosk] = useState(false);
   const [finishing, setFinishing] = useState(null);
   const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
@@ -30,7 +33,27 @@ export default function ShopFloorPage() {
     } catch { /* keep last */ }
   }, [companyId, station]);
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
-  useEffect(() => { localStorage.setItem("nx_operator", operator); localStorage.setItem("nx_station", station); }, [operator, station]);
+  useEffect(() => { localStorage.setItem("nx_station", station); }, [station]);
+
+  const requestOperator = (name) => {
+    if (!name) { setOperator(""); setPendingEmp(null); setPin(""); return; }
+    if (name === operator) return;
+    const emp = employees.find((e) => e.full_name === name);
+    if (!emp) return;
+    setPendingEmp(emp); setPin("");
+  };
+  const cancelUnlock = () => { setPendingEmp(null); setPin(""); };
+  const unlockOperator = async (e) => {
+    e.preventDefault();
+    if (!pendingEmp) return;
+    setUnlockBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-unlock`, { company_id: companyId, employee_id: pendingEmp.id, password: pin });
+      setOperator(r.data.operator_name); setPendingEmp(null); setPin("");
+      toast.success(`${r.data.operator_name} olarak giriş yapıldı.`);
+    } catch (err) { toast.error(err.response?.data?.detail || "Şifre doğrulanamadı."); }
+    finally { setUnlockBusy(false); }
+  };
 
   const act = async (w, action, body) => {
     if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
@@ -72,13 +95,13 @@ export default function ShopFloorPage() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <select value={operator} onChange={(e) => setOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
+          <select value={pendingEmp ? pendingEmp.full_name : operator} onChange={(e) => requestOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
           <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
         </div>
       </div>
-      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin. Seçim bu cihazda hatırlanır.</div>}
+      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin ve şifrenizi girin.</div>}
       <div className="grid grid-cols-3 gap-3 text-center">{[["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"], ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"], ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"]].map(([l, v, c]) => <div key={l} className="bg-white border rounded-2xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-3xl font-black ${c}`}>{v}</div></div>)}</div>
       <div className="bg-white border rounded-2xl p-3" data-testid="shopfloor-performance">
         <button onClick={() => setShowPerf(!showPerf)} className="w-full flex items-center justify-between text-sm font-bold text-slate-800" data-testid="shopfloor-perf-toggle"><span>Bugünkü Performans — operatör / istasyon ({perf?.total_done || 0} adım tamamlandı)</span><span className="text-xs text-slate-400">{showPerf ? "Gizle" : "Göster"}</span></button>
@@ -110,6 +133,28 @@ export default function ShopFloorPage() {
             {finishing.step_no === finishing.step_count && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir.</p>}
             <div className="flex gap-2"><button onClick={() => setFinishing(null)} className="flex-1 py-3 border-2 rounded-xl font-semibold">İptal</button><button onClick={() => act(finishing, "finish", { produced_qty: Number(fin.produced_qty), scrap_qty: Number(fin.scrap_qty), notes: fin.notes })} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid="wo-finish-confirm">Tamamla</button></div>
           </div>
+        </div>
+      )}
+      {pendingEmp && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" onClick={cancelUnlock}>
+          <form onSubmit={unlockOperator} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="shopfloor-pin-modal">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2"><KeyRound className="w-5 h-5 text-emerald-600" /> Operatör şifresi</h3>
+                <p className="text-sm text-slate-500 mt-1">{pendingEmp.full_name} — {pendingEmp.position}</p>
+              </div>
+              <button type="button" onClick={cancelUnlock} className="text-slate-400 hover:text-slate-700" data-testid="shopfloor-pin-cancel"><X className="w-5 h-5" /></button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Şifre</label>
+              <input type="password" autoFocus value={pin} onChange={(e) => setPin(e.target.value)} className="w-full border-2 rounded-xl p-3 text-lg font-semibold tracking-widest" required minLength={4} data-testid="shopfloor-pin-input" />
+            </div>
+            <p className="text-[11px] text-slate-400">Atölye şifresi personel kartından belirlenir. Sistem kullanıcısı bağlıysa o hesabın şifresi de geçerlidir.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={cancelUnlock} className="flex-1 py-3 border-2 rounded-xl font-semibold">Vazgeç</button>
+              <button type="submit" disabled={unlockBusy || pin.length < 4} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="shopfloor-pin-submit">{unlockBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Giriş</button>
+            </div>
+          </form>
         </div>
       )}
     </div>
