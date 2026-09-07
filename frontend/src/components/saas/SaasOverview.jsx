@@ -1,7 +1,23 @@
-import React from "react";
-import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
+import axios from "axios";
+import { API_URL } from "../../context/AuthContext";
 import { fmtTL, fmtDate, StatCard, StatusBadge, PlanChip } from "./saasUi";
+
+const AiOverviewBanner = () => {
+  const [ai, setAi] = useState(null);
+  useEffect(() => { axios.get(`${API_URL}/system/ai`).then((r) => setAi(r.data)).catch(() => {}); }, []);
+  return (
+    <Link to="/sistem/ai" className="flex flex-wrap items-center justify-between gap-3 bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3 hover:bg-violet-100/70" data-testid="overview-go-ai">
+      <span className="font-semibold text-violet-950 inline-flex items-center gap-2">
+        <Sparkles className="w-4 h-4" />
+        AI Entegrasyonu — tüm şirketler {ai ? <><b className="ml-1">{ai.provider_label} {ai.advisor_label}</b> kullanır</> : "bu sağlayıcıyı kullanır"}
+      </span>
+      <span className="text-violet-800 font-bold">Ayarla →</span>
+    </Link>
+  );
+};
 
 export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => {
   if (!data) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;
@@ -9,6 +25,7 @@ export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => 
   const usage = Object.entries(data.module_usage).sort((a, b) => b[1] - a[1]);
   return (
     <div className="space-y-5 text-xs" data-testid="saas-overview">
+      <AiOverviewBanner />
       <Link to="/sistem/web" className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 hover:bg-emerald-100/70" data-testid="overview-go-web">
         <span className="font-semibold text-emerald-900 inline-flex items-center gap-2"><Globe className="w-4 h-4" /> TamKobi müşteri sitesi yayında — vitrini yönetmek için tıklayın</span>
         <span className="text-emerald-800 font-bold">Web Sitesi →</span>

@@ -6087,6 +6087,12 @@ async def ask_financial_ai(req: AIChatRequest):
     advice = await get_financial_ai_advice(context, req.message)
     return {"advice": advice, "metrics": context}
 
+@api_router.get("/ai/status")
+async def get_ai_status():
+    from ai_service import load_ai_settings, public_ai_status
+    cfg = await load_ai_settings()
+    return public_ai_status(cfg)
+
 @api_router.get("/ai/cashflow-forecast")
 async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_01"):
     bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(100)

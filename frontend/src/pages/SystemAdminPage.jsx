@@ -10,6 +10,7 @@ import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { PlansPanel } from "../components/saas/PlansPanel";
 import { RequestsPanel } from "../components/saas/RequestsPanel";
 import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
+import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 
@@ -58,6 +59,7 @@ export default function SystemAdminPage() {
           {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}
+          {page === "ai" && <AiProviderPanel />}
           {page === "ayarlar" && <PlatformSettingsPanel />}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
