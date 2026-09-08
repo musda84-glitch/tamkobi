@@ -60,6 +60,13 @@ def test_product_and_contact_limit_enforced(hdr, quotas_ready):
     try:
         u = requests.put(f"{API}/system/companies/{cid}/license", headers=hdr, json={"product_limit": 1, "contact_limit": 1}, timeout=20)
         assert u.status_code == 200, u.text[:300]
+        usage = requests.get(f"{API}/system/quotas", headers=hdr, timeout=30).json()
+        row = next(x for x in usage["quotas"] if x["id"] == cid)
+        # New firms may receive demo cards; cap just above current usage.
+        requests.put(f"{API}/system/companies/{cid}/license", headers=hdr, json={
+            "product_limit": int(row["product_count"]) + 1,
+            "contact_limit": int(row["contact_count"]) + 1,
+        }, timeout=20)
         p1 = requests.post(f"{API}/products", headers=hdr, json={"company_id": cid, "name": "Kota Stok 1", "sku": f"Q-{uuid.uuid4().hex[:6]}", "sale_price": 1, "purchase_price": 1, "stock_quantity": 0, "vat_rate": 20, "unit": "Adet", "type": "product"}, timeout=20)
         assert p1.status_code == 200, p1.text[:400]
         p2 = requests.post(f"{API}/products", headers=hdr, json={"company_id": cid, "name": "Kota Stok 2", "sku": f"Q-{uuid.uuid4().hex[:6]}", "sale_price": 1, "purchase_price": 1, "stock_quantity": 0, "vat_rate": 20, "unit": "Adet", "type": "product"}, timeout=20)
