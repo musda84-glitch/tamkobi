@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
+import { HeaderFxRates } from "./HeaderFxRates";
 import { AccountMenu } from "./AccountMenu";
 import TamKobiMark from "./TamKobiMark";
 import AppSidebarNav from "./AppSidebarNav";
@@ -134,6 +135,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <span>•</span>
               <LicenseBadge license={license} />
             </div>
+            <HeaderFxRates companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
           </div>
 
           {/* Quick Actions & Search */}
