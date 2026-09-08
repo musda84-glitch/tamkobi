@@ -57,11 +57,33 @@ def test_typed_rate_keeps_manual_jpy():
 def s():
     ses = requests.Session()
     ses.headers.update({"Content-Type": "application/json"})
+    r = ses.post(f"{BASE}/auth/login", json={"email": "admin@nexus.com", "password": "admin123"}, timeout=20)
+    assert r.status_code == 200, r.text
     return ses
 
 
+def test_mask_money_hides_fx_stamp():
+    from rbac import mask_money
+    out = mask_money({"grand_total": 120.0, "local_total": 4800.0, "fx_rate": 40.0, "currency": "USD"})
+    assert out["grand_total"] == 0 and out["local_total"] == 0 and out["fx_rate"] == 0
+    assert out["currency"] == "USD"
+
+
+def test_fx_write_requires_login():
+    r = requests.put(f"{BASE}/fx/rates", params={"company_id": CO}, json={"date": "2026-09-08", "currency": "CHF", "rate": 12}, timeout=20)
+    assert r.status_code == 401, r.text
+
+
+def test_fx_ignores_body_company_id(s):
+    r = s.put(f"{BASE}/fx/rates", params={"company_id": CO}, json={"company_id": "comp_other_tenant", "date": "2026-09-08", "currency": "GBP", "rate": 51.25})
+    assert r.status_code == 200, r.text
+    q = s.get(f"{BASE}/fx/quote", params={"company_id": CO, "currency": "GBP", "date": "2026-09-08"})
+    assert q.status_code == 200
+    assert float(q.json()["rate"]) == 51.25
+
+
 def test_manual_rate_roundtrip(s):
-    r = s.put(f"{BASE}/fx/rates", json={"company_id": CO, "date": "2026-09-08", "currency": "USD", "rate": 41.5})
+    r = s.put(f"{BASE}/fx/rates", params={"company_id": CO}, json={"date": "2026-09-08", "currency": "USD", "rate": 41.5})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["currency"] == "USD" and float(d["rate"]) == 41.5 and d["source"] == "manual"
@@ -71,7 +93,7 @@ def test_manual_rate_roundtrip(s):
 
 
 def test_invoice_usd_local_total(s):
-    s.put(f"{BASE}/fx/rates", json={"company_id": CO, "date": date.today().isoformat(), "currency": "USD", "rate": 40})
+    s.put(f"{BASE}/fx/rates", params={"company_id": CO}, json={"date": date.today().isoformat(), "currency": "USD", "rate": 40})
     contacts = s.get(f"{BASE}/contacts", params={"company_id": CO})
     assert contacts.status_code == 200
     cid = (contacts.json() or [{}])[0].get("id")
@@ -99,7 +121,7 @@ def test_invoice_usd_local_total(s):
 
 
 def test_expense_eur_local_total(s):
-    s.put(f"{BASE}/fx/rates", json={"company_id": CO, "date": date.today().isoformat(), "currency": "EUR", "rate": 45})
+    s.put(f"{BASE}/fx/rates", params={"company_id": CO}, json={"date": date.today().isoformat(), "currency": "EUR", "rate": 45})
     r = s.post(f"{BASE}/expenses", json={"company_id": CO, "description": "EUR hosting", "amount": 10, "vat_rate": 0, "currency": "EUR", "fx_rate": 45, "category": "Yazılım / Abonelik"})
     assert r.status_code == 200, r.text
     exp = r.json()
