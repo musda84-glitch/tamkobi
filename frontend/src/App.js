@@ -99,7 +99,7 @@ export default function App() {
             <Route path="/sistem" element={<SystemAdminPage />} />
             <Route path="/sistem/:section" element={<SystemAdminPage />} />
             <Route path="/web" element={<PricingPage />} />
-            <Route path="/fiyatlar" element={<PricingPage />} />
+            <Route path="/fiyatlar" element={<Navigate to="/web" replace />} />
             <Route path="/kayit" element={<SignupPage />} />
             <Route path="/odeme/basarili" element={<PaymentResultPage />} />
             <Route path="/odeme/iptal" element={<PaymentResultPage />} />

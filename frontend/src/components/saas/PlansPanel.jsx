@@ -22,7 +22,7 @@ export const PlansPanel = ({ plans, catalog, onChanged }) => {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-slate-500">“Yayınla” açık paketler <b>tamkobi.com</b> vitrininde görünür; kapalı olanlar gizlenir.</p>
         <div className="flex gap-2">
-          <a href="/fiyatlar" target="_blank" rel="noreferrer" className="px-3 py-2 border border-slate-200 rounded-xl font-semibold flex items-center gap-1.5 hover:bg-white" data-testid="plans-preview-site"><ExternalLink className="w-3.5 h-3.5" /> Sitede gör</a>
+          <a href="/web" target="_blank" rel="noreferrer" className="px-3 py-2 border border-slate-200 rounded-xl font-semibold flex items-center gap-1.5 hover:bg-white" data-testid="plans-preview-site"><ExternalLink className="w-3.5 h-3.5" /> Sitede gör</a>
           <button onClick={() => setEdit({})} className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center gap-1.5" data-testid="new-plan-btn"><Plus className="w-4 h-4" /> Yeni Paket</button>
         </div>
       </div>

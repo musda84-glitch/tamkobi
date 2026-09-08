@@ -81,7 +81,7 @@ export const WebsiteAdminPanel = ({ plans, onChanged }) => {
             <h3 className="font-bold text-slate-900 text-sm">Vitrindeki paketler</h3>
             <Link to="/sistem/paketler" className="text-[11px] font-semibold text-emerald-700 inline-flex items-center gap-1" data-testid="web-go-plans"><Package className="w-3.5 h-3.5" /> Paketleri düzenle</Link>
           </div>
-          <p className="text-[11px] text-slate-500">Açık olanlar fiyatlar sayfasında görünür.</p>
+          <p className="text-[11px] text-slate-500">Açık olanlar web vitrininde görünür.</p>
           <ul className="divide-y">{(plans || []).map((p) => (
             <li key={p.id} className="py-2 flex items-center justify-between gap-2" data-testid={`web-plan-${p.id}`}>
               <div className="min-w-0"><PlanChip name={p.name} color={p.color} /><div className="text-[10px] text-slate-400 mt-0.5 truncate">{p.price_monthly} ₺/ay · {p.modules?.length || 0} modül</div></div>
