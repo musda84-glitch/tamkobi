@@ -496,6 +496,8 @@ class Employee(BaseDocument):
     phone: str
     email: str
     salary: float  # Net Maaş
+    meal_allowance: float = 0.0  # Aylık yemek
+    transport_allowance: float = 0.0  # Aylık yol / ulaşım
     start_date: str
     status: str = "active"  # active, on_leave, terminated
     annual_leave_days: int = 14

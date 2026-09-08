@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, Utensils, Bus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -115,6 +115,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
+  const [allow, setAllow] = useState({ meal: "", transport: "" });
+  const [busyAllow, setBusyAllow] = useState(false);
   useEscape(() => {
     if (quickPay) return;
     if (payItem) { setPayItem(null); return; }
@@ -165,6 +167,21 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     } finally { setBusyPay(false); }
   };
   const btn = "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap";
+  useEffect(() => {
+    if (!card?.employee) return;
+    setAllow({ meal: card.employee.meal_allowance ?? 0, transport: card.employee.transport_allowance ?? 0 });
+  }, [card?.employee?.meal_allowance, card?.employee?.transport_allowance, card?.employee?.id]);
+  const saveAllowances = async (ev) => {
+    ev.preventDefault();
+    setBusyAllow(true);
+    try {
+      await axios.put(`${API_URL}/personnel/employees/${id}`, { meal_allowance: Number(allow.meal) || 0, transport_allowance: Number(allow.transport) || 0 });
+      toast.success("Yemek ve yol tutarları kaydedildi.");
+      afterMoney();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+    finally { setBusyAllow(false); }
+  };
+  const b = card?.balance || {};
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
@@ -183,10 +200,31 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           {!card ? <div className="text-slate-400">Yükleniyor…</div> : (<>
             {tab === "summary" && (
               <div className="space-y-4">
+                <div className={`rounded-xl p-3 border ${Number(b.remaining) < 0 ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"}`} data-testid="emp-stat-remaining">
+                  <div className="text-[10px] uppercase font-semibold text-slate-500">{Number(b.remaining) < 0 ? "Personel borcu" : "Kalan alacak"}</div>
+                  <div className={`text-xl font-black ${Number(b.remaining) < 0 ? "text-rose-700" : "text-emerald-800"}`} data-testid="emp-remaining-amount">{fmt(b.remaining)} ₺</div>
+                  <div className="mt-1 text-[10px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>Ödenmemiş maaş {fmt(b.unpaid_payroll)} ₺</span>
+                    <span>Masraf {fmt(b.unpaid_expenses)} ₺</span>
+                    {Number(b.meal_due) > 0 && <span>Yemek {fmt(b.meal_due)} ₺</span>}
+                    {Number(b.transport_due) > 0 && <span>Yol {fmt(b.transport_due)} ₺</span>}
+                    {Number(b.bonus_pending) > 0 && <span>Prim {fmt(b.bonus_pending)} ₺</span>}
+                    {Number(b.advances) > 0 && <span>Avans −{fmt(b.advances)} ₺</span>}
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <Stat label="Net Maaş" value={`${fmt(e.salary)} ₺`} sub={`Bordro brüt ${fmt(e.payroll_salary || e.salary * 1.4)} ₺${e.second_salary ? ` · 2. maaş ${fmt(e.second_salary)} ₺` : ""}`} testid="emp-stat-salary" /><Stat label="Kalan İzin" value={`${card.leave_balance.remaining} / ${card.leave_balance.annual} gün`} testid="emp-stat-leave" />
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
                 </div>
+                <form onSubmit={saveAllowances} className="border border-slate-200 rounded-xl p-3 space-y-2" data-testid="emp-allowance-form">
+                  <div className="font-bold text-slate-800">Aylık masraflar (karttan)</div>
+                  <p className="text-[10px] text-slate-500">Yemek ve yol tutarları personel kartından belirlenir. Bu ay henüz masraf yazılmamış kısım kalan alacağa eklenir; Masraf butonunda önerilir.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-0.5"><span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 uppercase"><Utensils className="w-3 h-3" /> Yemek (₺ / ay)</span><input type="number" min="0" step="0.01" value={allow.meal} onChange={(e) => setAllow((s) => ({ ...s, meal: e.target.value }))} className="w-full bg-slate-50 border rounded-lg p-1.5" data-testid="emp-card-meal" /></label>
+                    <label className="space-y-0.5"><span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 uppercase"><Bus className="w-3 h-3" /> Yol / ulaşım (₺ / ay)</span><input type="number" min="0" step="0.01" value={allow.transport} onChange={(e) => setAllow((s) => ({ ...s, transport: e.target.value }))} className="w-full bg-slate-50 border rounded-lg p-1.5" data-testid="emp-card-transport" /></label>
+                  </div>
+                  <div className="flex justify-end"><button type="submit" disabled={busyAllow} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-card-allowance-save">{busyAllow ? "…" : "Kaydet"}</button></div>
+                </form>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {e.status === "active" ? "Aktif" : e.status}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
                 <div className="text-slate-500">Belgeler: {card.documents.length} · Bordro: {card.payrolls.length} dönem · Ödenen maaş toplamı: {fmt(card.totals.paid_salary)} ₺</div>
               </div>
@@ -209,7 +247,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </>)}
         </div>
       </div>
-      {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
+      {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} allowances={{ meal: e.meal_allowance, transport: e.transport_allowance }} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
       {payItem && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
