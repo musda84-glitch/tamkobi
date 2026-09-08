@@ -1433,6 +1433,144 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
     products = await db.products.find(query).to_list(10000)
     return clean_docs(products)
 
+
+def _reorder_qty(p: dict) -> float:
+    min_qty = float(p.get("min_stock_alert") or 0)
+    have = float(p.get("stock_quantity") or 0)
+    return max(min_qty - have, 1)
+
+
+async def _last_buys_by_product(company_id: str) -> Dict[str, dict]:
+    invs = await db.invoices.find(
+        {"company_id": company_id, "invoice_type": "purchase", "status": {"$nin": ["cancelled", "void", "rejected"]}},
+        {"items": 1, "contact_id": 1, "contact_name": 1, "issue_date": 1},
+    ).sort("issue_date", -1).to_list(4000)
+    last: Dict[str, dict] = {}
+    for inv in invs:
+        for it in inv.get("items") or []:
+            pid = it.get("product_id")
+            if not pid or pid in last:
+                continue
+            try:
+                price = float(it.get("unit_price") or 0)
+            except (TypeError, ValueError):
+                price = 0
+            last[pid] = {
+                "contact_id": inv.get("contact_id") or "",
+                "contact_name": inv.get("contact_name") or "",
+                "unit_price": price,
+            }
+    return last
+
+
+async def _reorder_lines(company_id: str, product_ids: Optional[List[str]] = None) -> List[dict]:
+    query: Dict[str, Any] = {"company_id": company_id, "type": {"$nin": ["service"]}}
+    if product_ids:
+        query["_id"] = {"$in": product_ids}
+    products = await db.products.find(query).to_list(5000)
+    if not product_ids:
+        products = [p for p in products if p.get("track_stock") is not False and float(p.get("stock_quantity") or 0) <= float(p.get("min_stock_alert") or 0)]
+    last = await _last_buys_by_product(company_id) if products else {}
+    rows = []
+    for p in products:
+        pid = p.get("_id") or p.get("id")
+        buy = last.get(pid) or {}
+        price = float(buy.get("unit_price") or 0) or float(p.get("purchase_price") or 0)
+        rows.append({
+            "product_id": pid,
+            "sku": p.get("sku") or "",
+            "name": p.get("name") or "",
+            "unit": p.get("unit") or "Adet",
+            "vat_rate": int(p.get("purchase_vat_rate") or p.get("vat_rate") or 20),
+            "stock_quantity": float(p.get("stock_quantity") or 0),
+            "min_stock_alert": float(p.get("min_stock_alert") or 0),
+            "quantity": _reorder_qty(p),
+            "unit_price": price,
+            "contact_id": buy.get("contact_id") or "",
+            "contact_name": buy.get("contact_name") or "",
+        })
+    return rows
+
+
+@api_router.get("/products/reorder-preview")
+async def reorder_preview(company_id: Optional[str] = "comp_nexus_main_01", product_ids: Optional[str] = None):
+    ids = [x for x in (product_ids or "").split(",") if x.strip()]
+    lines = await _reorder_lines(company_id, ids or None)
+    return {"company_id": company_id, "lines": lines, "count": len(lines)}
+
+
+@api_router.post("/products/reorder-purchases")
+async def reorder_purchases(req: Dict[str, Any]):
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    raw_lines = req.get("lines") or []
+    fallback = req.get("contact_id") or ""
+    if not raw_lines:
+        raw_lines = await _reorder_lines(company_id, None)
+    pids = [str(x.get("product_id") or "") for x in raw_lines if x.get("product_id")]
+    owned = {p["_id"]: p for p in await db.products.find({"company_id": company_id, "_id": {"$in": pids}}).to_list(5000)} if pids else {}
+    fallback_contact = None
+    if fallback:
+        fallback_contact = await db.contacts.find_one({"_id": fallback, "company_id": company_id})
+        if not fallback_contact:
+            raise HTTPException(status_code=400, detail="Tedarikçi bu firmaya ait değil.")
+    grouped: Dict[str, dict] = {}
+    missing = []
+    contact_cache: Dict[str, Any] = {}
+    if fallback_contact:
+        contact_cache[fallback_contact["_id"]] = fallback_contact
+    for line in raw_lines:
+        pid = str(line.get("product_id") or "")
+        p = owned.get(pid)
+        if not p:
+            continue
+        cid = str(line.get("contact_id") or "") or (fallback_contact["_id"] if fallback_contact else "")
+        contact = contact_cache.get(cid)
+        if cid and contact is None:
+            contact = await db.contacts.find_one({"_id": cid, "company_id": company_id})
+            contact_cache[cid] = contact
+        if not contact:
+            missing.append(p.get("sku") or p.get("name"))
+            continue
+        try:
+            qty = float(line.get("quantity") or _reorder_qty(p))
+        except (TypeError, ValueError):
+            qty = _reorder_qty(p)
+        if qty <= 0:
+            qty = 1
+        try:
+            price = float(line.get("unit_price") or p.get("purchase_price") or 0)
+        except (TypeError, ValueError):
+            price = float(p.get("purchase_price") or 0)
+        vat = int(line.get("vat_rate") or p.get("purchase_vat_rate") or p.get("vat_rate") or 20)
+        grouped.setdefault(cid, {"contact": contact, "items": []})
+        grouped[cid]["items"].append(InvoiceItem(
+            product_id=pid, name=p.get("name") or "", quantity=qty, unit=p.get("unit") or "Adet",
+            unit_price=price, vat_rate=vat, total=round(qty * price, 2),
+        ))
+    if missing and not grouped:
+        raise HTTPException(status_code=400, detail=f"Tedarikçi seçin: {', '.join(missing[:8])}")
+    created = []
+    for _cid, bundle in grouped.items():
+        c = bundle["contact"]
+        inv = Invoice(
+            company_id=company_id, invoice_type="purchase", e_type="paper", status="draft",
+            contact_id=c["_id"], contact_name=c.get("name") or "",
+            contact_tax_id=str(c.get("tax_number_or_id") or ""),
+            items=bundle["items"],
+            notes="Kritik stok siparişi (stok kartından)",
+            source_channel="stock_reorder",
+        )
+        created.append(await create_invoice(inv))
+    return {
+        "status": "success",
+        "invoices": [{"id": x.get("id"), "invoice_number": x.get("invoice_number"), "contact_name": x.get("contact_name"), "grand_total": x.get("grand_total")} for x in created],
+        "count": len(created),
+        "skipped": missing,
+        "message": (f"{len(created)} taslak alış faturası oluşturuldu." if created else "Fatura oluşturulamadı.")
+        + (f" Tedarikçisiz: {', '.join(missing[:8])}" if missing else ""),
+    }
+
+
 @api_router.post("/products")
 async def create_product(product: Product):
     if not product.barcode:

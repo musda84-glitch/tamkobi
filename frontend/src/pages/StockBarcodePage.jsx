@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   Trash2,
   Sparkles,
+  ShoppingCart,
 } from "lucide-react";
 import { StockCountPanel } from "../components/StockCountPanel";
 import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
@@ -66,6 +67,7 @@ export default function StockBarcodePage() {
   const [scanResultProduct, setScanResultProduct] = useState(null);
   const [detailProduct, setDetailProduct] = useState(null);
   const [produceProduct, setProduceProduct] = useState(null);
+  const [reorder, setReorder] = useState(null);
   const [detailTab, setDetailTab] = useState("images");
   const [withVariants, setWithVariants] = useState(false);
 
@@ -96,6 +98,41 @@ export default function StockBarcodePage() {
     } catch (err) {
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : "Stok kartı silinemedi.");
+    }
+  };
+
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const openReorder = async (productIds) => {
+    try {
+      const qs = productIds?.length ? `&product_ids=${productIds.join(",")}` : "";
+      const [prev, cnt] = await Promise.all([
+        axios.get(`${API_URL}/products/reorder-preview?company_id=${companyId}${qs}`),
+        axios.get(`${API_URL}/contacts?company_id=${companyId}`),
+      ]);
+      const suppliers = (cnt.data || []).filter((c) => c.type !== "customer");
+      const all = cnt.data || [];
+      setReorder({ lines: prev.data.lines || [], contacts: suppliers.length ? suppliers : all, fallback: "", busy: false });
+      if (!(prev.data.lines || []).length) toast.error("Alınacak ürün yok (kritik stok bulunamadı).");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Satın alma önerisi yüklenemedi.");
+    }
+  };
+  const submitReorder = async () => {
+    if (!reorder?.lines?.length) return;
+    setReorder((s) => ({ ...s, busy: true }));
+    try {
+      const r = await axios.post(`${API_URL}/products/reorder-purchases`, {
+        company_id: companyId,
+        contact_id: reorder.fallback || undefined,
+        lines: reorder.lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity) || 1, unit_price: l.unit_price, contact_id: l.contact_id || reorder.fallback, vat_rate: l.vat_rate })),
+      });
+      toast.success(r.data.message);
+      const first = (r.data.invoices || [])[0];
+      setReorder(null);
+      if (first?.id) navigate(`/invoices?type=purchase`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Alış faturası oluşturulamadı.");
+      setReorder((s) => ({ ...s, busy: false }));
     }
   };
 
@@ -253,12 +290,55 @@ export default function StockBarcodePage() {
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
+      {reorder && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="stock-reorder-modal">
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 shadow-2xl max-h-[90vh] overflow-y-auto text-xs">
+            <div className="flex items-center justify-between border-b pb-2">
+              <div className="flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-amber-700" /><h3 className="text-base font-bold text-slate-900">Tedarikçi satın alma</h3></div>
+              <button type="button" onClick={() => setReorder(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-slate-500">Min. stok eksiği kadar taslak alış faturası. Son alış tedarikçisi ve fiyatı doldurulur; yoksa aşağıdan tedarikçi seçin.</p>
+            <div className="flex items-center gap-2">
+              <label className="font-semibold text-slate-600 whitespace-nowrap">Varsayılan tedarikçi</label>
+              <select value={reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, fallback: e.target.value }))} className="flex-1 bg-slate-50 border rounded-lg p-1.5" data-testid="stock-reorder-fallback">
+                <option value="">— satırdaki / son alış —</option>
+                {reorder.contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="border rounded-xl overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-2 py-1.5">Ürün</th><th className="px-2 py-1.5 text-right">Stok / Min</th><th className="px-2 py-1.5 text-right">Sipariş</th><th className="px-2 py-1.5 text-right">Birim ₺</th><th className="px-2 py-1.5">Tedarikçi</th></tr></thead>
+                <tbody>
+                  {reorder.lines.map((l, i) => (
+                    <tr key={l.product_id} className="border-t" data-testid={`stock-reorder-row-${l.sku}`}>
+                      <td className="px-2 py-1.5"><div className="font-semibold text-slate-900">{l.name}</div><div className="font-mono text-[10px] text-slate-400">{l.sku}</div></td>
+                      <td className="px-2 py-1.5 text-right">{l.stock_quantity} / {l.min_stock_alert}</td>
+                      <td className="px-2 py-1.5"><input type="number" min="1" value={l.quantity} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) }))} className="w-20 bg-slate-50 border rounded p-1 text-right" data-testid={`stock-reorder-qty-${l.sku}`} /></td>
+                      <td className="px-2 py-1.5 text-right">{Number(l.unit_price || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-2 py-1.5">
+                        <select value={l.contact_id || reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, contact_id: e.target.value, contact_name: (s.contacts.find((c) => c.id === e.target.value) || {}).name || "" } : x) }))} className="w-full bg-slate-50 border rounded p-1" data-testid={`stock-reorder-supplier-${l.sku}`}>
+                          <option value="">Seçin</option>
+                          {reorder.contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setReorder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
+              <button type="button" disabled={reorder.busy || !reorder.lines.length} onClick={submitReorder} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="stock-reorder-submit">{reorder.busy ? "Oluşturuluyor…" : "Taslak alış oluştur"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
       <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} />
+      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} onReorderCritical={() => openReorder()} />
 
       {/* Products Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
@@ -366,6 +446,9 @@ export default function StockBarcodePage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => setPrintBarcodeProduct(prod)} data-testid={`print-barcode-btn-${prod.sku}`}>
                               <Printer className="w-4 h-4" /> Hızlı barkod
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => openReorder([prod.id || prod._id])} data-testid={`reorder-btn-${prod.sku}`}>
+                              <ShoppingCart className="w-4 h-4" /> Tedarikçiden al
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
