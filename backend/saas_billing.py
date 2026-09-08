@@ -142,7 +142,8 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
     s = await settings()
     sender = await _db.mail_accounts.find_one({"company_id": s["sender_company_id"]}, {"email": 1})
     wa = await _db.whatsapp_settings.find_one({"company_id": s["sender_company_id"]}, {"phone_number_id": 1})
-    return {**s, "id": "platform", "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
+    plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
+    return {**s, "id": "platform", "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
 
 
 @router.put("/system/settings")
@@ -180,7 +181,8 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:
-            acc = await _deps["mail_account"](st["sender_company_id"])
+            import platform_mail
+            acc = await platform_mail.resolve_smtp_account("transactional") or await _deps["mail_account"](st["sender_company_id"])
             btn = f"<p style='margin-top:16px'><a href='{link}' style='background:#10b981;color:#0f172a;padding:12px 20px;border-radius:12px;font-weight:bold;text-decoration:none'>Şimdi Yenile →</a></p>" if link else ""
             await _deps["smtp_send"](acc, emails, title, body, html=f"<div style='font-family:Arial,sans-serif;max-width:600px'><h2 style='color:#0f172a'>{title}</h2><p>{body.replace(' Tek tıkla yenilemek için: ' + link, '') if link else body}</p>{btn}</div>")
             res["email"] = emails
