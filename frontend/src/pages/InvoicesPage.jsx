@@ -36,6 +36,7 @@ import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
+import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
@@ -112,15 +113,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [invRes, cntRes, prodRes, bankRes] = await Promise.all([
-        axios.get(`${API_URL}/invoices?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`),
-        axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const [invoices, contacts, products, bankRes] = await Promise.all([
+        cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
+        cachedList("contacts", cid, { onCached: setContacts }),
+        cachedList("products", cid, { onCached: setProducts }),
+        axios.get(`${API_URL}/banking/accounts?company_id=${cid}`)
       ]);
-      setInvoices(invRes.data);
-      setContacts(cntRes.data);
-      setProducts(prodRes.data);
+      setInvoices(invoices);
+      setContacts(contacts);
+      setProducts(products);
       setBankAccounts(bankRes.data);
       if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {

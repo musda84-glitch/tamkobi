@@ -21,6 +21,7 @@ import {
   MessageSquare
 } from "lucide-react";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
+import { cachedList, contactTypeFilter, productFilter } from "../utils/dataSync";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -115,16 +116,17 @@ export default function OrdersB2BPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [ordRes, prodRes, cntRes] = await Promise.all([
-        axios.get(`${API_URL}/orders?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&b2b_only=true`),
-        axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=customer`)
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const [orders, products, contacts] = await Promise.all([
+        cachedList("orders", cid, { onCached: setOrders }),
+        cachedList("products", cid, { filter: productFilter({ b2bOnly: true }), onCached: setProducts }),
+        cachedList("contacts", cid, { filter: contactTypeFilter("customer"), onCached: setContacts })
       ]);
-      setOrders(ordRes.data);
-      setProducts(prodRes.data);
-      setContacts(cntRes.data);
-      axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`).then((r) => setAllProducts(r.data)).catch(() => {});
-      if (cntRes.data.length > 0) setB2bCustomer(cntRes.data[0].id || cntRes.data[0]._id);
+      setOrders(orders);
+      setProducts(products);
+      setContacts(contacts);
+      cachedList("products", cid).then(setAllProducts).catch(() => {});
+      if (contacts.length > 0) setB2bCustomer(contacts[0].id || contacts[0]._id);
     } catch (err) {
       toast.error("Sipariş verileri yüklenemedi.");
     } finally {

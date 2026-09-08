@@ -18,6 +18,7 @@ import {
   Link2
 } from "lucide-react";
 import { PartnersPanel } from "../components/PartnersPanel";
+import { cachedList } from "../utils/dataSync";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 
@@ -67,15 +68,15 @@ export default function BankingPage() {
   const loadBankingData = useCallback(async () => {
     try {
       setLoading(true);
-      const [accRes, txRes, cRes, psRes] = await Promise.all([
+      const [accRes, transactions, contacts, psRes] = await Promise.all([
         axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
-        axios.get(`${API_URL}/banking/transactions?company_id=${companyId}`),
-        axios.get(`${API_URL}/contacts?company_id=${companyId}`).catch(() => ({ data: [] })),
+        cachedList("bank_transactions", companyId, { onCached: setTransactions }),
+        cachedList("contacts", companyId, { onCached: setContacts }).catch(() => []),
         axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`).catch(() => ({ data: null }))
       ]);
       setAccounts(accRes.data);
-      setTransactions(txRes.data);
-      setContacts(cRes.data);
+      setTransactions(transactions);
+      setContacts(contacts);
       setPartnerSummary(psRes.data);
       const manual = accRes.data.filter((a) => !a.is_integrated);
       if (manual.length >= 2) {
