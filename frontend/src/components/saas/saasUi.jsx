@@ -54,3 +54,5 @@ export const QuotaBar = ({ used = 0, limit = 0, testId }) => {
     </div>
   );
 };
+
+export const groupByCategory = (catalog) => catalog.filter((m) => !m.is_core).reduce((acc, m) => { (acc[m.category] = acc[m.category] || []).push(m); return acc; }, {});
