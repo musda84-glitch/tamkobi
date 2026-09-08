@@ -62,8 +62,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const publicSite = location.pathname === "/" && !authenticated;
   if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/web", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
-  const routeKey = { "/sevk": "/orders", "/sayim": "/stock", "/saha": "/orders", "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices" }[location.pathname] || location.pathname;
-  const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
+  const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
   const lockedModule = !moduleOn(location.pathname);
 
   const roleLabels = {

@@ -19,17 +19,27 @@ CACHE_TTL = 15
 
 CORE_MODULES = {"/", "/settings", "/trash"}
 # Etiketler frontend/src/navGroups.js NAV_GROUPS ile aynı kalmalı (ERP menü, paket editörü, web vitrin).
-CATEGORIES = {"/invoices": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
-              "/stock": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
-DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv, gelen e-belge kutusu", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre, bakiye, B2B portal", "/installments": "Taksitli satış ve ödeme planları",
+# Sidebar pages that used to inherit a parent license key (LICENSE_KEY aliases).
+PANEL_MODULE_FROM = {
+    "/edoc-inbox": "/invoices",
+    "/dis-ticaret": "/invoices",
+    "/b2b-yonetim": "/contacts",
+    "/sayim": "/stock",
+    "/saha": "/orders",
+    "/sevk": "/orders",
+    "/mesai": "/personnel",
+}
+CATEGORIES = {"/invoices": "Muhasebe", "/edoc-inbox": "Muhasebe", "/dis-ticaret": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
+              "/stock": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/mesai": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
+DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv", "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım", "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre ve bakiye", "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi ve sipariş onayları", "/installments": "Taksitli satış ve ödeme planları",
                 "/banking": "Banka, kasa, POS, virman, canlı banka eşleme", "/expenses": "Masraf ve bütçe yönetimi", "/loans": "Kredi ve kredi kartı takibi", "/cheques": "Alınan/verilen çek ve senet girişi, tahsil, ciro, karşılıksız", "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları", "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/warehouses": "Çoklu depo, transfer, stok sayımı", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri",
+                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu", "/warehouses": "Çoklu depo ve transfer", "/sevk": "Depo sevkiyat kiosk, sipariş toplama", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri",
                 "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme", "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı", "/surveys": "Keşif, ölçü ve teklife dönüştürme",
-                "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, puantaj, vardiya, izin", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
+                "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/saha": "Tablet saha sipariş ve müşteri ziyareti", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, vardiya, izin", "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
 
-_STARTER = ["/invoices", "/dispatches", "/contacts", "/banking", "/expenses", "/stock", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/communication", "/accountant"]
-_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/ai-advisor"]
+_STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/sayim", "/reports"]
+_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/saha", "/sevk", "/communication", "/accountant"]
+_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_PLANS = [
     {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
@@ -86,6 +96,17 @@ def catalog():
     return [{"key": k, "label": l, "category": CATEGORIES.get(k, "Genel"), "description": DESCRIPTIONS.get(k, ""), "is_core": k in CORE_MODULES} for k, l in rbac.MODULES]
 
 
+def _sync_plan_modules(mods: list) -> list:
+    """Add panel modules that used to piggy-back on a parent key."""
+    out = list(mods or [])
+    seen = set(out)
+    for child, parent in PANEL_MODULE_FROM.items():
+        if parent in seen and child not in seen:
+            out.append(child)
+            seen.add(child)
+    return out
+
+
 async def license_id_of(company_id: str) -> str:
     c = await _db.companies.find_one({"_id": company_id}, {"license_id": 1})
     return (c or {}).get("license_id") or company_id
@@ -128,15 +149,24 @@ async def seed():
         if "/projects" in mods:
             extra = [m for m in ("/quotes", "/surveys") if m not in mods]
             if extra:
-                await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"modules": mods + extra}})
+                mods = mods + extra
+        synced = _sync_plan_modules(mods)
+        if p.get("code") == "enterprise":
+            extra_all = [k for k in _ALL if k not in synced]
+            synced = synced + extra_all
+        if synced != list((cur or {}).get("modules") or []):
+            await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"modules": synced}})
     async for lic in _db.company_licenses.find({}):
         ov = dict(lic.get("module_overrides") or {})
-        if "/projects" not in ov:
-            continue
         changed = False
-        for k in ("/quotes", "/surveys"):
-            if k not in ov:
-                ov[k] = ov["/projects"]
+        if "/projects" in ov:
+            for k in ("/quotes", "/surveys"):
+                if k not in ov:
+                    ov[k] = ov["/projects"]
+                    changed = True
+        for child, parent in PANEL_MODULE_FROM.items():
+            if parent in ov and child not in ov:
+                ov[child] = ov[parent]
                 changed = True
         if changed:
             await _db.company_licenses.update_one({"_id": lic["_id"]}, {"$set": {"module_overrides": ov}})
