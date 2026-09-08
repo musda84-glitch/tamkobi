@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase } from "lucide-react";
+import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase, Receipt } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -9,10 +9,14 @@ import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
 import { MapPin, LocateFixed } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { useNavigate } from "react-router-dom";
+import { ExpenseModal, EMPTY_EXPENSE } from "./ExpensesPage";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const STATUS = { draft: ["Taslak", "bg-slate-100 text-slate-600"], sent: ["Gönderildi", "bg-blue-50 text-blue-700"], accepted: ["Kabul / Faturalandı", "bg-emerald-50 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-50 text-rose-700"], planning: ["Planlama", "bg-slate-100 text-slate-600"], active: ["Devam Ediyor", "bg-blue-50 text-blue-700"], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700"], on_hold: ["Beklemede", "bg-amber-50 text-amber-700"], planned: ["Planlandı", "bg-slate-100 text-slate-600"], done: ["Yapıldı", "bg-blue-50 text-blue-700"], quoted: ["Teklife Dönüştü", "bg-emerald-50 text-emerald-700"] };
+const STAGES = [["planning", "Planlama"], ["active", "Devam"], ["completed", "Bitti"]];
+const stageRank = { planning: 0, on_hold: 1, active: 1, completed: 2 };
 const Badge = ({ s }) => { const [l, c] = STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
 
 const ImageStrip = ({ entity, doc, onUpdated }) => {
@@ -56,6 +60,7 @@ const PAGE_META = {
 
 export default function ProjectsPage({ section = "quotes" }) {
   const { activeCompany } = useAuth();
+  const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const tab = ["quotes", "projects", "surveys"].includes(section) ? section : "quotes";
   const meta = PAGE_META[tab];
@@ -67,6 +72,8 @@ export default function ProjectsPage({ section = "quotes" }) {
   const [planQuote, setPlanQuote] = useState(null);
   const [approvalQuote, setApprovalQuote] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
+  const [expModal, setExpModal] = useState(null);
+  const [expMeta, setExpMeta] = useState({ categories: [], accounts: [], contacts: [], employees: [] });
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
 
@@ -156,13 +163,35 @@ export default function ProjectsPage({ section = "quotes" }) {
           {projects.map((p) => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
-              <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
+              <div className="flex gap-1" data-testid={`project-stages-${p.project_number}`}>
+                {STAGES.map(([k, l], i) => {
+                  const on = p.status === k || (k === "active" && p.status === "on_hold");
+                  const done = stageRank[p.status] > i || on;
+                  return <button key={k} type="button" onClick={() => setStatus("projects", p.id, k)} className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${on ? "bg-emerald-600 text-white" : done ? "bg-emerald-50 text-emerald-800" : "bg-slate-50 text-slate-400"}`} data-testid={`project-stage-${p.project_number}-${k}`}>{i + 1}. {l}</button>;
+                })}
+              </div>
+              <div className="grid grid-cols-4 gap-1 text-[10px]">
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div>
+                <div className="bg-rose-50 rounded-lg p-1.5"><div className="text-rose-400">Gider</div><b className="text-rose-700" data-testid={`project-cost-${p.project_number}`}>{fmt(p.cost_total)} ₺</b></div>
+              </div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
               <ImageStrip entity="project" doc={p} onUpdated={load} />
-              <div className="flex items-center gap-1 pt-2 border-t">
-                <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1 text-[11px]" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
-                <button onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="ml-auto flex items-center gap-1 px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif Oluştur <ArrowRight className="w-3 h-3" /></button>
-                <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
+              <div className="flex flex-wrap items-center gap-1 pt-2 border-t">
+                {p.status !== "on_hold" && p.status !== "completed" && <button type="button" onClick={() => setStatus("projects", p.id, "on_hold")} className="px-2 py-1 border border-amber-200 text-amber-800 bg-amber-50 rounded-lg font-semibold" data-testid={`project-hold-${p.project_number}`}>Beklet</button>}
+                <button type="button" onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="flex items-center gap-1 px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif <ArrowRight className="w-3 h-3" /></button>
+                <button type="button" onClick={async () => {
+                  try {
+                    const [c, a, ct, em] = await Promise.all([axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`)]);
+                    setExpMeta({ categories: c.data, accounts: a.data, contacts: ct.data.filter((x) => x.type !== "customer"), employees: em.data });
+                    setExpModal({ ...EMPTY_EXPENSE, project_id: p.id, description: `${p.name} masrafı` });
+                  } catch { toast.error("Masraf formu açılamadı."); }
+                }} className="flex items-center gap-1 px-2 py-1 border border-rose-200 text-rose-700 rounded-lg font-semibold" data-testid={`project-expense-${p.project_number}`}><Receipt className="w-3 h-3" /> Masraf</button>
+                <button type="button" onClick={() => navigate(`/invoices?new=purchase&project_id=${p.id}${p.contact_id ? `&contact_id=${p.contact_id}` : ""}`)} className="px-2 py-1 border rounded-lg font-semibold text-slate-700" data-testid={`project-purchase-${p.project_number}`}>Gider faturası</button>
+                {p.can_invoice && <button type="button" onClick={() => act(() => axios.post(`${API_URL}/projects/${p.id}/invoice`, {}), "Proje faturalandı.")} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`project-invoice-${p.project_number}`}><FileText className="w-3 h-3" /> Faturala</button>}
+                {p.invoice_number && !p.can_invoice && <span className="font-mono text-[10px] text-emerald-700">{p.invoice_number}</span>}
+                <button onClick={() => del("projects", p.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
           ))}
@@ -230,6 +259,7 @@ export default function ProjectsPage({ section = "quotes" }) {
           </form>
         </div>
       )}
+      {expModal && <ExpenseModal companyId={companyId} initial={expModal} categories={expMeta.categories} accounts={expMeta.accounts} contacts={expMeta.contacts} employees={expMeta.employees} projects={projects} onClose={() => setExpModal(null)} onSaved={() => { setExpModal(null); load(); }} />}
       {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
       {planQuote && <InstallmentPlanModal doc={planQuote} kind="quote" companyId={companyId} onClose={() => setPlanQuote(null)} onChanged={load} />}
       {printDoc && <PrintDocument docType={printDoc.type} doc={printDoc.doc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(true)} />}

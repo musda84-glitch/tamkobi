@@ -52,6 +52,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const { activeCompany } = useAuth();
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [products, setProducts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [filterType, setFilterType] = useState(initialType);
@@ -112,31 +113,36 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     trade_kind: "",
     incoterm: "",
     country: "",
-    customs_office: ""
+    customs_office: "",
+    project_id: ""
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
   const newParam = searchParams.get("new");
   const newContactParam = searchParams.get("contact_id");
+  const newProjectParam = searchParams.get("project_id");
   useEffect(() => {
-    if (!newParam || contacts.length === 0) return;
+    if (!newParam) return;
+    if (newContactParam && contacts.length === 0) return;
     const c = contacts.find((x) => x.id === newContactParam);
-    setFormData((fd) => ({ ...fd, invoice_type: newParam === "purchase" ? "purchase" : "sales", e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"), contact_id: c?.id || "", contact_name: c?.name || "" }));
+    setFormData((fd) => ({ ...fd, invoice_type: newParam === "purchase" ? "purchase" : "sales", e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"), contact_id: c?.id || fd.contact_id || "", contact_name: c?.name || fd.contact_name || "", project_id: newProjectParam || fd.project_id || "" }));
     setShowNewModal(true);
-    setSearchParams(newContactParam ? { contact_id: newContactParam } : {}, { replace: true });
-  }, [newParam, newContactParam, contacts, setSearchParams]);
+    setSearchParams({}, { replace: true });
+  }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [invRes, cntRes, prodRes, bankRes] = await Promise.all([
+      const [invRes, cntRes, prodRes, bankRes, projRes] = await Promise.all([
         axios.get(`${API_URL}/invoices?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`),
         axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
         axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+        axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
+        axios.get(`${API_URL}/projects?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
       ]);
       setInvoices(invRes.data);
       setContacts(cntRes.data);
+      setProjects(projRes.data);
       setProducts(prodRes.data);
       setBankAccounts(bankRes.data);
       if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
@@ -643,6 +649,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "", e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type })}
                     testId="inv-contact-select"
                   />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Proje (opsiyonel)</label>
+                  <select value={formData.project_id || ""} onChange={(e) => { const id = e.target.value; const p = projects.find((x) => x.id === id); setFormData({ ...formData, project_id: id, project_number: p?.project_number || "" }); }} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="inv-project-select">
+                    <option value="">— Projesiz —</option>
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.project_number} · {p.name}</option>)}
+                  </select>
                 </div>
                 {quickContact && (
                   <div className="sm:col-span-3">

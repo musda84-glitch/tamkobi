@@ -557,7 +557,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
            "contact_name": q.get("contact_name"), "invoice_type": "sales", "e_type": req.get("e_type", "e_archive"), "items": items, "subtotal": q["subtotal"], "vat_total": q["vat_total"],
            "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
-           "quote_id": quote_id, "created_at": datetime.now(timezone.utc).isoformat()}
+           "quote_id": quote_id, "project_id": q.get("project_id"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(inv)
     if q.get("payment_plan"):
         await _create_invoice_installments(inv, q["payment_plan"].get("config", {}))
@@ -599,15 +599,39 @@ async def convert_quote_to_project(quote_id: str):
     project = clean_doc(await db.projects.find_one({"_id": project["id"]}))
     return {"status": "success", "project": project, "message": f"{q['quote_number']} → {project['project_number']} proje oluşturuldu."}
 
+def _group_by_project(rows):
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r.get("project_id"), []).append(r)
+    return grouped
+
 @api_router.get("/projects")
 async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
+    pids = [p["_id"] for p in projects]
+    quotes = await db.quotes.find({"project_id": {"$in": pids}}).to_list(2000) if pids else []
+    expenses_rows = await db.expenses.find({"project_id": {"$in": pids}}).to_list(2000) if pids else []
+    invoices_rows = await db.invoices.find({"project_id": {"$in": pids}, "invoice_type": {"$ne": "dispatch"}}).to_list(2000) if pids else []
+    qmap, emap, imap = _group_by_project(quotes), _group_by_project(expenses_rows), _group_by_project(invoices_rows)
     out = []
     for p in projects:
-        quotes = await db.quotes.find({"project_id": p["_id"]}).to_list(100)
-        p["quote_count"] = len(quotes)
-        p["quoted_total"] = sum(q.get("grand_total", 0) for q in quotes)
-        p["invoiced_total"] = sum(q.get("grand_total", 0) for q in quotes if q.get("invoice_id"))
+        pid = p["_id"]
+        qs = qmap.get(pid) or []
+        exs = emap.get(pid) or []
+        invs = imap.get(pid) or []
+        sales = [i for i in invs if i.get("invoice_type") != "purchase"]
+        purchases = [i for i in invs if i.get("invoice_type") == "purchase"]
+        quote_invoiced = sum(q.get("grand_total", 0) for q in qs if q.get("invoice_id"))
+        sales_total = sum(i.get("grand_total", 0) for i in sales)
+        p["quote_count"] = len(qs)
+        p["quoted_total"] = round(sum(q.get("grand_total", 0) for q in qs), 2)
+        p["invoiced_total"] = round(max(quote_invoiced, sales_total), 2)
+        p["expense_total"] = round(sum(e.get("total", 0) for e in exs), 2)
+        p["purchase_invoice_total"] = round(sum(i.get("grand_total", 0) for i in purchases), 2)
+        p["cost_total"] = round(p["expense_total"] + p["purchase_invoice_total"], 2)
+        p["can_invoice"] = p.get("status") == "completed" and not p.get("invoice_id") and (
+            any(not q.get("invoice_id") for q in qs) or (not qs and float(p.get("budget") or 0) > 0)
+        )
         out.append(clean_doc(p))
     return out
 
@@ -631,6 +655,66 @@ async def update_project(project_id: str, req: Dict[str, Any]):
     if not p:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     return clean_doc(p)
+
+@api_router.post("/projects/{project_id}/invoice")
+async def invoice_project(project_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    p = await db.projects.find_one({"_id": project_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    if p.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Fatura kesmek için proje Tamamlandı olmalı.")
+    if p.get("invoice_id"):
+        ex = await db.invoices.find_one({"_id": p["invoice_id"]})
+        if ex:
+            return {"status": "exists", "invoice": clean_doc(ex), "message": f"Bu proje zaten faturalandı: {ex.get('invoice_number')}"}
+    quotes = await db.quotes.find({"project_id": project_id}).to_list(200)
+    pending = [q for q in quotes if not q.get("invoice_id")]
+    items: List[Dict[str, Any]] = []
+    notes = []
+    contact_id = p.get("contact_id")
+    contact_name = p.get("contact_name") or ""
+    for q in pending:
+        notes.append(q.get("quote_number"))
+        if not contact_id and q.get("contact_id"):
+            contact_id, contact_name = q.get("contact_id"), q.get("contact_name") or contact_name
+        for it in q.get("items") or []:
+            if not (it.get("name") or it.get("product_name")):
+                continue
+            items.append({
+                "product_id": it.get("product_id"), "name": it.get("name") or it.get("product_name"),
+                "quantity": it.get("quantity", 1), "unit": it.get("unit", "Adet"),
+                "unit_price": it.get("unit_price", 0), "vat_rate": it.get("vat_rate", 20),
+                "discount_rate": it.get("discount_rate", 0),
+            })
+    if not items:
+        budget = float(p.get("budget") or 0)
+        if budget <= 0:
+            raise HTTPException(status_code=400, detail="Faturalanacak teklif kalemi veya bütçe yok.")
+        items.append({"name": p.get("name") or "Proje", "quantity": 1, "unit": "Adet", "unit_price": budget, "vat_rate": 20, "discount_rate": 0})
+        notes.append(p.get("project_number"))
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="Fatura için projeye cari bağlayın.")
+    _calc_items(items)
+    line_items = [InvoiceItem(
+        product_id=it.get("product_id") or None, name=it["name"], quantity=float(it.get("quantity") or 1),
+        unit=it.get("unit") or "Adet", unit_price=float(it.get("unit_price") or 0), vat_rate=int(it.get("vat_rate") or 20),
+        discount_rate=float(it.get("discount_rate") or 0), total=float(it.get("total") or 0),
+    ) for it in items]
+    inv = Invoice(
+        company_id=p["company_id"], invoice_type="sales", e_type=req.get("e_type") or "e_archive",
+        contact_id=contact_id, contact_name=contact_name, items=line_items,
+        issue_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        notes=req.get("notes") or f"Proje {p.get('project_number')} bitiminde faturalandı" + (f" · {' · '.join(notes)}" if notes else ""),
+        source_channel="project", project_id=project_id, project_number=p.get("project_number"),
+        status="draft",
+    )
+    created = await create_invoice(inv)
+    await db.projects.update_one({"_id": project_id}, {"$set": {"invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
+    for q in pending:
+        await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"status": "accepted", "invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
+    return {"status": "success", "invoice": created, "message": f"{p.get('project_number')} → {created['invoice_number']} taslak fatura oluşturuldu."}
+
 
 @api_router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
@@ -1922,7 +2006,7 @@ async def _fill_stock_codes(company_id: str, items: list):
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
-async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None):
+async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, project_id: Optional[str] = None):
     query = {"company_id": company_id}
     if type == "export":
         query["trade_kind"] = "export"
@@ -1934,6 +2018,8 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
         query["invoice_type"] = type
     else:
         query["invoice_type"] = {"$ne": "dispatch"}
+    if project_id:
+        query["project_id"] = project_id
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
 
