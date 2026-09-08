@@ -24,7 +24,7 @@ def main():
     info = asyncio.run(migrate())
     print(
         f"MySQL schema ready → {info['host']}:{info['port']}/{info['database']}\n"
-        "Tables: docs, meta_indexes, system_logs (created if missing)."
+        "Tables: docs, meta_indexes, system_logs (created if missing; docs.company_id generated column upgraded in place)."
     )
     print("SCHEMA:\n", SCHEMA_SQL.strip())
 

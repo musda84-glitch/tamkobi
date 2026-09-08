@@ -9,8 +9,10 @@ CREATE TABLE IF NOT EXISTS docs (
   collection VARCHAR(128) NOT NULL,
   id VARCHAR(191) NOT NULL,
   doc JSON NOT NULL,
+  company_id VARCHAR(64) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED,
   updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (collection, id)
+  PRIMARY KEY (collection, id),
+  KEY idx_docs_coll_company (collection, company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS meta_indexes (

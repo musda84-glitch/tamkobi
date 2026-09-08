@@ -125,6 +125,8 @@ async def startup_event():
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
     _asyncio.get_event_loop().create_task(applog.rotation_loop())
+    import perfmon
+    _asyncio.get_event_loop().create_task(perfmon.loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:

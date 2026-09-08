@@ -1,0 +1,21 @@
+[mysqld]
+# Conservative production defaults for TamKobi's JSON document store.
+# Tune innodb_buffer_pool_size to ~50–70% of RAM dedicated to MySQL.
+
+slow_query_log = 1
+slow_query_log_file = /var/lib/mysql/tamkobi-slow.log
+long_query_time = 1
+log_queries_not_using_indexes = 0
+log_error = /var/lib/mysql/tamkobi-error.log
+
+innodb_buffer_pool_size = 512M
+innodb_flush_method = O_DIRECT
+innodb_flush_log_at_trx_commit = 1
+
+max_connections = 80
+table_open_cache = 2000
+tmp_table_size = 64M
+max_heap_table_size = 64M
+wait_timeout = 600
+interactive_timeout = 600
+max_allowed_packet = 64M

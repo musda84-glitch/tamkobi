@@ -21,7 +21,7 @@ RUN grep -vE '^(#|emergentintegrations==)' /tmp/requirements.txt > /tmp/requirem
 
 COPY docker/stubs/emergentintegrations /usr/local/lib/python3.12/site-packages/emergentintegrations
 COPY . /app
-RUN chmod +x /app/scripts/rotate-logs.sh
+RUN chmod +x /app/scripts/rotate-logs.sh /app/scripts/perf-monitor.sh /app/scripts/apply-mysql-tuning.sh /app/scripts/map_schema.py
 
 EXPOSE 8000
 
