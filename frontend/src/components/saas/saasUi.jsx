@@ -29,4 +29,28 @@ export const StatCard = ({ label, value, sub, accent = "text-slate-900", testId 
   </div>
 );
 
-export const groupByCategory = (catalog) => catalog.filter((m) => !m.is_core).reduce((acc, m) => { (acc[m.category] = acc[m.category] || []).push(m); return acc; }, {});
+export const fmtBytes = (n) => {
+  const b = Number(n) || 0;
+  if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  if (b >= 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${b} B`;
+};
+
+export const QuotaBar = ({ used = 0, limit = 0, testId }) => {
+  const unlimited = !limit;
+  const pct = unlimited ? 0 : Math.min(100, Math.round((Number(used) / Number(limit)) * 100));
+  const over = !unlimited && Number(used) >= Number(limit);
+  const warn = !unlimited && pct >= 80;
+  return (
+    <div className="space-y-0.5" data-testid={testId}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className={`font-bold ${over ? "text-rose-700" : warn ? "text-amber-700" : "text-slate-800"}`}>{used}{unlimited ? "" : `/${limit}`}</span>
+        <span className="text-[10px] text-slate-400">{unlimited ? "sınırsız" : `%${pct}`}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+        <div className={`h-full rounded-full ${over ? "bg-rose-500" : warn ? "bg-amber-400" : "bg-emerald-500"}`} style={{ width: unlimited ? "8%" : `${Math.max(pct, used ? 4 : 0)}%` }} />
+      </div>
+    </div>
+  );
+};

@@ -310,6 +310,7 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
+    await saas.check_storage_limit(company_id, len(data))
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
     try:
@@ -318,7 +319,7 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
     await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data),
-                               "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+                               "company_id": company_id, "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
     url = f"/api/files/{result['path']}"
     if entity in ("quote", "project", "survey", "company") and entity_id:
         coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies}[entity]
@@ -869,6 +870,7 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
 
 @api_router.post("/contacts")
 async def create_contact(contact: Contact):
+    await saas.check_contact_limit(contact.company_id)
     doc = contact.to_mongo()
     await db.contacts.insert_one(doc)
     return clean_doc(doc)
@@ -1435,6 +1437,7 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
 
 @api_router.post("/products")
 async def create_product(product: Product):
+    await saas.check_product_limit(product.company_id)
     if not product.barcode:
         product.barcode = f"868{str(uuid.uuid4().int)[:10]}"
     doc = product.to_mongo()
@@ -1514,6 +1517,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
+    await saas.check_storage_limit(product.get("company_id") or "comp_nexus_main_01", len(data))
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
     path = f"{APP_NAME}/products/{product.get('company_id')}/{uuid.uuid4()}.{ext}"
     try:
@@ -1527,6 +1531,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         "original_filename": file.filename,
         "content_type": file.content_type,
         "size": result.get("size", len(data)),
+        "company_id": product.get("company_id"),
         "entity": "product",
         "entity_id": product_id,
         "is_deleted": False,
@@ -3829,6 +3834,10 @@ async def _ensure_order_contact(o: dict) -> Optional[dict]:
     c = await db.contacts.find_one({"company_id": cid, "$or": ors})
     created = False
     if not c:
+        try:
+            await saas.check_contact_limit(cid)
+        except HTTPException:
+            return None
         c = {"_id": f"cnt_{uuid.uuid4().hex[:8]}", "company_id": cid, "type": "customer", "name": name, "company_title": o.get("customer_company") or None, "tax_number_or_id": o.get("customer_tax_id") or "11111111111",
              "tax_office": o.get("customer_tax_office") or None, "email": (o.get("customer_email") or "").strip().lower() or None, "phone": o.get("customer_phone") or None, "address": o.get("shipping_address") or None, "city": o.get("city") or None,
              "balance": 0.0, "credit_limit": 0.0, "category": CHANNEL_CUSTOMER_CATEGORY.get((o.get("channel") or "").lower(), "Pazaryeri Müşterisi"), "is_e_invoice_user": False, "payment_term_days": 0, "late_fee_rate": 0.0,
@@ -4399,6 +4408,7 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
     sku = (req.get("sku") or "").strip() or (barcode or f"MP-{uuid.uuid4().hex[:6].upper()}")
     if barcode and await db.products.find_one({"company_id": company_id, "$or": [{"barcode": barcode}, {"variants.barcode": barcode}]}):
         raise HTTPException(status_code=400, detail="Bu barkodla bir stok kartı zaten var; 'Eşleştir' ile bağlayın.")
+    await saas.check_product_limit(company_id)
     if await db.products.find_one({"company_id": company_id, "sku": sku}):
         sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
     aliases = [a for a in {barcode, (req.get("sku") or "").strip(), name.lower()} if a]
@@ -5527,6 +5537,7 @@ async def ai_product_confirm(req: Dict[str, Any]):
             await _remember_category(company_id, rec.get("category"))
             updated += 1
             continue
+        await saas.check_product_limit(company_id)
         sku = rec.get("sku") or f"AI-{uuid.uuid4().hex[:6].upper()}"
         if await db.products.find_one({"company_id": company_id, "sku": sku}):
             sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
@@ -5602,6 +5613,7 @@ async def ai_invoice_confirm(req: Dict[str, Any]):
     if not contact_id:
         if not sup.get("name"):
             raise HTTPException(status_code=400, detail="Tedarikçi adı gerekli.")
+        await saas.check_contact_limit(company_id)
         c = Contact(company_id=company_id, name=sup["name"], type="supplier", tax_number_or_id=str(sup.get("tax_number") or ""), tax_office=sup.get("tax_office") or "", email=sup.get("email") or "", phone=sup.get("phone") or "", address=sup.get("address") or "", city=req.get("city") or "İstanbul", district="", credit_limit=0, category="Tedarikçi", is_e_invoice_user=True, notes="AI PDF aktarımından oluşturuldu")
         cd = c.to_mongo(); await db.contacts.insert_one(cd); contact_id = cd["_id"]; contact_name = c.name
     else:

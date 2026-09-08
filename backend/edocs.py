@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+import saas
+
 router = APIRouter(prefix="/api")
 _db = None
 _deps: Dict[str, Any] = {}
@@ -159,6 +161,7 @@ async def create_supplier(doc_id: str, req: Dict[str, Any]):
     s = {**d["supplier"], **{k: v for k, v in (req or {}).items() if k in ("name", "tax_id", "tax_office", "address", "city", "email", "phone")}}
     if not s.get("name"):
         raise HTTPException(status_code=400, detail="Tedarikçi adı gerekli.")
+    await saas.check_contact_limit(d["company_id"])
     c = {"_id": f"cnt_{uuid.uuid4().hex[:8]}", "company_id": d["company_id"], "type": "supplier", "name": s["name"], "tax_number_or_id": s.get("tax_id") or "", "tax_office": s.get("tax_office") or None, "address": s.get("address") or None, "city": s.get("city") or None, "email": s.get("email") or None, "phone": s.get("phone") or None,
          "balance": 0.0, "credit_limit": 0.0, "category": "Tedarikçi", "is_e_invoice_user": d.get("source") == "ubl_xml", "payment_term_days": 0, "late_fee_rate": 0.0, "b2b_enabled": False, "b2b_discount": 0.0, "source": "edoc_inbox", "created_at": _now()}
     await _db.contacts.insert_one(c)
