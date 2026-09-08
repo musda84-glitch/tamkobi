@@ -42,6 +42,7 @@ import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
 import B2BResetPage from "./pages/B2BResetPage";
 import B2BAdminPage from "./pages/B2BAdminPage";
+import FieldSalesPage from "./pages/FieldSalesPage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -60,6 +61,7 @@ export default function App() {
             <Route path="/ecommerce" element={<EcommercePage />} />
             <Route path="/cargo" element={<CargoPage />} />
             <Route path="/orders" element={<OrdersB2BPage />} />
+            <Route path="/saha" element={<FieldSalesPage />} />
             <Route path="/warehouses" element={<WarehousePage />} />
             <Route path="/production" element={<ProductionPage />} />
             <Route path="/personnel" element={<PersonnelPage />} />

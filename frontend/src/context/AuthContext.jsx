@@ -33,6 +33,7 @@ export const AuthProvider = ({ children }) => {
     { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
     { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
     { label: "Siparişler", path: "/orders", badge: "B2B" },
+    { label: "Saha Sipariş", path: "/saha", badge: "Tablet" },
     { label: "Depo & Transfer", path: "/warehouses" },
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
@@ -44,9 +45,10 @@ export const AuthProvider = ({ children }) => {
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" };
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/saha": "/orders" };
   const perms = user?.permissions;
-  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
+  const permPath = (path) => LICENSE_KEY[path] || path;
+  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
@@ -154,7 +156,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, permPath, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

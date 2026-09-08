@@ -3806,7 +3806,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     return {"inserted": inserted, "updated": updated}
 
 CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
-                             "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel"}
+                             "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel", "saha": "Saha Müşterisi"}
 
 async def _ensure_order_contact(o: dict) -> Optional[dict]:
     """Sipariş için cari bul (ad / telefon / e-posta / VKN) yoksa otomatik müşteri carisi aç ve siparişe bağla."""
@@ -3949,7 +3949,7 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
     """Kanal için hakediş hesabı seçiliyse: net tutar (ciro − komisyon − hizmet/kargo) hesaba tahsilat, kesintiler 'Pazaryeri Komisyonu' masrafı."""
     channel = (order.get("channel") or "").lower()
-    if channel in ("", "b2b", "manual"):
+    if channel in ("", "b2b", "manual", "saha"):
         return None
     cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
     if not cfg or not cfg.get("settlement_account_id"):
@@ -4163,7 +4163,7 @@ def _order_profit(o: dict, fees: dict, cost_lookup: Dict[str, float]) -> dict:
 @api_router.get("/marketplace/profitability")
 async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 30, channel: Optional[str] = None):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    q: Dict[str, Any] = {"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", None]}}
+    q: Dict[str, Any] = {"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}
     if channel:
         q["channel"] = channel
     orders = await db.orders.find(q).sort("order_date", -1).to_list(2000)
@@ -4243,7 +4243,7 @@ async def delete_label_template(tpl_id: str):
 async def product_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 90):
     """Ürün bazında pazaryeri satış/komisyon/maliyet/kâr + eşleşmeyen pazaryeri kalemleri."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    orders = await db.orders.find({"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", None]}}).to_list(3000)
+    orders = await db.orders.find({"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}).to_list(3000)
     cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": company_id}).to_list(50)}
     products = await db.products.find({"company_id": company_id}).to_list(5000)
     idx: Dict[str, dict] = {}

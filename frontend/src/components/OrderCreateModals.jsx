@@ -8,7 +8,7 @@ import { useEscape } from "../utils/useEscape";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const CHANNELS = [["manual", "Manuel / Telefon"], ["b2b", "B2B Bayi"], ["trendyol", "Trendyol"], ["hepsiburada", "Hepsiburada"], ["amazon", "Amazon"], ["n11", "n11"], ["shopify", "Shopify"], ["woocommerce", "WooCommerce"]];
+const CHANNELS = [["manual", "Manuel / Telefon"], ["saha", "Saha (Tablet)"], ["b2b", "B2B Bayi"], ["trendyol", "Trendyol"], ["hepsiburada", "Hepsiburada"], ["amazon", "Amazon"], ["n11", "n11"], ["shopify", "Shopify"], ["woocommerce", "WooCommerce"]];
 
 export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved }) => {
   useEscape(onClose);

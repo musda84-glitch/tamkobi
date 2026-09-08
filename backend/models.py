@@ -398,7 +398,7 @@ class OrderItem(BaseModel):
 class Order(BaseDocument):
     company_id: str
     order_number: Optional[str] = None
-    channel: str = "manual"  # manual, b2b, trendyol, hepsiburada, amazon, shopify
+    channel: str = "manual"  # manual, saha, b2b, trendyol, hepsiburada, amazon, shopify
     customer_name: str
     customer_email: Optional[str] = None
     customer_phone: Optional[str] = None
@@ -408,6 +408,9 @@ class Order(BaseDocument):
     total_amount: float
     currency: str = "TRY"
     order_status: str = "pending"  # pending, approved, preparing, shipped, completed, cancelled
+    contact_id: Optional[str] = None
+    notes: Optional[str] = None
+    salesperson_name: Optional[str] = None
     cargo_carrier: Optional[str] = None
     cargo_tracking_number: Optional[str] = None
     cargo_barcode: Optional[str] = None
