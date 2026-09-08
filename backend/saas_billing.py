@@ -270,6 +270,8 @@ async def public_signup(req: Dict[str, Any], response: Response):
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"])
+    import demo as demo_pack
+    await demo_pack.seed_for_new_company(cid)
     response.set_cookie(key="access_token", value=create_access_token(uid, email, "admin"), httponly=True, max_age=86400 * 7, path="/")
     response.set_cookie(key="refresh_token", value=create_refresh_token(uid), httponly=True, max_age=86400 * 30, path="/")
     return {"status": "success", "company_id": cid, "user": {"id": uid, "email": email, "name": name, "role": "admin"}, "license": await saas.effective(cid), "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı."}

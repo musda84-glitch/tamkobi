@@ -14,6 +14,7 @@ import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
 import { MigrationPanel } from "../components/MigrationPanel";
 import { MorningSummarySettings } from "../components/PricingCenter";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
+import { DemoContentCard } from "../components/DemoContentCard";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
@@ -205,7 +206,7 @@ export default function SettingsPage() {
           ))}
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
-          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
+          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><DemoContentCard companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
           {tab === "plan" && <MyPlanPanel companyId={companyId} />}
           {tab === "print" && <PrintSettings companyId={companyId} />}
           {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
