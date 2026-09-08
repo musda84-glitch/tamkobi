@@ -31,6 +31,7 @@ from auth_utils import (
     create_refresh_token, get_user_from_token
 )
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
+import demo
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import bank_providers
@@ -110,6 +111,7 @@ async def startup_event():
         await seed_all_data(db)
         await seed_partners(db)
         await seed_shopfloor_pins(db)
+        await demo.tag_legacy_seed()
         await saas.seed()
         await db.users.create_index("email", unique=True)
         await db.products.create_index("sku")
@@ -6749,6 +6751,7 @@ gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
+demo.init(db)
 expenses.init(db)
 fx.init(db)
 finance.init(db)
@@ -6815,6 +6818,7 @@ app.include_router(saas_docs.router)
 app.include_router(order_pick.router)
 app.include_router(trade.router)
 app.include_router(platform_mail.router)
+app.include_router(demo.router)
 
 @app.get("/")
 async def root():

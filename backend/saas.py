@@ -285,6 +285,8 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
     for uid in ids:
         await _db.users.update_one({"_id": uid}, {"$addToSet": {"company_ids": cid}})
     invalidate(lid)
+    import demo as demo_pack
+    await demo_pack.seed_for_new_company(cid)
     return await _db.companies.find_one({"_id": cid})
 
 
@@ -488,6 +490,8 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     lic = {"plan_id": plan_id, "status": "trial" if trial_days else "active", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=trial_days)).isoformat() if trial_days else None, "expires_at": req.get("expires_at") or None, "module_overrides": {}, "user_limit": None, "billing_period": req.get("billing_period", "monthly"), "notes": req.get("notes") or "", "created_at": _now()}
     await _db.company_licenses.insert_one({"_id": cid, **lic})
     await rbac.ensure_roles(cid)
+    import demo as demo_pack
+    await demo_pack.seed_for_new_company(cid)
     invalidate(cid)
     return await _company_row(await _db.companies.find_one({"_id": cid}))
 

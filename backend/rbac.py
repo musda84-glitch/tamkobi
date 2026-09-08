@@ -60,7 +60,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/warehouses/stock-counts", "/stock"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/orders"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
-                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/edocs", "/invoices"), ("/api/trade-files", "/invoices"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/invoices"), ("/api/trade-files", "/invoices"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
 SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/system", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute")
 _license_guard = None
