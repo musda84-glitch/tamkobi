@@ -79,7 +79,7 @@ async def add_category(req: Dict[str, Any]):
 
 
 @router.get("/expenses")
-async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None):
+async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None, project_id: Optional[str] = None):
     query: Dict[str, Any] = {"company_id": company_id}
     if date_from or date_to:
         query["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
@@ -89,6 +89,8 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
         query["payment_status"] = status
     if employee_id:
         query["employee_id"] = employee_id
+    if project_id:
+        query["project_id"] = project_id
     if q:
         query["$or"] = [{"description": {"$regex": q, "$options": "i"}}, {"expense_number": {"$regex": q, "$options": "i"}}, {"contact_name": {"$regex": q, "$options": "i"}}, {"notes": {"$regex": q, "$options": "i"}}]
     rows = [_clean(x) for x in await _db.expenses.find(query).sort("date", -1).to_list(2000)]
@@ -118,7 +120,7 @@ async def create_expense(req: Dict[str, Any]):
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
            "description": req["description"].strip(), **calc, "currency": "TRY", "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
-           "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
+           "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
     if req.get("is_recurring"):
         d = date.fromisoformat(doc["date"])
         doc["next_date"] = (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
@@ -144,7 +146,7 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if "employee_id" in req:
@@ -155,6 +157,8 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
         c = await _db.contacts.find_one({"_id": req["contact_id"]}) if req["contact_id"] else None
         upd["contact_id"] = c["_id"] if c else None
         upd["contact_name"] = c["name"] if c else upd.get("contact_name")
+    if "project_id" in upd:
+        upd["project_id"] = upd["project_id"] or None
     merged = {**exp, **upd}
     if exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or req.get("account_id") and req["account_id"] != exp.get("account_id")):
         await _reverse_payment(exp)

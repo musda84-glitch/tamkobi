@@ -203,6 +203,8 @@ class Invoice(BaseDocument):
     paid_amount: float = 0.0
     notes: Optional[str] = None
     source_channel: Optional[str] = "manual"  # manual, trendyol, hepsiburada, b2b, amazon, shopify
+    project_id: Optional[str] = None
+    project_number: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Banka, Kasa, POS
