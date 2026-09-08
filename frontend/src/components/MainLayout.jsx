@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
+import { DataExportIconButton } from "./DataExportPanel";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -175,14 +176,17 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <p className="text-[10px] text-emerald-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
             </div>
           </div>
-          <button
-            onClick={logout}
-            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition"
-            title="Çıkış Yap"
-            data-testid="logout-btn"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <DataExportIconButton />
+            <button
+              onClick={logout}
+              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition"
+              title="Çıkış Yap"
+              data-testid="logout-btn"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </aside>
 

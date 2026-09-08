@@ -52,6 +52,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import data_export
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -5689,6 +5690,7 @@ saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
+data_export.init(db, get_current_user)
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5741,6 +5743,7 @@ app.include_router(saas.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
+app.include_router(data_export.router)
 
 @app.get("/")
 async def root():
