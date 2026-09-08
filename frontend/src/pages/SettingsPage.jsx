@@ -43,20 +43,37 @@ const EInvoiceSettings = ({ companyId }) => {
   const [providers, setProviders] = useState([]);
   const [s, setS] = useState(null);
   const [password, setPassword] = useState("");
+  const [testing, setTesting] = useState(false);
   useEffect(() => { Promise.all([axios.get(`${API_URL}/einvoice/providers`), axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`)]).then(([p, st]) => { setProviders(p.data); setS(st.data); }); }, [companyId]);
   if (!s) return null;
   const prov = providers.find((p) => p.code === s.provider);
+  const isN11 = s.provider === "n11faturam";
   const save = async (e) => { e.preventDefault(); try { const r = await axios.put(`${API_URL}/einvoice/settings`, { ...s, company_id: companyId, password }); setS(r.data); setPassword(""); toast.success(r.data.status === "configured" ? "Entegratör bilgileri kaydedildi." : "Kaydedildi — kimlik bilgisi girilmediği için SİMÜLE mod."); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
+  const testConn = async () => {
+    setTesting(true);
+    try {
+      await axios.put(`${API_URL}/einvoice/settings`, { ...s, company_id: companyId, password });
+      const r = await axios.post(`${API_URL}/einvoice/test`, null, { params: { company_id: companyId } });
+      toast.success(r.data.message || "n11 Faturam bağlantısı başarılı.");
+      const st = await axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`);
+      setS(st.data); setPassword("");
+    } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı denemesi başarısız."); } finally { setTesting(false); }
+  };
   return (
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs max-w-xl" data-testid="einvoice-settings">
       <div className="flex items-center justify-between"><h3 className="text-sm font-bold">E-Fatura / E-Arşiv / E-İrsaliye Entegratörü</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${s.status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="einvoice-status">{s.status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}</span></div>
-      <p className="text-slate-500">Entegratör anahtarı girilmediği sürece GİB gönderimleri simüle edilir. Anahtar geldiğinde buradan girin, tüm fatura ekranları otomatik canlıya geçer.</p>
+      <p className="text-slate-500">{isN11 ? "n11 Faturam kurum kodu, kullanıcı adı ve şifre. Kaydettikten sonra Bağlantıyı dene ile oturumu doğrulayın; fatura kesimi ve GİB mükellef sorgusu canlıya geçer." : "Entegratör anahtarı girilmediği sürece GİB gönderimleri simüle edilir. Anahtar geldiğinde buradan girin, tüm fatura ekranları otomatik canlıya geçer."}</p>
       <div><label className="block font-semibold mb-1">Entegratör</label><select value={s.provider} onChange={(e) => setS({ ...s, provider: e.target.value })} className={inputCls} data-testid="einvoice-provider-select"><option value="">Seçilmedi (Simüle)</option>{providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select></div>
+      {prov?.hint && <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2">{prov.hint}{prov.docs ? <> · <a className="text-emerald-700 underline" href={prov.docs} target="_blank" rel="noreferrer">n11 Faturam</a></> : null}</p>}
       <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setS({ ...s, mode: "test" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "test" ? "bg-amber-500 text-white border-amber-500" : ""}`}>Test Ortamı</button><button type="button" onClick={() => setS({ ...s, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : ""}`}>Canlı</button></div>
       {(prov?.fields || []).includes("api_url") && <div><label className="block font-semibold mb-1">API URL</label><input value={s.api_url || ""} onChange={(e) => setS({ ...s, api_url: e.target.value })} className={`${inputCls} font-mono`} /></div>}
-      <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Kullanıcı Adı</label><input value={s.username} onChange={(e) => setS({ ...s, username: e.target.value })} className={inputCls} data-testid="einvoice-username-input" /></div><div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div></div>
+      {isN11 && <div><label className="block font-semibold mb-1">Kurum Kodu (CorporateCode)</label><input value={s.corporate_code || ""} onChange={(e) => setS({ ...s, corporate_code: e.target.value })} className={inputCls} data-testid="einvoice-corporate-code-input" placeholder="n11 Faturam kurum kodu" /></div>}
+      <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">{isN11 ? "Kullanıcı Adı (LoginName)" : "Kullanıcı Adı"}</label><input value={s.username} onChange={(e) => setS({ ...s, username: e.target.value })} className={inputCls} data-testid="einvoice-username-input" /></div><div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div></div>
       <div><label className="block font-semibold mb-1">GİB Etiket / Alias</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} /></div>
-      <div className="flex justify-end"><button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button></div>
+      <div className="flex justify-end gap-2">
+        {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
+        <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
+      </div>
     </form>
   );
 };
