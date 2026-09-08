@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { groupMenuItems } from "../navGroups";
 
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
 const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-sky-700", edit: "bg-emerald-100 text-emerald-700" };
@@ -162,11 +163,18 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
                 <span><span className="font-semibold text-slate-800">{f.label}</span>{f.help && <div className="text-[10px] text-slate-500 leading-tight">{f.help}</div>}</span>
               </label>))}</div>
           </div>)}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-          {rolesData.modules.map((m) => (
-            <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
-              <span className="font-semibold text-slate-700">{m.label}</span>
-              <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+        <div className="space-y-3">
+          {groupMenuItems((rolesData.modules || []).map((m) => ({ ...m, path: m.key }))).map((g) => (
+            <div key={g.id} className="border border-slate-100 rounded-xl p-2.5">
+              {g.label && <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5 px-0.5">{g.label}</div>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {g.items.map((m) => (
+                  <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
+                    <span className="font-semibold text-slate-700">{m.label}</span>
+                    <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>
