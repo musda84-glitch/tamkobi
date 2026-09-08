@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from bank_guard import assert_manual_allowed
 import partner_pay
+import fx
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -46,7 +47,7 @@ async def _next_number(company_id: str) -> str:
 
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
     if partner_id:
-        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, exp["total"], f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
+        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, fx.try_amount(exp, exp.get("total")), f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
         return f"{name} (Ortak)"
     if not account_id:
         raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
@@ -54,9 +55,13 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     await assert_manual_allowed(_db, account_id)
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -exp["total"]}})
+    acc_ccy = (acc.get("currency") or "TRY").upper()
+    exp_ccy = (exp.get("currency") or "TRY").upper()
+    posted = exp["total"] if acc_ccy == exp_ccy else fx.try_amount(exp, exp.get("total"))
+    posted_ccy = acc_ccy if acc_ccy == exp_ccy else "TRY"
+    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -posted}})
     await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": exp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": f"Masraf: {exp.get('category')}",
-                                            "amount": exp["total"], "currency": acc.get("currency", "TRY"), "description": f"{exp['expense_number']} {exp.get('description', '')}", "source": "expense", "expense_id": exp["_id"], "date": pay_date, "created_at": _now()})
+                                            "amount": posted, "currency": posted_ccy, "description": f"{exp['expense_number']} {exp.get('description', '')}", "source": "expense", "expense_id": exp["_id"], "date": pay_date, "created_at": _now()})
     return acc.get("account_name")
 
 
@@ -103,12 +108,16 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     rows = [_clean(x) for x in await _db.expenses.find(query).sort("date", -1).to_list(2000)]
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     all_rows = rows if not (date_from or date_to or category or status or employee_id or q) else [_clean(x) for x in await _db.expenses.find({"company_id": company_id}).to_list(5000)]
+    def _try(r):
+        if (r.get("currency") or "TRY").upper() != "TRY":
+            return float(r.get("local_total") or 0) or fx.local_of(r.get("total"), r.get("fx_rate") or 1)
+        return float(r.get("total") or 0)
     by_cat: Dict[str, float] = {}
     for r in rows:
-        by_cat[r.get("category", "Diğer")] = round(by_cat.get(r.get("category", "Diğer"), 0) + r.get("total", 0), 2)
-    summary = {"count": len(rows), "total": round(sum(r.get("total", 0) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
-               "unpaid_total": round(sum(r.get("total", 0) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
-               "this_month_total": round(sum(r.get("total", 0) for r in all_rows if (r.get("date") or "").startswith(month)), 2),
+        by_cat[r.get("category", "Diğer")] = round(by_cat.get(r.get("category", "Diğer"), 0) + _try(r), 2)
+    summary = {"count": len(rows), "total": round(sum(_try(r) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
+               "unpaid_total": round(sum(_try(r) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
+               "this_month_total": round(sum(_try(r) for r in all_rows if (r.get("date") or "").startswith(month)), 2),
                "recurring_count": sum(1 for r in all_rows if r.get("is_recurring")),
                "by_category": sorted([{"category": k, "total": v} for k, v in by_cat.items()], key=lambda x: -x["total"])}
     return {"expenses": rows, "summary": summary}
@@ -122,10 +131,11 @@ async def create_expense(req: Dict[str, Any]):
     calc = _calc(req)
     if calc["total"] <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
+    stamp = await fx.stamp(company_id, req.get("currency"), req.get("date"), fx.typed_rate(req.get("currency"), req.get("fx_rate"), req.get("fx_source")))
     contact = await _db.contacts.find_one({"_id": req["contact_id"]}) if req.get("contact_id") else None
     emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req.get("employee_id") else None
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
-           "description": req["description"].strip(), **calc, "currency": "TRY", "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
+           "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
            "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
     if req.get("is_recurring"):
@@ -155,9 +165,14 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "currency", "fx_rate", "fx_source") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
+    if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:
+        merged = {**exp, **upd}
+        stamp = await fx.stamp(exp["company_id"], merged.get("currency"), merged.get("date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
+        upd.update(stamp)
+        upd["local_total"] = fx.local_of(merged.get("total") or exp.get("total") or 0, stamp["fx_rate"])
     if "employee_id" in req:
         emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req["employee_id"] else None
         upd["employee_id"] = emp["_id"] if emp else None

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+import fx
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -22,8 +23,7 @@ REGIMES_EXPORT = [
     ["3171", "3171 — Transit"],
 ]
 CERTIFICATES = ["", "ATR", "EUR.1", "Menşe Şahadetnamesi", "Form A", "A.TR + Fat. beyannamesi"]
-CURRENCIES = ["TRY", "USD", "EUR", "GBP"]
-FX_DEFAULTS = {"TRY": 1.0, "USD": 42.5, "EUR": 46.2, "GBP": 54.0}
+CURRENCIES = fx.CURRENCIES
 STATUSES = [
     ["draft", "Taslak"],
     ["declared", "Beyanname verildi"],
@@ -126,7 +126,9 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
         "regime_code": req.get("regime_code") or ("4000" if kind == "import" else "1000"),
         "incoterm": req.get("incoterm") or ("CIF" if kind == "import" else "FOB"),
         "currency": (req.get("currency") or "USD").upper(),
-        "fx_rate": _num(req.get("fx_rate"), FX_DEFAULTS.get((req.get("currency") or "USD").upper(), 1)),
+        "fx_rate": _num(req.get("fx_rate"), 1) or 1.0,
+        "fx_date": req.get("fx_date") or "",
+        "fx_source": req.get("fx_source") or "",
         "bl_awb": req.get("bl_awb") or "",
         "container_no": req.get("container_no") or "",
         "declaration_no": req.get("declaration_no") or "",
@@ -150,14 +152,15 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
 
 
 @router.get("/trade-files/meta")
-async def trade_meta():
+async def trade_meta(company_id: Optional[str] = "comp_nexus_main_01", date: Optional[str] = None):
+    defaults = await fx.defaults_map(company_id, date, fetch=True)
     return {
         "incoterms": INCOTERMS,
         "regimes_import": REGIMES_IMPORT,
         "regimes_export": REGIMES_EXPORT,
         "certificates": CERTIFICATES,
         "currencies": CURRENCIES,
-        "fx_defaults": FX_DEFAULTS,
+        "fx_defaults": defaults,
         "statuses": STATUSES,
     }
 
@@ -173,7 +176,9 @@ async def list_trade_files(company_id: Optional[str] = "comp_nexus_main_01", kin
 
 @router.post("/trade-files")
 async def create_trade_file(req: Dict[str, Any]):
-    doc = _doc_from_req(req)
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    stamp = await fx.stamp(company_id, req.get("currency") or "USD", req.get("file_date"), fx.typed_rate(req.get("currency") or "USD", req.get("fx_rate"), req.get("fx_source")))
+    doc = _doc_from_req({**req, **stamp})
     if not doc["contact_name"] and not doc["contact_id"]:
         raise HTTPException(status_code=400, detail="Cari / firma adı gerekli.")
     if not doc["items"]:
@@ -202,7 +207,8 @@ async def update_trade_file(file_id: str, req: Dict[str, Any]):
     if cur.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal dosya düzenlenemez.")
     merged = {**cur, **req, "items": req.get("items", cur.get("items"))}
-    doc = _doc_from_req(merged, cur)
+    stamp = await fx.stamp(merged.get("company_id") or cur["company_id"], merged.get("currency") or "USD", merged.get("file_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
+    doc = _doc_from_req({**merged, **stamp}, cur)
     doc["updated_at"] = _now()
     await _db.trade_files.update_one({"_id": file_id}, {"$set": doc})
     return _clean(await _db.trade_files.find_one({"_id": file_id}))
@@ -236,7 +242,7 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         raise HTTPException(status_code=500, detail="Fatura servisi hazır değil.")
     from models import Invoice, InvoiceItem
     kind = d.get("kind")
-    fx = _num(d.get("fx_rate"), 1) or 1.0
+    rate = _num(d.get("fx_rate"), 1) or 1.0
     items = []
     for it in d.get("items") or []:
         unit_price = _num(it.get("unit_price_fx"))
@@ -265,7 +271,8 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         contact_tax_id=contact.get("tax_number_or_id") or "",
         items=items,
         currency=d.get("currency") or "USD",
-        fx_rate=fx,
+        fx_rate=rate,
+        fx_source=d.get("fx_source") or "manual",
         trade_kind=kind,
         incoterm=d.get("incoterm"),
         country=d.get("country"),
@@ -280,7 +287,8 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
     await _db.invoices.update_one({"_id": created["id"]}, {"$set": {
         "trade_file_id": d["_id"], "trade_file_number": d.get("file_number"),
         "trade_kind": kind, "incoterm": d.get("incoterm"), "country": d.get("country"),
-        "fx_rate": fx, "currency": d.get("currency") or "USD",
+        "fx_rate": rate, "currency": d.get("currency") or "USD",
+        "fx_source": d.get("fx_source") or "manual",
         "customs_office": d.get("customs_office"),
     }})
     await _db.trade_files.update_one({"_id": file_id}, {"$set": {

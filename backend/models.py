@@ -203,6 +203,9 @@ class Invoice(BaseDocument):
     price_mode: str = "excl"  # excl: KDV hariç, incl: KDV dahil girildi (net'e çevrilir)
     currency: str = "TRY"
     fx_rate: float = 1.0
+    fx_date: Optional[str] = None
+    fx_source: Optional[str] = None
+    local_total: float = 0.0
     trade_kind: Optional[str] = None  # None/domestic, export, import
     incoterm: Optional[str] = None
     country: Optional[str] = None

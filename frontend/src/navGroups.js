@@ -85,7 +85,7 @@ export const SETTINGS_TAB_GROUPS = [
   { id: "firma", label: "Firma", tabs: ["company"] },
   { id: "paketler", label: "Paketler", tabs: ["plan", "modules"] },
   { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
-  { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "channels", "whatsapp"] },
+  { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "fx", "channels", "whatsapp"] },
   { id: "kurallar", label: "Kurallar", tabs: ["units", "users"] },
   { id: "veri", label: "Veri", tabs: ["migration", "summary"] },
 ];
