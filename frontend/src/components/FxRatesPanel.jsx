@@ -25,7 +25,7 @@ export const FxRatesPanel = ({ companyId }) => {
   const fetchTcmb = async () => {
     setBusy("fetch");
     try {
-      const r = await axios.post(`${API_URL}/fx/fetch`, { company_id: companyId, date });
+      const r = await axios.post(`${API_URL}/fx/fetch`, { date }, { params: { company_id: companyId } });
       setPack({ ...pack, date: r.data.date, source: "tcmb", rates: r.data.rates });
       setDate(r.data.date);
       toast.success(r.data.message);
@@ -36,7 +36,7 @@ export const FxRatesPanel = ({ companyId }) => {
     if (!rate) return toast.error("Kur girin.");
     setBusy(code);
     try {
-      const row = await axios.put(`${API_URL}/fx/rates`, { company_id: companyId, date, currency: code, rate });
+      const row = await axios.put(`${API_URL}/fx/rates`, { date, currency: code, rate }, { params: { company_id: companyId } });
       setPack((p) => ({ ...p, rates: { ...p.rates, [code]: row.data } }));
       setDraft((d) => { const n = { ...d }; delete n[code]; return n; });
       toast.success(`${code} kuru kaydedildi.`);

@@ -12,7 +12,9 @@ from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from auth_utils import get_user_from_token
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -242,32 +244,51 @@ def try_amount(doc: dict, amount: Any = None) -> float:
     return local_of(amt, doc.get("fx_rate") or 1)
 
 
+async def _tenant_id(request: Request) -> str:
+    """Kur okuma/yazma yalnızca oturum + query company_id. Body'deki company_id yok sayılır."""
+    token = request.cookies.get("access_token")
+    auth = request.headers.get("Authorization") or ""
+    if not token and auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    user = await get_user_from_token(token, _db)
+    cid = request.query_params.get("company_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="company_id gerekli.")
+    if not user.get("is_super_admin") and cid not in (user.get("company_ids") or []):
+        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+    return cid
+
+
 @router.get("/fx/currencies")
 async def list_currencies():
     return {"currencies": CURRENCIES}
 
 
 @router.get("/fx/rates")
-async def get_rates(company_id: str = "comp_nexus_main_01", date: Optional[str] = None, fetch: bool = True):
+async def get_rates(request: Request, date: Optional[str] = None, fetch: bool = True):
+    company_id = await _tenant_id(request)
     return await ensure_rates(company_id, date, fetch=fetch)
 
 
 @router.get("/fx/quote")
-async def quote_rate(currency: str, company_id: str = "comp_nexus_main_01", date: Optional[str] = None, side: str = "selling"):
+async def quote_rate(request: Request, currency: str, date: Optional[str] = None, side: str = "selling"):
+    company_id = await _tenant_id(request)
     return await resolve_rate(company_id, currency, date, side=side if side in ("buying", "selling") else "selling")
 
 
 @router.post("/fx/fetch")
-async def fetch_rates(req: Dict[str, Any]):
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+async def fetch_rates(req: Dict[str, Any], request: Request):
+    company_id = await _tenant_id(request)
     iso, rates, url = await fetch_tcmb(req.get("date"))
     rows = await _upsert_rates(company_id, iso, rates, "tcmb", url)
     return {"date": iso, "source": "tcmb", "bulletin_url": url, "count": len(rows), "rates": {r["currency"]: r for r in rows}, "message": f"TCMB {iso} bülteni alındı ({len(rows)} kur). Manuel girilmiş kurlar korundu."}
 
 
 @router.put("/fx/rates")
-async def save_manual_rate(req: Dict[str, Any]):
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+async def save_manual_rate(req: Dict[str, Any], request: Request):
+    company_id = await _tenant_id(request)
     code = (req.get("currency") or "").upper()
     if code not in CURRENCIES or code == "TRY":
         raise HTTPException(status_code=400, detail="Para birimi USD, EUR, GBP, CHF veya JPY olmalı.")
