@@ -37,6 +37,24 @@ import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../compone
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 
+const moneyTry = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const buyPrice = (p, invoiceType) => (invoiceType === "sales" ? p.sale_price : (p.last_purchase_price || p.purchase_price));
+const purchaseCostText = (p) => {
+  const hist = p?.purchase_costs || [];
+  const kart = Number(p?.purchase_price || 0);
+  const last = p?.last_purchase_price;
+  if (!hist.length && !kart) return "Alış kaydı yok";
+  const bits = [];
+  if (kart) bits.push(`kart ${moneyTry(kart)}`);
+  if (last != null) {
+    const d = p.last_purchase_date ? String(p.last_purchase_date).slice(0, 10) : "";
+    const dm = d.length === 10 ? `${d.slice(8, 10)}.${d.slice(5, 7)}` : "";
+    const who = p.last_purchase_supplier ? ` ${p.last_purchase_supplier}` : "";
+    bits.push(`son ${moneyTry(last)}${dm ? ` (${dm}${who})` : who}`);
+  }
+  return `Alış ${bits.join(" · ")}`;
+};
+
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
   const [invoices, setInvoices] = useState([]);
@@ -151,7 +169,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name);
     if (emptyIdx >= 0) { handleItemProductSelect(emptyIdx, pid); }
     else {
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
+      const price = buyPrice(prod, formData.invoice_type);
       setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: price, vat_rate: prod.vat_rate || 20, total: price, discount_rate: 0 }] }));
     }
     toast.success(`${prod.name} eklendi`);
@@ -161,7 +179,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const prod = products.find(p => (p.id === productId || p._id === productId));
     const items = [...formData.items];
     if (prod) {
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
+      const price = buyPrice(prod, formData.invoice_type);
       items[index] = {
         product_id: prod.id || prod._id,
         name: prod.name,
@@ -622,9 +640,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
                   <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Tutar</div><div className="col-span-1"></div>
                 </div>
-                {formData.items.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
-                    <div className="col-span-3 flex items-center gap-1.5">
+                {formData.items.map((item, idx) => {
+                  const picked = !item.is_service && item.product_id ? products.find((p) => (p.id || p._id) === item.product_id) : null;
+                  const costs = picked?.purchase_costs || [];
+                  return (
+                  <div key={idx} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 space-y-1.5">
+                  <div className="grid grid-cols-12 gap-2 items-start">
+                    <div className="col-span-3 flex items-start gap-1.5">
                       <button type="button" onClick={() => { const items = [...formData.items]; items[idx] = { ...items[idx], is_service: !items[idx].is_service, product_id: "", name: items[idx].is_service ? "" : items[idx].name }; setFormData({ ...formData, items }); }} className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold border ${item.is_service ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-500 border-slate-300"}`} title={item.is_service ? "Hizmet satırı (stok düşmez) – ürüne çevir" : "Ürün satırı – hizmete çevir"} data-testid={`inv-item-kind-${idx}`}>{item.is_service ? "H" : "Ü"}</button>
                       {item.is_service ? (
                         <input value={item.name} onChange={(e) => { const items = [...formData.items]; items[idx] = { ...items[idx], name: e.target.value }; setFormData({ ...formData, items }); }} placeholder="Hizmet açıklaması (örn. Danışmanlık hizmeti)" className="w-full bg-white border border-indigo-200 rounded p-1.5" data-testid={`inv-item-service-name-${idx}`} />
@@ -634,7 +656,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         options={products}
                         placeholder="Ürün ara (ad / SKU / barkod)..."
                         getLabel={(p) => p.name}
-                        getSub={(p) => `SKU ${p.sku} • ${p.barcode} • Stok ${p.stock_quantity} • ${(p.sale_price || 0).toLocaleString('tr-TR')} ₺`}
+                        getSub={(p) => `SKU ${p.sku} • ${p.barcode} • Stok ${p.stock_quantity} • satış ${moneyTry(p.sale_price)} ₺`}
+                        getExtra={(p) => purchaseCostText(p)}
                         getImage={(p) => p.image_url}
                         onChange={(id) => handleItemProductSelect(idx, id)}
                         testId={`inv-item-product-${idx}`}
@@ -697,7 +720,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </button>
                     </div>
                   </div>
-                ))}
+                  {picked && (
+                    <div className="flex flex-wrap items-center gap-1 pl-8" data-testid={`inv-item-costs-${idx}`}>
+                      <span className="text-[10px] font-semibold text-amber-800">Önceki alış:</span>
+                      {Number(picked.purchase_price) > 0 && (
+                        <button type="button" onClick={() => handleItemChange(idx, "unit_price", picked.purchase_price)} className="px-1.5 py-0.5 rounded-md bg-white border border-amber-200 text-[10px] text-amber-900 font-semibold" data-testid={`inv-item-cost-card-${idx}`} title="Stok kartı alış fiyatı">kart {moneyTry(picked.purchase_price)} ₺</button>
+                      )}
+                      {costs.length === 0 && !(Number(picked.purchase_price) > 0) && <span className="text-[10px] text-slate-400">kayıt yok</span>}
+                      {costs.slice(0, 5).map((c, ci) => (
+                        <button key={`${c.invoice_number}-${ci}`} type="button" onClick={() => handleItemChange(idx, "unit_price", c.unit_price)} className="px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] text-amber-900" data-testid={`inv-item-cost-${idx}-${ci}`} title={`${c.invoice_number || ""} ${c.supplier || ""}`.trim()}>
+                          {c.date ? `${String(c.date).slice(8, 10)}.${String(c.date).slice(5, 7)} ` : ""}{moneyTry(c.unit_price)} ₺{c.supplier ? ` · ${c.supplier}` : ""}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  </div>
+                  );
+                })}
               </div>
 
               {/* Totals Summary */}

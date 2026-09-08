@@ -316,8 +316,19 @@ export default function StockBarcodePage() {
                         {prod.category}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-500 font-medium">
-                      {prod.purchase_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                    <td className="px-4 py-3 text-right text-slate-500 font-medium" data-testid={`stock-purchase-${prod.sku}`}>
+                      <div>{prod.purchase_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
+                      {prod.last_purchase_price != null && (
+                        <div className="text-[10px] text-amber-800 font-semibold" data-testid={`stock-last-buy-${prod.sku}`}>
+                          son {Number(prod.last_purchase_price).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          {prod.last_purchase_date ? ` · ${String(prod.last_purchase_date).slice(8, 10)}.${String(prod.last_purchase_date).slice(5, 7)}` : ""}
+                        </div>
+                      )}
+                      {(prod.purchase_costs || []).length > 1 && (
+                        <div className="text-[10px] text-slate-400 truncate max-w-[140px] ml-auto" title={(prod.purchase_costs || []).map((c) => `${c.date || ""} ${Number(c.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`).join(" · ")}>
+                          {(prod.purchase_costs || []).slice(0, 3).map((c) => Number(c.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })).join(" · ")}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
                       {prod.sale_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
