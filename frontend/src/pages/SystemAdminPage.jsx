@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { NAV_GROUPS, groupIdOf } from "../navGroups";
 import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
 import { CompaniesTable } from "../components/saas/CompaniesTable";
@@ -66,11 +67,27 @@ export default function SystemAdminPage() {
   );
 }
 
-const ModuleCatalog = ({ catalog, plans }) => (
-  <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto text-xs" data-testid="saas-module-catalog">
-    <table className="w-full min-w-[720px]">
-      <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Modül</th><th className="px-3 py-2.5 text-left">Kategori</th><th className="px-3 py-2.5 text-left">Açıklama</th>{plans.map((p) => <th key={p.id} className="px-3 py-2.5 text-center">{p.name}</th>)}</tr></thead>
-      <tbody className="divide-y divide-slate-100">{catalog.map((m) => <tr key={m.key} data-testid={`catalog-row-${m.key.replace("/", "") || "dashboard"}`}><td className="px-3 py-2 font-semibold text-slate-800">{m.label}{m.is_core && <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-500 px-1 rounded">çekirdek</span>}</td><td className="px-3 py-2 text-slate-500">{m.category}</td><td className="px-3 py-2 text-slate-500">{m.description}</td>{plans.map((p) => <td key={p.id} className="px-3 py-2 text-center">{m.is_core || p.modules.includes(m.key) ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}</td>)}</tr>)}</tbody>
-    </table>
-  </div>
-);
+const ModuleCatalog = ({ catalog, plans }) => {
+  const order = Object.fromEntries(NAV_GROUPS.map((g, i) => [g.id, i]));
+  const sorted = [...(catalog || [])].sort((a, b) => (order[groupIdOf(a.key)] ?? 99) - (order[groupIdOf(b.key)] ?? 99));
+  const groups = [];
+  for (const m of sorted) {
+    const cat = m.category || "Genel";
+    const last = groups[groups.length - 1];
+    if (!last || last.cat !== cat) groups.push({ cat, items: [m] });
+    else last.items.push(m);
+  }
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto text-xs" data-testid="saas-module-catalog">
+      <table className="w-full min-w-[720px]">
+        <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Modül</th><th className="px-3 py-2.5 text-left">Kategori</th><th className="px-3 py-2.5 text-left">Açıklama</th>{plans.map((p) => <th key={p.id} className="px-3 py-2.5 text-center">{p.name}</th>)}</tr></thead>
+        <tbody className="divide-y divide-slate-100">{groups.map((g) => (
+          <React.Fragment key={g.cat}>
+            <tr className="bg-slate-50/80"><td colSpan={3 + plans.length} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{g.cat}</td></tr>
+            {g.items.map((m) => <tr key={m.key} data-testid={`catalog-row-${m.key.replace("/", "") || "dashboard"}`}><td className="px-3 py-2 font-semibold text-slate-800">{m.label}{m.is_core && <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-500 px-1 rounded">çekirdek</span>}</td><td className="px-3 py-2 text-slate-500">{m.category}</td><td className="px-3 py-2 text-slate-500">{m.description}</td>{plans.map((p) => <td key={p.id} className="px-3 py-2 text-center">{m.is_core || p.modules.includes(m.key) ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}</td>)}</tr>)}
+          </React.Fragment>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+};

@@ -3,15 +3,14 @@ import { Link, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { groupIdOf, groupMenuItems } from "../navGroups";
 
-const OPEN_KEY = "nav_groups_open";
-const DEFAULT_OPEN = ["overview", "ticari", "finans", "stok"];
+const OPEN_KEY = "nav_groups_open_v2";
 
 function loadOpen() {
   try {
     const raw = JSON.parse(localStorage.getItem(OPEN_KEY) || "null");
-    if (Array.isArray(raw) && raw.length) return raw;
+    if (Array.isArray(raw)) return raw;
   } catch { /* ignore */ }
-  return DEFAULT_OPEN;
+  return [];
 }
 
 export default function AppSidebarNav({ items, onNavigate, onReorder }) {
@@ -37,7 +36,7 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
   };
 
   const linkClass = (item, isActive) =>
-    `flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+    `flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
       isActive
         ? item.isAi
           ? "bg-gradient-to-r from-purple-600/90 to-indigo-600/90 text-white shadow-md shadow-purple-900/40"
@@ -48,7 +47,7 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
           ? "text-purple-300 hover:bg-purple-950/40 hover:text-white"
           : item.isSystem
             ? "text-amber-300 hover:bg-amber-950/40 hover:text-white border border-amber-500/20"
-            : "text-slate-300 hover:bg-slate-800 hover:text-white"
+            : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
     }`;
 
   const renderItem = (item) => {
@@ -65,7 +64,7 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
           if (dragPath && dragPath !== item.path && groupIdOf(dragPath) === groupIdOf(item.path)) onReorder?.(dragPath, item.path);
           setDragPath(null);
         }}
-        title="Aynı grup içinde sürükleyip sıralayabilirsiniz"
+        title="Aynı paket içinde sürükleyip sıralayabilirsiniz"
         onClick={() => onNavigate?.()}
         data-testid={`nav-item-${item.path.replace("/", "") || "dashboard"}`}
         className={linkClass(item, isActive)}
@@ -102,35 +101,44 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
   };
 
   return (
-    <>
+    <div className="space-y-1.5">
       {groups.map((g) => {
         const isOpen = !g.label || open.includes(g.id);
         const groupActive = g.items.some((m) => m.path === activePath);
         if (!g.label) {
           return (
-            <div key={g.id} className="space-y-1" data-testid={`nav-group-${g.id}`}>
+            <div key={g.id} className="space-y-0.5" data-testid={`nav-group-${g.id}`}>
               {g.items.map(renderItem)}
             </div>
           );
         }
         return (
-          <div key={g.id} className="pt-2 first:pt-0" data-testid={`nav-group-${g.id}`}>
+          <div
+            key={g.id}
+            className={`rounded-lg border overflow-hidden ${
+              groupActive ? "border-emerald-800/60 bg-slate-800/40" : "border-slate-800 bg-slate-800/20"
+            }`}
+            data-testid={`nav-group-${g.id}`}
+          >
             <button
               type="button"
               onClick={() => toggle(g.id)}
-              className={`w-full flex items-center justify-between px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition ${
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
                 groupActive ? "text-emerald-300" : "text-slate-500 hover:text-slate-300"
               }`}
               data-testid={`nav-group-toggle-${g.id}`}
               aria-expanded={isOpen}
             >
               <span>{g.label}</span>
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+              <span className="flex items-center gap-1 font-mono font-semibold normal-case tracking-normal text-slate-500">
+                {g.items.length}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+              </span>
             </button>
-            {isOpen && <div className="mt-0.5 space-y-0.5">{g.items.map(renderItem)}</div>}
+            {isOpen && <div className="px-1 pb-1 space-y-0.5">{g.items.map(renderItem)}</div>}
           </div>
         );
       })}
-    </>
+    </div>
   );
 }

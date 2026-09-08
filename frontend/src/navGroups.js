@@ -1,48 +1,54 @@
-/** Logo / Mikro / BizimHesap tarzı sol menü grupları.
+/** Sol menü grupları — Platform → Paketler / Web vitrinindeki kategorilerle aynı.
  * Grup yalnızca görünüm içindir; RBAC ve lisans anahtarları değişmez.
+ * backend/saas.py CATEGORIES ile etiketleri senkron tutun.
  */
 export const NAV_GROUPS = [
   { id: "overview", label: null },
-  { id: "ticari", label: "Satış / Alış" },
+  { id: "muhasebe", label: "Muhasebe" },
   { id: "finans", label: "Finans" },
-  { id: "stok", label: "Stok / Lojistik" },
+  { id: "raporlama", label: "Raporlama" },
+  { id: "satis", label: "Satış" },
+  { id: "stok", label: "Stok & Depo" },
   { id: "uretim", label: "Üretim" },
-  { id: "ik", label: "Personel" },
+  { id: "eticaret", label: "E-Ticaret" },
+  { id: "ik", label: "İK" },
+  { id: "iletisim", label: "İletişim" },
+  { id: "ai", label: "Yapay Zeka" },
   { id: "sistem", label: "Sistem" },
 ];
 
 const PATH_GROUP = {
   "/": "overview",
-  "/invoices": "ticari",
-  "/edoc-inbox": "ticari",
-  "/dispatches": "ticari",
-  "/dis-ticaret": "ticari",
-  "/b2b-yonetim": "ticari",
-  "/quotes": "ticari",
-  "/projects": "ticari",
-  "/surveys": "ticari",
-  "/contacts": "finans",
-  "/installments": "finans",
+  "/invoices": "muhasebe",
+  "/edoc-inbox": "muhasebe",
+  "/dispatches": "muhasebe",
+  "/contacts": "muhasebe",
+  "/installments": "muhasebe",
+  "/dis-ticaret": "muhasebe",
   "/banking": "finans",
   "/expenses": "finans",
   "/loans": "finans",
   "/cheques": "finans",
-  "/reports": "finans",
-  "/accountant": "finans",
+  "/reports": "raporlama",
+  "/accountant": "raporlama",
+  "/projects": "satis",
+  "/quotes": "satis",
+  "/surveys": "satis",
+  "/orders": "satis",
+  "/b2b-yonetim": "satis",
+  "/saha": "satis",
   "/stock": "stok",
-  "/sayim": "stok",
-  "/orders": "stok",
-  "/saha": "stok",
-  "/sevk": "stok",
   "/warehouses": "stok",
-  "/ecommerce": "stok",
-  "/cargo": "stok",
+  "/sayim": "stok",
+  "/sevk": "stok",
   "/production": "uretim",
   "/atolye": "uretim",
+  "/ecommerce": "eticaret",
+  "/cargo": "eticaret",
   "/personnel": "ik",
   "/mesai": "ik",
-  "/communication": "sistem",
-  "/ai-advisor": "sistem",
+  "/communication": "iletisim",
+  "/ai-advisor": "ai",
   "/settings": "sistem",
   "/trash": "sistem",
   "/sistem": "sistem",
@@ -60,3 +66,23 @@ export function groupMenuItems(items) {
   }
   return NAV_GROUPS.map((g) => ({ ...g, items: buckets[g.id] || [] })).filter((g) => g.items.length);
 }
+
+/** Platform paneli: Web, Paketler, Kurallar — vitrin paketleri gibi klasörler. */
+export const SYSTEM_NAV_GROUPS = [
+  { id: "overview", label: null, paths: ["/sistem"] },
+  { id: "web", label: "Web", paths: ["/sistem/web"] },
+  { id: "paketler", label: "Paketler", paths: ["/sistem/paketler", "/sistem/moduller"] },
+  { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kullanicilar"] },
+  { id: "operasyon", label: "Operasyon", paths: ["/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar"] },
+  { id: "kurallar", label: "Kurallar", paths: ["/sistem/ayarlar"] },
+];
+
+/** Firma Ayarları sekmeleri — aynı paket klasörleri. */
+export const SETTINGS_TAB_GROUPS = [
+  { id: "firma", label: "Firma", tabs: ["company"] },
+  { id: "paketler", label: "Paketler", tabs: ["plan", "modules"] },
+  { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
+  { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "channels", "whatsapp"] },
+  { id: "kurallar", label: "Kurallar", tabs: ["units", "users"] },
+  { id: "veri", label: "Veri", tabs: ["migration", "summary"] },
+];
