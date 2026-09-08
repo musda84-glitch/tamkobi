@@ -653,7 +653,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div className="sm:col-span-3">
                   <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
-              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
