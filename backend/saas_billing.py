@@ -19,7 +19,7 @@ logger = logging.getLogger("NexusERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PERIOD_DAYS = {"monthly": 30, "yearly": 365}
-DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "TamKobi", "currency": "try", "public_url": "https://tamkobi.com", "gib_packs": None}
+DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "TamKobi", "currency": "try", "public_url": "https://tamkobi.com", "gib_packs": None, "gib_credits_sales": False}
 
 
 def init(db, deps):
@@ -50,6 +50,7 @@ async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
     if not await _db.companies.find_one({"_id": cid}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     if req.get("pack_id") or req.get("product_type") == "gib_credits":
+        await gib_credits.require_sales()
         pack = await gib_credits.get_pack(req.get("pack_id") or req.get("plan_id"))
         return {"company_id": cid, "product_type": "gib_credits", "pack_id": pack["id"], "plan_id": pack["id"], "plan_name": pack["name"], "credits": pack["credits"], "period": "once", "amount": float(pack["price"]), "label": f"{pack['name']} ({pack['credits']} GİB kontörü)"}
     period = req.get("period") if req.get("period") in PERIOD_DAYS else "monthly"
@@ -167,6 +168,8 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
 @router.put("/system/settings")
 async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     upd = {k: req[k] for k in ("email_enabled", "whatsapp_enabled", "sender_company_id", "support_email", "support_phone", "brand_name", "trial_plan_id", "public_url") if k in req}
+    if "gib_credits_sales" in req:
+        upd["gib_credits_sales"] = bool(req["gib_credits_sales"])
     if "reminder_days" in req:
         upd["reminder_days"] = sorted({int(x) for x in req["reminder_days"] if str(x).strip().isdigit() and 0 < int(x) <= 60}, reverse=True) or [7, 1]
     if "trial_days" in req:
@@ -187,6 +190,8 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
         if cleaned:
             upd["gib_packs"] = cleaned
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {**upd, "updated_at": _now()}}, upsert=True)
+    if "gib_credits_sales" in upd:
+        saas.invalidate()
     return await settings()
 
 

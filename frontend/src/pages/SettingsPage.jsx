@@ -184,7 +184,7 @@ export const B2BSettings = ({ companyId }) => {
 };
 
 export default function SettingsPage({ embedded = false }) {
-  const { activeCompany } = useAuth();
+  const { activeCompany, license } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
@@ -207,7 +207,7 @@ export default function SettingsPage({ embedded = false }) {
       {!embedded && (
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Hesabınız altındaki şirket bilgileri, form şablonları ve entegrasyonlar. GİB kontör almak için <button type="button" className="font-semibold text-emerald-700 underline" onClick={() => navigate("/hesap?tab=kontor")}>Hesap → GİB Kontör</button>.</p>
+          <p className="text-xs sm:text-sm text-slate-500">Hesabınız altındaki şirket bilgileri, form şablonları ve entegrasyonlar.{license?.gib_credits_sales ? <> GİB kontör almak için <button type="button" className="font-semibold text-emerald-700 underline" onClick={() => navigate("/hesap?tab=kontor")}>Hesap → GİB Kontör</button>.</> : null}</p>
         </div>
       )}
       <div className="flex flex-col lg:flex-row gap-6 items-start">

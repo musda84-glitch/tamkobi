@@ -19,6 +19,22 @@ DEFAULT_PACKS = [
     {"id": "gib_5000", "name": "5.000 Kontör", "credits": 5000, "price": 7500, "tagline": "Kurumsal hacim"},
 ]
 WELCOME_CREDITS = 50
+SALES_CLOSED_DETAIL = "GİB kontör satışı şu an kapalı. Entegratör anlaşması tamamlanınca platform yöneticisi satışları açacaktır."
+
+
+def sales_from_settings(st: Optional[dict]) -> bool:
+    """Missing / unset key means sales are off — no GİB agreement yet."""
+    return bool((st or {}).get("gib_credits_sales"))
+
+
+async def sales_enabled() -> bool:
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    return sales_from_settings(st)
+
+
+async def require_sales():
+    if not await sales_enabled():
+        raise HTTPException(status_code=403, detail=SALES_CLOSED_DETAIL)
 
 
 def init(db):
@@ -108,9 +124,13 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
     w = await get_wallet(company_id)
     bal = int(w.get("balance") or 0)
     if bal < credits:
+        if await sales_enabled():
+            hint = "Hesap → GİB Kontör ekranından paket satın alın."
+        else:
+            hint = "Platform yöneticinizden kontör yüklemesi isteyin."
         raise HTTPException(
             status_code=402,
-            detail=f"GİB kontörünüz yetersiz ({bal} kalan, {credits} gerekli). Hesap → GİB Kontör ekranından paket satın alın.",
+            detail=f"GİB kontörünüz yetersiz ({bal} kalan, {credits} gerekli). {hint}",
         )
     await _db.gib_wallets.update_one({"_id": w["_id"]}, {"$inc": {"balance": -credits}, "$set": {"updated_at": _now()}})
     await _db.gib_credit_ledger.insert_one({
@@ -138,11 +158,13 @@ async def account_credits(request: Request, company_id: str = "comp_nexus_main_0
     saas._require_company_access(user, company_id)
     w = await get_wallet(company_id)
     led = [_clean(x) for x in await _db.gib_credit_ledger.find({"wallet_id": w["_id"]}).sort("created_at", -1).to_list(40)]
+    selling = await sales_enabled()
     return {
         "company_id": company_id,
         "wallet_id": w["_id"],
         "balance": int(w.get("balance") or 0),
-        "packs": await packs(),
+        "sales_enabled": selling,
+        "packs": await packs() if selling else [],
         "ledger": led,
     }
 

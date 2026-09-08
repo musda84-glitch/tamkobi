@@ -103,6 +103,18 @@ export const PlatformSettingsPanel = () => {
         </div>
       </div>
       <PaytrSettings />
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="gib-sales-toggle-card">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm">GİB kontör satışı</h3>
+            <p className="text-[11px] text-slate-500 mt-1">Müşteriler Hesap menüsünde paket satın almayı görür. Entegratör anlaşması yapılmadan kapalı tutun; hediye kontör ve e-belge gönderimi çalışmaya devam eder.</p>
+          </div>
+          <label className="flex items-center gap-2 shrink-0 pt-0.5">
+            <Toggle on={!!s.gib_credits_sales} onChange={(v) => setS({ ...s, gib_credits_sales: v })} testId="set-gib-credits-sales" />
+            <span className="font-semibold">{s.gib_credits_sales ? "Açık" : "Kapalı"}</span>
+          </label>
+        </div>
+      </div>
       <GibPacksEditor packs={s.gib_packs || []} onChange={(gib_packs) => setS({ ...s, gib_packs })} />
       <div className="flex justify-end"><button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="set-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
@@ -113,7 +125,7 @@ export const PlatformSettingsPanel = () => {
 const GibPacksEditor = ({ packs, onChange }) => (
   <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="gib-packs-editor">
     <h3 className="font-bold text-slate-900 text-sm">GİB kontör paketleri (müşteri satışı)</h3>
-    <p className="text-[11px] text-slate-500">Hesap → GİB Kontör ekranında görünür. Ödeme PayTR/Stripe ile alınır, kontör lisans cüzdanına yüklenir.</p>
+    <p className="text-[11px] text-slate-500">Satış açıkken Hesap → GİB Kontör ekranında görünür. Ödeme PayTR/Stripe ile alınır, kontör lisans cüzdanına yüklenir. Satış kapalıyken fiyatları yine buradan hazırlayabilirsiniz.</p>
     <div className="space-y-2">
       {(packs || []).map((p, i) => (
         <div key={p.id || i} className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid={`gib-pack-edit-${p.id}`}>

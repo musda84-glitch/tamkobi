@@ -163,11 +163,13 @@ async def effective(company_id: str) -> Dict[str, Any]:
     plan_company_limit = int((plan or {}).get("company_limit") or 0)
     lic_company_limit = (lic or {}).get("company_limit")
     company_limit = int(lic_company_limit) if lic_company_limit is not None else plan_company_limit
+    plat = await _db.platform_settings.find_one({"_id": "platform"}, {"gib_credits_sales": 1}) or {}
     res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
            "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
            "company_limit": company_limit, "company_count": len(siblings),
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
-           "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly")}
+           "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly"),
+           "gib_credits_sales": bool(plat.get("gib_credits_sales"))}
     _cache[lid] = (time.time() + CACHE_TTL, dict(res))
     return res
 

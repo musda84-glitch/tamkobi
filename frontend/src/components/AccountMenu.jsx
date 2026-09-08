@@ -6,7 +6,7 @@ import { Building2, ChevronDown, Plus, Settings, UserRound, Wallet, Check, Loade
 import { API_URL, useAuth } from "../context/AuthContext";
 
 export const AccountMenu = () => {
-  const { companies, activeCompany, switchCompany, reloadSession, user } = useAuth();
+  const { companies, activeCompany, switchCompany, reloadSession, user, license } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -48,6 +48,7 @@ export const AccountMenu = () => {
     setOpen(false);
   };
   const canAdmin = !user?.role || user.role === "admin" || user?.is_super_admin;
+  const salesOn = !!license?.gib_credits_sales;
   return (
     <div className="px-3.5 py-3 border-b border-slate-800/60 relative" ref={box} data-testid="account-menu">
       <button
@@ -93,10 +94,12 @@ export const AccountMenu = () => {
             </form>
           )}
           <div className="my-1 border-t border-slate-700" />
-          <Link to="/hesap?tab=kontor" onClick={() => setOpen(false)} className="flex items-center justify-between px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-gib">
-            <span className="inline-flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-amber-400" /> GİB Kontör</span>
-            <span className="font-bold text-amber-300" data-testid="account-gib-balance">{credits == null ? "…" : `${credits}`}</span>
-          </Link>
+          {salesOn && (
+            <Link to="/hesap?tab=kontor" onClick={() => setOpen(false)} className="flex items-center justify-between px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-gib">
+              <span className="inline-flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-amber-400" /> GİB Kontör</span>
+              <span className="font-bold text-amber-300" data-testid="account-gib-balance">{credits == null ? "…" : `${credits}`}</span>
+            </Link>
+          )}
           <Link to="/hesap?tab=sirketler" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-page"><Building2 className="w-3.5 h-3.5" /> Hesabım</Link>
           <Link to="/hesap?tab=profil" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-profile"><UserRound className="w-3.5 h-3.5" /> Profilim</Link>
           <Link to="/hesap?tab=ayarlar" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>
