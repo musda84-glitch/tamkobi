@@ -88,6 +88,7 @@ def test_addon_for_path_longest_prefix_and_statement():
     assert addons.addon_for_path("/api/ai/cashflow-forecast") == "ai.advisor"
     assert addons.addon_for_path("/api/loans/extract") == "ai.finance_docs"
     assert addons.addon_for_path("/api/migration/ai-map") == "ai.migration"
+    assert addons.addon_for_path("/api/support/tickets") == "support.tickets"
     assert addons.addon_for_path("/api/banking/accounts/acc1/import-statement") == "ai.finance_docs"
     assert addons.addon_for_path("/api/invoices") is None
     assert addons.addon_for_path("/api/public/b2b/tok/ai-cart") is None

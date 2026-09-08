@@ -13,6 +13,7 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 import { AddonsPanel } from "../components/saas/AddonsPanel";
+import { SupportTicketsPanel } from "../components/saas/SupportTicketsPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -43,7 +44,7 @@ export default function SystemAdminPage() {
   const changed = () => { load(); refreshLicense(); };
   const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
   return (
-    <SystemLayout pendingCount={overview?.pending_requests || 0}>
+    <SystemLayout pendingCount={overview?.pending_requests || 0} openTickets={overview?.open_tickets || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
@@ -57,6 +58,7 @@ export default function SystemAdminPage() {
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
           {page === "araclar" && <AddonsPanel />}
+          {page === "destek" && <SupportTicketsPanel onOpenCompany={setOpenId} />}
           {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}

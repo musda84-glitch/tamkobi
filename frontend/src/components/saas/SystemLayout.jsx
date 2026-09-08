@@ -1,11 +1,11 @@
 import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Bot } from "lucide-react";
+import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Bot, Headset } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
-export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/araclar", "AI & Destek", Bot], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
+export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/araclar", "AI & Destek", Bot], ["/sistem/destek", "Destek Talepleri", Headset], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
 
-export const SystemLayout = ({ children, pendingCount = 0 }) => {
+export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -23,6 +23,7 @@ export const SystemLayout = ({ children, pendingCount = 0 }) => {
             <Link key={path} to={path} className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-colors ${active ? "bg-amber-400 text-slate-900" : "text-slate-400 hover:bg-white/5 hover:text-white"}`} data-testid={`sys-nav-${path.replace("/sistem", "").replace("/", "") || "overview"}`}>
               <span className="flex items-center gap-2.5"><Icon className="w-4 h-4" />{label}</span>
               {path === "/sistem/talepler" && pendingCount > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{pendingCount}</span>}
+              {path === "/sistem/destek" && openTickets > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{openTickets}</span>}
             </Link>); })}
         </nav>
         <div className="p-3 border-t border-white/5 space-y-2">

@@ -32,6 +32,7 @@ import ExpensesPage from "./pages/ExpensesPage";
 import LoansPage from "./pages/LoansPage";
 import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
+import SupportPage from "./pages/SupportPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
 import SystemLoginPage from "./pages/SystemLoginPage";
 import PricingPage from "./pages/PricingPage";
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="/ai-advisor" element={<AIAssistantPage />} />
             <Route path="/communication" element={<CommunicationPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/support" element={<SupportPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />

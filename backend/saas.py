@@ -333,7 +333,8 @@ async def overview(_: dict = Depends(require_super_admin)):
     module_usage = {k: sum(1 for r in rows if r["license"]["modules"].get(k)) for k in _ALL}
     expiring = sorted([r for r in rows if r["license"]["days_left"] is not None and r["license"]["days_left"] <= 7], key=lambda r: r["license"]["days_left"])
     pending = await _db.upgrade_requests.count_documents({"status": "pending"})
-    return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
+    open_tickets = await _db.support_tickets.count_documents({"status": {"$in": ["open", "in_progress", "waiting_customer"]}})
+    return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "open_tickets": open_tickets, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
 
 
 @router.get("/system/modules")

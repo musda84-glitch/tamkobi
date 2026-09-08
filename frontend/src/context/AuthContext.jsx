@@ -42,6 +42,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
+    { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
   const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" };
@@ -50,7 +51,7 @@ export const AuthProvider = ({ children }) => {
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const addonOn = (key) => !license?.addons || license.addons[key] !== false;
-  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")));
+  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
     if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
