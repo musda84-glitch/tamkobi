@@ -276,6 +276,32 @@ EINVOICE_PROVIDERS = {
     "other": {"name": "Diğer Entegratör", "fields": ["api_url", "username", "password", "api_key"], "docs": ""},
 }
 
+def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
+    s = s or {}
+    code = s.get("provider") or ""
+    meta = EINVOICE_PROVIDERS.get(code) or {}
+    return {
+        "id": str(s["_id"]) if s.get("_id") else None,
+        "company_id": company_id,
+        "provider": code,
+        "provider_name": meta.get("name") or "",
+        "fields": list(meta.get("fields") or []),
+        "docs": meta.get("docs") or "",
+        "hint": meta.get("hint") or "",
+        "assigned": bool(code),
+        "mode": s.get("mode") or "test",
+        "username": s.get("username") or "",
+        "api_url": s.get("api_url") or "",
+        "alias": s.get("alias") or "",
+        "corporate_code": s.get("corporate_code") or "",
+        "has_password": bool(s.get("password_enc")),
+        "has_api_key": bool(s.get("api_key_enc")),
+        "status": s.get("status") or "simulated",
+        "updated_at": s.get("updated_at"),
+        "assigned_at": s.get("assigned_at"),
+    }
+
+
 @api_router.get("/einvoice/providers")
 async def einvoice_providers():
     return [{"code": k, **v} for k, v in EINVOICE_PROVIDERS.items()]
@@ -283,29 +309,63 @@ async def einvoice_providers():
 @api_router.get("/einvoice/settings")
 async def get_einvoice_settings(company_id: Optional[str] = "comp_nexus_main_01"):
     s = await db.einvoice_settings.find_one({"company_id": company_id})
-    if not s:
-        return {"company_id": company_id, "provider": "", "mode": "test", "username": "", "has_password": False, "status": "simulated", "alias": "", "corporate_code": ""}
-    return {"id": str(s["_id"]), "company_id": company_id, "provider": s.get("provider", ""), "mode": s.get("mode", "test"), "username": s.get("username", ""),
-            "api_url": s.get("api_url", ""), "alias": s.get("alias", ""), "corporate_code": s.get("corporate_code", ""),
-            "has_password": bool(s.get("password_enc")), "status": s.get("status", "simulated"), "updated_at": s.get("updated_at")}
+    return _einvoice_view(company_id, s)
 
 @api_router.put("/einvoice/settings")
 async def save_einvoice_settings(req: Dict[str, Any]):
+    """Tenant may only enter connection fields for the integrator assigned by platform admin."""
     company_id = req.get("company_id", "comp_nexus_main_01")
-    provider = req.get("provider", "")
-    if provider and provider not in EINVOICE_PROVIDERS:
-        raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
-    update = {"provider": provider, "mode": req.get("mode", "test"), "username": (req.get("username") or "").strip(), "api_url": req.get("api_url", ""), "alias": req.get("alias", ""),
-              "corporate_code": (req.get("corporate_code") or "").strip(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    provider = existing.get("provider") or ""
+    if not provider:
+        raise HTTPException(status_code=400, detail="Bu şirket için e-fatura entegratörü henüz atanmadı. Seçim Platform Yönetimi → Şirketler ekranından yapılır.")
+    if "provider" in req and (req.get("provider") or "") != provider:
+        raise HTTPException(status_code=403, detail="Entegratör yalnızca Platform Yönetimi → Şirketler ekranından değiştirilir.")
+    update = {
+        "mode": req.get("mode", existing.get("mode") or "test"),
+        "username": (req.get("username") if "username" in req else existing.get("username") or "").strip(),
+        "api_url": req.get("api_url") if "api_url" in req else existing.get("api_url", ""),
+        "alias": req.get("alias") if "alias" in req else existing.get("alias", ""),
+        "corporate_code": (req.get("corporate_code") if "corporate_code" in req else existing.get("corporate_code") or "").strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     if req.get("password"):
         update["password_enc"] = comm_service.encrypt(req["password"])
-    existing = await db.einvoice_settings.find_one({"company_id": company_id})
-    has_pwd = bool(update.get("password_enc") or (existing or {}).get("password_enc"))
+    if req.get("api_key"):
+        update["api_key_enc"] = comm_service.encrypt(req["api_key"])
+    has_pwd = bool(update.get("password_enc") or existing.get("password_enc"))
     has_creds = bool(update["username"] and has_pwd)
     if provider == "n11faturam":
-        has_creds = has_creds and bool(update.get("corporate_code") or (existing or {}).get("corporate_code"))
-    update["status"] = "configured" if provider and has_creds else "simulated"
-    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+        has_creds = has_creds and bool(update.get("corporate_code") or existing.get("corporate_code"))
+    update["status"] = "configured" if has_creds else "simulated"
+    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "provider": provider}}, upsert=True)
+    return await get_einvoice_settings(company_id)
+
+
+@api_router.put("/system/companies/{company_id}/einvoice")
+async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+    if not await db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    provider = (req.get("provider") or "").strip()
+    if provider and provider not in EINVOICE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
+    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    now = datetime.now(timezone.utc).isoformat()
+    update = {"provider": provider, "updated_at": now, "assigned_at": now}
+    unset = {}
+    if provider != (existing.get("provider") or ""):
+        update["username"] = ""
+        update["api_url"] = ""
+        update["corporate_code"] = ""
+        update["status"] = "simulated"
+        unset["password_enc"] = ""
+        unset["api_key_enc"] = ""
+    if not provider:
+        update["status"] = "simulated"
+    ops = {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "mode": existing.get("mode") or "test", "alias": existing.get("alias") or ""}}
+    if unset:
+        ops["$unset"] = unset
+    await db.einvoice_settings.update_one({"company_id": company_id}, ops, upsert=True)
     return await get_einvoice_settings(company_id)
 
 

@@ -205,23 +205,27 @@ class TestN11FaturamApi:
         assert "corporate_code" in n11["fields"]
 
     def test_save_requires_corporate_code(self, client):
+        a = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "n11faturam"}, timeout=20)
+        assert a.status_code == 200, a.text
         r = client.put(f"{BASE}/einvoice/settings", json={
-            "company_id": COMPANY, "provider": "n11faturam", "username": "u1", "password": "p1", "mode": "test",
+            "company_id": COMPANY, "username": "u1", "password": "p1", "mode": "test",
         }, timeout=20)
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "simulated"
         r2 = client.put(f"{BASE}/einvoice/settings", json={
-            "company_id": COMPANY, "provider": "n11faturam", "username": "u1", "password": "p1",
+            "company_id": COMPANY, "username": "u1", "password": "p1",
             "corporate_code": "CORP-TEST", "mode": "test",
         }, timeout=20)
         assert r2.status_code == 200, r2.text
         d = r2.json()
         assert d["status"] == "configured" and d["corporate_code"] == "CORP-TEST"
         assert d["has_password"] is True and "password" not in d
-        client.put(f"{BASE}/einvoice/settings", json={"company_id": COMPANY, "provider": "", "username": "", "password": "", "corporate_code": ""}, timeout=20)
+        client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": ""}, timeout=20)
 
     def test_test_endpoint_without_n11_is_400(self, client):
-        client.put(f"{BASE}/einvoice/settings", json={"company_id": COMPANY, "provider": "foriba", "username": "x", "password": "y"}, timeout=20)
+        a = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "foriba"}, timeout=20)
+        assert a.status_code == 200, a.text
+        client.put(f"{BASE}/einvoice/settings", json={"company_id": COMPANY, "username": "x", "password": "y"}, timeout=20)
         r = client.post(f"{BASE}/einvoice/test", params={"company_id": COMPANY}, timeout=20)
         assert r.status_code == 400
-        client.put(f"{BASE}/einvoice/settings", json={"company_id": COMPANY, "provider": "", "username": "", "password": ""}, timeout=20)
+        client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": ""}, timeout=20)
