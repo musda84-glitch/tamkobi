@@ -120,3 +120,20 @@ code {
   #print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
   .no-print { display: none !important; }
 }
+
+/* Invoice/order print lines: keep stock barcode inline and tiny next to the description. */
+#print-area [data-testid^="print-item-barcode-"] {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-height: 1.15rem;
+  overflow: hidden;
+  line-height: 0;
+  vertical-align: middle;
+}
+#print-area [data-testid^="print-item-barcode-"] svg {
+  width: 3.25rem !important;
+  height: 0.85rem !important;
+  max-width: 3.25rem !important;
+  display: block;
+}

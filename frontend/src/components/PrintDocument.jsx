@@ -49,9 +49,9 @@ const LineStockBarcode = ({ item, productsById, index }) => {
   const code = lineStockCode(item, productsById);
   if (!code) return null;
   return (
-    <div className="inline-flex items-center shrink-0" data-testid={`print-item-barcode-${index}`}>
-      <Barcode value={code} height={16} width={0.8} fontSize={7} />
-    </div>
+    <span className="shrink-0" data-testid={`print-item-barcode-${index}`}>
+      <Barcode value={code} height={14} width={0.55} fontSize={0} displayValue={false} className="block h-[14px] w-[52px]" />
+    </span>
   );
 };
 
@@ -152,15 +152,15 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
               <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
                 {tpl.show_images !== false && <td className="p-1">{(it.image_url || productsById[it.product_id]?.image_url) ? <img src={resolveImageUrl(it.image_url || productsById[it.product_id]?.image_url)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}</td>}
                 <td className="p-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="min-w-0 flex-1">
+                  <div className="flex flex-nowrap items-center gap-1.5 min-w-0">
+                    <span className="min-w-0 truncate">
                       {it.name || it.product_name}
                       {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
-                      {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
-                      {tpl.show_item_notes !== false && itemNote(it) && <div className="mt-1 text-[10px] text-slate-600 italic whitespace-pre-wrap border-l-2 border-slate-200 pl-1.5" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
-                    </div>
+                    </span>
                     {tpl.show_barcode && <LineStockBarcode item={it} productsById={productsById} index={i} />}
                   </div>
+                  {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
+                  {tpl.show_item_notes !== false && itemNote(it) && <div className="mt-1 text-[10px] text-slate-600 italic whitespace-pre-wrap border-l-2 border-slate-200 pl-1.5" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                 </td>
                 <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
                 {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
