@@ -44,11 +44,10 @@ export const AuthProvider = ({ children }) => {
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" };
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[path] !== "none" : perms[path] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
-  const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
+  const moduleOn = (path) => !license?.modules || license.modules[path] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
