@@ -22,7 +22,7 @@ import {
   MessageSquare,
   MoreVertical,
   MousePointerClick,
-  FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
+  FileCheck2, Pencil, Trash2, CheckCircle } from "lucide-react";
 import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
@@ -456,7 +456,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <td className="px-4 py-3 text-center w-[300px] min-w-[300px]">
                       {(() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
-                        const pending = isIncomingPurchasePending(inv);
                         return (
                       <div className="grid grid-cols-7 gap-1 justify-items-center items-center" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" ? (
@@ -484,26 +483,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <MessageSquare className="w-4 h-4" />
                         </button>
                         {incoming ? (
-                          pending ? (
-                            <div className="flex items-center gap-0.5" data-testid={`incoming-response-btns-${inv.invoice_number}`}>
-                              <button
-                                onClick={() => handleAcceptIncoming(inv)}
-                                className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition"
-                                title="Gelen e-faturayı onayla (kabul)"
-                                data-testid={`accept-incoming-btn-${inv.invoice_number}`}
-                              >
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => handleRejectIncoming(inv)}
-                                className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition"
-                                title="Gelen e-faturayı reddet"
-                                data-testid={`reject-incoming-btn-${inv.invoice_number}`}
-                              >
-                                <XCircle className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
+                          <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
                         ) : inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && inv.gib_status !== 'Kağıt Fatura (Matbu)' ? (
                           <button
                             onClick={() => handleSendToGib(inv.id || inv._id)}
