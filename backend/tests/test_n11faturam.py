@@ -3,6 +3,7 @@ import asyncio
 import base64
 import os
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree.ElementTree import fromstring
@@ -25,7 +26,6 @@ def _env_base():
 
 
 BASE = _env_base().rstrip("/") + "/api"
-COMPANY = "comp_n11_settings_test"
 
 
 def _ticket_xml(ticket="TICKET-ABC"):
@@ -196,6 +196,21 @@ class TestN11FaturamApi:
             pytest.skip(f"login failed {r.status_code}")
         return s
 
+    @pytest.fixture(scope="class")
+    def company_id(self, client):
+        email = f"n11_{uuid.uuid4().hex[:8]}@nexus.test"
+        r = client.post(f"{BASE}/system/companies", json={
+            "name": "n11 Settings Test",
+            "admin_email": email,
+            "admin_password": "test1234",
+            "plan_id": "plan_standard",
+            "trial_days": 7,
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        cid = r.json()["id"]
+        yield cid
+        client.delete(f"{BASE}/system/companies/{cid}", timeout=20)
+
     def test_provider_listed(self, client):
         r = client.get(f"{BASE}/einvoice/providers", timeout=20)
         assert r.status_code == 200
@@ -204,28 +219,28 @@ class TestN11FaturamApi:
         n11 = next(p for p in r.json() if p["code"] == "n11faturam")
         assert "corporate_code" in n11["fields"]
 
-    def test_save_requires_corporate_code(self, client):
-        a = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "n11faturam"}, timeout=20)
+    def test_save_requires_corporate_code(self, client, company_id):
+        a = client.put(f"{BASE}/system/companies/{company_id}/einvoice", json={"provider": "n11faturam"}, timeout=20)
         assert a.status_code == 200, a.text
         r = client.put(f"{BASE}/einvoice/settings", json={
-            "company_id": COMPANY, "username": "u1", "password": "p1", "mode": "test",
+            "company_id": company_id, "username": "u1", "password": "p1", "mode": "test",
         }, timeout=20)
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "simulated"
         r2 = client.put(f"{BASE}/einvoice/settings", json={
-            "company_id": COMPANY, "username": "u1", "password": "p1",
+            "company_id": company_id, "username": "u1", "password": "p1",
             "corporate_code": "CORP-TEST", "mode": "test",
         }, timeout=20)
         assert r2.status_code == 200, r2.text
         d = r2.json()
         assert d["status"] == "configured" and d["corporate_code"] == "CORP-TEST"
         assert d["has_password"] is True and "password" not in d
-        client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": ""}, timeout=20)
+        client.put(f"{BASE}/system/companies/{company_id}/einvoice", json={"provider": ""}, timeout=20)
 
-    def test_test_endpoint_without_n11_is_400(self, client):
-        a = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "foriba"}, timeout=20)
+    def test_test_endpoint_without_n11_is_400(self, client, company_id):
+        a = client.put(f"{BASE}/system/companies/{company_id}/einvoice", json={"provider": "foriba"}, timeout=20)
         assert a.status_code == 200, a.text
-        client.put(f"{BASE}/einvoice/settings", json={"company_id": COMPANY, "username": "x", "password": "y"}, timeout=20)
-        r = client.post(f"{BASE}/einvoice/test", params={"company_id": COMPANY}, timeout=20)
+        client.put(f"{BASE}/einvoice/settings", json={"company_id": company_id, "username": "x", "password": "y"}, timeout=20)
+        r = client.post(f"{BASE}/einvoice/test", params={"company_id": company_id}, timeout=20)
         assert r.status_code == 400
-        client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": ""}, timeout=20)
+        client.put(f"{BASE}/system/companies/{company_id}/einvoice", json={"provider": ""}, timeout=20)
