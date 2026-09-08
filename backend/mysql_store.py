@@ -416,6 +416,7 @@ def sort_docs(docs: List[dict], key) -> List[dict]:
         return sorted(docs, key=lambda d: [str(x) for x in sk(d)], reverse=reverse)
 
 
+# Keep in sync with backend/schema.mysql.sql (CREATE TABLE bodies only; no CREATE DATABASE).
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS docs (
   collection VARCHAR(128) NOT NULL,

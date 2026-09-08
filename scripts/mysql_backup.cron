@@ -1,0 +1,3 @@
+# Daily 02:15 UTC TamKobi MySQL backup (install with: crontab scripts/mysql_backup.cron)
+# Adjust paths and keep-days for the host. Logs append; rotate the log separately.
+15 2 * * * /workspace/scripts/mysql_backup.sh --dir /var/backups/tamkobi --keep 14 >> /var/log/tamkobi-mysql-backup.log 2>&1
