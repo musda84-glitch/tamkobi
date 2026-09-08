@@ -260,13 +260,25 @@ def env_updates(
     }
 
 
+def _exec(cur, sql: str, args=None) -> None:
+    """pymysql treats % as printf; escape literal % when using %s placeholders."""
+    if args is None:
+        cur.execute(sql)
+        return
+    parts = sql.split("%s")
+    sql = "%s".join(p.replace("%", "%%") for p in parts)
+    cur.execute(sql, args)
+
+
 def _ensure_user(cur, user: str, host: str, password: str) -> None:
-    cur.execute(
+    _exec(
+        cur,
         f"CREATE USER IF NOT EXISTS `{_ident(user)}`@`{_ident(host)}` "
         f"IDENTIFIED WITH {AUTH_PLUGIN} BY %s",
         (password,),
     )
-    cur.execute(
+    _exec(
+        cur,
         f"ALTER USER `{_ident(user)}`@`{_ident(host)}` "
         f"IDENTIFIED WITH {AUTH_PLUGIN} BY %s",
         (password,),
@@ -311,7 +323,8 @@ def apply_hardening(
 
         # Root: rotate both accounts to the new password, then lock remote root.
         for host in ("localhost", "%"):
-            cur.execute(
+            _exec(
+                cur,
                 f"ALTER USER `root`@`{_ident(host)}` IDENTIFIED WITH {AUTH_PLUGIN} BY %s",
                 (root_password,),
             )

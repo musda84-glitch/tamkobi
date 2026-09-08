@@ -30,6 +30,25 @@ from mysql_users import (  # noqa: E402
 )
 
 
+def test_exec_escapes_host_percent_for_pymysql():
+    from mysql_users import _exec
+
+    class FakeCur:
+        def __init__(self):
+            self.sql = None
+            self.args = None
+
+        def execute(self, sql, args=None):
+            self.sql = sql
+            self.args = args
+
+    cur = FakeCur()
+    _exec(cur, "ALTER USER `root`@`%` IDENTIFIED BY %s", ("secret",))
+    assert "%%" in cur.sql
+    assert "%s" in cur.sql
+    assert cur.args == ("secret",)
+
+
 def test_generate_password_is_strong_and_env_safe():
     pw = generate_password()
     assert len(pw) >= 32
@@ -85,6 +104,20 @@ def test_forbidden_tokens_documented():
     assert "CREATE USER" not in APP_PRIVILEGES
 
 
+def _env_passwords():
+    load_env()
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        dotenv_values = lambda p: {}
+    file_vals = {}
+    file_vals.update(dotenv_values(ROOT / ".env") or {})
+    file_vals.update(dotenv_values(BACKEND / ".env") or {})
+    merged = dict(os.environ)
+    merged.update({k: v for k, v in file_vals.items() if v})
+    return merged
+
+
 def _grants_for(user: str, password: str):
     from mysql_users import connect
 
@@ -98,8 +131,8 @@ def _grants_for(user: str, password: str):
 
 
 def test_live_app_user_is_least_privilege():
-    load_env()
-    pw = os.environ.get("MYSQL_PASSWORD") or ""
+    env = _env_passwords()
+    pw = env.get("MYSQL_PASSWORD") or ""
     if not pw or pw in {"tamkobi", "change-me-app"}:
         pytest.skip("hardened MYSQL_PASSWORD not configured")
     grants = _grants_for(APP_USER, pw)
@@ -121,8 +154,8 @@ def test_live_app_user_is_least_privilege():
 
 
 def test_live_backup_cannot_write():
-    load_env()
-    pw = os.environ.get("MYSQL_BACKUP_PASSWORD") or ""
+    env = _env_passwords()
+    pw = env.get("MYSQL_BACKUP_PASSWORD") or ""
     if not pw or pw.startswith("change-me"):
         pytest.skip("MYSQL_BACKUP_PASSWORD not configured")
     from mysql_users import connect
@@ -142,8 +175,41 @@ def test_live_backup_cannot_write():
 
 
 def test_live_remote_root_locked():
-    load_env()
-    pw = os.environ.get("MYSQL_ROOT_PASSWORD") or ""
+    env = _env_passwords()
+    pw = env.get("MYSQL_ROOT_PASSWORD") or ""
+    if not pw or pw in {"tamkobi", "change-me-root"}:
+        pytest.skip("MYSQL_ROOT_PASSWORD not rotated")
+    from mysql_users import connect
+
+    with pytest.raises(Exception):
+        connect("root", pw, "tamkobi")
+
+
+
+def test_live_backup_cannot_write():
+    env = _env_passwords()
+    pw = env.get("MYSQL_BACKUP_PASSWORD") or ""
+    if not pw or pw.startswith("change-me"):
+        pytest.skip("MYSQL_BACKUP_PASSWORD not configured")
+    from mysql_users import connect
+
+    conn = connect(BACKUP_USER, pw, "tamkobi")
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM docs")
+        cur.fetchone()
+        with pytest.raises(Exception):
+            cur.execute(
+                "INSERT INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
+                ("_priv_probe", "1", "{}"),
+            )
+    finally:
+        conn.close()
+
+
+def test_live_remote_root_locked():
+    env = _env_passwords()
+    pw = env.get("MYSQL_ROOT_PASSWORD") or ""
     if not pw or pw in {"tamkobi", "change-me-root"}:
         pytest.skip("MYSQL_ROOT_PASSWORD not rotated")
     from mysql_users import connect
