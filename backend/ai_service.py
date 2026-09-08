@@ -10,7 +10,7 @@ async def get_financial_ai_advice(company_context: dict, prompt: str, history: l
     if not api_key:
         return "Yapay Zeka API anahtarı yapılandırılmamış. Lütfen sistem yöneticinizle görüşün."
 
-    system_prompt = f"""Sen NexusHesap'ın uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
+    system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
 Kullanıcının şirketine dair güncel veriler:
 - Şirket Adı: {company_context.get('company_name', 'Nexus Teknoloji A.Ş.')}
 - Toplam Kasa/Banka Varlığı: {company_context.get('total_bank_balance', 0):,.2f} TRY

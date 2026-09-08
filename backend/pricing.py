@@ -150,20 +150,20 @@ async def put_summary_settings(req: Dict[str, Any]):
 async def preview_summary(company_id: str = "comp_nexus_main_01"):
     s = await build_summary(company_id)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
-    return {"summary": s, "text": render_text(s, comp.get("name") or "NexusHesap")}
+    return {"summary": s, "text": render_text(s, comp.get("name") or "TamKobi")}
 
 
 async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
     st = await get_summary_settings(company_id)
     s = await build_summary(company_id)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
-    text = render_text(s, comp.get("name") or "NexusHesap")
+    text = render_text(s, comp.get("name") or "TamKobi")
     result: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "email": None, "whatsapp": None}
     if st["emails"]:
         try:
             acc = await _deps["mail_account"](company_id)
             html = "<pre style='font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap'>" + text.replace("<", "&lt;") + "</pre>"
-            await comm_service.smtp_send(acc, st["emails"], f"Sabah Özeti {s['date']} — {comp.get('name') or 'NexusHesap'}", text, html)
+            await comm_service.smtp_send(acc, st["emails"], f"Sabah Özeti {s['date']} — {comp.get('name') or 'TamKobi'}", text, html)
             result["email"] = {"ok": True, "to": st["emails"]}
         except HTTPException as e:
             result["email"] = {"ok": False, "error": e.detail}

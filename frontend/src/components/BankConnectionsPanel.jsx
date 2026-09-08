@@ -273,7 +273,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <select className={inputCls} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} data-testid="conn-provider-select">{providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select>
                 {provider?.docs && <a href={provider.docs} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 hover:underline">Geliştirici portalı: {provider.docs}</a>}
               </div>
-              <div><label className="block font-semibold mb-1">Bağlanacak Hesap (NexusHesap)</label>
+              <div><label className="block font-semibold mb-1">Bağlanacak Hesap (TamKobi)</label>
                 <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} data-testid="conn-account-select">{accounts.filter((a) => a.type === "bank" && !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
                 <p className="text-[10px] text-amber-700 mt-1">Bağlanan hesaba manuel işlem kapatılır; hareketler yalnızca bankadan çekilir.</p>
               </div>

@@ -3,7 +3,7 @@ import requests
 
 STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
-APP_NAME = "nexushesap"
+APP_NAME = "tamkobi"
 storage_key = None
 
 

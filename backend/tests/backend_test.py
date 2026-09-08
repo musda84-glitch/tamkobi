@@ -1,4 +1,4 @@
-"""Iteration 2 backend regression tests for NexusHesap.
+"""Iteration 2 backend regression tests for TamKobi.
 
 Covers: products (images/variants/barcode/stock adjust), partners account,
 bank live-data connections + matching rules, comm SMS (simulated), comm mail
@@ -371,14 +371,14 @@ class TestBankConnections:
 class TestCommSms:
     def test_settings_roundtrip_no_password_leak(self, s):
         r = s.put(f"{BASE}/comm/sms/settings",
-                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "NEXUSHESAP", "is_active": True}, timeout=30)
+                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "TAMKOBI", "is_active": True}, timeout=30)
         assert r.status_code == 200, r.text[:300]
         d = r.json()
         assert d["usercode"] == "TEST8503"
         assert "password" not in d and "password_enc" not in d
         assert d["has_password"] is False
         g = s.get(f"{BASE}/comm/sms/settings", timeout=30).json()
-        assert g["msgheader"] == "NEXUSHESAP"
+        assert g["msgheader"] == "TAMKOBI"
         assert "password" not in g
 
     def test_balance_simulated(self, s):

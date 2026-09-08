@@ -197,7 +197,7 @@ class ShopPHPClient:
         self.email = str(cfg["api_key"]).strip()
         pw_md5 = hashlib.md5(str(cfg["api_secret"]).encode("utf-8")).hexdigest()  # noqa: S324 — ShopPHP protokolü zorunlu kılar
         self.key = hashlib.md5((self.email + pw_md5).encode("utf-8")).hexdigest()  # noqa: S324
-        self.client = httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers={"Accept": "application/json", "User-Agent": "NexusHesap/1.0"})
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers={"Accept": "application/json", "User-Agent": "TamKobi/1.0"})
 
     def _auth(self) -> Dict[str, str]:
         return {"auth_email": self.email, "auth_key": self.key, "format": "json"}
@@ -334,7 +334,7 @@ def _shopphp_base(cfg: dict) -> str:
 
 async def shopphp_xml(cfg: dict, c: str, key: str) -> ET.Element:
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0), headers={"User-Agent": "NexusHesap/1.0"}) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0), headers={"User-Agent": "TamKobi/1.0"}) as client:
             r = await client.get(f"{_shopphp_base(cfg)}/xml.php", params={"c": c, "xmlc": key})
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"ShopPHP XML bağlantı hatası ({c}): {type(e).__name__}")

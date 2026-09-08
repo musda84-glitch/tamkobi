@@ -405,7 +405,7 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
             a = await _mail_account_fn(company_id)
             admins = await _db.users.find({"role": "admin", "email": {"$exists": True, "$ne": ""}}).to_list(20)
             to = sorted({u["email"] for u in admins if u.get("email")}) or [a["email"]]
-            await _smtp_send_fn(a, to, f"[NexusHesap] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
+            await _smtp_send_fn(a, to, f"[TamKobi] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
             mail = {"status": "sent", "to": to}
         except HTTPException as e:
             mail = {"status": "skipped", "detail": e.detail}
