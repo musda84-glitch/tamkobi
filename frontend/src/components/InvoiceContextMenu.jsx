@@ -1,5 +1,8 @@
 import React, { useEffect, useRef } from "react";
-import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck } from "lucide-react";
+import axios from "axios";
+import { toast } from "sonner";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, FileCode, FileDown } from "lucide-react";
+import { API_URL } from "../context/AuthContext";
 
 export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye" };
 
@@ -8,6 +11,21 @@ const ISSUE_OPTIONS = [
   { key: "e_archive", label: "E-Arşiv olarak kes", sub: "Nihai tüketici / mükellef olmayan", icon: Archive, color: "text-blue-600" },
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" }
 ];
+
+const isOutgoingEdoc = (inv) => inv?.invoice_type === "sales" && (inv.e_type === "e_invoice" || inv.e_type === "e_archive");
+
+const downloadInvoiceFile = (inv, kind) => {
+  const id = inv.id || inv._id;
+  const num = String(inv.invoice_number || "fatura").replace(/[^\w.-]+/g, "_");
+  const url = kind === "xml" ? `${API_URL}/invoices/${id}/xml` : `${API_URL}/invoices/${id}/pdf?download=1`;
+  axios.get(url, { responseType: "blob" }).then((r) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(r.data);
+    a.download = `${num}.${kind === "xml" ? "xml" : "pdf"}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }).catch(() => toast.error(kind === "xml" ? "XML indirilemedi." : "PDF indirilemedi."));
+};
 
 export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch }) => {
   const ref = useRef(null);
@@ -25,7 +43,7 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
   const { inv } = menu;
   const issued = inv.gib_status && inv.gib_status !== "Taslak";
   const left = Math.min(menu.x, window.innerWidth - 280);
-  const top = Math.min(menu.y, window.innerHeight - 340);
+  const top = Math.min(menu.y, window.innerHeight - 420);
   const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (
     <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition" data-testid={testId}>
       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${color}`} />
@@ -50,6 +68,12 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
       )}
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
       <Item icon={Printer} label="Şablonlu Yazdır" onClick={() => onPrint(inv)} testId="ctx-print" />
+      {isOutgoingEdoc(inv) && (
+        <>
+          <Item icon={FileCode} color="text-indigo-600" label="XML indir" sub="UBL-TR e-Fatura / e-Arşiv" onClick={() => downloadInvoiceFile(inv, "xml")} testId="ctx-download-xml" />
+          <Item icon={FileDown} color="text-rose-600" label="PDF indir" sub="Görüntülenebilir belge kopyası" onClick={() => downloadInvoiceFile(inv, "pdf")} testId="ctx-download-pdf" />
+        </>
+      )}
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
       {onDispatch && inv.invoice_type === "sales" && <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />}
       {inv.payment_status !== "paid" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
