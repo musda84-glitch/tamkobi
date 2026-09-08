@@ -47,6 +47,7 @@ import attendance
 import trash
 import migration
 import pricing
+from report_helpers import issue_q as _issue_q, report_insights as _report_insights
 import edocs
 import saas
 import saas_billing
@@ -758,12 +759,28 @@ async def change_password(req: ChangePasswordRequest, request: Request):
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 # ----------------- DASHBOARD & KPIS -----------------
+_TR_MON = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
+_CHANNEL_COLORS = {"trendyol": "#f97316", "hepsiburada": "#ea580c", "b2b": "#3b82f6", "shopify": "#10b981",
+                   "amazon": "#232f3e", "n11": "#7c3aed", "manual": "#64748b", "shopphp": "#0ea5e9"}
+
+
 @api_router.get("/dashboard/overview")
 async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
-    invs = await db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}}, {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1, "created_at": 1}).to_list(20000)
+    invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, budgets = await asyncio.gather(
+        db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}},
+                         {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1}).to_list(20000),
+        db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1}).to_list(5000),
+        db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": today}),
+        db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": {"$lt": today}}),
+        db.orders.count_documents({"company_id": company_id, "order_status": "pending"}),
+        db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}),
+        db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000),
+        db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
+        expenses.get_budgets(company_id),
+    )
     def bucket(t):
         tot = over = notdue = 0.0
         for i in invs:
@@ -784,21 +801,19 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     drafts = [i for i in invs if i.get("status") == "draft"]
     sales_vat = round(sum(float(i.get("vat_total", 0)) for i in invs if i.get("invoice_type") == "sales" and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(month)), 2)
     purch_vat = round(sum(float(i.get("vat_total", 0)) for i in invs if i.get("invoice_type") == "purchase" and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(month)), 2)
-    exp_vat = round(sum([e.get("vat_amount", 0) async for e in db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1})]), 2)
+    exp_vat = round(sum(float(e.get("vat_amount", 0) or 0) for e in exp_rows), 2)
     nxt = (now.replace(day=1) + timedelta(days=32)).replace(day=26)
-    inst_today = await db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": today})
-    inst_overdue = await db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": {"$lt": today}})
+    crit = len([p for p in products if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)])
     tasks = [
-        {"key": "pending_orders", "label": "Onay bekleyen sipariş", "count": await db.orders.count_documents({"company_id": company_id, "order_status": "pending"}), "path": "/orders"},
+        {"key": "pending_orders", "label": "Onay bekleyen sipariş", "count": pending_orders, "path": "/orders"},
         {"key": "due_today", "label": "Bugün vadesi gelen fatura", "count": sum(1 for i in invs if i.get("due_date") == today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
         {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
-        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/projects"},
-        {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
-        {"key": "leaves", "label": "Bekleyen izin talebi", "count": await db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}), "path": "/personnel"},
+        {"key": "quotes", "label": "Onay bekleyen teklif", "count": quotes, "path": "/projects"},
+        {"key": "critical_stock", "label": "Kritik stok", "count": crit, "path": "/stock"},
+        {"key": "leaves", "label": "Bekleyen izin talebi", "count": leaves, "path": "/personnel"},
     ]
-    budgets = await expenses.get_budgets(company_id)
     return {"date": today, "tasks": [t for t in tasks if t["count"]], "collections": bucket("sales"), "payments": bucket("purchase"),
             "drafts": {"count": len(drafts), "total": round(sum(float(i.get("grand_total", 0)) for i in drafts), 2)},
             "invoices": {"incoming": counts("purchase"), "outgoing": counts("sales")},
@@ -807,55 +822,85 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
 
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
-    bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(100)
-    total_bank_balance = sum(acc.get("current_balance", 0) for acc in bank_accs)
-
-    contacts = await db.contacts.find({"company_id": company_id}).to_list(500)
-    total_receivables = sum(c.get("balance", 0) for c in contacts if c.get("balance", 0) > 0)
-    total_payables = abs(sum(c.get("balance", 0) for c in contacts if c.get("balance", 0) < 0))
-
-    invoices = await db.invoices.find({"company_id": company_id}).to_list(500)
-    sales_total = sum(inv.get("grand_total", 0) for inv in invoices if inv.get("invoice_type") == "sales")
-    purchase_total = sum(inv.get("grand_total", 0) for inv in invoices if inv.get("invoice_type") == "purchase")
-
-    orders = await db.orders.find({"company_id": company_id}).to_list(500)
+    now = datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+    prev = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    months = []
+    cursor = now.replace(day=1)
+    for _ in range(6):
+        months.append(cursor.strftime("%Y-%m"))
+        cursor = (cursor - timedelta(days=1)).replace(day=1)
+    months = list(reversed(months))
+    start = months[0] + "-01"
+    bank_accs, contacts, invs, orders, products, recent_invs = await asyncio.gather(
+        db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(200),
+        db.contacts.find({"company_id": company_id}, {"balance": 1}).to_list(10000),
+        db.invoices.find(_issue_q(company_id, start, None, {"invoice_type": {"$in": ["sales", "purchase"]}}),
+                         {"invoice_type": 1, "status": 1, "grand_total": 1, "issue_date": 1, "contact_name": 1, "invoice_number": 1, "gib_status": 1}).to_list(20000),
+        db.orders.find({"company_id": company_id}, {"order_status": 1, "channel": 1, "total_amount": 1, "grand_total": 1}).to_list(5000),
+        db.products.find({"company_id": company_id}, {"stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "name": 1, "sku": 1}).to_list(5000),
+        db.invoices.find({"company_id": company_id, "status": {"$ne": "cancelled"}},
+                         {"contact_name": 1, "invoice_number": 1, "issue_date": 1, "grand_total": 1, "status": 1, "gib_status": 1}).sort("issue_date", -1).limit(5).to_list(5),
+    )
+    total_bank_balance = sum(float(acc.get("current_balance", 0) or 0) for acc in bank_accs)
+    recv_rows = [c for c in contacts if float(c.get("balance", 0) or 0) > 0]
+    pay_rows = [c for c in contacts if float(c.get("balance", 0) or 0) < 0]
+    total_receivables = sum(float(c.get("balance", 0)) for c in recv_rows)
+    total_payables = abs(sum(float(c.get("balance", 0)) for c in pay_rows))
+    def month_sum(ym, typ):
+        return sum(float(i.get("grand_total", 0) or 0) for i in invs if i.get("invoice_type") == typ and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(ym))
+    chart_data = []
+    for ym in months:
+        gelir = month_sum(ym, "sales")
+        gider = month_sum(ym, "purchase")
+        mi = int(ym[5:7]) - 1
+        label = f"{_TR_MON[mi]} {ym[2:4]}"
+        if ym == month:
+            label += " (Güncel)"
+        chart_data.append({"month": label, "gelir": round(gelir, 2), "gider": round(gider, 2), "net": round(gelir - gider, 2)})
+    sales_total = month_sum(month, "sales")
+    purchase_total = month_sum(month, "purchase")
+    prev_sales = month_sum(prev, "sales")
+    sales_change_pct = round(((sales_total - prev_sales) / prev_sales) * 100, 1) if prev_sales else None
     pending_orders = [o for o in orders if o.get("order_status") in ["pending", "approved", "preparing"]]
-
-    products = await db.products.find({"company_id": company_id}).to_list(500)
-    low_stock = [p for p in products if p.get("stock_quantity", 0) <= p.get("min_stock_alert", 5)]
-    total_stock_value = sum(p.get("stock_quantity", 0) * p.get("purchase_price", 0) for p in products)
-
-    chart_data = [
-        {"month": "Oca", "gelir": 142000, "gider": 89000, "net": 53000},
-        {"month": "Şub", "gelir": 168000, "gider": 94000, "net": 74000},
-        {"month": "Mar", "gelir": 195000, "gider": 110000, "net": 85000},
-        {"month": "Nis", "gelir": 230000, "gider": 125000, "net": 105000},
-        {"month": "May", "gelir": 284000, "gider": 142000, "net": 142000},
-        {"month": "Haz (Güncel)", "gelir": sales_total or 310000, "gider": purchase_total or 158000, "net": (sales_total or 310000) - (purchase_total or 158000)}
-    ]
-
-    channels_breakdown = [
-        {"name": "Trendyol", "value": 42, "color": "#f97316"},
-        {"name": "Hepsiburada", "value": 26, "color": "#ea580c"},
-        {"name": "B2B Bayi Portalı", "value": 20, "color": "#3b82f6"},
-        {"name": "Shopify / Doğrudan", "value": 12, "color": "#10b981"}
-    ]
-
+    low_stock = [p for p in products if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") if p.get("min_stock_alert") is not None else 5)]
+    total_stock_value = sum(float(p.get("stock_quantity", 0) or 0) * float(p.get("purchase_price", 0) or 0) for p in products)
+    ch_amt: Dict[str, float] = {}
+    for o in orders:
+        if o.get("order_status") in ("cancelled", "returned"):
+            continue
+        ch = (o.get("channel") or "manual").lower()
+        ch_amt[ch] = ch_amt.get(ch, 0) + float(o.get("total_amount") or o.get("grand_total") or 0)
+    total_ch = sum(ch_amt.values()) or 1
+    channels_breakdown = [{"name": k.title() if k != "b2b" else "B2B Bayi Portalı", "value": round(v / total_ch * 100), "color": _CHANNEL_COLORS.get(k, "#64748b")} for k, v in sorted(ch_amt.items(), key=lambda x: -x[1])]
+    if not channels_breakdown:
+        channels_breakdown = [{"name": "Satış yok", "value": 100, "color": "#cbd5e1"}]
+    decision = []
+    if total_receivables > 0:
+        decision.append({"text": f"Tahsil edilecek {total_receivables:,.0f} ₺ — gecikmişleri önce kapatın.".replace(",", "."), "path": "/invoices"})
+    if len(low_stock):
+        decision.append({"text": f"{len(low_stock)} üründe stok kritik.", "path": "/stock"})
+    if pending_orders:
+        decision.append({"text": f"{len(pending_orders)} sipariş onay/hazırlık bekliyor.", "path": "/orders"})
     return {
         "total_bank_balance": total_bank_balance,
         "total_receivables": total_receivables,
         "total_payables": total_payables,
+        "receivable_count": len(recv_rows),
+        "payable_count": len(pay_rows),
         "monthly_sales": sales_total,
         "monthly_expenses": purchase_total,
         "net_profit": sales_total - purchase_total,
+        "sales_change_pct": sales_change_pct,
         "pending_orders_count": len(pending_orders),
         "low_stock_count": len(low_stock),
         "total_stock_value": total_stock_value,
         "chart_data": chart_data,
         "channels_breakdown": channels_breakdown,
-        "recent_invoices": clean_docs(invoices[-5:]),
-        "recent_orders": clean_docs(orders[-5:]),
-        "low_stock_products": clean_docs(low_stock[:5])
+        "recent_invoices": clean_docs(recent_invs),
+        "recent_orders": clean_docs(pending_orders[:5]),
+        "low_stock_products": clean_docs(low_stock[:5]),
+        "decision": decision[:4],
     }
 
 # ----------------- CARİLER (MÜŞTERİ & TEDARİKÇİ) -----------------
@@ -2078,14 +2123,18 @@ async def set_quote_payment_plan(quote_id: str, req: Dict[str, Any]):
     return {"status": "success", "payment_plan": plan}
 
 # ----------------- RAPORLAR -----------------
-def _in_range(d: Optional[str], f: Optional[str], t: Optional[str]) -> bool:
-    return bool(d) and (not f or d >= f) and (not t or d <= t)
+_INV_REPORT_PROJ = {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1,
+                    "due_date": 1, "issue_date": 1, "vat_total": 1, "subtotal": 1, "contact_id": 1, "contact_name": 1, "items": 1}
+
 
 @api_router.get("/reports/{kind}")
 async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, group: Optional[str] = "contact"):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    invs = [i for i in await db.invoices.find({"company_id": company_id, "status": {"$ne": "cancelled"}}).to_list(20000) if _in_range(i.get("issue_date"), date_from, date_to)]
     R = lambda v: round(float(v or 0), 2)
+    if kind in ("sales", "purchases", "vat", "profit"):
+        invs = await db.invoices.find(_issue_q(company_id, date_from, date_to), _INV_REPORT_PROJ).to_list(20000)
+    else:
+        invs = []
     if kind in ("sales", "purchases"):
         t = "sales" if kind == "sales" else "purchase"
         sel = [i for i in invs if i.get("invoice_type") == t]
@@ -2105,11 +2154,12 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
             x["count"] += 1; x["quantity"] += sum(float(it.get("quantity", 0)) for it in i.get("items", [])); x["net"] += float(i.get("subtotal", 0)); x["vat"] += float(i.get("vat_total", 0)); x["gross"] += float(i.get("grand_total", 0)); x["paid"] += float(i.get("paid_amount", 0))
         rows = sorted([{k: (R(v) if isinstance(v, float) else v) for k, v in b.items()} for b in buckets.values()], key=lambda r: -r["gross"])
         tot = {"count": sum(r["count"] for r in rows), "net": R(sum(r["net"] for r in rows)), "vat": R(sum(r["vat"] for r in rows)), "gross": R(sum(r["gross"] for r in rows)), "paid": R(sum(r.get("paid", 0) for r in rows))}
-        return {"kind": kind, "group": group, "rows": rows, "totals": {**tot, "open": R(tot["gross"] - tot["paid"])}}
+        totals = {**tot, "open": R(tot["gross"] - tot["paid"])}
+        return {"kind": kind, "group": group, "rows": rows, "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "aging":
-        contacts = {c["_id"]: c for c in await db.contacts.find({"company_id": company_id}).to_list(5000)}
+        contacts = {c["_id"]: c for c in await db.contacts.find({"company_id": company_id}, {"phone": 1}).to_list(5000)}
         rows: Dict[str, Dict[str, Any]] = {}
-        for i in await db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}).to_list(20000):
+        for i in await db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, _INV_REPORT_PROJ).to_list(20000):
             rem = float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0))
             if rem <= 0.01:
                 continue
@@ -2120,27 +2170,42 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
             x[b] += rem; x["total"] += rem; x["invoices"] += 1
         out = sorted([{k: (R(v) if isinstance(v, float) else v) for k, v in r.items()} for r in rows.values()], key=lambda r: -r["total"])
         keys = ["not_due", "d1_30", "d31_60", "d61_90", "d90p", "total"]
-        return {"kind": kind, "rows": out, "totals": {k: R(sum(r[k] for r in out if r["type"] == "receivable")) for k in keys}, "totals_payable": {k: R(sum(r[k] for r in out if r["type"] == "payable")) for k in keys}}
+        totals = {k: R(sum(r[k] for r in out if r["type"] == "receivable")) for k in keys}
+        return {"kind": kind, "rows": out, "totals": totals, "totals_payable": {k: R(sum(r[k] for r in out if r["type"] == "payable")) for k in keys}, "insights": _report_insights(kind, out, totals)}
     if kind == "stock":
-        prods = await db.products.find({"company_id": company_id, "type": {"$ne": "service"}}).to_list(20000)
+        prods = await db.products.find({"company_id": company_id, "type": {"$ne": "service"}}, {"name": 1, "sku": 1, "category": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "sale_price": 1}).to_list(20000)
         rows = [{"name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "quantity": R(p.get("stock_quantity", 0)), "min": R(p.get("min_stock_alert", 0)), "cost": R(p.get("purchase_price", 0)), "price": R(p.get("sale_price", 0)), "cost_value": R(float(p.get("stock_quantity", 0)) * float(p.get("purchase_price", 0))), "sale_value": R(float(p.get("stock_quantity", 0)) * float(p.get("sale_price", 0))), "status": "critical" if float(p.get("stock_quantity", 0)) <= 0 else "low" if float(p.get("stock_quantity", 0)) <= float(p.get("min_stock_alert", 0) or 0) else "ok"} for p in prods]
         rows.sort(key=lambda r: -r["cost_value"])
-        return {"kind": kind, "rows": rows, "totals": {"count": len(rows), "cost_value": R(sum(r["cost_value"] for r in rows)), "sale_value": R(sum(r["sale_value"] for r in rows)), "critical": sum(1 for r in rows if r["status"] == "critical"), "low": sum(1 for r in rows if r["status"] == "low")}}
+        totals = {"count": len(rows), "cost_value": R(sum(r["cost_value"] for r in rows)), "sale_value": R(sum(r["sale_value"] for r in rows)), "critical": sum(1 for r in rows if r["status"] == "critical"), "low": sum(1 for r in rows if r["status"] == "low")}
+        return {"kind": kind, "rows": rows, "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "cashflow":
-        txs = [t for t in await db.bank_transactions.find({"company_id": company_id}).to_list(50000) if _in_range(t.get("date"), date_from, date_to) and t.get("type") != "transfer"]
+        txq: Dict[str, Any] = {"company_id": company_id, "type": {"$ne": "transfer"}}
+        if date_from or date_to:
+            rng = {}
+            if date_from:
+                rng["$gte"] = date_from
+            if date_to:
+                rng["$lte"] = date_to
+            txq["date"] = rng
+        txs = await db.bank_transactions.find(txq, {"date": 1, "type": 1, "amount": 1, "category": 1}).to_list(50000)
         months: Dict[str, Dict[str, Any]] = {}
         cats: Dict[str, Dict[str, Any]] = {}
         for t in txs:
+            if not t.get("date"):
+                continue
             m = months.setdefault(t["date"][:7], {"name": t["date"][:7], "inflow": 0.0, "outflow": 0.0, "net": 0.0})
             c = cats.setdefault(t.get("category") or "Diğer", {"name": t.get("category") or "Diğer", "inflow": 0.0, "outflow": 0.0, "net": 0.0})
             for x in (m, c):
-                x["inflow" if t["type"] == "inflow" else "outflow"] += float(t.get("amount", 0)); x["net"] = x["inflow"] - x["outflow"]
-        accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(200)
-        upcoming = [i for i in await db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}).to_list(20000)]
+                x["inflow" if t.get("type") == "inflow" else "outflow"] += float(t.get("amount", 0)); x["net"] = x["inflow"] - x["outflow"]
+        accounts, upcoming = await asyncio.gather(
+            db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(200),
+            db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"invoice_type": 1, "grand_total": 1, "paid_amount": 1}).to_list(20000),
+        )
         rec = R(sum(float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0)) for i in upcoming if i.get("invoice_type") == "sales"))
         pay = R(sum(float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0)) for i in upcoming if i.get("invoice_type") != "sales"))
         fin = lambda d: sorted([{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in d.values()], key=lambda r: r["name"])
-        return {"kind": kind, "rows": fin(months), "categories": sorted(fin(cats), key=lambda r: r["net"]), "totals": {"inflow": R(sum(x["inflow"] for x in months.values())), "outflow": R(sum(x["outflow"] for x in months.values())), "net": R(sum(x["net"] for x in months.values())), "cash_now": R(sum(float(a.get("current_balance", 0)) for a in accounts)), "expected_in": rec, "expected_out": pay, "projected": R(sum(float(a.get("current_balance", 0)) for a in accounts) + rec - pay)}}
+        totals = {"inflow": R(sum(x["inflow"] for x in months.values())), "outflow": R(sum(x["outflow"] for x in months.values())), "net": R(sum(x["net"] for x in months.values())), "cash_now": R(sum(float(a.get("current_balance", 0)) for a in accounts)), "expected_in": rec, "expected_out": pay, "projected": R(sum(float(a.get("current_balance", 0)) for a in accounts) + rec - pay)}
+        return {"kind": kind, "rows": fin(months), "categories": sorted(fin(cats), key=lambda r: r["net"]), "totals": totals, "insights": _report_insights(kind, [], totals)}
     if kind == "vat":
         by: Dict[str, Dict[str, Any]] = {}
         for i in invs:
@@ -2161,9 +2226,10 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
                 x = rates.setdefault(r, {"name": r, "sales_net": 0.0, "sales_vat": 0.0, "purchase_net": 0.0, "purchase_vat": 0.0})
                 k = "sales" if i.get("invoice_type") == "sales" else "purchase"
                 x[f"{k}_net"] += float(it.get("total", 0)); x[f"{k}_vat"] += float(it.get("total", 0)) * float(it.get("vat_rate", 20)) / 100
-        return {"kind": kind, "rows": rows, "by_rate": [{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in rates.values()], "totals": {k: R(sum(r[k] for r in rows)) for k in ("sales_net", "sales_vat", "purchase_net", "purchase_vat", "payable_vat")}}
+        totals = {k: R(sum(r[k] for r in rows)) for k in ("sales_net", "sales_vat", "purchase_net", "purchase_vat", "payable_vat")}
+        return {"kind": kind, "rows": rows, "by_rate": [{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in rates.values()], "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "profit":
-        prods = {p["_id"]: p for p in await db.products.find({"company_id": company_id}).to_list(20000)}
+        prods = {p["_id"]: p for p in await db.products.find({"company_id": company_id}, {"purchase_price": 1}).to_list(20000)}
         by: Dict[str, Dict[str, Any]] = {}
         for i in invs:
             if i.get("invoice_type") != "sales" or i.get("status") == "draft":
@@ -2181,7 +2247,8 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
             eq["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
         expenses_total = R(sum(e.get("amount", 0) for e in await db.expenses.find(eq, {"amount": 1}).to_list(10000)))
         net = R(rev - cost - expenses_total)
-        return {"kind": kind, "group": group, "rows": rows, "totals": {"revenue": rev, "cost": cost, "profit": R(rev - cost), "margin": R((rev - cost) / rev * 100) if rev else 0, "expenses": expenses_total, "net_profit": net, "net_margin": R(net / rev * 100) if rev else 0}}
+        totals = {"revenue": rev, "cost": cost, "profit": R(rev - cost), "margin": R((rev - cost) / rev * 100) if rev else 0, "expenses": expenses_total, "net_profit": net, "net_margin": R(net / rev * 100) if rev else 0}
+        return {"kind": kind, "group": group, "rows": rows, "totals": totals, "insights": _report_insights(kind, rows, totals)}
     raise HTTPException(status_code=404, detail="Rapor türü bulunamadı.")
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
@@ -3662,7 +3729,13 @@ async def upsert_attendance(req: Dict[str, Any]):
 @api_router.get("/accountant/summary")
 async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
-    invs = await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).to_list(5000)
+    invs, txs, payrolls = await asyncio.gather(
+        db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}},
+                         {"invoice_type": 1, "status": 1, "e_type": 1, "invoice_number": 1, "issue_date": 1, "contact_name": 1,
+                          "subtotal": 1, "vat_total": 1, "grand_total": 1, "paid_amount": 1, "payment_status": 1, "gib_status": 1, "items": 1}).to_list(5000),
+        db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
+        db.payrolls.find({"company_id": company_id, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
+    )
     sales = [i for i in invs if i.get("invoice_type") == "sales"]
     purchases = [i for i in invs if i.get("invoice_type") == "purchase"]
     by_vat = {}
@@ -3672,9 +3745,8 @@ async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", m
             k = ("sales" if i.get("invoice_type") == "sales" else "purchase")
             by_vat.setdefault(r, {"rate": r, "sales_base": 0, "sales_vat": 0, "purchase_base": 0, "purchase_vat": 0})
             by_vat[r][f"{k}_base"] += base; by_vat[r][f"{k}_vat"] += vat
-    txs = await db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).to_list(5000)
-    payrolls = await db.payrolls.find({"company_id": company_id, "period": month}).to_list(500)
     calc_vat = sum(i.get("vat_total", 0) for i in sales); ded_vat = sum(i.get("vat_total", 0) for i in purchases)
+    slim = [{k: i.get(k) for k in ("invoice_number", "issue_date", "invoice_type", "e_type", "contact_name", "subtotal", "vat_total", "grand_total", "gib_status")} | {"id": i.get("_id") or i.get("id")} for i in sorted(invs, key=lambda x: x.get("issue_date", ""), reverse=True)]
     return {"month": month,
             "sales": {"count": len(sales), "subtotal": sum(i.get("subtotal", 0) for i in sales), "vat": calc_vat, "total": sum(i.get("grand_total", 0) for i in sales), "unpaid": sum(i.get("grand_total", 0) - i.get("paid_amount", 0) for i in sales if i.get("payment_status") != "paid")},
             "purchases": {"count": len(purchases), "subtotal": sum(i.get("subtotal", 0) for i in purchases), "vat": ded_vat, "total": sum(i.get("grand_total", 0) for i in purchases)},
@@ -3682,7 +3754,7 @@ async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", m
             "cash": {"inflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "outflow"), "count": len(txs)},
             "payroll": {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls)},
             "e_docs": {"gib_sent": sum(1 for i in invs if i.get("status") == "sent"), "draft": sum(1 for i in invs if i.get("status") == "draft"), "dispatch": sum(1 for i in invs if i.get("invoice_type") == "dispatch")},
-            "invoices": clean_docs(sorted(invs, key=lambda x: x.get("issue_date", ""), reverse=True))}
+            "invoices": slim}
 
 @api_router.get("/accountant/export")
 async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None, kind: str = "invoices"):
@@ -3691,8 +3763,14 @@ async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", mo
     buf = io.StringIO(); w = csv.writer(buf, delimiter=";")
     if kind == "invoices":
         w.writerow(["Belge No", "Tarih", "Tür", "E-Belge", "Cari", "VKN", "Matrah", "KDV", "Toplam", "Ödeme", "GİB"])
-        for i in await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000):
-            c = await db.contacts.find_one({"_id": i.get("contact_id")}) if i.get("contact_id") else None
+        invs = await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000)
+        cids = list({i.get("contact_id") for i in invs if i.get("contact_id")})
+        cmap = {}
+        if cids:
+            for c in await db.contacts.find({"_id": {"$in": cids}}, {"tax_number_or_id": 1}).to_list(len(cids) + 10):
+                cmap[c["_id"]] = c
+        for i in invs:
+            c = cmap.get(i.get("contact_id"))
             w.writerow([i.get("invoice_number"), i.get("issue_date"), i.get("invoice_type"), i.get("e_type"), i.get("contact_name"), (c or {}).get("tax_number_or_id", ""), f"{i.get('subtotal', 0):.2f}", f"{i.get('vat_total', 0):.2f}", f"{i.get('grand_total', 0):.2f}", i.get("payment_status"), i.get("gib_status") or ""])
     else:
         w.writerow(["Tarih", "Hesap", "Tür", "Kategori", "Açıklama", "Tutar"])

@@ -59,6 +59,14 @@ export default function ReportsPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{kpis.map(([l, v, ty]) => <div key={l} className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={`report-kpi-${l}`}><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className="text-lg font-bold text-slate-900">{ty === "raw" ? v : ty === "n" ? (v || 0) : ty === "p" ? `%${fmt(v)}` : `${fmt(v)} ₺`}</div></div>)}</div>
         {kind === "cashflow" && data?.categories?.length > 0 && <div className="bg-white border rounded-2xl p-4 text-xs"><div className="font-bold text-slate-700 mb-2">Kategoriye Göre</div><div className="grid grid-cols-2 md:grid-cols-4 gap-2">{data.categories.map((c) => <div key={c.name} className="flex justify-between bg-slate-50 rounded-lg p-2"><span>{c.name}</span><b className={c.net >= 0 ? "text-emerald-700" : "text-rose-700"}>{fmt(c.net)} ₺</b></div>)}</div></div>}
         {kind === "vat" && data?.by_rate?.length > 0 && <div className="bg-white border rounded-2xl p-4 text-xs"><div className="font-bold text-slate-700 mb-2">KDV Oranına Göre</div><div className="grid grid-cols-2 md:grid-cols-4 gap-2">{data.by_rate.map((c) => <div key={c.name} className="bg-slate-50 rounded-lg p-2"><div className="font-bold">{c.name}</div><div>Satış KDV: {fmt(c.sales_vat)} ₺</div><div>Alış KDV: {fmt(c.purchase_vat)} ₺</div></div>)}</div></div>}
+        {data?.insights?.length > 0 && (
+          <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-1.5" data-testid="report-insights">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Karar özeti</div>
+            {data.insights.map((ins, i) => (
+              <div key={i} className={`text-xs ${ins.level === "alert" ? "text-rose-300" : ins.level === "warn" ? "text-amber-200" : "text-slate-200"}`} data-testid={`report-insight-${i}`}>{ins.text}</div>
+            ))}
+          </div>
+        )}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
           <table className="w-full text-xs text-left" data-testid="report-table">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b"><tr>{cols.map((c) => <th key={c[0]} className={`px-3 py-2 ${c[2] && c[2] !== "t" && c[2] !== "s" ? "text-right" : ""}`}>{c[1]}</th>)}</tr></thead>
