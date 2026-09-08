@@ -32,6 +32,7 @@ from auth_utils import (
 from seed_data import seed_all_data, seed_partners
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
+import image_opt
 import bank_providers
 import bank_guard
 import marketplace_providers
@@ -310,14 +311,16 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
+    data, content_type, ext = opt.data, opt.content_type, opt.ext
     path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
     try:
-        result = put_object(path, data, file.content_type)
+        result = put_object(path, data, content_type)
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
-    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data),
+    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": content_type, "size": len(data),
+                               "original_size": opt.original_size, "optimized": opt.optimized,
                                "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
     url = f"/api/files/{result['path']}"
     if entity in ("quote", "project", "survey", "company") and entity_id:
@@ -326,7 +329,7 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
             await coll.update_one({"_id": entity_id}, {"$set": {"logo_url": url}})
         else:
             await coll.update_one({"_id": entity_id}, {"$push": {"images": url}})
-    return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(data)}
+    return {"url": url, "filename": file.filename, "content_type": content_type, "size": len(data), **opt.as_meta()}
 
 # ----------------- TEKLİF / PROJE / KEŞİF -----------------
 async def _next_number(prefix: str, coll=None, company_id: Optional[str] = None) -> str:
@@ -1514,10 +1517,11 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+    opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
+    data, content_type, ext = opt.data, opt.content_type, opt.ext
     path = f"{APP_NAME}/products/{product.get('company_id')}/{uuid.uuid4()}.{ext}"
     try:
-        result = put_object(path, data, file.content_type)
+        result = put_object(path, data, content_type)
     except Exception as e:
         logger.error(f"Image upload failed: {e}")
         raise HTTPException(status_code=502, detail="Görsel depolama servisine yüklenemedi.")
@@ -1525,8 +1529,10 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         "_id": str(uuid.uuid4()),
         "storage_path": result["path"],
         "original_filename": file.filename,
-        "content_type": file.content_type,
+        "content_type": content_type,
         "size": result.get("size", len(data)),
+        "original_size": opt.original_size,
+        "optimized": opt.optimized,
         "entity": "product",
         "entity_id": product_id,
         "is_deleted": False,
@@ -1544,7 +1550,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
             update["$set"] = {"image_url": image_url}
         await db.products.update_one({"_id": product_id}, update)
     updated = await db.products.find_one({"_id": product_id})
-    return {"image_url": image_url, "product": clean_doc(updated)}
+    return {"image_url": image_url, "product": clean_doc(updated), **opt.as_meta()}
 
 @api_router.put("/products/{product_id}/images")
 async def update_product_images(product_id: str, req: Dict[str, Any]):
