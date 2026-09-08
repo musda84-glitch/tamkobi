@@ -235,9 +235,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
   const handleItemChange = (index, field, val) => {
     const items = [...formData.items];
-    items[index][field] = val;
-    if (["quantity", "unit_price", "discount_rate", "vat_rate"].includes(field)) {
-      items[index].total = Number(items[index].quantity || 0) * netPrice(items[index]) * (1 - Number(items[index].discount_rate || 0) / 100);
+    if (field === "line_amount") {
+      const qty = Number(items[index].quantity || 0);
+      const disc = 1 - Number(items[index].discount_rate || 0) / 100;
+      const vatF = 1 + Number(items[index].vat_rate || 0) / 100;
+      const entered = Number(val || 0);
+      const factor = qty * disc;
+      items[index].unit_price = factor ? Number((entered / factor).toFixed(4)) : 0;
+      items[index].total = formData.price_mode === "incl" ? entered / vatF : entered;
+    } else {
+      items[index][field] = val;
+      if (["quantity", "unit_price", "discount_rate", "vat_rate"].includes(field)) {
+        items[index].total = Number(items[index].quantity || 0) * netPrice(items[index]) * (1 - Number(items[index].discount_rate || 0) / 100);
+      }
     }
     setFormData({ ...formData, items });
   };
@@ -249,7 +259,24 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
 
   const netPrice = (item, mode = formData.price_mode) => mode === "incl" ? Number(item.unit_price || 0) / (1 + Number(item.vat_rate || 0) / 100) : Number(item.unit_price || 0);
-  const recalcItems = (items, mode) => items.map((it) => ({ ...it, total: Number(it.quantity || 0) * netPrice(it, mode) * (1 - Number(it.discount_rate || 0) / 100) }));
+  const lineAmount = (item, mode = formData.price_mode) => {
+    const net = Number(item.total || 0);
+    const gross = net * (1 + Number(item.vat_rate || 0) / 100);
+    const v = mode === "incl" ? gross : net;
+    return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0;
+  };
+  const convertPriceMode = (items, from, to) => {
+    if (from === to) return items;
+    return items.map((it) => {
+      const vatF = 1 + Number(it.vat_rate || 0) / 100;
+      let unit = Number(it.unit_price || 0);
+      if (from === "excl" && to === "incl") unit *= vatF;
+      if (from === "incl" && to === "excl") unit /= vatF;
+      const next = { ...it, unit_price: Number(unit.toFixed(4)) };
+      next.total = Number(next.quantity || 0) * netPrice(next, to) * (1 - Number(next.discount_rate || 0) / 100);
+      return next;
+    });
+  };
   const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
   const calculateTotals = () => {
     const itemsSum = formData.items.reduce((sum, item) => sum + Number(item.total || 0), 0);
@@ -728,8 +755,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Birim Fiyat Girişi</label>
                     <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[11px] font-bold">
-                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m, items: recalcItems(formData.items, m) })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
+                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m, items: convertPriceMode(formData.items, formData.price_mode, m) })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
                     </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Birim fiyat veya adet toplamı bu moda göre girilir.</p>
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Kayıt Durumu</label>
@@ -804,7 +832,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div className="flex justify-end"><ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle (kamera)" /></div>
 
                 <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
-                  <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Tutar</div><div className="col-span-1"></div>
+                  <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Adet Toplam ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1"></div>
                 </div>
                 {formData.items.map((item, idx) => {
                   const picked = !item.is_service && item.product_id ? products.find((p) => (p.id || p._id) === item.product_id) : null;
@@ -855,10 +883,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <div className="col-span-2">
                       <input
                         type="number"
+                        step="0.01"
+                        min="0"
                         placeholder="Birim Fiyat"
                         value={item.unit_price}
                         onChange={(e) => handleItemChange(idx, "unit_price", e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded p-1.5 text-right"
+                        data-testid={`inv-item-unit-price-${idx}`}
                       />
                     </div>
                     <div className="col-span-1">
@@ -873,8 +904,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         <option value="0">%0</option>
                       </select>
                     </div>
-                    <div className="col-span-2 text-right font-bold text-slate-800">
-                      {fmtMoney(item.total, formData.currency)}
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Adet toplam"
+                        title={formData.price_mode === "incl" ? "Satır tutarı (KDV dahil)" : "Satır tutarı (KDV hariç)"}
+                        value={lineAmount(item)}
+                        onChange={(e) => handleItemChange(idx, "line_amount", e.target.value)}
+                        className="w-full bg-white border border-emerald-200 rounded p-1.5 text-right font-bold text-slate-800"
+                        data-testid={`inv-item-line-amount-${idx}`}
+                      />
                     </div>
                     <div className="col-span-1 text-center">
                       <button
