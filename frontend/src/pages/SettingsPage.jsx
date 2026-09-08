@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { groupIdOf, groupMenuItems } from "../navGroups";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -92,15 +93,28 @@ const WhatsAppSettings = ({ companyId }) => {
 
 const ModuleOrder = () => {
   const { menuItems, moveModule, resetModuleOrder } = useAuth();
+  const groups = groupMenuItems(menuItems);
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-2" data-testid="module-order-settings">
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-3" data-testid="module-order-settings">
       <div className="flex justify-between items-center"><h3 className="text-sm font-bold">Modül Sıralama</h3><button onClick={resetModuleOrder} className="text-slate-500 hover:underline">Varsayılana dön</button></div>
-      <p className="text-slate-500">Sol menüde modülleri sürükleyip bırakarak da sıralayabilirsiniz.</p>
-      {menuItems.map((m, i) => (
-        <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
-          <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
-          <button onClick={() => moveModule(i, i - 1)} disabled={i === 0} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
-          <button onClick={() => moveModule(i, i + 1)} disabled={i === menuItems.length - 1} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+      <p className="text-slate-500">Sol menü Logo / Mikro / BizimHesap gibi grupludur. Aynı grup içinde sürükleyerek veya oklarla sıralayabilirsiniz.</p>
+      {groups.map((g) => (
+        <div key={g.id} className="space-y-1.5">
+          {g.label && <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-1">{g.label}</div>}
+          {g.items.map((m) => {
+            const i = menuItems.findIndex((x) => x.path === m.path);
+            const prev = menuItems[i - 1];
+            const next = menuItems[i + 1];
+            const canUp = prev && groupIdOf(prev.path) === groupIdOf(m.path);
+            const canDown = next && groupIdOf(next.path) === groupIdOf(m.path);
+            return (
+              <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
+                <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
+                <button onClick={() => moveModule(i, i - 1)} disabled={!canUp} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
+                <button onClick={() => moveModule(i, i + 1)} disabled={!canDown} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>

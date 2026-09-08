@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
+import AppSidebarNav from "./AppSidebarNav";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -49,9 +50,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
-  const { menuItems: orderedMenu, moveModule } = useAuth();
+  const { menuItems: orderedMenu, moveModulePath } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
-  const [dragIdx, setDragIdx] = useState(null);
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
   const publicSite = location.pathname === "/" && !authenticated;
@@ -122,45 +122,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         </div>
 
         {/* Navigation Menu */}
-        <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
-          {menuItems.map((item, idx) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                draggable
-                onDragStart={() => setDragIdx(idx)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => { if (dragIdx !== null && dragIdx !== idx) moveModule(dragIdx, idx); setDragIdx(null); }}
-                title="Sürükleyip sıralayabilirsiniz"
-                onClick={() => setMobileMenuOpen(false)}
-                data-testid={`nav-item-${item.path.replace('/', '') || 'dashboard'}`}
-                className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  isActive
-                    ? item.isAi
-                      ? "bg-gradient-to-r from-purple-600/90 to-indigo-600/90 text-white shadow-md shadow-purple-900/40"
-                      : item.isSystem ? "bg-amber-500 text-slate-900 shadow-md shadow-amber-900/40" : "bg-emerald-600 text-white shadow-md shadow-emerald-950/40"
-                    : item.isAi
-                    ? "text-purple-300 hover:bg-purple-950/40 hover:text-white"
-                    : item.isSystem ? "text-amber-300 hover:bg-amber-950/40 hover:text-white border border-amber-500/20 mt-2" : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`}
-              >
-                <div className="flex items-center gap-2.5 truncate">
-                  <Icon className={`w-4 h-4 ${isActive ? (item.isSystem ? 'text-slate-900' : 'text-white') : item.isAi ? 'text-purple-400' : item.isSystem ? 'text-amber-400' : 'text-slate-400'}`} />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                    isActive ? 'bg-white/20 text-white' : item.isAi ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-800 text-slate-400'
-                  }`}>
-                    {item.badge}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700" data-testid="app-sidebar-nav">
+          <AppSidebarNav items={menuItems} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
         </nav>
 
         {/* User Card & Logout */}

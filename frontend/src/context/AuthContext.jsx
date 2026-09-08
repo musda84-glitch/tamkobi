@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { groupIdOf } from "../navGroups";
 
 const AuthContext = createContext(null);
 
@@ -67,6 +68,16 @@ export const AuthProvider = ({ children }) => {
   const moveModule = (from, to) => {
     if (to < 0 || to >= menuItems.length) return;
     const paths = menuItems.map((m) => m.path);
+    const [moved] = paths.splice(from, 1);
+    paths.splice(to, 0, moved);
+    persistOrder(paths);
+  };
+  const moveModulePath = (fromPath, toPath) => {
+    if (groupIdOf(fromPath) !== groupIdOf(toPath)) return;
+    const paths = menuItems.map((m) => m.path);
+    const from = paths.indexOf(fromPath);
+    const to = paths.indexOf(toPath);
+    if (from < 0 || to < 0 || from === to) return;
     const [moved] = paths.splice(from, 1);
     paths.splice(to, 0, moved);
     persistOrder(paths);
@@ -154,7 +165,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );
