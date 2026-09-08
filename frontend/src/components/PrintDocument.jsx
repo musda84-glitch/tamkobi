@@ -3,7 +3,6 @@ import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { resolveImageUrl } from "../utils/imageUrl";
 import { Barcode } from "./BarcodeLabelPrint";
 import { moneySuffix } from "../utils/money";
 
