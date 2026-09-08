@@ -13,6 +13,7 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
+import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -52,6 +53,7 @@ export default function SystemAdminPage() {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
+          {page === "posta" && <PlatformMailPanel />}
           {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
           {page === "kullanicilar" && <PlatformUsersPanel />}
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}

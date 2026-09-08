@@ -58,6 +58,7 @@ import saas_docs
 import gib_credits
 import order_pick
 import trade
+import platform_mail
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -6601,6 +6602,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
+platform_mail.init(db)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
@@ -6669,6 +6671,7 @@ app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
 app.include_router(order_pick.router)
 app.include_router(trade.router)
+app.include_router(platform_mail.router)
 
 @app.get("/")
 async def root():
