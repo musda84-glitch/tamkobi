@@ -1042,7 +1042,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-300">
                     <span>Ödenecek Tutar:</span>
-                    <span className="text-emerald-700">{fmtMoney(previewInvoice.grand_total, previewInvoice.currency)}</span>
+                    <span className="text-emerald-700">{fmtMoney(previewInvoice.grand_total, previewInvoice.currency || "TRY")}</span>
                   </div>
                   {(previewInvoice.currency || "TRY") !== "TRY" && previewInvoice.local_total != null && (
                     <div className="flex justify-between text-slate-500" data-testid="inv-preview-local-total">
