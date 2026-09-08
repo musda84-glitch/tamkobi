@@ -122,7 +122,7 @@ async def create_expense(req: Dict[str, Any]):
     calc = _calc(req)
     if calc["total"] <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
-    stamp = await fx.stamp(company_id, req.get("currency"), req.get("date"), req.get("fx_rate") if (req.get("currency") or "TRY").upper() != "TRY" and float(req.get("fx_rate") or 0) > 1.000001 else None)
+    stamp = await fx.stamp(company_id, req.get("currency"), req.get("date"), fx.typed_rate(req.get("currency"), req.get("fx_rate"), req.get("fx_source")))
     contact = await _db.contacts.find_one({"_id": req["contact_id"]}) if req.get("contact_id") else None
     emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req.get("employee_id") else None
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
@@ -154,12 +154,12 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate", "fx_source") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:
         merged = {**exp, **upd}
-        stamp = await fx.stamp(exp["company_id"], merged.get("currency"), merged.get("date"), merged.get("fx_rate") if (merged.get("currency") or "TRY").upper() != "TRY" and float(merged.get("fx_rate") or 0) > 1.000001 else None)
+        stamp = await fx.stamp(exp["company_id"], merged.get("currency"), merged.get("date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         upd.update(stamp)
         upd["local_total"] = fx.local_of(merged.get("total") or exp.get("total") or 0, stamp["fx_rate"])
     if "employee_id" in req:

@@ -859,8 +859,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-300">
                     <span>Ödenecek Tutar:</span>
-                    <span className="text-emerald-700">{previewInvoice.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                    <span className="text-emerald-700">{fmtMoney(previewInvoice.grand_total, previewInvoice.currency || "TRY")}</span>
                   </div>
+                  {(previewInvoice.currency || "TRY") !== "TRY" && previewInvoice.local_total != null && (
+                    <div className="flex justify-between text-slate-500" data-testid="inv-preview-local-total">
+                      <span>TL karşılığı (kur {Number(previewInvoice.fx_rate || 0).toLocaleString("tr-TR")}):</span>
+                      <span className="font-semibold">{fmtMoney(previewInvoice.local_total, "TRY")}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -883,7 +889,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <span className="font-semibold text-slate-700">Fatura:</span> {paymentModalInvoice.invoice_number} ({paymentModalInvoice.contact_name})
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Tahsilat/Ödeme Tutarı (₺)</label>
+                <label className="block font-semibold text-slate-700 mb-1">Tahsilat/Ödeme Tutarı ({paymentModalInvoice.currency === "TRY" || !paymentModalInvoice.currency ? "₺" : paymentModalInvoice.currency})</label>
                 <input
                   type="number"
                   value={paymentAmount}
@@ -891,6 +897,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900 text-sm"
                   data-testid="payment-amount-input"
                 />
+                {(paymentModalInvoice.currency || "TRY") !== "TRY" && Number(paymentModalInvoice.fx_rate) > 0 && (
+                  <div className="text-[11px] text-slate-500 mt-1">TL karşılığı ≈ {fmtMoney((Number(paymentAmount) || 0) * Number(paymentModalInvoice.fx_rate), "TRY")} (kur {Number(paymentModalInvoice.fx_rate).toLocaleString("tr-TR")})</div>
+                )}
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Kasa / Banka / POS / Ortak Seçin</label>

@@ -1740,7 +1740,7 @@ async def create_invoice(invoice: Invoice):
     invoice.vat_total = round(sum(item.total * factor * (item.vat_rate / 100) for item in invoice.items), 2)
     invoice.withholding_amount = round(invoice.vat_total * float(invoice.withholding_rate or 0), 2)
     invoice.grand_total = round(invoice.subtotal + invoice.vat_total - invoice.withholding_amount, 2)
-    given_rate = invoice.fx_rate if (invoice.fx_source == "manual" or (float(invoice.fx_rate or 0) > 1.000001)) else None
+    given_rate = fx.typed_rate(invoice.currency, invoice.fx_rate, invoice.fx_source)
     fx_stamp = await fx.stamp(invoice.company_id, invoice.currency, invoice.issue_date, given_rate)
     invoice.currency = fx_stamp["currency"]
     invoice.fx_rate = fx_stamp["fx_rate"]
@@ -1818,14 +1818,14 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         vat_total = sum(float(i.get("total", 0)) * factor * float(i.get("vat_rate", 20)) / 100 for i in items)
         allowed.update({"discount_total": gd, "general_discount_amount": gd, "subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "withholding_amount": round(vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2), "grand_total": round(subtotal + vat_total - vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2)})
         merged = {**inv, **allowed}
-        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), merged.get("fx_rate") if (merged.get("currency") or "TRY").upper() != "TRY" and float(merged.get("fx_rate") or 0) > 1.000001 else None)
+        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(allowed["grand_total"], stamp["fx_rate"])
         if inv.get("effects_applied") and inv.get("contact_id") and inv.get("invoice_type") == "sales":
             await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["local_total"] - fx.try_amount(inv)}})
     elif any(k in allowed for k in ("currency", "fx_rate", "issue_date")):
         merged = {**inv, **allowed}
-        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), merged.get("fx_rate") if (merged.get("currency") or "TRY").upper() != "TRY" and float(merged.get("fx_rate") or 0) > 1.000001 else None)
+        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})

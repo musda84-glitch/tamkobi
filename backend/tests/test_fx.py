@@ -40,6 +40,19 @@ def test_parse_tcmb_xml():
     assert abs(rates["JPY"]["rate"] - 0.23) < 1e-9
 
 
+def test_try_amount_uses_local_total():
+    assert fx_mod.try_amount({"currency": "USD", "grand_total": 100, "fx_rate": 40, "local_total": 4000}) == 4000
+    assert fx_mod.try_amount({"currency": "USD", "grand_total": 100, "fx_rate": 40, "local_total": 4000}, 10) == 400
+    assert fx_mod.try_amount({"currency": "TRY", "grand_total": 50}) == 50
+
+
+def test_typed_rate_keeps_manual_jpy():
+    assert fx_mod.typed_rate("JPY", 0.25, "manual") == 0.25
+    assert fx_mod.typed_rate("JPY", 0.23, "tcmb") is None
+    assert fx_mod.typed_rate("USD", 40, "tcmb") == 40
+    assert fx_mod.typed_rate("TRY", 1) is None
+
+
 @pytest.fixture
 def s():
     ses = requests.Session()

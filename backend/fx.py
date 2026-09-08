@@ -188,6 +188,19 @@ async def resolve_rate(company_id: str, currency: str, on_date: Optional[str] = 
     return {"currency": code, "date": row.get("date") or iso, "rate": rate, "source": row.get("source") or "tcmb", "buying": row.get("buying"), "selling": row.get("selling")}
 
 
+def typed_rate(currency: Optional[str], fx_rate: Any = None, fx_source: Optional[str] = None):
+    """Formdan gelen kuru stamp'e geçir. TCMB satışı (JPY < 1 dahil) source=tcmb iken None döner."""
+    if (currency or "TRY").upper() == "TRY":
+        return None
+    if (fx_source or "") == "manual":
+        return fx_rate
+    try:
+        r = float(fx_rate or 0)
+    except (TypeError, ValueError):
+        return None
+    return r if r > 1.000001 else None
+
+
 async def stamp(company_id: str, currency: Optional[str], on_date: Optional[str], fx_rate: Any = None) -> dict:
     """Belgeye yazılacak kur damgası. fx_rate verilirse (manuel satır kuru) o kullanılır."""
     code = (currency or "TRY").upper()
@@ -207,12 +220,20 @@ def local_of(amount: Any, fx_rate: Any) -> float:
     return round(float(amount or 0) * float(fx_rate or 1), 2)
 
 
-async def defaults_map(company_id: str, on_date: Optional[str] = None) -> dict:
-    pack = await ensure_rates(company_id, on_date, fetch=False)
+async def defaults_map(company_id: str, on_date: Optional[str] = None, fetch: bool = True) -> dict:
+    pack = await ensure_rates(company_id, on_date, fetch=fetch)
     out = {"TRY": 1.0}
-    for code, row in (pack.get("rates") or {}).items():
-        out[code] = float(row.get("rate") or 0) or 1.0
+    for code in CURRENCIES:
+        if code == "TRY":
+            continue
+        row = (pack.get("rates") or {}).get(code)
+        if row:
+            out[code] = float(row.get("rate") or 0) or 1.0
     return out
+
+
+def try_amount(doc: dict, amount: Any = None) -> float:
+    """Belge tutarını TRY'ye çevir. amount verilmezse local_total / grand_total."""
     amt = float(doc.get("grand_total") if amount is None else amount)
     if (doc.get("currency") or "TRY").upper() == "TRY":
         return round(amt, 2)
