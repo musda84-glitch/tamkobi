@@ -64,7 +64,7 @@ def mysql_settings_from_env() -> Dict[str, Any]:
         "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": os.environ.get("MYSQL_USER", "tamkobi"),
-        "password": os.environ.get("MYSQL_PASSWORD", "tamkobi"),
+        "password": os.environ.get("MYSQL_PASSWORD") or "",
         "db": os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
         "autocommit": True,

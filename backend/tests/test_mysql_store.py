@@ -118,3 +118,11 @@ def test_database_url_sqlalchemy_style(monkeypatch):
     assert s["user"] == "bob"
     assert s["password"] == "pw"
     assert s["db"] == "tamkobi"
+
+
+def test_mysql_settings_no_hardcoded_password(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.delenv("MYSQL_PASSWORD", raising=False)
+    s = mysql_settings_from_env()
+    assert s["password"] == ""
