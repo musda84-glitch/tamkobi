@@ -436,7 +436,7 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
-      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
+      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} allowances={(() => { const emp = employees.find((x) => (x.id || x._id) === quickPay.p.employee_id); return { meal: emp?.meal_allowance, transport: emp?.transport_allowance }; })()} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
     </div>
   );
 }

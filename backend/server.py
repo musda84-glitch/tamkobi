@@ -5147,8 +5147,47 @@ async def create_employee(emp: Employee):
     return clean_doc(doc)
 
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "status", "annual_leave_days", "used_leave_days",
-                      "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact"}
-EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate"}
+                      "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
+                      "meal_allowance", "transport_allowance"}
+EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
+MEAL_CAT = "Yemek"
+TRANSPORT_CAT = "Yol / Ulaşım"
+
+
+def _emp_num(v, default: float = 0.0) -> float:
+    try:
+        return float(v if v is not None and v != "" else default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _allowance_due(amount, category: str, expenses: list, month: str) -> float:
+    amt = round(_emp_num(amount), 2)
+    if amt <= 0:
+        return 0.0
+    recorded = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("category") == category and str(e.get("date") or "").startswith(month)), 2)
+    return round(max(0.0, amt - recorded), 2)
+
+
+async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: str) -> dict:
+    emp_id = emp.get("_id") or emp.get("id")
+    expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
+    unpaid_payroll = round(sum(_emp_num(p.get("final_payable"), _emp_num(p.get("net_salary"))) for p in payrolls if p.get("status") != "paid"), 2)
+    unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
+    meal = round(_emp_num(emp.get("meal_allowance")), 2)
+    transport = round(_emp_num(emp.get("transport_allowance")), 2)
+    meal_due = _allowance_due(meal, MEAL_CAT, expenses, month)
+    transport_due = _allowance_due(transport, TRANSPORT_CAT, expenses, month)
+    bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") != "advance" and b.get("status") != "paid"), 2)
+    payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
+    advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") == "advance" and str(b.get("period") or "").startswith(month)), 2)
+    extra_advance = round(max(0.0, advances - payroll_adv), 2)
+    remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance, 2)
+    return {
+        "remaining": remaining, "unpaid_payroll": unpaid_payroll, "unpaid_expenses": unpaid_expenses,
+        "meal_due": meal_due, "transport_due": transport_due, "bonus_pending": bonus_pending, "advances": extra_advance,
+        "meal_allowance": meal, "transport_allowance": transport, "month": month,
+    }
 
 @api_router.put("/personnel/employees/{emp_id}")
 async def update_employee(emp_id: str, data: Dict[str, Any]):
@@ -5218,7 +5257,8 @@ async def employee_card(emp_id: str):
             "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
             "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
             "pending_invite": clean_doc(invite) if invite else None,
-            "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)}}
+            "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
+            "balance": await _employee_receivable(emp, payrolls, bonuses, month)}
 
 @api_router.delete("/files/{file_id}")
 async def delete_file_record(file_id: str):
