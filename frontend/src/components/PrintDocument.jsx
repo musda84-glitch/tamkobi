@@ -4,6 +4,7 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix } from "../utils/money";
+import { BarcodeRenderer } from "./BarcodeRenderer";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
@@ -22,11 +23,11 @@ export const LAYOUTS = [
 
 export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }) => {
   const [tpl, setTpl] = useState(null);
-  const [prodImgs, setProdImgs] = useState({});
+  const [prodById, setProdById] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const companyId = company?.id || "comp_nexus_main_01";
-  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { if (p.image_url) m[p.id] = p.image_url; }); setProdImgs(m); }).catch(() => {}); }, [companyId]);
+  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { m[p.id || p._id] = p; }); setProdById(m); }).catch(() => {}); }, [companyId]);
   useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   if (!tpl) return null;
@@ -113,7 +114,31 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           </div>
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
             <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim Fiyat</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
-            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{(it.sku || it.barcode) && tpl.show_barcode && <div className="text-[10px] text-slate-400 font-mono">{it.sku}{it.barcode ? ` • ${it.barcode}` : ""}</div>}{it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}{tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmtM(it.total)}</td>}</tr>)}</tbody>
+            <tbody>{items.map((it, i) => {
+              const prod = prodById[it.product_id] || {};
+              const img = it.image_url || prod.image_url;
+              const code = it.barcode || prod.barcode || it.sku || prod.sku;
+              return (
+                <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
+                  {tpl.show_images !== false && <td className="p-1">{img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}</td>}
+                  <td className="p-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="min-w-0 flex-1">
+                        {it.name || it.product_name}
+                        {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
+                        {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
+                        {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
+                      </div>
+                      {tpl.show_barcode && code && <span data-testid={`print-item-barcode-${i}`}><BarcodeRenderer code={String(code)} width={68} height={16} showText compact /></span>}
+                    </div>
+                  </td>
+                  <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
+                  {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
+                  {!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}
+                  {!hideLine && <td className="p-2 text-right font-semibold">{fmtM(it.total)}</td>}
+                </tr>
+              );
+            })}</tbody>
           </table>
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
           {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
