@@ -53,6 +53,7 @@ import saas_billing
 import saas_extras
 import saas_docs
 import ubl_export
+import edoc_backup
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -121,6 +122,7 @@ async def startup_event():
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
+    _asyncio.get_event_loop().create_task(edoc_backup.reminder_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -5691,6 +5693,7 @@ saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
 ubl_export.init(db)
+edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5744,6 +5747,7 @@ app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
 app.include_router(ubl_export.router)
+app.include_router(edoc_backup.router)
 
 @app.get("/")
 async def root():
