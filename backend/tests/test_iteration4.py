@@ -115,8 +115,9 @@ class TestEInvoice:
         r = client.get(f"{BASE}/einvoice/providers", timeout=30)
         assert r.status_code == 200
         data = r.json()
-        assert len(data) == 5
-        assert {p["code"] for p in data} == {"foriba", "elogo", "uyumsoft", "izibiz", "other"}
+        assert len(data) == 6
+        assert {p["code"] for p in data} == {"n11faturam", "foriba", "elogo", "uyumsoft", "izibiz", "other"}
+        assert any(p["code"] == "n11faturam" and "n11" in p["name"].lower() for p in data)
 
     def test_configure_then_reset(self, client):
         r = client.put(f"{BASE}/einvoice/settings", json={"provider": "foriba", "username": "TEST_user", "password": "TEST_pass", "mode": "test"}, timeout=30)
