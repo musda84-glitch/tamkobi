@@ -43,6 +43,7 @@ import cargo_providers
 import rbac
 import expenses
 import finance
+import fx
 import attendance
 import trash
 import migration
@@ -1739,6 +1740,13 @@ async def create_invoice(invoice: Invoice):
     invoice.vat_total = round(sum(item.total * factor * (item.vat_rate / 100) for item in invoice.items), 2)
     invoice.withholding_amount = round(invoice.vat_total * float(invoice.withholding_rate or 0), 2)
     invoice.grand_total = round(invoice.subtotal + invoice.vat_total - invoice.withholding_amount, 2)
+    given_rate = invoice.fx_rate if (invoice.fx_source == "manual" or (float(invoice.fx_rate or 0) > 1.000001)) else None
+    fx_stamp = await fx.stamp(invoice.company_id, invoice.currency, invoice.issue_date, given_rate)
+    invoice.currency = fx_stamp["currency"]
+    invoice.fx_rate = fx_stamp["fx_rate"]
+    invoice.fx_date = fx_stamp["fx_date"]
+    invoice.fx_source = fx_stamp["fx_source"]
+    invoice.local_total = fx.local_of(invoice.grand_total, invoice.fx_rate)
 
     doc = invoice.to_mongo()
     if invoice.status in ["approved", "sent_to_gib"]:
@@ -1751,7 +1759,7 @@ async def create_invoice(invoice: Invoice):
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. Taslaklar için çağrılmaz."""
     if inv.get("contact_id"):
-        change = float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else -float(inv.get("grand_total", 0))
+        change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
     if inv.get("invoice_type") == "sales":
         for item in inv.get("items", []):
@@ -1798,7 +1806,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="Kesilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source"}}
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
         items = allowed.get("items", inv.get("items", []))
         items_sum = sum(float(i.get("total", 0)) for i in items)
@@ -1809,8 +1817,17 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         subtotal = items_sum - gd
         vat_total = sum(float(i.get("total", 0)) * factor * float(i.get("vat_rate", 20)) / 100 for i in items)
         allowed.update({"discount_total": gd, "general_discount_amount": gd, "subtotal": round(subtotal, 2), "vat_total": round(vat_total, 2), "withholding_amount": round(vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2), "grand_total": round(subtotal + vat_total - vat_total * float(allowed.get("withholding_rate", inv.get("withholding_rate", 0)) or 0), 2)})
+        merged = {**inv, **allowed}
+        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), merged.get("fx_rate") if (merged.get("currency") or "TRY").upper() != "TRY" and float(merged.get("fx_rate") or 0) > 1.000001 else None)
+        allowed.update(stamp)
+        allowed["local_total"] = fx.local_of(allowed["grand_total"], stamp["fx_rate"])
         if inv.get("effects_applied") and inv.get("contact_id") and inv.get("invoice_type") == "sales":
-            await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["grand_total"] - inv.get("grand_total", 0)}})
+            await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["local_total"] - fx.try_amount(inv)}})
+    elif any(k in allowed for k in ("currency", "fx_rate", "issue_date")):
+        merged = {**inv, **allowed}
+        stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), merged.get("fx_rate") if (merged.get("currency") or "TRY").upper() != "TRY" and float(merged.get("fx_rate") or 0) > 1.000001 else None)
+        allowed.update(stamp)
+        allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
     return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
 
@@ -1865,6 +1882,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
     new_paid = inv.get("paid_amount", 0) + amount
     grand_total = inv.get("grand_total", 0)
     payment_status = "paid" if new_paid >= grand_total - 0.01 else "partially_paid"
+    try_amt = fx.try_amount(inv, amount)
 
     await db.invoices.update_one(
         {"_id": invoice_id},
@@ -1877,13 +1895,13 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
         is_sales = inv.get("invoice_type") == "sales"
         tx_type = "withdrawal" if is_sales else "capital_in"
-        inc = {"balance": -amount, "total_withdrawn": amount} if is_sales else {"balance": amount, "total_capital_in": amount}
+        inc = {"balance": -try_amt, "total_withdrawn": try_amt} if is_sales else {"balance": try_amt, "total_capital_in": try_amt}
         await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
         description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
-        ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=amount,
+        ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=try_amt,
                                  account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         await db.partner_transactions.insert_one(ptx.to_mongo())
-        await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -amount if is_sales else amount}})
+        await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -try_amt if is_sales else try_amt}})
         return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
 
     if account_id:
@@ -1891,10 +1909,13 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
         await bank_guard.assert_manual_allowed(db, account_id)
         is_sales = inv.get("invoice_type") == "sales"
-        
+        acc_ccy = (acc.get("currency") if acc else "TRY") or "TRY"
+        posted = amount if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else try_amt
+        posted_ccy = acc_ccy if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else "TRY"
+
         await db.bank_accounts.update_one(
             {"_id": account_id},
-            {"$inc": {"current_balance": amount if is_sales else -amount}}
+            {"$inc": {"current_balance": posted if is_sales else -posted}}
         )
 
         await db.bank_transactions.insert_one({
@@ -1904,9 +1925,9 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
             "account_name": acc_name,
             "type": "inflow" if is_sales else "outflow",
             "category": "Fatura Tahsilatı" if is_sales else "Fatura Ödemesi",
-            "amount": amount,
-            "currency": inv.get("currency", "TRY"),
-            "description": f"{inv.get('invoice_number')} nolu fatura ödemesi / {inv.get('contact_name')}",
+            "amount": posted,
+            "currency": posted_ccy,
+            "description": f"{inv.get('invoice_number')} nolu fatura ödemesi / {inv.get('contact_name')}" + (f" ({amount} {inv.get('currency')} × {inv.get('fx_rate')})" if posted_ccy == "TRY" and (inv.get("currency") or "TRY") != "TRY" else ""),
             "contact_id": inv.get("contact_id"),
             "contact_name": inv.get("contact_name"),
             "related_invoice_id": invoice_id,
@@ -1914,7 +1935,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
             "created_at": datetime.now(timezone.utc).isoformat()
         })
 
-        balance_change = -amount if is_sales else amount
+        balance_change = -try_amt if is_sales else try_amt
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
 
     return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status}
@@ -5691,6 +5712,7 @@ saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.s
 saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
+fx.init(db)
 finance.init(db)
 attendance.init(db, get_current_user)
 trash.init(db)
@@ -5731,6 +5753,7 @@ for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", 
 app.include_router(api_router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
+app.include_router(fx.router)
 app.include_router(finance.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)
