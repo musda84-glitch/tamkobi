@@ -114,7 +114,9 @@ export default function StockBarcodePage() {
     min_stock_alert: 10,
     warehouse_id: "wh_main",
     show_in_b2b: true,
-    track_stock: true
+    track_stock: true,
+    gtip: "",
+    origin_country: ""
   });
 
   const loadProducts = useCallback(async () => {
@@ -639,6 +641,29 @@ export default function StockBarcodePage() {
                     <option value="1">%1</option>
                     <option value="0">%0</option>
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">GTIP (Gümrük)</label>
+                  <input
+                    value={newProduct.gtip}
+                    onChange={(e) => setNewProduct({ ...newProduct, gtip: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
+                    placeholder="8471.30.00.00.00"
+                    data-testid="product-gtip-input"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Menşe ülke</label>
+                  <input
+                    value={newProduct.origin_country}
+                    onChange={(e) => setNewProduct({ ...newProduct, origin_country: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    placeholder="TR, CN, DE…"
+                    data-testid="product-origin-input"
+                  />
                 </div>
               </div>
 

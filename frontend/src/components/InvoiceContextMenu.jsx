@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from "react";
-import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck } from "lucide-react";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, Globe } from "lucide-react";
 
-export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye" };
+export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat" };
 
 const ISSUE_OPTIONS = [
   { key: "e_invoice", label: "E-Fatura olarak kes", sub: "GİB Portal (mükellef alıcı)", icon: FileCheck2, color: "text-emerald-600" },
   { key: "e_archive", label: "E-Arşiv olarak kes", sub: "Nihai tüketici / mükellef olmayan", icon: Archive, color: "text-blue-600" },
+  { key: "e_export", label: "e-İhracat olarak kes", sub: "GİB e-İhracat · GTIP / teslim şekli", icon: Globe, color: "text-sky-600" },
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" }
 ];
 

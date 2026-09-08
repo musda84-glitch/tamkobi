@@ -19,6 +19,7 @@ export const AuthProvider = ({ children }) => {
   const BASE_MENU = [
     { label: "Genel Bakış", path: "/" },
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
+    { label: "İthalat / İhracat", path: "/dis-ticaret", badge: "Gümrük" },
     { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
     { label: "B2B Portal Yönetimi", path: "/b2b-yonetim", badge: "Bayi" },
     { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
@@ -49,7 +50,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sayim": "/stock", "/sevk": "/orders", "/saha": "/orders" };
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sayim": "/stock", "/sevk": "/orders", "/saha": "/orders", "/dis-ticaret": "/invoices" };
   const perms = user?.permissions;
   const permPath = (path) => LICENSE_KEY[path] || path;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");

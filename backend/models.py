@@ -130,6 +130,8 @@ class Product(BaseDocument):
     variants: List[ProductVariant] = []
     image_url: Optional[str] = None
     images: List[str] = []
+    gtip: Optional[str] = None
+    origin_country: Optional[str] = None
     show_in_b2b: bool = True
     track_stock: bool = True
     purchase_vat_rate: float = 20.0
@@ -175,11 +177,13 @@ class InvoiceItem(BaseModel):
     is_service: bool = False
     sku: Optional[str] = ""
     barcode: Optional[str] = ""
+    gtip: Optional[str] = None
+    origin_country: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str
     invoice_type: str  # "sales", "purchase", "proforma", "return"
-    e_type: str = "e_archive"  # "e_invoice", "e_archive", "e_dispatch", "paper"
+    e_type: str = "e_archive"  # "e_invoice", "e_archive", "e_dispatch", "e_export", "paper"
     invoice_number: Optional[str] = None
     contact_id: str
     contact_name: str
@@ -198,6 +202,13 @@ class Invoice(BaseDocument):
     withholding_amount: float = 0.0
     price_mode: str = "excl"  # excl: KDV hariç, incl: KDV dahil girildi (net'e çevrilir)
     currency: str = "TRY"
+    fx_rate: float = 1.0
+    trade_kind: Optional[str] = None  # None/domestic, export, import
+    incoterm: Optional[str] = None
+    country: Optional[str] = None
+    customs_office: Optional[str] = None
+    trade_file_id: Optional[str] = None
+    trade_file_number: Optional[str] = None
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
     gib_status: Optional[str] = "Taslak"  # Taslak, GİB'e Gönderildi, Başarıyla İletildi, İptal Edildi
     gib_tracking_id: Optional[str] = None
