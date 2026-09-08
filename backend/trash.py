@@ -12,7 +12,7 @@ RETENTION_DAYS = 30
 
 TYPE_LABELS = {"contact": "Cari Hesap", "product": "Ürün / Stok Kartı", "order": "Sipariş", "quote": "Teklif", "project": "Proje", "survey": "Keşif", "expense": "Masraf", "loan": "Kredi",
                "bank_transaction": "Banka / Kasa Hareketi", "bank_account": "Banka / Kasa Hesabı", "partner": "Ortak", "partner_transaction": "Ortak Hareketi", "leave": "İzin Talebi", "bonus": "Prim / Avans / 2. Maaş",
-               "recipe": "Reçete (BOM)", "production_order": "Üretim Emri", "stock_count": "Stok Sayımı", "shift": "Vardiya", "shift_template": "Vardiya Şablonu"}
+               "recipe": "Reçete (BOM)", "production_order": "Üretim Emri", "stock_count": "Stok Sayımı", "shift": "Vardiya", "shift_template": "Vardiya Şablonu", "trade_file": "İthalat / İhracat Dosyası", "invoice": "Fatura"}
 PREVIEW_FIELDS = ("name", "customer_name", "contact_name", "partner_name", "employee_name", "product_name", "sku", "barcode", "order_number", "quote_number", "project_number", "survey_number", "expense_number",
                   "invoice_number", "description", "category", "amount", "total", "total_amount", "grand_total", "stock_quantity", "sale_price", "status", "order_status", "payment_status", "date", "order_date", "start_date", "end_date", "channel", "type")
 

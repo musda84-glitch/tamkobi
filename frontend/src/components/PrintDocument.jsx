@@ -3,9 +3,15 @@ import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { moneySuffix } from "../utils/money";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
+const docTitle = (docType, doc) => {
+  if (doc.e_type === "e_export" || doc.trade_kind === "export") return "e-İHRACAT FATURASI";
+  if (doc.trade_kind === "import") return "İTHALAT FATURASI";
+  return TITLES[docType];
+};
 
 export const LAYOUTS = [
   ["classic", "Klasik", "Alt çizgili başlık, renkli tablo başlığı"],
@@ -36,6 +42,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const thStyle = isMinimal ? { borderBottom: "2px solid #0f172a" } : isBold ? { backgroundColor: "#0f172a" } : { backgroundColor: color };
   const thCls = isMinimal ? "text-slate-900" : "text-white";
   const hideAll = !!tpl.hide_all_prices, hideLine = hideAll || !!tpl.hide_line_prices, hideVat = hideAll || !!tpl.hide_vat;
+  const suf = moneySuffix(doc.currency);
+  const fmtM = (n) => `${fmt(n)} ${suf}`;
+  const title = tpl.title_override || docTitle(docType, doc);
   const itemNote = (it) => it.note || it.notes || it.description || it.line_note || "";
   const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
   return (
@@ -74,7 +83,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                 {tpl.show_logo && company?.logo_url && <img src={resolveImageUrl(company.logo_url)} alt="logo" className="h-14 object-contain bg-white rounded-lg p-1" />}
                 <div><div className="text-lg font-bold">{company?.name}</div><div className="opacity-80">{company?.address} {company?.city}</div>{tpl.show_tax_info && <div className="opacity-80">VD: {company?.tax_office} • VKN: {company?.tax_number}</div>}<div className="opacity-80">{company?.phone} • {company?.email}</div></div>
               </div>
-              <div className="text-right"><div className="text-2xl font-black tracking-tight">{tpl.title_override || TITLES[docType]}</div><div className="font-mono font-semibold">{number}</div><div className="opacity-80">Tarih: {doc.issue_date || (doc.order_date || doc.created_at || "").slice(0, 10)}</div>{doc.valid_until && <div className="opacity-80">Geçerlilik: {doc.valid_until}</div>}{doc.due_date && <div className="opacity-80">Vade: {doc.due_date}</div>}</div>
+              <div className="text-right"><div className="text-2xl font-black tracking-tight">{title}</div><div className="font-mono font-semibold">{number}</div><div className="opacity-80">Tarih: {doc.issue_date || (doc.order_date || doc.created_at || "").slice(0, 10)}</div>{doc.valid_until && <div className="opacity-80">Geçerlilik: {doc.valid_until}</div>}{doc.due_date && <div className="opacity-80">Vade: {doc.due_date}</div>}</div>
             </div>
           ) : (
           <div className={`flex justify-between items-start pb-4 ${isMinimal ? "border-b border-slate-900" : "border-b-4"}`} style={isMinimal ? {} : { borderColor: color }}>
@@ -88,7 +97,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
               </div>
             </div>
             <div className="text-right">
-              <div className={`${isBold ? "text-3xl" : "text-2xl"} font-black tracking-tight`} style={{ color: isBold ? "#0f172a" : color }}>{tpl.title_override || TITLES[docType]}</div>
+              <div className={`${isBold ? "text-3xl" : "text-2xl"} font-black tracking-tight`} style={{ color: isBold ? "#0f172a" : color }}>{title}</div>
               <div className="font-mono font-semibold">{number}</div>
               <div className="text-slate-500">Tarih: {doc.issue_date || (doc.order_date || doc.created_at || "").slice(0, 10)}</div>
               {doc.valid_until && <div className="text-slate-500">Geçerlilik: {doc.valid_until}</div>}
@@ -99,20 +108,20 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           <div className={isModern ? "px-10 pb-10" : ""}>
           {tpl.header_note && <p className="mt-3 text-slate-600 italic">{tpl.header_note}</p>}
           <div className="mt-5 grid grid-cols-2 gap-6">
-            <div><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div><div className="font-bold text-base">{customer}</div>{(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}{doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}</div>
+            <div><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div><div className="font-bold text-base">{customer}</div>{(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}{doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}{(doc.incoterm || doc.country) && <div className="text-slate-500 mt-1" data-testid="print-trade-meta">{[doc.incoterm, doc.country, doc.customs_office].filter(Boolean).join(" · ")}</div>}</div>
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
             <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim Fiyat</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
-            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{(it.sku || it.barcode) && tpl.show_barcode && <div className="text-[10px] text-slate-400 font-mono">{it.sku}{it.barcode ? ` • ${it.barcode}` : ""}</div>}{tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmt(it.unit_price)} ₺</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmt(it.total)} ₺</td>}</tr>)}</tbody>
+            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{(it.sku || it.barcode) && tpl.show_barcode && <div className="text-[10px] text-slate-400 font-mono">{it.sku}{it.barcode ? ` • ${it.barcode}` : ""}</div>}{it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}{tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmtM(it.total)}</td>}</tr>)}</tbody>
           </table>
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
           {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
-            {doc.discount_total > 0 && <div className="flex justify-between text-rose-600"><span>İskonto</span><span>-{fmt(doc.discount_total)} ₺</span></div>}
-            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam</span><span>{fmt(doc.subtotal)} ₺</span></div>}
-            {!hideVat && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmt(doc.vat_total)} ₺</span></div>}
-            {doc.withholding_amount > 0 && <div className="flex justify-between text-indigo-700"><span>Tevkifat</span><span>-{fmt(doc.withholding_amount)} ₺</span></div>}
-            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM"}</span><span style={{ color }}>{fmt(total)} ₺</span></div>
+            {doc.discount_total > 0 && <div className="flex justify-between text-rose-600"><span>İskonto</span><span>-{fmtM(doc.discount_total)}</span></div>}
+            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam</span><span>{fmtM(doc.subtotal)}</span></div>}
+            {!hideVat && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmtM(doc.vat_total)}</span></div>}
+            {doc.withholding_amount > 0 && <div className="flex justify-between text-indigo-700"><span>Tevkifat</span><span>-{fmtM(doc.withholding_amount)}</span></div>}
+            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM"}</span><span style={{ color }}>{fmtM(total)}</span></div>
           </div></div>}
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">
