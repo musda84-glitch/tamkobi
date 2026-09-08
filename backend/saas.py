@@ -41,11 +41,13 @@ _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contact
 _STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/saha", "/sevk", "/communication", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
+# 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
+QUOTA_KEYS = ("user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb")
 DEFAULT_PLANS = [
-    {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
-    {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
-    {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
-    {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
+    {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "product_limit": 250, "contact_limit": 150, "storage_limit_mb": 512, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
+    {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "product_limit": 1500, "contact_limit": 800, "storage_limit_mb": 2048, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
+    {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "product_limit": 8000, "contact_limit": 3000, "storage_limit_mb": 10240, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
+    {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "product_limit": 0, "contact_limit": 0, "storage_limit_mb": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
 ]
 STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
@@ -90,6 +92,31 @@ def _as_iso(value) -> Optional[str]:
 
 def _clean(d: dict) -> dict:
     d = dict(d); d["id"] = d.pop("_id"); return d
+
+
+def resolve_quota_limit(plan: Optional[dict], lic: Optional[dict], key: str) -> int:
+    """License override wins; missing/blank inherits the plan. 0 = unlimited."""
+    lic = lic or {}
+    plan = plan or {}
+    raw = lic.get(key)
+    if raw not in (None, ""):
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(0, int(plan.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_override(val):
+    if val in (None, ""):
+        return None
+    try:
+        return max(0, int(val))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Limit sayısal olmalıdır (boş = paketten al, 0 = sınırsız).")
 
 
 def catalog():
@@ -139,8 +166,14 @@ async def seed():
     for p in DEFAULT_PLANS:
         await _db.saas_plans.update_one({"_id": p["_id"]}, {"$setOnInsert": {**p, "created_at": _now()}}, upsert=True)
         cur = await _db.saas_plans.find_one({"_id": p["_id"]})
-        if cur is not None and cur.get("company_limit") is None:
-            await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"company_limit": p.get("company_limit", 1)}})
+        if cur is None:
+            continue
+        patch = {}
+        for k in ("company_limit", "product_limit", "contact_limit", "storage_limit_mb"):
+            if cur.get(k) is None and k in p:
+                patch[k] = p[k]
+        if patch:
+            await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": patch})
         cur = await _db.saas_plans.find_one({"_id": p["_id"]})
         if cur and "/loans" in (cur.get("modules") or []) and "/cheques" not in (cur.get("modules") or []):
             await _db.saas_plans.update_one({"_id": p["_id"]}, {"$push": {"modules": "/cheques"}})
@@ -237,12 +270,16 @@ async def effective(company_id: str) -> Dict[str, Any]:
     if end_dt:
         days_left = max(0, -(-int((end_dt - now_dt).total_seconds()) // 86400))
     siblings = await companies_on_license(lid)
-    plan_company_limit = int((plan or {}).get("company_limit") or 0)
-    lic_company_limit = (lic or {}).get("company_limit")
-    company_limit = int(lic_company_limit) if lic_company_limit is not None else plan_company_limit
     res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
-           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
-           "company_limit": company_limit, "company_count": len(siblings),
+           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL),
+           "user_limit": resolve_quota_limit(plan, lic, "user_limit"),
+           "company_limit": resolve_quota_limit(plan, lic, "company_limit"),
+           "product_limit": resolve_quota_limit(plan, lic, "product_limit"),
+           "contact_limit": resolve_quota_limit(plan, lic, "contact_limit"),
+           "storage_limit_mb": resolve_quota_limit(plan, lic, "storage_limit_mb"),
+           "company_count": len(siblings),
+           "plan_defaults": {k: int((plan or {}).get(k) or 0) for k in QUOTA_KEYS},
+           "quota_overrides": {k: (lic or {}).get(k) for k in QUOTA_KEYS},
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly")}
     _cache[lid] = (time.time() + CACHE_TTL, dict(res))
@@ -288,6 +325,56 @@ async def check_company_limit(company_id: str):
     limit = int(lic.get("company_limit") or 0)
     if limit and int(lic.get("company_count") or 0) >= limit:
         raise HTTPException(status_code=403, detail=f"Şirket limitine ulaşıldı ({limit}). Paketiniz ({lic['plan_name']}) bu kadar yasal şirket açmaya izin veriyor. Yükseltin veya mevcut şirketi kullanın.")
+
+
+async def quota_usage(company_id: str) -> Dict[str, Any]:
+    """Live license-wide usage (not cached — checks must see the latest counts)."""
+    lid = await license_id_of(company_id)
+    ids = [c["_id"] for c in await companies_on_license(lid)] or [company_id]
+    q = {"company_id": {"$in": ids}}
+    products = await _db.products.count_documents(q)
+    contacts = await _db.contacts.count_documents(q)
+    files = await _db.files.find({"$or": [{"company_id": {"$in": ids}}, {"entity_id": {"$in": ids}}]}).to_list(50000)
+    storage = 0
+    seen = set()
+    for f in files:
+        fid = f.get("_id")
+        if fid in seen or f.get("is_deleted"):
+            continue
+        seen.add(fid)
+        storage += int(f.get("size") or 0)
+    return {"product_count": products, "contact_count": contacts, "storage_bytes": storage, "company_ids": ids}
+
+
+async def check_product_limit(company_id: str, extra: int = 1):
+    lic = await effective(company_id)
+    limit = int(lic.get("product_limit") or 0)
+    if not limit:
+        return
+    used = (await quota_usage(company_id))["product_count"]
+    if used + extra > limit:
+        raise HTTPException(status_code=403, detail=f"Stok kartı limitine ulaşıldı ({used}/{limit}). Paketinizi yükseltin ({lic['plan_name']}).")
+
+
+async def check_contact_limit(company_id: str, extra: int = 1):
+    lic = await effective(company_id)
+    limit = int(lic.get("contact_limit") or 0)
+    if not limit:
+        return
+    used = (await quota_usage(company_id))["contact_count"]
+    if used + extra > limit:
+        raise HTTPException(status_code=403, detail=f"Cari kart limitine ulaşıldı ({used}/{limit}). Paketinizi yükseltin ({lic['plan_name']}).")
+
+
+async def check_storage_limit(company_id: str, extra_bytes: int = 0):
+    lic = await effective(company_id)
+    limit_mb = int(lic.get("storage_limit_mb") or 0)
+    if not limit_mb:
+        return
+    used = (await quota_usage(company_id))["storage_bytes"]
+    cap = limit_mb * 1024 * 1024
+    if used + max(0, int(extra_bytes or 0)) > cap:
+        raise HTTPException(status_code=403, detail=f"Resim depolama kotası doldu ({round(used / (1024 * 1024), 1)}/{limit_mb} MB). Paketinizi yükseltin ({lic['plan_name']}).")
 
 
 async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], attach_user: Optional[dict] = None) -> dict:
@@ -367,8 +454,11 @@ async def require_super_admin(request: Request) -> dict:
 
 async def _usage(company_id: str) -> Dict[str, Any]:
     last = await _db.activity_logs.find_one({"company_id": company_id}, sort=[("created_at", -1)])
-    return {"users": await _db.users.count_documents(tenant_user_query(company_id)), "invoices": await _db.invoices.count_documents({"company_id": company_id}), "contacts": await _db.contacts.count_documents({"company_id": company_id}),
-            "products": await _db.products.count_documents({"company_id": company_id}), "orders": await _db.orders.count_documents({"company_id": company_id}), "last_activity": (last or {}).get("created_at")}
+    q = {"company_id": company_id}
+    files = await _db.files.find({"$or": [{"company_id": company_id}, {"entity_id": company_id}]}).to_list(20000)
+    storage = sum(int(f.get("size") or 0) for f in files if not f.get("is_deleted"))
+    return {"users": await _db.users.count_documents(tenant_user_query(company_id)), "invoices": await _db.invoices.count_documents(q), "contacts": await _db.contacts.count_documents(q),
+            "products": await _db.products.count_documents(q), "orders": await _db.orders.count_documents(q), "storage_bytes": storage, "last_activity": (last or {}).get("created_at")}
 
 
 async def _company_row(c: dict) -> Dict[str, Any]:
@@ -450,7 +540,10 @@ def _plan_payload(req: Dict[str, Any], base: Optional[dict] = None) -> Dict[str,
     if not name:
         raise HTTPException(status_code=400, detail="Paket adı gerekli.")
     return {"name": name, "tagline": (req.get("tagline") if "tagline" in req else b.get("tagline", "")) or "", "price_monthly": float(req.get("price_monthly", b.get("price_monthly", 0)) or 0), "price_yearly": float(req.get("price_yearly", b.get("price_yearly", 0)) or 0),
-            "user_limit": int(req.get("user_limit", b.get("user_limit", 0)) or 0), "company_limit": int(req.get("company_limit", b.get("company_limit", 1)) or 0), "modules": mods, "color": req.get("color", b.get("color", "slate")), "sort": int(req.get("sort", b.get("sort", 99)) or 99), "is_public": bool(req.get("is_public", b.get("is_public", True))), "is_popular": bool(req.get("is_popular", b.get("is_popular", False)))}
+            "user_limit": int(req.get("user_limit", b.get("user_limit", 0)) or 0), "company_limit": int(req.get("company_limit", b.get("company_limit", 1)) or 0),
+            "product_limit": int(req.get("product_limit", b.get("product_limit", 0)) or 0), "contact_limit": int(req.get("contact_limit", b.get("contact_limit", 0)) or 0),
+            "storage_limit_mb": int(req.get("storage_limit_mb", b.get("storage_limit_mb", 0)) or 0),
+            "modules": mods, "color": req.get("color", b.get("color", "slate")), "sort": int(req.get("sort", b.get("sort", 99)) or 99), "is_public": bool(req.get("is_public", b.get("is_public", True))), "is_popular": bool(req.get("is_popular", b.get("is_popular", False)))}
 
 
 @router.post("/system/plans")
@@ -493,7 +586,46 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     row = await _company_row(c)
     row["users"] = [{"id": u["_id"], "name": u.get("name"), "email": u.get("email"), "role": u.get("role"), "is_active": u.get("is_active", True), "last_login_at": u.get("last_login_at")} for u in await _db.users.find(tenant_user_query(company_id), {"password_hash": 0}).to_list(200)]
     row["requests"] = [_clean(r) for r in await _db.upgrade_requests.find({"company_id": company_id}).sort("created_at", -1).to_list(20)]
+    row["quota_usage"] = await quota_usage(company_id)
     return row
+
+
+@router.get("/system/quotas")
+async def list_quotas(_: dict = Depends(require_super_admin)):
+    """One row per license (primary company) with live resource usage vs limits."""
+    plans = {p["_id"]: p for p in await _db.saas_plans.find({}).to_list(50)}
+    rows = []
+    for lic in await _db.company_licenses.find({}).to_list(500):
+        lid = lic["_id"]
+        c = await _db.companies.find_one({"_id": lid})
+        if not c:
+            continue
+        eff = await effective(lid)
+        used = await quota_usage(lid)
+        users = await _db.users.count_documents(tenant_user_query(lid))
+        rows.append({
+            "id": lid,
+            "name": c.get("name"),
+            "plan_id": eff.get("plan_id"),
+            "plan_name": eff.get("plan_name"),
+            "plan_color": eff.get("plan_color"),
+            "status": eff.get("status"),
+            "status_label": eff.get("status_label"),
+            "user_limit": eff.get("user_limit") or 0,
+            "company_limit": eff.get("company_limit") or 0,
+            "product_limit": eff.get("product_limit") or 0,
+            "contact_limit": eff.get("contact_limit") or 0,
+            "storage_limit_mb": eff.get("storage_limit_mb") or 0,
+            "user_count": users,
+            "company_count": eff.get("company_count") or 0,
+            "product_count": used["product_count"],
+            "contact_count": used["contact_count"],
+            "storage_bytes": used["storage_bytes"],
+            "plan_defaults": eff.get("plan_defaults") or {},
+            "overrides": {k: lic.get(k) for k in QUOTA_KEYS},
+        })
+    rows.sort(key=lambda r: (r.get("name") or "").lower())
+    return {"quotas": rows, "plans": [{"id": p["_id"], "name": p.get("name"), **{k: int(p.get(k) or 0) for k in QUOTA_KEYS}} for p in plans.values()]}
 
 
 @router.post("/system/companies/{company_id}/companies")
@@ -588,9 +720,15 @@ async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends
     if "notes" in req:
         upd["notes"] = req["notes"] or ""
     if "user_limit" in req:
-        upd["user_limit"] = int(req["user_limit"]) if req["user_limit"] not in (None, "") else None
+        upd["user_limit"] = _parse_override(req["user_limit"])
     if "company_limit" in req:
-        upd["company_limit"] = int(req["company_limit"]) if req["company_limit"] not in (None, "") else None
+        upd["company_limit"] = _parse_override(req["company_limit"])
+    if "product_limit" in req:
+        upd["product_limit"] = _parse_override(req["product_limit"])
+    if "contact_limit" in req:
+        upd["contact_limit"] = _parse_override(req["contact_limit"])
+    if "storage_limit_mb" in req:
+        upd["storage_limit_mb"] = _parse_override(req["storage_limit_mb"])
     if "module_overrides" in req:
         upd["module_overrides"] = {k: bool(v) for k, v in (req["module_overrides"] or {}).items() if k in _ALL and v is not None}
     if "extend_days" in req:
@@ -785,7 +923,8 @@ async def my_license(request: Request, company_id: str = "comp_nexus_main_01"):
     plans = [{**_clean(p), "modules": p["modules"]} for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     pending = await _db.upgrade_requests.find_one({"company_id": company_id, "status": "pending"})
     sibs = [{"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city")} for c in await companies_on_license(lic.get("license_id") or company_id)]
-    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "companies": sibs, "pending_request": _clean(pending) if pending else None}
+    used = await quota_usage(company_id)
+    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "companies": sibs, "pending_request": _clean(pending) if pending else None, **used}
 
 
 @router.get("/license/companies")

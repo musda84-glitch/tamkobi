@@ -1,10 +1,10 @@
 import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles, Mail } from "lucide-react";
+import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles, Mail, Gauge } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { SYSTEM_NAV_GROUPS } from "../../navGroups";
 
-export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/posta", "Posta Sunucusu", Mail], ["/sistem/ai", "AI Entegrasyonu", Sparkles], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
+export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/posta", "Posta Sunucusu", Mail], ["/sistem/ai", "AI Entegrasyonu", Sparkles], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kotalar", "Kotalar", Gauge], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
 
 const ICONS = Object.fromEntries(SYSTEM_NAV.map(([path, , Icon]) => [path, Icon]));
 const LABELS = Object.fromEntries(SYSTEM_NAV.map(([path, label]) => [path, label]));

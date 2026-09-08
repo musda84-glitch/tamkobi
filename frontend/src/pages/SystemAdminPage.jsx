@@ -15,6 +15,7 @@ import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
+import { QuotasPanel } from "../components/saas/QuotasPanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -56,6 +57,7 @@ export default function SystemAdminPage() {
           {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
           {page === "posta" && <PlatformMailPanel />}
           {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {page === "kotalar" && <QuotasPanel onOpenCompany={setOpenId} />}
           {page === "kullanicilar" && <PlatformUsersPanel />}
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
