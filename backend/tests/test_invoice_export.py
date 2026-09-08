@@ -148,7 +148,7 @@ class TestInvoicePdfDownload:
             assert inline.headers.get("content-type", "").startswith("application/pdf")
             assert "inline" in (inline.headers.get("content-disposition") or "")
             assert inline.content[:4] == b"%PDF"
-            assert len(inline.content) > 1000
+            assert len(inline.content) > 10_000
             dl = client.get(f"{API}/invoices/{inv['id']}/pdf", params={"download": 1}, timeout=20)
             assert dl.status_code == 200
             assert "attachment" in (dl.headers.get("content-disposition") or "")
