@@ -16,6 +16,8 @@ import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { DocumentLineEditor } from "./DocumentLineEditor";
+import { documentLineTotals, fmtMoney, hydrateLine } from "../utils/documentLines";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -304,7 +306,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         )}
         {editInv && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditInv(null)}>
-            <div className="bg-white rounded-2xl max-w-2xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
+            <div className="bg-white rounded-2xl max-w-6xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
               <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3><button onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               {editInv.status !== "draft" && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex items-center gap-1" data-testid="edit-inv-locked-note"><Lock className="w-3 h-3" /> Kesilmiş fatura: kalemler ve belge türü değiştirilemez; yalnızca vade ve not düzenlenebilir.</div>}
               <div className="grid grid-cols-3 gap-2">
@@ -312,22 +314,32 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <div><label className="block font-semibold mb-1">Vade</label><input type="date" value={editInv.due_date || ""} onChange={(e) => setEditInv({ ...editInv, due_date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
                 <div><label className="block font-semibold mb-1">Not</label><input value={editInv.notes || ""} onChange={(e) => setEditInv({ ...editInv, notes: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
               </div>
-              <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Kalem</th><th className="py-1 w-20">Miktar</th><th className="py-1 w-28">Birim Fiyat</th><th className="py-1 w-16">KDV</th><th className="py-1 text-right">Tutar</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{editInv.items.map((it, i) => { const upd = (k, v) => { const items = editInv.items.map((x, idx) => idx === i ? { ...x, [k]: v } : x); items[i].total = Number(items[i].quantity || 0) * Number(items[i].unit_price || 0) * (1 - Number(items[i].discount_rate || 0) / 100); setEditInv({ ...editInv, items }); }; return (
-                  <tr key={i}><td className="py-1"><input disabled={editInv.status !== "draft"} value={it.name} onChange={(e) => upd("name", e.target.value)} className="w-full bg-slate-50 border rounded p-1 disabled:opacity-60" data-testid={`edit-inv-item-name-${i}`} /></td><td className="py-1"><input disabled={editInv.status !== "draft"} type="number" value={it.quantity} onChange={(e) => upd("quantity", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-center disabled:opacity-60" data-testid={`edit-inv-item-qty-${i}`} /></td><td className="py-1"><input disabled={editInv.status !== "draft"} type="number" value={it.unit_price} onChange={(e) => upd("unit_price", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 text-right disabled:opacity-60" /></td><td className="py-1"><select disabled={editInv.status !== "draft"} value={it.vat_rate ?? 20} onChange={(e) => upd("vat_rate", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1 disabled:opacity-60">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></td><td className="py-1 text-right font-bold">{fmt(it.total)} ₺</td></tr>); })}</tbody></table>
-              <div className="flex justify-between items-center border-t pt-2"><span className="font-bold">Genel Toplam: {fmt(editInv.items.reduce((s, it) => s + Number(it.total || 0) * (1 + Number(it.vat_rate ?? 20) / 100), 0))} ₺</span><div className="flex gap-2"><button onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button></div></div>
+              <DocumentLineEditor
+                items={(editInv.items || []).map(hydrateLine)}
+                onChange={(items) => setEditInv({ ...editInv, items })}
+                products={[]}
+                kind="invoice"
+                allowService
+                disabled={editInv.status !== "draft"}
+                testIdPrefix="edit-inv-item"
+              />
+              {(() => { const t = documentLineTotals(editInv.items || []); return (
+              <div className="flex justify-between items-center border-t pt-2"><div className="text-right space-y-0.5"><div>KDV Hariç: <b>{fmtMoney(t.subtotal)} ₺</b></div><div>KDV: <b>{fmtMoney(t.vat)} ₺</b></div><div className="font-bold">Genel Toplam (KDV Dahil): {fmtMoney(t.grandTotal)} ₺</div></div><div className="flex gap-2"><button onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button></div></div>
+              ); })()}
             </div>
           </div>
         )}
         {orderDetail && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setOrderDetail(null)}>
-            <div className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
+            <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
               <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{statusTr(orderDetail.order_status)}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
               {orderDetail.cargo_tracking_number && <div className="text-slate-600"><b>Kargo:</b> {orderDetail.cargo_carrier} • <span className="font-mono">{orderDetail.cargo_tracking_number}</span></div>}
-              <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Ürün</th><th className="py-1 text-right">Adet</th><th className="py-1 text-right">Birim</th><th className="py-1 text-right">Toplam</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => <tr key={i}><td className="py-1.5"><div className="font-semibold">{it.product_name}</div><div className="font-mono text-slate-400">{it.sku}</div></td><td className="py-1.5 text-right">{it.quantity}</td><td className="py-1.5 text-right">{fmt(it.unit_price)} ₺</td><td className="py-1.5 text-right font-bold">{fmt(it.total)} ₺</td></tr>)}</tbody></table>
-              <div className="flex justify-between border-t pt-2 font-bold"><span>Genel Toplam</span><span>{fmt(orderDetail.total_amount)} ₺</span></div>
+              <div className="overflow-x-auto"><table className="w-full min-w-[640px]"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Stok adı</th><th className="py-1 text-right">Miktar</th><th className="py-1 text-right">KDV'siz</th><th className="py-1 text-right">KDV'li</th><th className="py-1 text-center">İsk %</th><th className="py-1 text-center">KDV</th><th className="py-1 text-right">Hariç</th><th className="py-1 text-right">Dahil</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => { const line = hydrateLine(it); return (<tr key={i}><td className="py-1.5"><div className="font-semibold">{line.product_name || line.name}</div><div className="font-mono text-slate-400">{it.sku}</div></td><td className="py-1.5 text-right">{line.quantity}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price)} ₺</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price_incl)} ₺</td><td className="py-1.5 text-center">{line.discount_rate || 0}</td><td className="py-1.5 text-center">%{line.vat_rate}</td><td className="py-1.5 text-right">{fmtMoney(line.total)} ₺</td><td className="py-1.5 text-right font-bold">{fmtMoney(line.total_incl)} ₺</td></tr>); })}</tbody></table></div>
+              {(() => { const t = documentLineTotals(orderDetail.items || []); return (
+              <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(orderDetail.subtotal ?? t.subtotal)} ₺</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(orderDetail.vat_total ?? t.vat)} ₺</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(orderDetail.grand_total ?? t.grandTotal ?? orderDetail.total_amount)} ₺</span></div></div>
+              ); })()}
               <div className="flex justify-between text-slate-500"><span>Fatura: {orderDetail.is_invoiced ? "Kesildi" : "Kesilmedi"}</span></div>
             </div>
           </div>

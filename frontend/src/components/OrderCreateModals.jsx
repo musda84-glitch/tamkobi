@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Plus, Trash2, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
+import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { useEscape } from "../utils/useEscape";
+import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
+import { computeLine, documentLineTotals, emptyLine } from "../utils/documentLines";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
@@ -13,25 +15,24 @@ const CHANNELS = [["manual", "Manuel / Telefon"], ["b2b", "B2B Bayi"], ["trendyo
 export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved }) => {
   useEscape(onClose);
   const [f, setF] = useState({ contact_id: "", customer_name: "", customer_phone: "", customer_email: "", shipping_address: "", city: "", channel: "manual", notes: "" });
-  const [items, setItems] = useState([{ product_id: "", product_name: "", sku: "", quantity: 1, unit_price: 0 }]);
+  const [items, setItems] = useState([emptyLine({ vat_rate: 20, quantity: 1 })]);
   const [busy, setBusy] = useState(false);
   const pickContact = (id) => { const c = contacts.find((x) => (x.id || x._id) === id); setF({ ...f, contact_id: id, customer_name: c?.name || f.customer_name, customer_phone: c?.phone || f.customer_phone, customer_email: c?.email || f.customer_email, shipping_address: c?.address || f.shipping_address, city: c?.city || f.city }); };
-  const pickProduct = (i, id) => { const p = products.find((x) => (x.id || x._id) === id); setItems(items.map((it, k) => (k === i ? { ...it, product_id: id, product_name: p?.name || it.product_name, sku: p?.sku || "", unit_price: p?.sale_price ?? it.unit_price } : it))); };
-  const total = items.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0);
+  const totals = documentLineTotals(items);
   const save = async () => {
     if (!f.customer_name.trim()) { toast.error("Müşteri adı gerekli."); return; }
-    const valid = items.filter((it) => it.product_name && Number(it.quantity) > 0);
+    const valid = items.map((it) => computeLine(it)).filter((it) => (it.product_name || it.name) && Number(it.quantity) > 0);
     if (!valid.length) { toast.error("En az bir ürün kalemi ekleyin."); return; }
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/orders`, { company_id: companyId, channel: f.channel, customer_name: f.customer_name.trim(), customer_phone: f.customer_phone, customer_email: f.customer_email, shipping_address: f.shipping_address || "-", city: f.city || "-", order_status: "pending", contact_id: f.contact_id || null, notes: f.notes,
-        items: valid.map((it) => ({ product_id: it.product_id || "", product_name: it.product_name, sku: it.sku || "", quantity: Number(it.quantity), unit_price: Number(it.unit_price), total: Number(it.quantity) * Number(it.unit_price) })), total_amount: total });
+        items: valid.map((it) => ({ product_id: it.product_id || "", product_name: it.product_name || it.name, sku: it.sku || "", quantity: Number(it.quantity), unit: it.unit || "Adet", unit_price: Number(it.unit_price), unit_price_incl: Number(it.unit_price_incl), vat_rate: Number(it.vat_rate), discount_rate: Number(it.discount_rate || 0), total: Number(it.total), total_incl: Number(it.total_incl), vat_amount: Number(it.vat_amount), is_service: !!it.is_service })), total_amount: totals.grandTotal, subtotal: totals.subtotal, vat_total: totals.vat, grand_total: totals.grandTotal });
       toast.success(`Sipariş oluşturuldu: ${r.data.order_number}`); onSaved(); onClose();
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş oluşturulamadı."); } finally { setBusy(false); }
   };
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="new-order-modal">
+      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="new-order-modal">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Cari (seçince bilgiler dolar)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.phone || c.tax_number_or_id} placeholder="Cari ara…" onChange={pickContact} testId="new-order-contact" /></div>
@@ -42,18 +43,9 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Teslimat Adresi</label><input value={f.shipping_address} onChange={(e) => setF({ ...f, shipping_address: e.target.value })} className={inp} data-testid="new-order-address" /></div>
           <div><label className="block font-semibold mb-1">İl</label><input value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} className={inp} data-testid="new-order-city" /></div>
         </div>
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
-          <table className="w-full"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 text-left w-1/2">Ürün</th><th className="px-3 py-2 text-right">Adet</th><th className="px-3 py-2 text-right">Birim Fiyat</th><th className="px-3 py-2 text-right">Tutar</th><th className="w-8"></th></tr></thead>
-            <tbody className="divide-y divide-slate-100">{items.map((it, i) => (
-              <tr key={i} data-testid={`new-order-item-${i}`}>
-                <td className="px-3 py-1.5"><SearchSelect value={it.product_id} options={products} getLabel={(p) => p.name} getSub={(p) => `${p.sku || ""} · ${fmt(p.sale_price)} ₺ · stok ${p.stock_quantity ?? "-"}`} placeholder="Ürün ara veya ad yaz…" onChange={(id) => pickProduct(i, id)} testId={`new-order-product-${i}`} />
-                  {!it.product_id && <input value={it.product_name} onChange={(e) => setItems(items.map((x, k) => (k === i ? { ...x, product_name: e.target.value } : x)))} placeholder="Stokta yoksa serbest ürün adı" className={`${inp} mt-1`} data-testid={`new-order-freename-${i}`} />}</td>
-                <td className="px-3 py-1.5"><input type="number" min="1" value={it.quantity} onChange={(e) => setItems(items.map((x, k) => (k === i ? { ...x, quantity: e.target.value } : x)))} className={`${inp} text-right w-20`} data-testid={`new-order-qty-${i}`} /></td>
-                <td className="px-3 py-1.5"><input type="number" step="0.01" value={it.unit_price} onChange={(e) => setItems(items.map((x, k) => (k === i ? { ...x, unit_price: e.target.value } : x)))} className={`${inp} text-right w-28`} data-testid={`new-order-price-${i}`} /></td>
-                <td className="px-3 py-1.5 text-right font-semibold">{fmt((Number(it.quantity) || 0) * (Number(it.unit_price) || 0))} ₺</td>
-                <td className="px-1"><button onClick={() => setItems(items.filter((_, k) => k !== i))} className="p-1 text-rose-500 hover:bg-rose-50 rounded" data-testid={`new-order-remove-${i}`}><Trash2 className="w-3.5 h-3.5" /></button></td>
-              </tr>))}</tbody></table>
-          <div className="flex items-center justify-between p-2 bg-slate-50"><button onClick={() => setItems([...items, { product_id: "", product_name: "", sku: "", quantity: 1, unit_price: 0 }])} className="px-3 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold flex items-center gap-1" data-testid="new-order-add-item"><Plus className="w-3.5 h-3.5" /> Kalem Ekle</button><b className="text-sm">Toplam: {fmt(total)} ₺</b></div>
+        <div className="border border-slate-200 rounded-xl p-2 space-y-2">
+          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" testIdPrefix="new-order" />
+          <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} />
         </div>
         <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
         <div className="flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>

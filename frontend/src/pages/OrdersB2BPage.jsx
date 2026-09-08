@@ -191,6 +191,7 @@ export default function OrdersB2BPage() {
       const qty = cart[prodId];
       if (p && qty > 0) {
         // Apply B2B wholesale discount 15%
+        const vatRate = p.vat_rate ?? 20;
         const b2bPrice = p.sale_price * 0.85;
         const itmTotal = b2bPrice * qty;
         total += itmTotal;
@@ -199,8 +200,13 @@ export default function OrdersB2BPage() {
           product_name: p.name,
           sku: p.sku,
           quantity: qty,
+          unit: p.unit || "Adet",
           unit_price: b2bPrice,
-          total: itmTotal
+          unit_price_incl: b2bPrice * (1 + Number(vatRate) / 100),
+          vat_rate: vatRate,
+          discount_rate: 0,
+          total: itmTotal,
+          total_incl: itmTotal * (1 + Number(vatRate) / 100)
         });
       }
     });
@@ -362,7 +368,7 @@ export default function OrdersB2BPage() {
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `KDV'siz ${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.unit_price_incl != null ? ` · KDV'li ${Number(it.unit_price_incl).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.vat_rate != null ? ` · KDV %${it.vat_rate}` : ""}{it.discount_rate ? ` · isk. %${it.discount_rate}` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
                             </div>))}
                           </div>
@@ -370,7 +376,8 @@ export default function OrdersB2BPage() {
                         </div>); })()}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {ord.total_amount?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {(ord.grand_total || ord.total_amount)?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {ord.vat_total ? <div className="text-[10px] font-medium text-slate-400">KDV hariç {(ord.subtotal ?? (Number(ord.grand_total) - Number(ord.vat_total))).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</div> : null}
                     </td>
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (

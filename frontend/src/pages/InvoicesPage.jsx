@@ -36,6 +36,8 @@ import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
+import { DocumentLineEditor } from "../components/DocumentLineEditor";
+import { computeLine, documentLineTotals, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
@@ -91,7 +93,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     issue_date: new Date().toISOString().split("T")[0],
     due_date: new Date(Date.now() + 15 * 86400000).toISOString().split("T")[0],
     items: [
-      { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20, total: 0 }
+      emptyLine()
     ],
     notes: "Teşekkür ederiz.",
     general_discount_rate: 0,
@@ -136,7 +138,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       ...formData,
       items: [
         ...formData.items,
-        { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20, total: 0 }
+        emptyLine()
       ]
     });
   };
@@ -151,8 +153,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name);
     if (emptyIdx >= 0) { handleItemProductSelect(emptyIdx, pid); }
     else {
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
-      setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: price, vat_rate: prod.vat_rate || 20, total: price, discount_rate: 0 }] }));
+      setFormData((f) => ({ ...f, items: [...f.items, lineFromProduct(prod, { invoiceType: f.invoice_type })] }));
     }
     toast.success(`${prod.name} eklendi`);
   };
@@ -160,57 +161,33 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const handleItemProductSelect = (index, productId) => {
     const prod = products.find(p => (p.id === productId || p._id === productId));
     const items = [...formData.items];
-    if (prod) {
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
-      items[index] = {
-        product_id: prod.id || prod._id,
-        name: prod.name,
-        quantity: 1,
-        unit: prod.unit || "Adet",
-        unit_price: price,
-        vat_rate: prod.vat_rate || 20,
-        total: price
-      };
-      items[index].total = netPrice(items[index]) * Number(items[index].quantity || 1);
-    }
+    if (prod) items[index] = lineFromProduct(prod, { invoiceType: formData.invoice_type, quantity: items[index]?.quantity || 1 });
     setFormData({ ...formData, items });
   };
 
   const handleItemChange = (index, field, val) => {
-    const items = [...formData.items];
-    items[index][field] = val;
-    if (["quantity", "unit_price", "discount_rate", "vat_rate"].includes(field)) {
-      items[index].total = Number(items[index].quantity || 0) * netPrice(items[index]) * (1 - Number(items[index].discount_rate || 0) / 100);
-    }
+    const items = formData.items.map((it, i) => (i === index ? computeLine({ ...it, [field]: val }, field) : it));
     setFormData({ ...formData, items });
   };
 
-  const handleRemoveItem = (index) => {
-    if (formData.items.length <= 1) return;
-    const items = formData.items.filter((_, i) => i !== index);
-    setFormData({ ...formData, items });
-  };
-
-  const netPrice = (item, mode = formData.price_mode) => mode === "incl" ? Number(item.unit_price || 0) / (1 + Number(item.vat_rate || 0) / 100) : Number(item.unit_price || 0);
-  const recalcItems = (items, mode) => items.map((it) => ({ ...it, total: Number(it.quantity || 0) * netPrice(it, mode) * (1 - Number(it.discount_rate || 0) / 100) }));
   const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
   const calculateTotals = () => {
-    const itemsSum = formData.items.reduce((sum, item) => sum + Number(item.total || 0), 0);
-    const lineDiscount = formData.items.reduce((sum, item) => sum + Number(item.quantity || 0) * netPrice(item) * (Number(item.discount_rate || 0) / 100), 0);
+    const { subtotal: itemsNet, vat: lineVat, lineDiscount } = documentLineTotals(formData.items);
+    const itemsSum = itemsNet;
     const gdRaw = gdMode === "percent" ? itemsSum * Number(formData.general_discount_rate || 0) / 100 : Number(formData.general_discount_amount || 0);
     const gd = Math.min(Math.max(gdRaw, 0), itemsSum);
     const factor = itemsSum ? (itemsSum - gd) / itemsSum : 1;
     const subtotal = itemsSum - gd;
-    const vat = formData.items.reduce((sum, item) => sum + (Number(item.total || 0) * factor * (Number(item.vat_rate || 20) / 100)), 0);
+    const vat = formData.items.reduce((sum, item) => sum + (Number(computeLine(item).total || 0) * factor * (Number(item.vat_rate || 20) / 100)), 0);
     const withholding = vat * Number(formData.withholding_rate || 0);
-    return { itemsSum, lineDiscount, gd, subtotal, vat, withholding, grandTotal: subtotal + vat - withholding };
+    return { itemsSum: itemsSum + lineDiscount, lineDiscount, gd, subtotal, vat, withholding, grandTotal: subtotal + vat - withholding, lineVat };
   };
 
   const [editingInvoice, setEditingInvoice] = useState(null);
   const openEditInvoice = (inv) => {
     setEditingInvoice(inv);
     setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
+    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: inv.price_mode || "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })) });
     setShowNewModal(true);
   };
   const handleDeleteInvoice = async (inv) => {
@@ -229,7 +206,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const payload = {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...formData,
-        items: formData.items.map((it) => ({ ...it, unit_price: Number(netPrice(it).toFixed(4)), product_id: it.is_service ? "" : it.product_id })),
+        items: formData.items.map((it) => {
+          const line = computeLine(it);
+          return { ...line, unit_price: Number(Number(line.unit_price).toFixed(4)), product_id: it.is_service ? "" : it.product_id };
+        }),
         withholding_rate: Number(formData.withholding_rate || 0),
         withholding_code: formData.withholding_code || null,
         general_discount_amount: t.gd,
@@ -498,7 +478,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       {/* NEW INVOICE MODAL */}
       {showNewModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-6xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
+          <div className="bg-white rounded-2xl max-w-7xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
@@ -550,7 +530,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Birim Fiyat Girişi</label>
                     <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[11px] font-bold">
-                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m, items: recalcItems(formData.items, m) })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
+                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
                     </div>
                   </div>
                   <div>
@@ -608,105 +588,27 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-900">Fatura Kalemleri</span>
-                  <button
-                    type="button"
-                    onClick={handleAddItem}
-                    className="text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1"
-                    data-testid="add-invoice-item-btn"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Kalem Ekle
-                  </button>
                 </div>
                 <div className="flex justify-end"><ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle (kamera)" /></div>
-
-                <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
-                  <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Tutar</div><div className="col-span-1"></div>
-                </div>
-                {formData.items.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
-                    <div className="col-span-3 flex items-center gap-1.5">
-                      <button type="button" onClick={() => { const items = [...formData.items]; items[idx] = { ...items[idx], is_service: !items[idx].is_service, product_id: "", name: items[idx].is_service ? "" : items[idx].name }; setFormData({ ...formData, items }); }} className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold border ${item.is_service ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-500 border-slate-300"}`} title={item.is_service ? "Hizmet satırı (stok düşmez) – ürüne çevir" : "Ürün satırı – hizmete çevir"} data-testid={`inv-item-kind-${idx}`}>{item.is_service ? "H" : "Ü"}</button>
-                      {item.is_service ? (
-                        <input value={item.name} onChange={(e) => { const items = [...formData.items]; items[idx] = { ...items[idx], name: e.target.value }; setFormData({ ...formData, items }); }} placeholder="Hizmet açıklaması (örn. Danışmanlık hizmeti)" className="w-full bg-white border border-indigo-200 rounded p-1.5" data-testid={`inv-item-service-name-${idx}`} />
-                      ) : (
-                      <div className="flex-1 min-w-0"><SearchSelect
-                        value={item.product_id}
-                        options={products}
-                        placeholder="Ürün ara (ad / SKU / barkod)..."
-                        getLabel={(p) => p.name}
-                        getSub={(p) => `SKU ${p.sku} • ${p.barcode} • Stok ${p.stock_quantity} • ${(p.sale_price || 0).toLocaleString('tr-TR')} ₺`}
-                        getImage={(p) => p.image_url}
-                        onChange={(id) => handleItemProductSelect(idx, id)}
-                        testId={`inv-item-product-${idx}`}
-                      /></div>)}
-                    </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        min="1"
-                        placeholder="Miktar"
-                        value={item.quantity}
-                        onChange={(e) => handleItemChange(idx, "quantity", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5 text-center"
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        placeholder="İsk. %"
-                        title="İskonto %"
-                        value={item.discount_rate || ""}
-                        onChange={(e) => handleItemChange(idx, "discount_rate", e.target.value)}
-                        className="w-full bg-white border border-rose-200 rounded p-1.5 text-center text-rose-700"
-                        data-testid={`inv-item-discount-${idx}`}
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        placeholder="Birim Fiyat"
-                        value={item.unit_price}
-                        onChange={(e) => handleItemChange(idx, "unit_price", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5 text-right"
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <select
-                        value={item.vat_rate}
-                        onChange={(e) => handleItemChange(idx, "vat_rate", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5"
-                      >
-                        <option value="20">%20</option>
-                        <option value="10">%10</option>
-                        <option value="1">%1</option>
-                        <option value="0">%0</option>
-                      </select>
-                    </div>
-                    <div className="col-span-2 text-right font-bold text-slate-800">
-                      {item.total?.toLocaleString('tr-TR')} ₺
-                    </div>
-                    <div className="col-span-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                <DocumentLineEditor
+                  items={formData.items}
+                  onChange={(items) => setFormData({ ...formData, items })}
+                  products={products}
+                  kind="invoice"
+                  allowService
+                  invoiceType={formData.invoice_type}
+                  onAdd={handleAddItem}
+                  testIdPrefix="inv-item"
+                />
               </div>
 
               {/* Totals Summary */}
               <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
                 <div className="flex justify-between w-80">
-                  <span>Mal / Hizmet Toplamı:</span>
-                  <span className="font-semibold">{totals.itemsSum.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                  <span>Mal / Hizmet Toplamı (KDV Hariç):</span>
+                  <span className="font-semibold">{fmtMoney(totals.itemsSum)} ₺</span>
                 </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{totals.lineDiscount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span></div>}
+                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{fmtMoney(totals.lineDiscount)} ₺</span></div>}
                 <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
                   <span>Genel İskonto:</span>
                   <div className="flex items-center gap-1">
@@ -715,21 +617,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
                     </div>
                     <input type="number" min="0" value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(e) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: e.target.value })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{totals.gd.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                    <span className="text-rose-600 font-semibold w-24 text-right">-{fmtMoney(totals.gd)} ₺</span>
                   </div>
                 </div>
                 <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
-                  <span>Ara Toplam (İskontolu):</span>
-                  <span className="font-semibold">{totals.subtotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                  <span>Ara Toplam (KDV Hariç):</span>
+                  <span className="font-semibold">{fmtMoney(totals.subtotal)} ₺</span>
                 </div>
                 <div className="flex justify-between w-80">
                   <span>Toplam KDV:</span>
-                  <span className="font-semibold">{totals.vat.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                  <span className="font-semibold">{fmtMoney(totals.vat)} ₺</span>
                 </div>
-                {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{totals.withholding.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span></div>}
+                {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{fmtMoney(totals.withholding)} ₺</span></div>}
                 <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
-                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700">{totals.grandTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam (KDV Dahil):"}</span>
+                  <span className="text-emerald-700">{fmtMoney(totals.grandTotal)} ₺</span>
                 </div>
               </div>
 
@@ -810,9 +712,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <tr>
                     <th className="py-2">Hizmet / Ürün Açıklaması</th>
                     <th className="py-2 text-center">Miktar</th>
-                    <th className="py-2 text-right">Birim Fiyat</th>
+                    <th className="py-2 text-right">Birim (KDV'siz)</th>
+                    <th className="py-2 text-right">Birim (KDV'li)</th>
                     <th className="py-2 text-center">KDV</th>
-                    <th className="py-2 text-right">Toplam</th>
+                    <th className="py-2 text-right">Tutar Hariç</th>
+                    <th className="py-2 text-right">Tutar Dahil</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -820,9 +724,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <tr key={i}>
                       <td className="py-2.5 font-medium text-slate-900">{it.name}</td>
                       <td className="py-2.5 text-center">{it.quantity} {it.unit}</td>
-                      <td className="py-2.5 text-right">{it.unit_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                      <td className="py-2.5 text-right">{fmtMoney(it.unit_price)} ₺</td>
+                      <td className="py-2.5 text-right">{fmtMoney(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))} ₺</td>
                       <td className="py-2.5 text-center">%{it.vat_rate}</td>
-                      <td className="py-2.5 text-right font-semibold">{it.total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                      <td className="py-2.5 text-right font-semibold">{fmtMoney(it.total)} ₺</td>
+                      <td className="py-2.5 text-right font-bold">{fmtMoney(it.total_incl ?? (Number(it.total || 0) * (1 + Number(it.vat_rate || 0) / 100)))} ₺</td>
                     </tr>
                   ))}
                 </tbody>
