@@ -25,6 +25,7 @@ import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
+import { TxRowMenu } from "../components/TxRowMenu";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -399,16 +400,17 @@ export default function BankingPage() {
                 <th className="px-4 py-2.5">İşlem Türü & Kategori</th>
                 <th className="px-4 py-2.5">Açıklama / Cari</th>
                 <th className="px-4 py-2.5 text-right">Tutar</th>
+                <th className="px-3 py-2.5 text-right w-12">İşlem</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleTx.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400">{selectedAccount ? 'Bu hesaba ait hareket bulunmuyor.' : 'Henüz finansal hareket kaydı bulunmuyor.'}</td>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">{selectedAccount ? 'Bu hesaba ait hareket bulunmuyor.' : 'Henüz finansal hareket kaydı bulunmuyor.'}</td>
                 </tr>
               ) : (
                 visibleTx.map((tx) => (
-                  <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition">
+                  <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition" data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono">{tx.date}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{tx.account_name}</td>
                     <td className="px-4 py-2.5">
@@ -424,6 +426,9 @@ export default function BankingPage() {
                       tx.type === 'inflow' ? 'text-emerald-600' : tx.type === 'outflow' ? 'text-rose-600' : 'text-indigo-600'
                     }`}>
                       {tx.type === 'inflow' ? `+${tx.amount?.toLocaleString('tr-TR')} ₺` : tx.type === 'outflow' ? `-${tx.amount?.toLocaleString('tr-TR')} ₺` : `${tx.amount?.toLocaleString('tr-TR')} ₺`}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={loadBankingData} />
                     </td>
                   </tr>
                 ))
