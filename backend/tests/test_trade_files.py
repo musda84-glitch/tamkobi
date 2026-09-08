@@ -117,6 +117,7 @@ def test_import_landed_cost(api, created):
     assert d["customs_duty"] == 415
     assert d["import_vat"] == 913
     assert d["landed_cost"] == 5478
+    assert d["items"][0]["landed_unit_try"] == 5478
 
     conv = api.post(f"{API}/trade-files/{d['id']}/convert-to-invoice", json={})
     assert conv.status_code == 200, conv.text
@@ -127,7 +128,9 @@ def test_import_landed_cost(api, created):
     assert inv["trade_kind"] == "import"
     assert inv["e_type"] == "paper"
     imps = api.get(f"{API}/invoices", params={"company_id": CID, "type": "import"}).json()
-    assert any(x["id"] == inv["id"] for x in imps)
+    got = next(x for x in imps if x["id"] == inv["id"])
+    assert got.get("incoterm") == "CIF"
+    assert got.get("country") == "CN"
 
 
 def test_direct_e_export_invoice_prefix_and_vat(api, created):
@@ -166,3 +169,38 @@ def test_etype_filter_keys_match_db():
     assert '["e_export", "e-İhracat"]' in src
     assert "e_fatura" not in src
     assert "e_arsiv" not in src
+    inv_src = Path("/workspace/frontend/src/pages/InvoicesPage.jsx").read_text()
+    assert "inv-declaration" in inv_src and "inv-try-equivalent" in inv_src
+    assert "fmtMoney(item.total, formData.currency)" in inv_src
+    trade_src = Path("/workspace/frontend/src/pages/TradePage.jsx").read_text()
+    assert "trade-status" in trade_src and "trade-print-modal" in trade_src
+    assert "landed_unit_try" in Path("/workspace/backend/trade.py").read_text()
+
+
+def test_status_workflow_and_invoice_customs_fields(api, created):
+    r = api.post(f"{API}/trade-files", json={
+        "company_id": CID, "kind": "export", "contact_id": "cnt_01", "contact_name": "TEST Cari",
+        "country": "IT", "incoterm": "CIP", "currency": "EUR", "fx_rate": 46,
+        "items": [{"name": "Makine", "quantity": 1, "unit_price_fx": 10, "gtip": "8479.89", "net_weight": 12, "origin_country": "TR"}],
+    })
+    assert r.status_code == 200, r.text
+    d = r.json()
+    created["files"].append(d["id"])
+    st = api.post(f"{API}/trade-files/{d['id']}/status", json={"status": "declared", "declaration_no": "BEY-99"})
+    assert st.status_code == 200, st.text
+    assert st.json()["status"] == "declared" and st.json()["declaration_no"] == "BEY-99"
+    cl = api.post(f"{API}/trade-files/{d['id']}/status", json={"status": "cleared"})
+    assert cl.status_code == 200 and cl.json()["status"] == "cleared"
+    inv = api.post(f"{API}/invoices", json={
+        "company_id": CID, "contact_id": "cnt_01", "contact_name": "TEST Cari",
+        "invoice_type": "sales", "e_type": "e_export", "trade_kind": "export",
+        "currency": "EUR", "fx_rate": 46, "incoterm": "CIP", "country": "IT",
+        "declaration_no": "BEY-99", "bl_awb": "BL-1", "dab_no": "DAB-2", "regime_code": "1000",
+        "status": "draft",
+        "items": [{"name": "Makine", "quantity": 1, "unit_price": 10, "vat_rate": 0, "total": 10, "gtip": "8479.89", "origin_country": "TR"}],
+    })
+    assert inv.status_code == 200, inv.text
+    body = inv.json()
+    created["invoices"].append(body["id"])
+    assert body["declaration_no"] == "BEY-99" and body["bl_awb"] == "BL-1" and body["dab_no"] == "DAB-2"
+    assert body["vat_total"] == 0

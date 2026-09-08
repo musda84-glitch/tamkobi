@@ -179,6 +179,8 @@ class InvoiceItem(BaseModel):
     barcode: Optional[str] = ""
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
+    net_weight: Optional[float] = None
+    landed_unit_try: Optional[float] = None
 
 class Invoice(BaseDocument):
     company_id: str
@@ -210,6 +212,12 @@ class Invoice(BaseDocument):
     incoterm: Optional[str] = None
     country: Optional[str] = None
     customs_office: Optional[str] = None
+    regime_code: Optional[str] = None
+    declaration_no: Optional[str] = None
+    declaration_date: Optional[str] = None
+    dab_no: Optional[str] = None
+    bl_awb: Optional[str] = None
+    certificate: Optional[str] = None
     trade_file_id: Optional[str] = None
     trade_file_number: Optional[str] = None
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue

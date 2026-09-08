@@ -134,7 +134,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     incoterm: "",
     country: "",
     customs_office: "",
-    project_id: ""
+    project_id: "",
+    regime_code: "",
+    declaration_no: "",
+    declaration_date: "",
+    dab_no: "",
+    bl_awb: "",
+    certificate: "",
+    trade_file_number: ""
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
@@ -260,7 +267,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const openEditInvoice = (inv) => {
     setEditingInvoice(inv);
     setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, currency: inv.currency || "TRY", fx_rate: inv.fx_rate || 1, fx_source: inv.fx_source || "try", trade_kind: inv.trade_kind || "", incoterm: inv.incoterm || "", country: inv.country || "", customs_office: inv.customs_office || "", items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
+    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, currency: inv.currency || "TRY", fx_rate: inv.fx_rate || 1, fx_source: inv.fx_source || "try", trade_kind: inv.trade_kind || "", incoterm: inv.incoterm || "", country: inv.country || "", customs_office: inv.customs_office || "", project_id: inv.project_id || "", regime_code: inv.regime_code || "", declaration_no: inv.declaration_no || "", declaration_date: inv.declaration_date || "", dab_no: inv.dab_no || "", bl_awb: inv.bl_awb || "", certificate: inv.certificate || "", trade_file_number: inv.trade_file_number || "", items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
     setShowNewModal(true);
   };
   const handleDeleteInvoice = async (inv) => {
@@ -486,6 +493,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <td className="px-4 py-3 text-right">
                       <div className="font-bold text-slate-900">{fmtMoney(inv.grand_total, inv.currency || "TRY")}</div>
                       {(inv.currency || "TRY") !== "TRY" && inv.local_total != null && <div className="text-[10px] text-slate-400">{fmtMoney(inv.local_total, "TRY")}</div>}
+                      {(inv.currency || "TRY") !== "TRY" && inv.local_total == null && Number(inv.fx_rate) > 0 && <div className="text-[10px] text-slate-400">{fmtMoney(Number(inv.grand_total || 0) * Number(inv.fx_rate || 1), "TRY")} · kur {inv.fx_rate}</div>}
                       <div className="text-[10px] text-slate-400">{inv.invoice_type === 'dispatch' ? "KDV'siz (Sevk)" : 'KDV Dahil'}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -693,10 +701,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </div>
               </div>
               {(formData.trade_kind === "export" || formData.trade_kind === "import") && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-sky-50 border border-sky-100 rounded-xl p-3" data-testid="inv-trade-row">
-                  <div><label className="block font-semibold text-slate-700 mb-1">Teslim şekli</label><select value={formData.incoterm || ""} onChange={(e) => setFormData({ ...formData, incoterm: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-incoterm">{["", "EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"].map((x) => <option key={x || "yok"} value={x}>{x || "Seçin"}</option>)}</select></div>
-                  <div><label className="block font-semibold text-slate-700 mb-1">Ülke</label><input value={formData.country || ""} onChange={(e) => setFormData({ ...formData, country: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-country" /></div>
-                  <div><label className="block font-semibold text-slate-700 mb-1">Gümrük idaresi</label><input value={formData.customs_office || ""} onChange={(e) => setFormData({ ...formData, customs_office: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-customs" /></div>
+                <div className="space-y-3 bg-sky-50 border border-sky-100 rounded-xl p-3" data-testid="inv-trade-row">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div><label className="block font-semibold text-slate-700 mb-1">Teslim şekli</label><select value={formData.incoterm || ""} onChange={(e) => setFormData({ ...formData, incoterm: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-incoterm">{["", "EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"].map((x) => <option key={x || "yok"} value={x}>{x || "Seçin"}</option>)}</select></div>
+                    <div><label className="block font-semibold text-slate-700 mb-1">Ülke</label><input value={formData.country || ""} onChange={(e) => setFormData({ ...formData, country: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-country" /></div>
+                    <div><label className="block font-semibold text-slate-700 mb-1">Gümrük idaresi</label><input value={formData.customs_office || ""} onChange={(e) => setFormData({ ...formData, customs_office: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-customs" /></div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div><label className="block font-semibold text-slate-700 mb-1">Rejim</label><input value={formData.regime_code || ""} onChange={(e) => setFormData({ ...formData, regime_code: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" placeholder="4000 / 1000" data-testid="inv-regime" /></div>
+                    <div><label className="block font-semibold text-slate-700 mb-1">Beyanname no</label><input value={formData.declaration_no || ""} onChange={(e) => setFormData({ ...formData, declaration_no: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-declaration" /></div>
+                    <div><label className="block font-semibold text-slate-700 mb-1">Beyanname tarihi</label><input type="date" value={formData.declaration_date || ""} onChange={(e) => setFormData({ ...formData, declaration_date: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-declaration-date" /></div>
+                    {formData.trade_kind === "export" && <div><label className="block font-semibold text-slate-700 mb-1">DAB no</label><input value={formData.dab_no || ""} onChange={(e) => setFormData({ ...formData, dab_no: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-dab" /></div>}
+                    <div><label className="block font-semibold text-slate-700 mb-1">Konşimento / AWB</label><input value={formData.bl_awb || ""} onChange={(e) => setFormData({ ...formData, bl_awb: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-bl" /></div>
+                    <div><label className="block font-semibold text-slate-700 mb-1">Menşe belgesi</label><input value={formData.certificate || ""} onChange={(e) => setFormData({ ...formData, certificate: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" placeholder="ATR, EUR.1…" data-testid="inv-certificate" /></div>
+                  </div>
+                  {formData.trade_file_number && <div className="text-[11px] text-sky-800 font-semibold" data-testid="inv-trade-file">Gümrük dosyası: {formData.trade_file_number}</div>}
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3" data-testid="inv-scenario-row">
@@ -855,7 +874,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </select>
                     </div>
                     <div className="col-span-2 text-right font-bold text-slate-800">
-                      {item.total?.toLocaleString('tr-TR')} ₺
+                      {fmtMoney(item.total, formData.currency)}
                     </div>
                     <div className="col-span-1 text-center">
                       <button
@@ -922,7 +941,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <span className="text-emerald-700">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
                 </div>
                 {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
-                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-local-total">
+                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">
                     <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
                     <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
                   </div>
@@ -994,6 +1013,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <div className="font-bold text-slate-900 text-sm mt-0.5">{previewInvoice.contact_name}</div>
                   <div className="text-slate-600 mt-1">VKN / TCKN: {previewInvoice.contact_tax_id || 'Belirtilmedi'}</div>
                   {(previewInvoice.incoterm || previewInvoice.country) && <div className="text-slate-600 mt-1">{previewInvoice.incoterm} {previewInvoice.country}{previewInvoice.customs_office ? ` · ${previewInvoice.customs_office}` : ""}</div>}
+                  {(previewInvoice.declaration_no || previewInvoice.bl_awb || previewInvoice.dab_no || previewInvoice.trade_file_number) && (
+                    <div className="text-slate-500 mt-1 text-[11px]">
+                      {[previewInvoice.trade_file_number && `Dosya ${previewInvoice.trade_file_number}`, previewInvoice.declaration_no && `Bey. ${previewInvoice.declaration_no}`, previewInvoice.bl_awb && `BL ${previewInvoice.bl_awb}`, previewInvoice.dab_no && `DAB ${previewInvoice.dab_no}`, previewInvoice.certificate].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="text-slate-400 font-semibold uppercase text-[10px]">ETTN / GİB TAKİP NO</div>

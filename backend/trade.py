@@ -84,6 +84,22 @@ def landed_cost(data: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
+def distribute_landed(data: Dict[str, Any]) -> List[dict]:
+    """Spread CIF+taxes onto lines as TRY unit cost (Logo/Mikro maliyet dağıtımı)."""
+    items = list(data.get("items") or [])
+    goods_fx = sum(_num(it.get("quantity")) * _num(it.get("unit_price_fx")) for it in items) or 0
+    landed = _num(data.get("landed_cost"))
+    if not items:
+        return items
+    for it in items:
+        qty = _num(it.get("quantity"), 1) or 1
+        line_fx = _num(it.get("quantity")) * _num(it.get("unit_price_fx"))
+        share = (line_fx / goods_fx) if goods_fx else (1 / len(items))
+        it["landed_unit_try"] = round((landed * share) / qty, 4) if landed else round((_num(data.get("fx_rate"), 1) or 1) * _num(it.get("unit_price_fx")), 4)
+        it["landed_line_try"] = round(it["landed_unit_try"] * qty, 2)
+    return items
+
+
 async def _next_file_number(company_id: str, kind: str) -> str:
     prefix = "ITH" if kind == "import" else "IHR"
     year = datetime.now(timezone.utc).strftime("%Y")
@@ -148,6 +164,8 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
     }
     costs = landed_cost({**base, "amount_fx": req.get("amount_fx")})
     base.update(costs)
+    if kind == "import":
+        base["items"] = distribute_landed(base)
     return base
 
 
@@ -226,6 +244,31 @@ async def delete_trade_file(file_id: str):
     return {"status": "success", "trash_id": tid, "message": "Dosya çöp kutusuna taşındı."}
 
 
+@router.post("/trade-files/{file_id}/status")
+async def set_trade_status(file_id: str, req: Dict[str, Any]):
+    d = await _db.trade_files.find_one({"_id": file_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    status = (req.get("status") or "").strip()
+    allowed = {s[0] for s in STATUSES}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Geçersiz durum.")
+    if d.get("status") == "cancelled" and status != "cancelled":
+        raise HTTPException(status_code=400, detail="İptal dosya geri açılamaz.")
+    if d.get("invoice_id") and status == "cancelled":
+        raise HTTPException(status_code=400, detail="Faturalanmış dosya iptal edilemez.")
+    extra = {"status": status, "updated_at": _now()}
+    if status == "declared" and not (d.get("declaration_no") or req.get("declaration_no")):
+        extra["declaration_no"] = req.get("declaration_no") or d.get("declaration_no") or ""
+        extra["declaration_date"] = req.get("declaration_date") or d.get("declaration_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if req.get("declaration_no"):
+        extra["declaration_no"] = req["declaration_no"]
+    if req.get("declaration_date"):
+        extra["declaration_date"] = req["declaration_date"]
+    await _db.trade_files.update_one({"_id": file_id}, {"$set": extra})
+    return _clean(await _db.trade_files.find_one({"_id": file_id}))
+
+
 @router.post("/trade-files/{file_id}/convert-to-invoice")
 async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None):
     req = req or {}
@@ -258,6 +301,8 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
             total=round(qty * unit_price, 2),
             gtip=it.get("gtip") or None,
             origin_country=it.get("origin_country") or None,
+            net_weight=_num(it.get("net_weight")) or None,
+            landed_unit_try=_num(it.get("landed_unit_try")) or None,
         ))
     if not items:
         raise HTTPException(status_code=400, detail="Kalem yok.")
@@ -277,6 +322,12 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         incoterm=d.get("incoterm"),
         country=d.get("country"),
         customs_office=d.get("customs_office"),
+        regime_code=d.get("regime_code"),
+        declaration_no=d.get("declaration_no"),
+        declaration_date=d.get("declaration_date"),
+        dab_no=d.get("dab_no"),
+        bl_awb=d.get("bl_awb"),
+        certificate=d.get("certificate"),
         trade_file_id=d["_id"],
         trade_file_number=d.get("file_number"),
         notes=f"Dış ticaret dosyası {d.get('file_number')} ({d.get('incoterm')} {d.get('country') or ''}). " + (d.get("notes") or ""),
@@ -284,13 +335,30 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         source_channel="trade",
     )
     created = await _create_invoice(inv)
-    await _db.invoices.update_one({"_id": created["id"]}, {"$set": {
+    extra_inv = {
         "trade_file_id": d["_id"], "trade_file_number": d.get("file_number"),
         "trade_kind": kind, "incoterm": d.get("incoterm"), "country": d.get("country"),
         "fx_rate": rate, "currency": d.get("currency") or "USD",
         "fx_source": d.get("fx_source") or "manual",
         "customs_office": d.get("customs_office"),
-    }})
+        "regime_code": d.get("regime_code"), "declaration_no": d.get("declaration_no"),
+        "declaration_date": d.get("declaration_date"), "dab_no": d.get("dab_no"),
+        "bl_awb": d.get("bl_awb"), "certificate": d.get("certificate"),
+    }
+    await _db.invoices.update_one({"_id": created["id"]}, {"$set": extra_inv})
+    if kind == "import":
+        priced = distribute_landed({**d, "items": d.get("items") or [], "landed_cost": d.get("landed_cost")})
+        for it in priced:
+            pid = it.get("product_id")
+            if not pid:
+                continue
+            patch = {"purchase_price": it.get("landed_unit_try") or 0}
+            if it.get("gtip"):
+                patch["gtip"] = it["gtip"]
+            if it.get("origin_country") or d.get("country"):
+                patch["origin_country"] = it.get("origin_country") or d.get("country")
+            await _db.products.update_one({"_id": pid}, {"$set": patch})
+        await _db.trade_files.update_one({"_id": file_id}, {"$set": {"items": priced}})
     await _db.trade_files.update_one({"_id": file_id}, {"$set": {
         "invoice_id": created["id"], "invoice_number": created["invoice_number"],
         "status": "invoiced", "updated_at": _now(),
