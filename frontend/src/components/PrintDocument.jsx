@@ -122,15 +122,19 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                 <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
                   {tpl.show_images !== false && <td className="p-1">{img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}</td>}
                   <td className="p-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="min-w-0 flex-1">
+                    <div className="flex flex-nowrap items-center gap-1.5 min-w-0">
+                      <span className="min-w-0 truncate">
                         {it.name || it.product_name}
                         {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
-                        {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
-                        {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
-                      </div>
-                      {tpl.show_barcode && code && <span data-testid={`print-item-barcode-${i}`}><BarcodeRenderer code={String(code)} width={68} height={16} showText compact /></span>}
+                      </span>
+                      {tpl.show_barcode && code && (
+                        <span className="shrink-0" data-testid={`print-item-barcode-${i}`}>
+                          <BarcodeRenderer code={String(code)} width={52} height={14} showText={false} compact />
+                        </span>
+                      )}
                     </div>
+                    {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
+                    {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                   </td>
                   <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
                   {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
