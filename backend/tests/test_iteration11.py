@@ -8,7 +8,7 @@ import uuid
 import pytest
 import requests
 
-from conftest import API as BASE, TEST_COMPANY_ID as COMPANY, TEST_B2B_CONTACT_ID, resolve_b2b_token
+from conftest import API as BASE, TEST_COMPANY_ID as COMPANY, TEST_B2B_CONTACT_ID, resolve_b2b_token, LEGAL_ACCEPT
 B2B_TOKEN = resolve_b2b_token()
 
 
@@ -29,7 +29,7 @@ def api():
 class TestB2BOrders:
     def test_create_b2b_order_and_delete(self, api):
         r = api.post(f"{BASE}/public/b2b/{B2B_TOKEN}/orders",
-                     json={"items": [{"product_id": "prod_01", "quantity": 1}], "note": "TEST_IT11"})
+                     json={"items": [{"product_id": "prod_01", "quantity": 1}], "note": "TEST_IT11", **LEGAL_ACCEPT})
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["status"] == "success"
@@ -129,7 +129,7 @@ class TestConvertToInvoice:
     def test_convert_paper_resolves_contact(self, api):
         # create a B2B order for cnt_01 (customer name matches contact)
         r = api.post(f"{BASE}/public/b2b/{B2B_TOKEN}/orders",
-                     json={"items": [{"product_id": "prod_01", "quantity": 2}], "note": "TEST_IT11_CONV"})
+                     json={"items": [{"product_id": "prod_01", "quantity": 2}], "note": "TEST_IT11_CONV", **LEGAL_ACCEPT})
         assert r.status_code == 200, r.text
         order = r.json()["order"]
         oid = order["id"]

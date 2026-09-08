@@ -2,6 +2,7 @@ import React from "react";
 import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { LegalConsent } from "./LegalConsent";
 
 export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
@@ -23,14 +24,15 @@ export const B2BHeader = ({ company, contact }) => {
   );
 };
 
-export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "" }) => (
+export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", consent, setConsent, hrefExtra = "", legalOk }) => (
   <>
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
     <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l) => <div key={l.p.id} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}${suffix}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{l.p.name}</div><div className="text-slate-400">{l.qty} × {fmt(l.p.price)} ₺</div></div><b className="whitespace-nowrap">{fmt(l.p.price * l.qty)} ₺</b><button onClick={() => setQty(l.p.id, 0)} className="text-rose-500 p-1.5" aria-label="Kaldır"><Trash2 className="w-4 h-4" /></button></div>)}</div>
     {lines.length > 0 && <>
       <div className="text-xs space-y-1 border-t pt-2"><div className="flex justify-between text-slate-500"><span>Ara Toplam</span><span>{fmt(sub)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(vat)} ₺</span></div><div className="flex justify-between font-black text-base border-t pt-1"><span>Toplam</span><span data-testid={`b2b-cart-total${suffix}`}>{fmt(sub + vat)} ₺</span></div></div>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu (teslimat, adres…)" className="w-full border rounded-xl p-2.5 text-sm sm:text-xs" data-testid={`b2b-note${suffix}`} />
-      <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
+      <LegalConsent value={consent} onChange={setConsent} hrefExtra={hrefExtra} prefix={`b2b${suffix}-`} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
+      <button onClick={submit} disabled={busy || !legalOk} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
     </>}
   </>
 );

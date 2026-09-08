@@ -2,7 +2,7 @@
 import requests
 import pytest
 
-from conftest import API as BASE, TEST_COMPANY_ID as CO, TEST_B2B_CONTACT_ID, resolve_b2b_token
+from conftest import API as BASE, TEST_COMPANY_ID as CO, TEST_B2B_CONTACT_ID, resolve_b2b_token, LEGAL_ACCEPT
 DF, DT = "2026-01-01", "2026-12-31"
 TOKEN = resolve_b2b_token()
 
@@ -266,7 +266,7 @@ class TestB2BPortal:
     def test_create_order(self, s):
         portal = s.get(f"{BASE}/public/b2b/{TOKEN}").json()
         prod = next(p for p in portal["products"] if p["id"] == "prod_01")
-        r = s.post(f"{BASE}/public/b2b/{TOKEN}/orders", json={"items": [{"product_id": "prod_01", "quantity": 2}], "note": "TEST_it10"})
+        r = s.post(f"{BASE}/public/b2b/{TOKEN}/orders", json={"items": [{"product_id": "prod_01", "quantity": 2}], "note": "TEST_it10", **LEGAL_ACCEPT})
         assert r.status_code == 200, r.text
         d = r.json()
         o = d["order"]

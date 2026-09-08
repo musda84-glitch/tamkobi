@@ -37,6 +37,7 @@ import SystemLoginPage from "./pages/SystemLoginPage";
 import PricingPage from "./pages/PricingPage";
 import HomeOrApp from "./pages/HomeOrApp";
 import SignupPage from "./pages/SignupPage";
+import LegalPage from "./pages/LegalPage";
 import PaymentResultPage from "./pages/PaymentResultPage";
 import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="/sistem/:section" element={<SystemAdminPage />} />
             <Route path="/fiyatlar" element={<PricingPage />} />
             <Route path="/kayit" element={<SignupPage />} />
+            <Route path="/yasal/:slug" element={<LegalPage />} />
             <Route path="/odeme/basarili" element={<PaymentResultPage />} />
             <Route path="/odeme/iptal" element={<PaymentResultPage />} />
             <Route path="/yenile/:token" element={<RenewPage />} />

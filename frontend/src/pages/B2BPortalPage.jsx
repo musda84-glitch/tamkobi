@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
+import { LegalFooterLinks, allLegalAccepted, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
 
 const TABS = [["catalog", "Ürünler", Package], ["orders", "Siparişlerim", Truck], ["statement", "Hesap Ekstresi", FileText], ["installments", "Taksitlerim", CalendarClock]];
 
@@ -22,6 +23,7 @@ export default function B2BPortalPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [sheet, setSheet] = useState(false);
+  const [consent, setConsent] = useState(emptyLegalConsent());
   const load = useCallback(() => axios.get(`${API_URL}/public/b2b/${token}`).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.detail || "Portal yüklenemedi.")), [token]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart, token]);
@@ -34,11 +36,13 @@ export default function B2BPortalPage() {
   const vat = lines.reduce((s, l) => s + l.p.price * l.qty * (l.p.vat_rate || 20) / 100, 0);
   const setQty = (id, qty) => setCart((c) => { const n = { ...c }; if (qty <= 0) delete n[id]; else n[id] = qty; return n; });
   const submit = async () => {
+    if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan sipariş gönderilemez."); return; }
     setBusy(true);
-    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, { items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty })), note }); setDone(r.data.order); setCart({}); setNote(""); setSheet(false); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, { items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty })), note, ...legalPayload(consent) }); setDone(r.data.order); setCart({}); setNote(""); setSheet(false); setConsent(emptyLegalConsent()); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" }); }
     catch (e) { toast.error(e.response?.data?.detail || "Sipariş gönderilemedi."); } finally { setBusy(false); }
   };
-  const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy };
+  const hrefExtra = `?b2b=${encodeURIComponent(token)}`;
+  const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy, consent, setConsent, hrefExtra, legalOk: allLegalAccepted(consent) };
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
       <B2BHeader company={d.company} contact={d.contact} />
@@ -75,6 +79,7 @@ export default function B2BPortalPage() {
         {tab === "installments" && <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">{d.installments.length === 0 && <div className="p-8 text-center text-slate-400">Bekleyen taksit yok.</div>}{d.installments.map((i) => <div key={i.id} className={`p-3 flex items-center gap-3 ${i.is_overdue ? "bg-rose-50/60" : ""}`}><CalendarClock className={`w-4 h-4 shrink-0 ${i.is_overdue ? "text-rose-600" : "text-slate-400"}`} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{i.invoice_number} • {i.label}</div><div className="text-slate-500">Vade {i.due_date}{i.is_overdue ? ` — ${-i.days_left} gün gecikti` : ` — ${i.days_left} gün kaldı`}</div></div><b className="text-sm whitespace-nowrap">{fmt(i.amount - (i.paid_amount || 0))} ₺</b></div>)}</div>}
       </div>
       {tab === "catalog" && <MobileCartBar lines={lines} total={sub + vat} open={sheet} setOpen={setSheet}><CartBody {...cartProps} suffix="-mobile" /></MobileCartBar>}
+      <LegalFooterLinks hrefExtra={hrefExtra} className="text-slate-500 py-4" prefix="b2b-footer" />
     </div>
   );
 }

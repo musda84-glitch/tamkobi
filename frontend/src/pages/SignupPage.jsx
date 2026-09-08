@@ -6,6 +6,7 @@ import { Check, Loader2, Rocket } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PLAN_COLORS } from "../components/saas/saasUi";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
+import { LegalConsent, LegalFooterLinks, allLegalAccepted, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -13,13 +14,16 @@ export default function SignupPage() {
   const [params] = useSearchParams();
   const [d, setD] = useState(null);
   const [f, setF] = useState({ company_name: "", tax_number: "", city: "", phone: "", name: "", email: "", password: "", plan_id: params.get("plan") || "" });
+  const [consent, setConsent] = useState(emptyLegalConsent());
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => { setD(r.data); if (!f.plan_id) setF((x) => ({ ...x, plan_id: (r.data.plans.find((p) => p.is_popular) || r.data.plans[0])?.id || "" })); }).catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true);
-    try { const r = await axios.post(`${API_URL}/public/signup`, f, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
+    e.preventDefault();
+    if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan kayıt olamazsınız."); return; }
+    setBusy(true);
+    try { const r = await axios.post(`${API_URL}/public/signup`, { ...f, ...legalPayload(consent) }, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
   };
   const plan = d?.plans?.find((p) => p.id === f.plan_id);
   if (done) return (
@@ -43,8 +47,9 @@ export default function SignupPage() {
             <div><label className="block font-semibold text-slate-300 mb-1">Şifre * (min 6)</label><input type="password" required minLength={6} value={f.password} onChange={set("password")} className={inputCls} data-testid="signup-password" /></div>
           </div>
           <div><label className="block font-semibold text-slate-300 mb-2 text-xs">Denemek istediğiniz paket</label><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(d?.plans || []).map((p) => <button type="button" key={p.id} onClick={() => setF({ ...f, plan_id: p.id })} className={`rounded-xl p-3 text-left border transition ${f.plan_id === p.id ? "bg-white text-slate-900 border-white" : "bg-white/5 border-white/10 hover:bg-white/10"}`} data-testid={`signup-plan-${p.id}`}><div className="text-xs font-bold">{p.name}</div><div className={`text-[10px] ${f.plan_id === p.id ? "text-slate-500" : "text-slate-400"}`}>{p.modules.length} modül</div></button>)}</div></div>
-          <button disabled={busy} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
-          <p className="text-[11px] text-slate-500">Kayıt olarak kullanım koşullarını kabul edersiniz. Verileriniz yalnızca şirketinize aittir.</p>
+          <LegalConsent value={consent} onChange={setConsent} prefix="signup-" className="bg-white/5 border border-white/10 rounded-xl p-3 text-slate-300 [&_a]:text-emerald-300" />
+          <button disabled={busy || !allLegalAccepted(consent)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
+          <LegalFooterLinks className="text-slate-500 justify-start" prefix="signup-footer" />
         </form>
         {plan && <aside className="bg-white/5 border border-white/10 rounded-3xl p-6 h-fit lg:sticky lg:top-6" data-testid="signup-plan-summary">
           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${PLAN_COLORS[plan.color] || PLAN_COLORS.slate}`}>{plan.name}</span>

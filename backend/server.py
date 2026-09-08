@@ -52,6 +52,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import legal_docs
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -870,6 +871,8 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
 @api_router.post("/contacts")
 async def create_contact(contact: Contact):
     doc = contact.to_mongo()
+    if doc.get("kvkk_accepted") and not doc.get("kvkk_accepted_at"):
+        doc["kvkk_accepted_at"] = datetime.now(timezone.utc).isoformat()
     await db.contacts.insert_one(doc)
     return clean_doc(doc)
 
@@ -1212,7 +1215,8 @@ async def b2b_portal(token: str):
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
             "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
-            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
+            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")},
+            "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -1228,6 +1232,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""), quantity=int(q), unit_price=price, total=round(price * q, 2)))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
+    legal_docs.require_acceptance(req)
     total = round(sum(i.total for i in items), 2)
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
@@ -1240,6 +1245,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
     doc["source"] = "b2b_portal"
+    doc["legal_accept"] = legal_docs.acceptance_record(req)
     await db.orders.insert_one(doc)
     await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": c["company_id"], "type": "b2b_order", "title": f"Yeni B2B siparişi {doc['order_number']}", "message": f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", "ref_type": "order", "ref_id": doc["_id"], "is_read": False, "created_at": datetime.now(timezone.utc).isoformat()})
     return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
@@ -5689,6 +5695,7 @@ saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
+legal_docs.init(db, get_current_user)
 rbac.set_license_guard(saas.guard)
 expenses.init(db)
 finance.init(db)
@@ -5741,6 +5748,7 @@ app.include_router(saas.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
+app.include_router(legal_docs.router)
 
 @app.get("/")
 async def root():
