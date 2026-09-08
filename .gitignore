@@ -36,6 +36,8 @@ dist
 *credentials.json*
 
 # Logs and debug files
+logs/
+/var/log/tamkobi/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

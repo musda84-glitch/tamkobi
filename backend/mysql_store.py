@@ -10,11 +10,20 @@ import copy
 import json
 import os
 import re
+import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
 MISSING = object()
+
+
+def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0):
+    try:
+        from applog import log_sql
+        log_sql(op, collection, doc_id=doc_id, duration_ms=duration_ms)
+    except Exception:
+        pass
 
 
 class DuplicateKeyError(Exception):
@@ -432,6 +441,30 @@ CREATE TABLE IF NOT EXISTS meta_indexes (
   unique_index TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (collection, name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS system_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  level VARCHAR(16) NOT NULL,
+  category VARCHAR(32) NOT NULL,
+  event VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NULL,
+  user_email VARCHAR(191) NULL,
+  company_id VARCHAR(64) NULL,
+  ip VARCHAR(64) NULL,
+  method VARCHAR(16) NULL,
+  path VARCHAR(512) NULL,
+  status_code SMALLINT NULL,
+  duration_ms INT NULL,
+  collection_name VARCHAR(128) NULL,
+  message TEXT NOT NULL,
+  details JSON NULL,
+  PRIMARY KEY (id),
+  KEY idx_syslogs_created (created_at),
+  KEY idx_syslogs_cat_created (category, created_at),
+  KEY idx_syslogs_user (user_email, created_at),
+  KEY idx_syslogs_event (event, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 """
 
 
@@ -494,10 +527,12 @@ class MySQLCollection:
 
     async def _load_all(self) -> List[dict]:
         await self._db._ensure()
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT doc FROM docs WHERE collection=%s", (self.name,))
                 rows = await cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
@@ -515,17 +550,20 @@ class MySQLCollection:
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
         await self._check_unique(doc, exclude_id=None)
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
                     (self.name, str(doc["_id"]), dumps(doc)),
                 )
+        _audit_sql("REPLACE", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
 
     async def _delete_ids(self, ids: Sequence[str]) -> int:
         if not ids:
             return 0
         await self._db._ensure()
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 placeholders = ",".join(["%s"] * len(ids))
@@ -533,7 +571,9 @@ class MySQLCollection:
                     f"DELETE FROM docs WHERE collection=%s AND id IN ({placeholders})",
                     (self.name, *[str(i) for i in ids]),
                 )
-                return cur.rowcount
+                n = cur.rowcount
+        _audit_sql("DELETE", self.name, doc_id=",".join(str(i) for i in ids[:8]), duration_ms=(time.perf_counter() - t0) * 1000)
+        return n
 
     async def _check_unique(self, doc: dict, exclude_id):
         indexes = self._db._indexes.get(self.name) or []
@@ -566,6 +606,7 @@ class MySQLCollection:
             doc["_id"] = str(uuid.uuid4())
         await self._check_unique(doc, exclude_id=None)
         await self._db._ensure()
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 try:
@@ -578,6 +619,7 @@ class MySQLCollection:
                     if "duplicate" in err or getattr(e, "args", [None])[0] == 1062:
                         raise DuplicateKeyError(str(e)) from e
                     raise
+        _audit_sql("INSERT", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
         return InsertOneResult(doc["_id"])
 
     async def insert_many(self, docs: Iterable[dict], ordered: bool = True):
@@ -832,9 +874,12 @@ class SyncMySQLCollection:
 
     def _load_all(self):
         self._db._ensure()
+        t0 = time.perf_counter()
         with self._db._conn.cursor() as cur:
             cur.execute("SELECT doc FROM docs WHERE collection=%s", (self.name,))
-            return [loads(r[0]) for r in cur.fetchall()]
+            rows = cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+        return [loads(r[0]) for r in rows]
 
     def _load_filtered(self, query):
         docs = self._load_all()
@@ -849,11 +894,13 @@ class SyncMySQLCollection:
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
+        t0 = time.perf_counter()
         with self._db._conn.cursor() as cur:
             cur.execute(
                 "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
                 (self.name, str(doc["_id"]), dumps(doc)),
             )
+        _audit_sql("REPLACE", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
         return doc
 
     def find_one(self, query=None, projection=None, sort=None, skip=0):
@@ -927,9 +974,12 @@ class SyncMySQLCollection:
         if not docs:
             return DeleteResult(0)
         self._db._ensure()
+        t0 = time.perf_counter()
         with self._db._conn.cursor() as cur:
             cur.execute("DELETE FROM docs WHERE collection=%s AND id=%s", (self.name, str(docs[0]["_id"])))
-            return DeleteResult(cur.rowcount)
+            n = cur.rowcount
+        _audit_sql("DELETE", self.name, doc_id=docs[0].get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
+        return DeleteResult(n)
 
     def delete_many(self, query):
         docs = self._load_filtered(query)
@@ -937,13 +987,16 @@ class SyncMySQLCollection:
             return DeleteResult(0)
         self._db._ensure()
         ids = [str(d["_id"]) for d in docs]
+        t0 = time.perf_counter()
         with self._db._conn.cursor() as cur:
             placeholders = ",".join(["%s"] * len(ids))
             cur.execute(
                 f"DELETE FROM docs WHERE collection=%s AND id IN ({placeholders})",
                 (self.name, *ids),
             )
-            return DeleteResult(cur.rowcount)
+            n = cur.rowcount
+        _audit_sql("DELETE", self.name, doc_id=",".join(ids[:8]), duration_ms=(time.perf_counter() - t0) * 1000)
+        return DeleteResult(n)
 
     def count_documents(self, query=None):
         return len(self._load_filtered(query))
