@@ -22,8 +22,8 @@ import {
   MessageSquare,
   MoreVertical,
   MousePointerClick,
-  FileCheck2, Pencil, Trash2, CheckCircle } from "lucide-react";
-import { InvoiceContextMenu, E_TYPE_LABELS } from "../components/InvoiceContextMenu";
+  FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -264,6 +264,31 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
 
+  const handleAcceptIncoming = async (inv) => {
+    const id = inv.id || inv._id;
+    if (!window.confirm(`${inv.invoice_number} gelen e-faturası onaylansın mı? Ticari kabul GİB'e iletilir.`)) return;
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${id}/accept-incoming`);
+      toast.success(res.data.message);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Onaylanamadı.");
+    }
+  };
+
+  const handleRejectIncoming = async (inv) => {
+    const id = inv.id || inv._id;
+    const reason = window.prompt(`${inv.invoice_number} gelen e-faturası reddedilsin mi?\nİsteğe bağlı ret nedeni (GİB ticari yanıt, 8 gün):`, "") ?? null;
+    if (reason === null) return;
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${id}/reject-incoming`, { reason });
+      toast.success(res.data.message);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Reddedilemedi.");
+    }
+  };
+
   const handleRecordPayment = async () => {
     if (!paymentAmount || Number(paymentAmount) <= 0) {
       toast.error("Lütfen geçerli bir tutar girin.");
@@ -301,7 +326,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           data-testid="create-new-invoice-btn"
         >
           <Plus className="w-4 h-4" />
-          <span>{filterType === "dispatch" ? "Yeni İrsaliye" : "Yeni Fatura Kes"}</span>
+          <span>{filterType === "dispatch" ? "Yeni İrsaliye" : filterType === "purchase" ? "Alış Faturası Gir" : "Yeni Fatura Kes"}</span>
         </button>
         </div>
       </div>
@@ -341,7 +366,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           </div>
         )}
         <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50/70 border-b border-slate-100 text-[11px] text-slate-500" data-testid="ctx-hint">
-          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Bir fatura satırına <b>sağ tıklayarak</b> E-Fatura / E-Arşiv / Kağıt olarak kesebilir, yazdırabilir veya tahsilat ekleyebilirsiniz.
+          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını <b>sağ tıklayarak</b> E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır.
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
@@ -390,10 +415,22 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <div className="text-[11px] text-slate-400">Vade: {inv.due_date || 'Peşin'}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full">
+                      {(() => {
+                        const incoming = isIncomingPurchaseInvoice(inv);
+                        const pending = isIncomingPurchasePending(inv);
+                        const resp = incomingPurchaseResponse(inv);
+                        const cls = resp === "rejected" || inv.status === "cancelled"
+                          ? "bg-rose-50 text-rose-700"
+                          : incoming && pending
+                            ? "bg-amber-50 text-amber-800"
+                            : "bg-emerald-50 text-emerald-700";
+                        return (
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${cls}`} data-testid={`inv-gib-badge-${inv.invoice_number}`}>
                         <CheckCircle2 className="w-3 h-3" />
                         {inv.gib_status || 'Taslak'}
                       </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</div>
@@ -416,13 +453,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center w-[260px] min-w-[260px]">
-                      <div className="grid grid-cols-7 gap-1 justify-items-center items-center">
+                    <td className="px-4 py-3 text-center w-[300px] min-w-[300px]">
+                      {(() => {
+                        const incoming = isIncomingPurchaseInvoice(inv);
+                        const pending = isIncomingPurchasePending(inv);
+                        return (
+                      <div className="grid grid-cols-7 gap-1 justify-items-center items-center" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" ? (
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                             <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="Taslağı sil (çöp kutusu)" data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
-                            <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
+                            {!incoming && <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>}
                           </div>
                         ) : <span className="w-7" />}
                         <button
@@ -442,7 +483,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         >
                           <MessageSquare className="w-4 h-4" />
                         </button>
-                        {inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && inv.gib_status !== 'Kağıt Fatura (Matbu)' ? (
+                        {incoming ? (
+                          pending ? (
+                            <div className="flex items-center gap-0.5" data-testid={`incoming-response-btns-${inv.invoice_number}`}>
+                              <button
+                                onClick={() => handleAcceptIncoming(inv)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition"
+                                title="Gelen e-faturayı onayla (kabul)"
+                                data-testid={`accept-incoming-btn-${inv.invoice_number}`}
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleRejectIncoming(inv)}
+                                className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition"
+                                title="Gelen e-faturayı reddet"
+                                data-testid={`reject-incoming-btn-${inv.invoice_number}`}
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
+                        ) : inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && inv.gib_status !== 'Kağıt Fatura (Matbu)' ? (
                           <button
                             onClick={() => handleSendToGib(inv.id || inv._id)}
                             className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
@@ -452,10 +514,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <Send className="w-4 h-4" />
                           </button>
                         ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
-                        <button onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+                        <button onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === 'dispatch' ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
-                        ) : inv.payment_status !== 'paid' ? (
+                        ) : inv.payment_status !== 'paid' && inv.status !== 'cancelled' ? (
                           <button
                             onClick={() => openPayment(inv)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
@@ -466,6 +528,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           </button>
                         ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
                       </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))
@@ -475,7 +539,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         </div>
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}

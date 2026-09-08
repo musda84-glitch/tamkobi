@@ -194,7 +194,9 @@ async def approve_edoc(doc_id: str, req: Dict[str, Any]):
     sub = float(d.get("subtotal") or sum(i["total"] for i in items)); vat = float(d.get("vat_total") or sum(i["vat_amount"] for i in items)); gt = float(d.get("grand_total") or (sub + vat))
     inv = {"_id": str(uuid.uuid4()), "company_id": d["company_id"], "invoice_number": d.get("number") or f"GELEN-{uuid.uuid4().hex[:6].upper()}", "invoice_type": "dispatch" if d["kind"] == "dispatch" else "purchase", "e_type": "e_dispatch" if d["kind"] == "dispatch" else ("e_invoice" if d.get("source") == "ubl_xml" else "paper"),
            "direction": "incoming", "contact_id": d["contact_id"], "contact_name": d["contact_name"], "contact_tax_id": d["supplier"].get("tax_id"), "issue_date": d.get("issue_date") or _now()[:10], "due_date": d.get("issue_date") or _now()[:10], "items": items, "subtotal": round(sub, 2), "vat_total": round(vat, 2), "discount_total": 0.0,
-           "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "gib_status": "received" if d.get("source") == "ubl_xml" else None, "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
+           "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
+           "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)" if d.get("source") == "ubl_xml" and d.get("kind") != "dispatch" else ("received" if d.get("source") == "ubl_xml" else None),
+           "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
     await _db.invoices.insert_one(inv)
     if d["kind"] == "invoice":
         await _db.contacts.update_one({"_id": d["contact_id"]}, {"$inc": {"balance": -round(gt, 2)}})

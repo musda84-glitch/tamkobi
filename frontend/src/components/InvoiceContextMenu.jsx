@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck } from "lucide-react";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, CheckCircle2, XCircle } from "lucide-react";
 
 export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye" };
 
@@ -9,7 +9,31 @@ const ISSUE_OPTIONS = [
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" }
 ];
 
-export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch }) => {
+/** Alış e-faturası GİB'den gelir; satıcı keser, alıcı onaylar/reddeder. */
+export function isIncomingPurchaseInvoice(inv) {
+  if (!inv || inv.invoice_type !== "purchase") return false;
+  if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
+  if (inv.e_type === "e_invoice") return true;
+  const gs = String(inv.gib_status || "");
+  return /gelen|received/i.test(gs);
+}
+
+export function incomingPurchaseResponse(inv) {
+  const r = String(inv?.gib_response || "").toLowerCase();
+  if (r === "accepted" || r === "rejected") return r;
+  const gs = String(inv?.gib_status || "");
+  if (/reddedildi/i.test(gs)) return "rejected";
+  if (/gelen/i.test(gs) && /onaylandı/i.test(gs)) return "accepted";
+  return "pending";
+}
+
+export function isIncomingPurchasePending(inv) {
+  if (!isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.status === "cancelled") return false;
+  return incomingPurchaseResponse(inv) === "pending";
+}
+
+export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onAcceptIncoming, onRejectIncoming }) => {
   const ref = useRef(null);
   useEffect(() => {
     if (!menu) return;
@@ -23,6 +47,8 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
 
   if (!menu) return null;
   const { inv } = menu;
+  const incoming = isIncomingPurchaseInvoice(inv);
+  const pending = isIncomingPurchasePending(inv);
   const issued = inv.gib_status && inv.gib_status !== "Taslak";
   const left = Math.min(menu.x, window.innerWidth - 280);
   const top = Math.min(menu.y, window.innerHeight - 340);
@@ -36,7 +62,20 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
   return (
     <div ref={ref} style={{ left, top }} className="fixed z-[70] w-64 bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
       <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 truncate">{inv.invoice_number} • {inv.contact_name}</div>
-      {issued ? (
+      {incoming ? (
+        pending ? (
+          <div className="border-b border-slate-100 pb-1">
+            <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-amber-800">GELEN E-FATURA</div>
+            <p className="px-3 pb-1 text-[10px] text-slate-500">Bu belge GİB'den geldi; kesilmez. 8 gün içinde ticari yanıt verin.</p>
+            {onAcceptIncoming && <Item icon={CheckCircle2} color="text-emerald-600" label="Onayla (Kabul)" sub="Ticari kabul yanıtı GİB'e iletilir" onClick={() => onAcceptIncoming(inv)} testId="ctx-accept-incoming" />}
+            {onRejectIncoming && <Item icon={XCircle} color="text-rose-600" label="Reddet" sub="Ticari ret — alış kaydı iptal edilir" onClick={() => onRejectIncoming(inv)} testId="ctx-reject-incoming" />}
+          </div>
+        ) : (
+          <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-incoming-info">
+            Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{inv.gib_status || incomingPurchaseResponse(inv)}</span>
+          </div>
+        )
+      ) : issued ? (
         <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-issued-info">
           Kesildi: <span className="font-semibold text-slate-700">{E_TYPE_LABELS[inv.e_type] || inv.e_type}</span> — belge türü artık değiştirilemez.
         </div>
@@ -52,7 +91,7 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
       <Item icon={Printer} label="Şablonlu Yazdır" onClick={() => onPrint(inv)} testId="ctx-print" />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
       {onDispatch && inv.invoice_type === "sales" && <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />}
-      {inv.payment_status !== "paid" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
+      {inv.payment_status !== "paid" && inv.status !== "cancelled" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
       {onInstallments && <Item icon={CalendarClock} color="text-violet-600" label={inv.installment_plan ? `Taksitler (${inv.installment_plan.paid_count}/${inv.installment_plan.count})` : "Taksitlendir"} sub={inv.installment_plan ? "Planı gör, tahsil et" : "Ödeme planı oluştur"} onClick={() => onInstallments(inv)} testId="ctx-installments" />}
     </div>
   );

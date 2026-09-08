@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, CheckCircle2, XCircle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -9,7 +9,7 @@ import { ReceiptPrint } from "./ReceiptPrint";
 import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending } from "./InvoiceContextMenu";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
@@ -100,6 +100,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/send-to-gib`, { e_type: eType || inv.e_type }); toast.success(r.data.message || "E-Fatura GİB'e gönderildi."); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } finally { setBusy(null); }
   };
+  const acceptIncoming = async (inv) => {
+    if (!window.confirm(`${inv.invoice_number} gelen e-faturası onaylansın mı?`)) return;
+    setBusy(inv.id);
+    try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/accept-incoming`); toast.success(r.data.message); load(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } finally { setBusy(null); }
+  };
+  const rejectIncoming = async (inv) => {
+    const reason = window.prompt(`${inv.invoice_number} reddedilsin mi? İsteğe bağlı neden:`, "") ?? null;
+    if (reason === null) return;
+    setBusy(inv.id);
+    try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/reject-incoming`, { reason }); toast.success(r.data.message); load(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Reddedilemedi."); } finally { setBusy(null); }
+  };
 
   if (!data) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
   const { contact: c, summary: s } = data;
@@ -183,7 +196,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <SortableHeader {...colState} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const cells = {
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const pending = isIncomingPurchasePending(inv); const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
                     date: <td key="date" className="py-2 text-slate-500">{inv.issue_date}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>,
@@ -191,9 +204,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
                     payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>,
                   }; return (
-                  <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} title="Sağ tık: fatura kes / yazdır / tahsilat" data-testid={`detail-inv-${inv.invoice_number}`}>
+                  <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} title={incoming ? "Sağ tık: gelen e-fatura onayla / reddet" : "Sağ tık: fatura kes / yazdır / tahsilat"} data-testid={`detail-inv-${inv.invoice_number}`}>
                     {colState.cols.map((k) => cells[k])}
-                    <td className="py-2 text-right"><button onClick={() => setEditInv({ ...inv })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold mr-1 hover:bg-slate-50" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc(inv)} className="inline-flex items-center px-2 py-1 border rounded-md text-[10px] font-semibold mr-1" data-testid={`detail-inv-print-${inv.invoice_number}`}>Yazdır</button>{inv.status === "draft" && <span className="inline-flex items-center gap-1"><select defaultValue={inv.e_type} id={`etype-${inv.id}`} className="bg-white border border-slate-200 rounded-md p-1 text-[10px]" data-testid={`detail-etype-${inv.invoice_number}`}><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select><button onClick={() => sendToGib(inv, document.getElementById(`etype-${inv.id}`).value)} disabled={busy === inv.id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold disabled:opacity-50" data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />} Kes</button></span>}</td>
+                    <td className="py-2 text-right"><button onClick={() => setEditInv({ ...inv })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold mr-1 hover:bg-slate-50" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc(inv)} className="inline-flex items-center px-2 py-1 border rounded-md text-[10px] font-semibold mr-1" data-testid={`detail-inv-print-${inv.invoice_number}`}>Yazdır</button>{pending && <span className="inline-flex items-center gap-1">{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><button onClick={() => acceptIncoming(inv)} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-accept-incoming-${inv.invoice_number}`}><CheckCircle2 className="w-3 h-3" /> Onayla</button><button onClick={() => rejectIncoming(inv)} className="inline-flex items-center gap-1 px-2 py-1 bg-rose-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-reject-incoming-${inv.invoice_number}`}><XCircle className="w-3 h-3" /> Reddet</button></>}</span>}{inv.status === "draft" && !incoming && <span className="inline-flex items-center gap-1"><select defaultValue={inv.e_type} id={`etype-${inv.id}`} className="bg-white border border-slate-200 rounded-md p-1 text-[10px]" data-testid={`detail-etype-${inv.invoice_number}`}><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select><button onClick={() => sendToGib(inv, document.getElementById(`etype-${inv.id}`).value)} disabled={busy === inv.id} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold disabled:opacity-50" data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />} Kes</button></span>}</td>
                   </tr>
                 ); })}
               </tbody>
@@ -273,7 +286,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} />
         {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
         {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}
