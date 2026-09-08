@@ -396,7 +396,7 @@ export default function OrdersB2BPage() {
                       {orderGross(ord).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺
                     </td>
                     <td className="px-4 py-3">
-                      {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
+                      {ord.channel && !["b2b", "manual", "saha"].includes(ord.channel) ? (
                         <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
                           <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold ${["shipped", "completed"].includes(ord.order_status) ? "bg-emerald-50 text-emerald-700" : ["cancelled", "returned", "partially_returned"].includes(ord.order_status) ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(ord.order_status)}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {ord.marketplace_status}</div>}
