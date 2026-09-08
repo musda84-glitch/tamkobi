@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
+import { HeaderFxRates } from "./HeaderFxRates";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -203,6 +204,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <span>•</span>
               <LicenseBadge license={license} />
             </div>
+            <HeaderFxRates companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
           </div>
 
           {/* Quick Actions & Search */}
