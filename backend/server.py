@@ -71,7 +71,7 @@ DB_NAME = _mysql_cfg["db"]
 client = MySQLClient()
 db = client[DB_NAME]
 
-app = FastAPI(title="NexusHesap Cloud ERP & CRM & Muhasebe API")
+app = FastAPI(title="TamKobi Cloud ERP & CRM & Muhasebe API")
 
 # Setup CORS
 app.add_middleware(
@@ -118,7 +118,7 @@ async def startup_event():
         await db.invoices.create_index("invoice_number")
         await db.orders.create_index("order_number")
         await db.login_attempts.create_index("identifier")
-        logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
+        logger.info("TamKobi backend startup complete. Seed & indexes ready.")
     except Exception as e:
         logger.error(f"Startup error: {e}")
     try:
@@ -4561,7 +4561,7 @@ async def geocode(q: str):
         raise HTTPException(status_code=400, detail="En az 3 karakter girin.")
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
-            r = await client.get("https://nominatim.openstreetmap.org/search", params={"q": q, "format": "json", "limit": 5, "countrycodes": "tr", "addressdetails": 0}, headers={"User-Agent": "NexusHesap/1.0 (erp)"})
+            r = await client.get("https://nominatim.openstreetmap.org/search", params={"q": q, "format": "json", "limit": 5, "countrycodes": "tr", "addressdetails": 0}, headers={"User-Agent": "TamKobi/1.0 (erp)"})
         r.raise_for_status()
         return [{"label": x.get("display_name"), "latitude": float(x["lat"]), "longitude": float(x["lon"])} for x in r.json()]
     except HTTPException:
@@ -6818,7 +6818,7 @@ app.include_router(platform_mail.router)
 
 @app.get("/")
 async def root():
-    return {"status": "healthy", "service": "NexusERP API", "version": "2.0.0"}
+    return {"status": "healthy", "service": "TamKobi API", "version": "2.0.0"}
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

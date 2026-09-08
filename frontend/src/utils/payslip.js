@@ -23,7 +23,7 @@ export const printPayslip = (p, company = {}) => {
   <div class="grid"><div class="box"><b>Personel</b>${esc(p.employee_name)}${p.department ? "<br>" + esc(p.department) : ""}</div><div class="box"><b>Bordro</b>No: ${esc(p.id || p._id || "")}<br>Hesaplama: ${esc((p.updated_at || p.created_at || "").slice(0, 10))}${p.paid_at ? "<br>Ödeme: " + esc(String(p.paid_at).slice(0, 10)) : ""}${ot.method ? `<br>Mesai yöntemi: ${ot.method === "fixed" ? "Sabit saatlik" : `Yasal (brüt/${ot.divisor || 225} × ${ot.multiplier || 1.5})`}` : ""}</div></div>
   <table>${rows.map(([l, v, cls]) => `<tr class="${cls || ""}"><td>${esc(l)}</td><td class="num">${v < 0 ? "−" : ""}${fmt(Math.abs(v))} ₺</td></tr>`).join("")}<tr class="total"><td>ÖDENECEK NET TUTAR</td><td class="num">${fmt(p.final_payable)} ₺</td></tr></table>
   <div class="sig"><div>İşveren / Yetkili</div><div>Personel İmzası</div></div>
-  <div class="foot">NexusHesap · ${new Date().toLocaleString("tr-TR")} · Bu belge ${esc(p.period)} dönemi için hesaplanan ödemeyi gösterir; resmi SGK bordrosu yerine geçmez.</div>
+  <div class="foot">TamKobi · ${new Date().toLocaleString("tr-TR")} · Bu belge ${esc(p.period)} dönemi için hesaplanan ödemeyi gösterir; resmi SGK bordrosu yerine geçmez.</div>
   <script>window.onload=()=>{window.print();}</script></body></html>`;
   w.document.write(html); w.document.close();
 };

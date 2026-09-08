@@ -154,7 +154,7 @@ async def make_chat(session_id: str, system_message: str, purpose: str = "extrac
 
 async def get_financial_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
 
-    system_prompt = f"""Sen NexusHesap'ın uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
+    system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
 Kullanıcının şirketine dair güncel veriler:
 - Şirket Adı: {company_context.get('company_name', 'Nexus Teknoloji A.Ş.')}
 - Toplam Kasa/Banka Varlığı: {company_context.get('total_bank_balance', 0):,.2f} TRY

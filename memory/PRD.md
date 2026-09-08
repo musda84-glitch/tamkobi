@@ -1,4 +1,4 @@
-# NexusHesap — CRM / ERP / Ön Muhasebe (bizimhesap.com benzeri, gelişmiş entegrasyonlu)
+# TamKobi — CRM / ERP / Ön Muhasebe (bizimhesap.com benzeri, gelişmiş entegrasyonlu)
 
 ## Orijinal İstek
 "bana bizimhesap.com gibi ama daha gelişmiş entegrasyonu iyi olan crm erp muhasebe programı yap"

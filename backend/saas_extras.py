@@ -94,7 +94,7 @@ async def issue_subscription_invoice(tx: dict) -> Optional[str]:
     year = datetime.now(timezone.utc).year
     seq = await _db.invoices.count_documents({"company_id": platform_cid, "source": "subscription"}) + 1
     inv = {"_id": str(uuid.uuid4()), "company_id": platform_cid, "invoice_number": f"ABN{year}{seq:06d}", "invoice_type": "sales", "e_type": "e_archive", "contact_id": contact["_id"], "contact_name": contact["name"], "contact_tax_id": contact.get("tax_number_or_id"), "issue_date": _now()[:10], "due_date": _now()[:10],
-           "items": [{"product_id": "", "name": f"{st.get('brand_name', 'NexusHesap')} {tx['plan_name']} Paketi – {period_label} Abonelik", "quantity": 1, "unit": "Adet", "unit_price": net, "vat_rate": 20, "discount_rate": 0, "total": net, "vat_amount": vat}],
+           "items": [{"product_id": "", "name": f"{st.get('brand_name', 'TamKobi')} {tx['plan_name']} Paketi – {period_label} Abonelik", "quantity": 1, "unit": "Adet", "unit_price": net, "vat_rate": 20, "discount_rate": 0, "total": net, "vat_amount": vat}],
            "subtotal": net, "vat_total": vat, "discount_total": 0.0, "grand_total": gross, "currency": "TRY", "status": "approved", "gib_status": "Başarıyla İletildi (GİB Onaylı)", "gib_tracking_id": f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}", "payment_status": "paid", "paid_amount": gross,
            "notes": f"Online ödeme ({tx.get('provider', 'stripe')}) · Referans {tx.get('session_id') or tx.get('merchant_oid')}", "source": "subscription", "payment_tx_id": tx["_id"], "subscriber_company_id": tx["company_id"], "created_at": _now()}
     await _db.invoices.insert_one(inv)
@@ -162,7 +162,7 @@ async def test_paytr(request: Request, _: dict = Depends(saas.require_super_admi
     c = await paytr_conf()
     if not (c["merchant_id"] and c["merchant_key"] and c["merchant_salt"]):
         raise HTTPException(status_code=400, detail="Önce Merchant ID, Key ve Salt kaydedin.")
-    oid, email, minor, ip = "NXTEST" + uuid.uuid4().hex[:16], "test@nexushesap.com", "100", "127.0.0.1"
+    oid, email, minor, ip = "NXTEST" + uuid.uuid4().hex[:16], "test@tamkobi.com", "100", "127.0.0.1"
     basket = base64.b64encode(json.dumps([["Bağlantı testi", "1.00", 1]], separators=(",", ":")).encode()).decode()
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + "0" + "0" + "TL" + "1" + c["merchant_salt"])
     origin = str(request.base_url).rstrip("/")
