@@ -67,13 +67,16 @@ export function groupMenuItems(items) {
   return NAV_GROUPS.map((g) => ({ ...g, items: buckets[g.id] || [] })).filter((g) => g.items.length);
 }
 
-/** Platform paneli: Web, Paketler, Kurallar — vitrin paketleri gibi klasörler. */
+/** Platform paneli: Web, Paketler, Kurallar — vitrin paketleri gibi klasörler.
+ * `SYSTEM_NAV`'de olmayan path'ler sessizce atlanır (canlıdaki Posta / AI gibi ekler).
+ */
 export const SYSTEM_NAV_GROUPS = [
   { id: "overview", label: null, paths: ["/sistem"] },
   { id: "web", label: "Web", paths: ["/sistem/web"] },
   { id: "paketler", label: "Paketler", paths: ["/sistem/paketler", "/sistem/moduller"] },
   { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kullanicilar"] },
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar"] },
+  { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/ai"] },
   { id: "kurallar", label: "Kurallar", paths: ["/sistem/ayarlar"] },
 ];
 

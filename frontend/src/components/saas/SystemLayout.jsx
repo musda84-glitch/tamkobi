@@ -25,8 +25,10 @@ export const SystemLayout = ({ children, pendingCount = 0 }) => {
         </div>
         <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto" data-testid="sys-sidebar-nav">
           {SYSTEM_NAV_GROUPS.map((g) => {
-            const groupActive = g.paths.some((p) => here === p);
-            const links = g.paths.map((path) => {
+            const paths = g.paths.filter((p) => LABELS[p]);
+            if (!paths.length) return null;
+            const groupActive = paths.some((p) => here === p);
+            const links = paths.map((path) => {
               const Icon = ICONS[path];
               const active = here === path;
               return (
