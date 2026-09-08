@@ -13,6 +13,7 @@ const Stat = ({ label, value, cls = "", testid }) => <div className="bg-white ro
 
 const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
   useEscape(onClose);
+  const { addonOn } = useAuth();
   const [d, setD] = useState({ name: "", bank: "", loan_type: "ticari", principal: "", interest_rate: "", term_months: 12, start_date: new Date().toISOString().slice(0, 10), monthly_payment: "", installments: [], account_id: "", credit_to_account: false });
   const [busy, setBusy] = useState(null);
   const upload = async (file) => {
@@ -27,10 +28,12 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-4xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="loan-modal">
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold flex items-center gap-2"><Landmark className="w-5 h-5 text-indigo-600" /> Yeni Kredi</h3><button type="button" onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button></div>
+        {addonOn("ai.finance_docs") && (
         <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl p-4 cursor-pointer text-xs ${busy === "ai" ? "opacity-60" : "hover:bg-violet-50/40 hover:border-violet-400"}`} data-testid="loan-ai-dropzone">
           {busy === "ai" ? <Loader2 className="w-6 h-6 animate-spin text-violet-600" /> : <Sparkles className="w-6 h-6 text-violet-600" />}<div><b>Bankanın ödeme planı PDF'ini yükleyin</b> — AI (Claude Sonnet 4.6) taksitleri, faizi ve KKDF/BSMV'yi otomatik çıkarır.<div className="text-slate-400">veya aşağıdan elle girip "Plan Oluştur" ile eşit taksit hesaplayın</div></div>
           <input type="file" accept="application/pdf" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="loan-ai-file" /><Upload className="w-4 h-4 text-slate-400 ml-auto" />
         </label>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div className="col-span-2"><label className="block font-semibold mb-1">Kredi Adı</label><input required value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} className={inputCls} data-testid="loan-name" /></div>
           <div><label className="block font-semibold mb-1">Banka</label><input value={d.bank || ""} onChange={(e) => setD({ ...d, bank: e.target.value })} className={inputCls} /></div>

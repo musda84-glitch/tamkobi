@@ -38,7 +38,7 @@ import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
-  const { activeCompany } = useAuth();
+  const { activeCompany, addonOn } = useAuth();
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
@@ -294,7 +294,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           <p className="text-xs sm:text-sm text-slate-500">{lockType ? "Sevk irsaliyeleri, e-İrsaliye ve faturaya dönüştürme" : "Satış, Alış, E-Fatura, E-Arşiv ve GİB Portal Entegrasyonu"}</p>
         </div>
         <div className="flex gap-2 self-start">
-        <button onClick={() => setShowAiImport(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>PDF'den Aktar (AI)</span></button>
+        {addonOn("ai.invoice") && <button onClick={() => setShowAiImport(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>PDF'den Aktar (AI)</span></button>}
         <button
           onClick={() => { if (filterType === "dispatch") setFormData((fd) => ({ ...fd, invoice_type: "dispatch", e_type: "e_dispatch" })); setShowNewModal(true); }}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition self-start sm:self-auto"
@@ -305,7 +305,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         </button>
         </div>
       </div>
-      {showAiImport && <AiInvoiceImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} onClose={() => setShowAiImport(false)} onDone={() => loadData()} />}
+      {showAiImport && addonOn("ai.invoice") && <AiInvoiceImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} onClose={() => setShowAiImport(false)} onDone={() => loadData()} />}
 
       {/* Filter Tabs */}
       {!lockType && <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { AddonToggles } from "./AddonsPanel";
 
 const cred = { withCredentials: true };
 
@@ -31,6 +32,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
+  const toggleAddon = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/addons/${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Araç değiştirilemedi."); } finally { setBusy(""); } };
+  const inheritAddon = async (key) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/addons/${key}`, { inherit: true }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Varsayılana dönülemedi."); } finally { setBusy(""); } };
   const siblings = d.license_companies || [];
   const limit = Number(lic.company_limit || 0);
   const canAddSibling = !limit || siblings.length < limit;
@@ -143,6 +146,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
                 </div>))}
             </div>
           </section>
+
+          <AddonToggles license={lic} busy={busy} onToggle={toggleAddon} onInherit={inheritAddon} />
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid="drawer-license-companies">
             <h3 className="font-bold text-slate-900 text-sm mb-1 flex items-center gap-1.5"><Building2 className="w-4 h-4 text-slate-400" /> Lisans şirketleri ({siblings.length}{limit ? `/${limit}` : ""})</h3>

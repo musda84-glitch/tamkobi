@@ -28,7 +28,7 @@ const TABS = [
 ];
 
 export default function BankingPage() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, addonOn } = useAuth();
   const [searchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [tab, setTab] = useState(searchParams.get("tab") || "accounts");
@@ -239,7 +239,7 @@ export default function BankingPage() {
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
                   <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
-                  {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
+                  {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span>{addonOn("ai.finance_docs") && <button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button>}</div>}
                   {acc.iban && acc.iban !== '-' && (
                     <div className="text-[11px] font-mono text-slate-400 mt-1 truncate">{acc.iban}</div>
                   )}

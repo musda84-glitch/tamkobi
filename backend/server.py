@@ -52,6 +52,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import addons
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1143,6 +1144,9 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     b2b_st = {**B2B_DEFAULTS, **((await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}).get("b2b_settings") or {})}
     if b2b_st.get("allow_ai_cart") is False:
         raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
+    import addons as _addons
+    if not await _addons.is_on(c["company_id"], "ai.b2b_cart"):
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
@@ -1161,6 +1165,8 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
 @api_router.post("/public/b2b/{token}/ai-cart/match")
 async def b2b_ai_cart_match(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)
+    import addons as _addons
+    await _addons.require(c["company_id"], "ai.b2b_cart")
     items, unmatched = await _b2b_match_cart_items(c["company_id"], req.get("items") or [])
     return {"items": items, "unmatched": unmatched, "total_lines": len(items) + len(unmatched)}
 
@@ -1168,6 +1174,8 @@ async def b2b_ai_cart_match(token: str, req: Dict[str, Any]):
 @api_router.post("/public/b2b/{token}/ai-cart/learn")
 async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)
+    import addons as _addons
+    await _addons.require(c["company_id"], "ai.b2b_cart")
     now = datetime.now(timezone.utc).isoformat()
     saved = []
     for m in (req.get("mappings") or []):
@@ -1209,10 +1217,12 @@ async def b2b_portal(token: str):
         o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
+    import addons as _addons
+    ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city")},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
             "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
-            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}}
+            "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart}}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -5686,6 +5696,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
+addons.init(db)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
@@ -5738,6 +5749,7 @@ app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
+app.include_router(addons.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
