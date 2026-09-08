@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2 } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
 
@@ -14,8 +14,10 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
-  useEffect(() => { load(); }, [load]);
+  const [providers, setProviders] = useState([]);
+  const [eiProvider, setEiProvider] = useState("");
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
@@ -106,6 +108,35 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
                 </div>
               </div>
             )}
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. Firma paneli bu sağlayıcının kullanıcı adı ve şifresini girer.</p>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
+              <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider">
+                <option value="">Seçilmedi (GİB simüle)</option>
+                {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+              </select>
+            </div>
+            {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
+            <div className="flex justify-end">
+              <button type="button" onClick={async () => {
+                setBusy("ei");
+                try {
+                  const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
+                  setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
+                  setEiProvider(r.data.provider || "");
+                  toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
+                } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
+              }} disabled={busy === "ei"} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
+            </div>
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">

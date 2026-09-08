@@ -118,8 +118,15 @@ class TestEInvoice:
         assert len(data) == 5
         assert {p["code"] for p in data} == {"foriba", "elogo", "uyumsoft", "izibiz", "other"}
 
-    def test_configure_then_reset(self, client):
+    def test_tenant_cannot_assign_provider(self, client):
         r = client.put(f"{BASE}/einvoice/settings", json={"provider": "foriba", "username": "TEST_user", "password": "TEST_pass", "mode": "test"}, timeout=30)
+        assert r.status_code in (400, 403), r.text
+
+    def test_configure_then_reset(self, client):
+        a = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "foriba"}, timeout=30)
+        assert a.status_code == 200, a.text
+        assert a.json()["provider"] == "foriba" and a.json()["assigned"] is True
+        r = client.put(f"{BASE}/einvoice/settings", json={"username": "TEST_user", "password": "TEST_pass", "mode": "test"}, timeout=30)
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["provider"] == "foriba" and d["status"] == "configured"
@@ -127,14 +134,15 @@ class TestEInvoice:
         assert "password" not in d and "password_enc" not in d
         g = client.get(f"{BASE}/einvoice/settings", timeout=30).json()
         assert g["status"] == "configured" and g["username"] == "TEST_user" and "password" not in g
-        # reset to simulated
-        r2 = client.put(f"{BASE}/einvoice/settings", json={"provider": "", "username": "", "password": ""}, timeout=30)
+        steal = client.put(f"{BASE}/einvoice/settings", json={"provider": "elogo", "username": "TEST_user"}, timeout=30)
+        assert steal.status_code == 403
+        r2 = client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": ""}, timeout=30)
         assert r2.status_code == 200
-        assert r2.json()["status"] == "simulated"
+        assert r2.json()["status"] == "simulated" and r2.json()["assigned"] is False
         assert client.get(f"{BASE}/einvoice/settings", timeout=30).json()["status"] == "simulated"
 
     def test_bad_provider(self, client):
-        assert client.put(f"{BASE}/einvoice/settings", json={"provider": "hackprov"}, timeout=30).status_code == 400
+        assert client.put(f"{BASE}/system/companies/{COMPANY}/einvoice", json={"provider": "hackprov"}, timeout=30).status_code == 400
 
 
 # ---------------- Quotes ----------------
