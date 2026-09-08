@@ -55,7 +55,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
   const publicSite = location.pathname === "/" && !authenticated;
-  if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  if (publicSite || ["/teklif/", "/proje/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
   const lockedModule = !moduleOn(location.pathname);
 

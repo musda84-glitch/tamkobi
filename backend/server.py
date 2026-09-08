@@ -586,6 +586,163 @@ async def update_project(project_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     return clean_doc(p)
 
+PROJECT_STATUS_LABELS = {
+    "planning": "Planlama",
+    "active": "Devam Ediyor",
+    "on_hold": "Beklemede",
+    "completed": "Tamamlandı",
+}
+
+
+def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: List[Dict[str, Any]], surveys: List[Dict[str, Any]]) -> Dict[str, Any]:
+    status = p.get("status") or "planning"
+    quotes_pub = [{"quote_number": q.get("quote_number"), "title": q.get("title"), "status": q.get("status"),
+                   "approval_status": (q.get("approval") or {}).get("status"), "issue_date": q.get("issue_date"),
+                   "invoiced": bool(q.get("invoice_id"))} for q in quotes]
+    surveys_pub = [{"survey_number": s.get("survey_number"), "survey_date": s.get("survey_date"),
+                    "status": s.get("status"), "address": s.get("address")} for s in surveys]
+    tasks_pub = []
+    for t in (p.get("tasks") or []):
+        if isinstance(t, dict):
+            tasks_pub.append({"title": t.get("title") or t.get("name") or "Adım", "done": bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))})
+        elif t:
+            tasks_pub.append({"title": str(t), "done": False})
+
+    survey_done = bool(surveys) and all(s.get("status") in ("done", "quoted") for s in surveys)
+    survey_started = bool(surveys)
+    quote_accepted = any((q.get("status") == "accepted") or ((q.get("approval") or {}).get("status") == "accepted") for q in quotes)
+    quote_sent = any(q.get("status") in ("sent", "accepted") or (q.get("approval") or {}).get("status") in ("pending", "accepted") for q in quotes)
+    invoiced = any(q.get("invoice_id") for q in quotes)
+    work_done = status == "completed"
+    work_active = status in ("active", "on_hold")
+
+    steps = [
+        {"key": "created", "label": "Proje açıldı", "done": True, "current": status == "planning" and not survey_started and not quote_sent},
+        {"key": "survey", "label": "Saha keşfi", "done": survey_done, "current": survey_started and not survey_done and not work_done, "hidden": not survey_started},
+        {"key": "quote", "label": "Teklif", "done": quote_accepted, "current": quote_sent and not quote_accepted and not work_done, "hidden": not quote_sent and not quotes},
+        {"key": "work", "label": "Beklemede" if status == "on_hold" else "Uygulama", "done": work_done, "current": work_active},
+        {"key": "invoice", "label": "Faturalama", "done": invoiced, "current": quote_accepted and not invoiced and not work_done, "hidden": not invoiced and not quote_accepted},
+        {"key": "done", "label": "Teslim / Tamamlandı", "done": work_done, "current": False},
+    ]
+    steps = [s for s in steps if not s.get("hidden")]
+    if not any(s.get("current") for s in steps):
+        for s in steps:
+            if not s["done"]:
+                s["current"] = True
+                break
+        else:
+            if steps:
+                steps[-1]["current"] = work_done
+
+    return {
+        "project_number": p.get("project_number"),
+        "name": p.get("name"),
+        "contact_name": p.get("contact_name"),
+        "status": status,
+        "status_label": PROJECT_STATUS_LABELS.get(status, status),
+        "start_date": p.get("start_date"),
+        "end_date": p.get("end_date"),
+        "address": p.get("address"),
+        "location_url": p.get("location_url") or "",
+        "description": p.get("description") or p.get("notes") or "",
+        "images": p.get("images") or [],
+        "steps": steps,
+        "quotes": quotes_pub,
+        "surveys": surveys_pub,
+        "tasks": tasks_pub,
+        "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"),
+                    "address": company.get("address"), "city": company.get("city"), "logo_url": company.get("logo_url")},
+        "created_at": p.get("created_at"),
+    }
+
+
+async def _send_customer_link(company_id: str, channels: List[str], phone: Optional[str], email: Optional[str],
+                              contact_id: Optional[str], contact_name: Optional[str], message: str,
+                              subject: str, html: str, context: str, ref_id: str) -> Dict[str, Any]:
+    results: Dict[str, Any] = {}
+    if "sms" in channels:
+        if not phone:
+            results["sms"] = {"status": "failed", "detail": "Carinin telefon numarası yok."}
+        else:
+            try:
+                r = await _send_sms_to(company_id, [{"phone": phone, "contact_id": contact_id, "contact_name": contact_name}], message, context, ref_id)
+                results["sms"] = {"status": "sent" if not r.get("simulated") else "simulated", "detail": r.get("message")}
+            except HTTPException as e:
+                results["sms"] = {"status": "failed", "detail": e.detail}
+    if "email" in channels:
+        if not email:
+            results["email"] = {"status": "failed", "detail": "Carinin e-posta adresi yok."}
+        else:
+            try:
+                a = await _mail_account(company_id)
+                await comm_service.smtp_send(a, [email], subject, message, html=html)
+                await db.mail_logs.insert_one(MailLog(company_id=company_id, from_email=a["email"], to=[email], subject=subject, body=message, contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id).to_mongo())
+                results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
+            except HTTPException as e:
+                results["email"] = {"status": "failed", "detail": e.detail}
+            except Exception as e:
+                results["email"] = {"status": "failed", "detail": f"SMTP hatası: {_err_text(e)}"}
+    if "whatsapp" in channels:
+        if not phone:
+            results["whatsapp"] = {"status": "failed", "detail": "Carinin telefon numarası yok."}
+        else:
+            try:
+                r = await wa_send({"company_id": company_id, "phone": phone, "message": message, "contact_id": contact_id, "contact_name": contact_name})
+                results["whatsapp"] = {"status": r.get("status"), "detail": r.get("message_info"), "wa_link": r.get("wa_link")}
+            except HTTPException as e:
+                results["whatsapp"] = {"status": "failed", "detail": e.detail}
+    return results
+
+
+@api_router.post("/projects/{project_id}/send-tracking")
+async def send_project_tracking(project_id: str, req: Dict[str, Any]):
+    p = await db.projects.find_one({"_id": project_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
+    contact = await db.contacts.find_one({"_id": p.get("contact_id")}) if p.get("contact_id") else None
+    company = await db.companies.find_one({"_id": p["company_id"]}) or {}
+    phone = req.get("phone") or (contact or {}).get("phone")
+    email = req.get("email") or (contact or {}).get("email")
+    tracking = p.get("tracking") or {}
+    token = tracking.get("token") or uuid.uuid4().hex
+    base = (req.get("base_url") or "").rstrip("/")
+    link = f"{base}/proje/{token}"
+    message = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
+    if link not in message:
+        message = f"{message}\n{link}"
+    html = f"<p>{message.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Proje Durumunu Görüntüle</a></p>"
+    results: Dict[str, Any] = {}
+    if channels:
+        results = await _send_customer_link(p["company_id"], channels, phone, email, p.get("contact_id"), p.get("contact_name"),
+                                           message, f"{p.get('project_number')} proje durum takibi", html, "project_tracking", project_id)
+    now = datetime.now(timezone.utc).isoformat()
+    tracking.update({"token": token, "link": link, "sent_at": now if channels else tracking.get("sent_at"), "channels": channels or tracking.get("channels") or [],
+                     "results": results, "sent_count": tracking.get("sent_count", 0) + (1 if channels else 0)})
+    await db.projects.update_one({"_id": project_id}, {"$set": {"tracking": tracking}})
+    any_ok = (not channels) or any(v.get("status") in ("sent", "simulated") for v in results.values())
+    if channels:
+        msg = "Takip linki gönderildi." if any_ok else "Hiçbir kanaldan gönderilemedi."
+    else:
+        msg = "Takip linki oluşturuldu. Kopyalayıp paylaşabilirsiniz."
+    return {"status": "success" if any_ok else "failed", "link": link, "token": token, "results": results, "message": msg}
+
+
+@api_router.get("/public/projects/{token}")
+async def public_project(token: str):
+    token = (token or "").strip()
+    if not token or len(token) < 16:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    p = await db.projects.find_one({"tracking.token": token})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    company = await db.companies.find_one({"_id": p["company_id"]}) or {}
+    quotes = await db.quotes.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
+    surveys = await db.surveys.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
+    await db.projects.update_one({"_id": p["_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
+    return _public_project_view(p, company, quotes, surveys)
+
+
 @api_router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
     p = await db.projects.find_one({"_id": project_id})
