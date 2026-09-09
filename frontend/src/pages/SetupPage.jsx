@@ -11,7 +11,7 @@ const emptyForm = {
   db_name: "tamkobi",
   db_user: "tamkobi",
   db_password: "",
-  ssl_mode: "disabled",
+  ssl_mode: "",
   ssl_ca: "",
   site_name: "",
   admin_email: "",
@@ -19,7 +19,12 @@ const emptyForm = {
   admin_name: "",
 };
 
-const SSL_LABELS = { disabled: "Kapalı (aynı sunucudaki MySQL)", required: "TLS zorunlu", verify_ca: "TLS + CA doğrulaması" };
+const SSL_LABELS = {
+  disabled: "Şifreleme kapalı",
+  required: "Şifreli, sertifika doğrulanmaz",
+  verify_ca: "Şifreli, CA doğrulamalı",
+  verify_identity: "Şifreli, CA ve sunucu adı doğrulamalı",
+};
 
 export default function SetupPage() {
   const [status, setStatus] = useState(null);
@@ -43,7 +48,8 @@ export default function SetupPage() {
           db_port: d.db_port || f.db_port,
           db_name: d.db_name || f.db_name,
           db_user: d.db_user || f.db_user,
-          ssl_mode: d.ssl_mode || f.ssl_mode,
+          // Not the mode: it stays on "automatic" so changing the host still
+          // picks the right default instead of whatever this host needed.
           ssl_ca: d.ssl_ca || f.ssl_ca,
         }));
       })
@@ -66,7 +72,8 @@ export default function SetupPage() {
         db_name: form.db_name,
         db_user: form.db_user,
         db_password: form.db_password,
-        ssl_mode: form.ssl_mode,
+        // Empty means "decide from the host", which only the server should do.
+        ssl_mode: form.ssl_mode || null,
         ssl_ca: form.ssl_ca,
       });
       setDbOk(r.data);
@@ -87,6 +94,7 @@ export default function SetupPage() {
       await axios.post(`${API_URL}/setup/install`, {
         ...form,
         db_port: Number(form.db_port) || 3306,
+        ssl_mode: form.ssl_mode || null,
       });
       window.location.href = "/";
     } catch (err) {
@@ -201,15 +209,18 @@ export default function SetupPage() {
               </label>
               <label className="block text-xs font-semibold">Bağlantı şifrelemesi
                 <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-mode">
+                  <option value="">Sunucuya göre otomatik seç</option>
                   {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
                 <span className="block font-normal text-[10px] text-slate-500 mt-1">
-                  MySQL bu makinede değilse şifrelemeyi açık bırakın; şifreniz ve tüm veri bu bağlantıdan geçer.
+                  Otomatik seçimde başka bir sunucu için sertifika doğrulamalı TLS, bu makinedeki MySQL için şifresiz
+                  bağlantı kullanılır. Şifreniz ve tüm veri bu bağlantıdan geçer.
                 </span>
               </label>
-              {form.ssl_mode === "verify_ca" && (
-                <label className="block text-xs font-semibold">CA sertifika dosyası
-                  <input required value={form.ssl_ca} onChange={(e) => set("ssl_ca", e.target.value)} placeholder="/etc/ssl/certs/mysql-ca.pem" className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-ca" />
+              {(form.ssl_mode === "verify_ca" || form.ssl_mode === "verify_identity") && (
+                <label className="block text-xs font-semibold">
+                  CA sertifika dosyası{form.ssl_mode === "verify_identity" ? " (isteğe bağlı)" : ""}
+                  <input required={form.ssl_mode === "verify_ca"} value={form.ssl_ca} onChange={(e) => set("ssl_ca", e.target.value)} placeholder="/etc/ssl/certs/mysql-ca.pem" className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-ca" />
                 </label>
               )}
               {dbOk?.ok && (

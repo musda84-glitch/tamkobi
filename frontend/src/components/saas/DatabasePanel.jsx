@@ -5,9 +5,14 @@ import { Database, HardDriveDownload, Loader2, PlugZap, ServerCog } from "lucide
 import { API_URL } from "../../context/AuthContext";
 import { inputCls } from "./saasUi";
 
-const emptyTarget = { db_host: "", db_port: 3306, db_name: "tamkobi", db_user: "tamkobi", db_password: "", ssl_mode: "required", ssl_ca: "" };
+const emptyTarget = { db_host: "", db_port: 3306, db_name: "tamkobi", db_user: "tamkobi", db_password: "", ssl_mode: "", ssl_ca: "" };
 const tl = (n) => Number(n || 0).toLocaleString("tr-TR");
-const SSL_LABELS = { disabled: "Kapalı (yalnızca aynı sunucu)", required: "TLS zorunlu", verify_ca: "TLS + CA doğrulaması" };
+export const SSL_LABELS = {
+  disabled: "Şifreleme kapalı",
+  required: "Şifreli, sertifika doğrulanmaz",
+  verify_ca: "Şifreli, CA doğrulamalı",
+  verify_identity: "Şifreli, CA ve sunucu adı doğrulamalı",
+};
 
 export const DatabasePanel = () => {
   const [info, setInfo] = useState(null);
@@ -30,7 +35,13 @@ export const DatabasePanel = () => {
     setForm((f) => ({ ...f, [k]: v }));
     setProbe(null);
   };
-  const payload = () => ({ ...form, db_host: form.db_host.trim(), db_port: Number(form.db_port) || 3306 });
+  // An empty ssl_mode means "decide from the host" on the server, so it is left out.
+  const payload = () => ({
+    ...form,
+    db_host: form.db_host.trim(),
+    db_port: Number(form.db_port) || 3306,
+    ssl_mode: form.ssl_mode || null,
+  });
 
   const test = async () => {
     setBusy("test");
@@ -70,6 +81,8 @@ export const DatabasePanel = () => {
   if (!info) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
   const rows = Object.entries(info.tables || {});
   const canMove = probe && form.db_host.trim() && (probe.empty || overwrite);
+  const needsCa = form.ssl_mode === "verify_ca" || form.ssl_mode === "verify_identity";
+  const unverified = form.ssl_mode === "disabled" || form.ssl_mode === "required";
 
   return (
     <div className="space-y-4 text-xs max-w-3xl" data-testid="saas-database-panel">
@@ -138,26 +151,36 @@ export const DatabasePanel = () => {
             <label className="block font-semibold text-slate-700 mb-1">Şifre</label>
             <input type="password" value={form.db_password} onChange={(e) => set("db_password", e.target.value)} className={inputCls} data-testid="db-password" autoComplete="new-password" />
           </div>
-          <div className={form.ssl_mode === "verify_ca" ? "" : "sm:col-span-2"}>
+          <div className={needsCa ? "" : "sm:col-span-2"}>
             <label className="block font-semibold text-slate-700 mb-1">Bağlantı şifrelemesi</label>
             <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className={inputCls} data-testid="db-ssl-mode">
+              <option value="">Sunucuya göre otomatik seç</option>
               {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
             <p className="text-[10px] text-slate-500 mt-1">
-              Şifre ve tüm veri bu bağlantıdan geçer; internet üzerinden taşımada TLS kapatmayın. Sunucunuz TLS desteklemiyorsa
-              "Kapalı" seçin ve bağlantıyı özel ağ/VPN ile koruyun.
+              Şifreniz ve tüm veri bu bağlantıdan geçer. Otomatik seçimde başka bir sunucu için sertifika doğrulamalı TLS,
+              bu makinedeki MySQL için şifresiz bağlantı kullanılır.
             </p>
+            {unverified && (
+              <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5 mt-1" data-testid="db-ssl-warning">
+                Sertifika doğrulanmadığı için araya giren biri kendi sunucusunu TamKobi'ye gösterebilir. Bunu yalnızca bağlantı
+                özel ağ veya VPN ile korunuyorsa seçin.
+              </p>
+            )}
           </div>
-          {form.ssl_mode === "verify_ca" && (
+          {needsCa && (
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">CA sertifika dosyası</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                CA sertifika dosyası{form.ssl_mode === "verify_identity" ? " (isteğe bağlı)" : ""}
+              </label>
               <input value={form.ssl_ca} onChange={(e) => set("ssl_ca", e.target.value)} placeholder="/etc/ssl/certs/mysql-ca.pem" className={inputCls} data-testid="db-ssl-ca" />
             </div>
           )}
         </div>
         {probe && (
           <div className={`rounded-xl px-3 py-2 ${probe.empty ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-900"}`} data-testid="db-probe">
-            MySQL {probe.server_version} · {probe.created ? "veritabanı oluşturuldu" : "veritabanı mevcut"} · {probe.summary}
+            MySQL {probe.server_version} · {probe.created ? "veritabanı oluşturuldu" : "veritabanı mevcut"} ·{" "}
+            {SSL_LABELS[probe.target?.ssl_mode] || probe.target?.ssl_mode} · {probe.summary}
           </div>
         )}
         {probe && !probe.empty && (

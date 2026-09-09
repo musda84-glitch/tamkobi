@@ -55,7 +55,7 @@ def _settings_from(req: DbProbe) -> dict:
     env_mode, env_ca = db_ssl.from_env()
     # An explicit choice wins, then the deployment's own setting, then the
     # host-based default (encrypted unless MySQL runs on this machine).
-    if req.ssl_mode:
+    if (req.ssl_mode or "").strip():
         mode = req.ssl_mode
     elif (os.environ.get("MYSQL_SSL_MODE") or "").strip():
         mode = env_mode
@@ -64,10 +64,9 @@ def _settings_from(req: DbProbe) -> dict:
     ca = (req.ssl_ca or "").strip() or env_ca
     try:
         mode = db_ssl.normalize_mode(mode)
+        db_ssl.context(mode, ca)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if mode == db_ssl.VERIFY_CA and not ca:
-        raise HTTPException(status_code=400, detail="verify_ca modu için CA sertifika dosyası gerekir.")
     return {
         "host": host,
         "port": int(req.db_port),
@@ -110,7 +109,7 @@ def probe_database(settings: dict) -> dict:
         try:
             conn = _connect(settings, None)
         except Exception as exc2:
-            raise RuntimeError(f"MySQL bağlantısı kurulamadı: {exc2}") from exc2
+            raise RuntimeError(f"MySQL bağlantısı kurulamadı: {exc2}.{db_ssl.explain(exc2)}") from exc2
         try:
             cur = conn.cursor()
             cur.execute(

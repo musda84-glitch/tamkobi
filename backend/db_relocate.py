@@ -59,8 +59,7 @@ def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not 1 <= port <= 65535:
         raise ValueError("Port 1-65535 aralığında olmalı.")
     ssl_mode, ssl_ca = db_ssl.settings(cfg)
-    if ssl_mode == db_ssl.VERIFY_CA and not ssl_ca:
-        raise ValueError("verify_ca modu için CA sertifika dosyası gerekir.")
+    db_ssl.context(ssl_mode, ssl_ca)  # rejects a mode we could not honour
     return {
         "host": host,
         "port": port,
@@ -364,9 +363,9 @@ def _add_target_args(p: argparse.ArgumentParser) -> None:
         dest="ssl_mode",
         default=None,
         choices=list(db_ssl.SSL_MODES),
-        help="TLS modu (uzak sunucularda varsayılan: required)",
+        help="TLS modu (başka bir sunucuda varsayılan: verify_identity)",
     )
-    p.add_argument("--ssl-ca", dest="ssl_ca", default=None, help="verify_ca için CA sertifika dosyası")
+    p.add_argument("--ssl-ca", dest="ssl_ca", default=None, help="Sunucunun CA sertifika dosyası")
 
 
 def build_parser() -> argparse.ArgumentParser:

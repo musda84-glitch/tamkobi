@@ -43,8 +43,8 @@ def _settings(req: DbTarget) -> Dict[str, Any]:
                 "user": req.db_user,
                 "password": req.db_password,
                 "db": req.db_name,
-                # Remote targets are encrypted unless the admin explicitly opts out.
-                "ssl_mode": req.ssl_mode or db_ssl.default_mode(req.db_host),
+                # A target on another host is verified unless the admin picks otherwise.
+                "ssl_mode": (req.ssl_mode or "").strip() or db_ssl.default_mode(req.db_host),
                 "ssl_ca": req.ssl_ca,
             }
         )

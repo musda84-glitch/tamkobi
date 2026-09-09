@@ -19,19 +19,20 @@ FLUSH PRIVILEGES;
 
 ## Bağlantı şifrelemesi (TLS)
 
-Şifre ve tüm ERP verisi bu bağlantıdan geçtiği için, sunucu bu makinede değilse bağlantı şifrelenmelidir. Üç mod var:
+Şifre ve tüm ERP verisi bu bağlantıdan geçtiği için, sunucu bu makinede değilse bağlantı şifrelenir **ve** sunucunun kimliği doğrulanır. Modlar MySQL'in kendi `--ssl-mode` değerleriyle aynı anlama gelir:
 
 | Mod | Anlamı |
 |---|---|
-| `disabled` | Şifresiz. Yalnızca aynı makinedeki (veya güvenli özel ağdaki) MySQL için |
-| `required` | Şifreli; sunucu sertifikası doğrulanmaz. MySQL 8'in kendi ürettiği sertifikayla da çalışır |
-| `verify_ca` | Şifreli; sunucu sertifikası verdiğiniz CA dosyasıyla doğrulanır |
+| `disabled` | Şifresiz. Yalnızca aynı makinedeki MySQL için |
+| `required` | Şifreli, sertifika doğrulanmaz. Araya giren biri kendi sertifikasını sunabileceği için yalnızca bağlantı VPN/özel ağ ile korunuyorsa seçin |
+| `verify_ca` | Şifreli; sertifika verdiğiniz CA dosyasıyla doğrulanır (sunucu adı kontrol edilmez) |
+| `verify_identity` | Şifreli; sertifika güvenilen bir CA'ya bağlanmalı **ve** yazdığınız sunucu adıyla eşleşmeli |
 
-Panelde, kurulum sihirbazında ve komut satırında uzak sunucular için varsayılan `required`'dır; `localhost`/`127.0.0.1` için `disabled`. `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri açıkça verilirse onlar geçerli olur; komut satırında `--ssl-mode` ve `--ssl-ca` bayrakları vardır. Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı şekilde şifreli kalır.
+Panelde, kurulum sihirbazında ve komut satırında başka bir sunucu için varsayılan `verify_identity`'dir; `localhost`/`127.0.0.1` için `disabled`. `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri açıkça verilirse onlar geçerli olur; komut satırında `--ssl-mode` ve `--ssl-ca` bayrakları vardır. Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı doğrulamayı yapar.
 
-Hiçbir yerde ayar yapılmamışsa ve veritabanı başka bir makinedeyse bağlantı şifresiz kurulur ama günlüğe bir kez uyarı yazılır (`MySQL connection to ... is not encrypted`).
+MySQL kendi imzaladığı sertifikayla kurulmuşsa (varsayılan kurulumların çoğu böyle) `verify_identity` "sertifika doğrulanamadı" hatası verir. İki seçeneğiniz var: sunucudaki `ca.pem` dosyasını TamKobi sunucusuna kopyalayıp `verify_ca` modunda o dosyayı vermek (önerilen), ya da bağlantı zaten özel bir ağdan geçiyorsa bilerek `required` seçmek. Hata mesajı bu iki yolu da hatırlatır.
 
-Sunucunuz TLS desteklemiyorsa `disabled` seçebilirsiniz; bu durumda bağlantıyı VPN veya özel ağ ile koruyun.
+Hiçbir yerde ayar yapılmamışsa ve veritabanı başka bir makinedeyse bağlantı kurulur ama günlüğe bir kez uyarı yazılır (`MySQL connection to ... is encrypted but unverified` / `is not encrypted`).
 
 ## Panelden taşıma
 
@@ -67,7 +68,7 @@ TARGET_MYSQL_PASSWORD='guclu-bir-sifre' \
 | `--no-repoint` | Sadece kopyalar; uygulama eski veritabanında kalır (deneme için) |
 | `--no-backup` | Kopyalama öncesi yedek dosyası yazmaz |
 | `--backup-dir DIR` | Yedek klasörünü değiştirir (varsayılan `backend/data/backups`, `MYSQL_BACKUP_DIR` ile de değişir) |
-| `--ssl-mode` / `--ssl-ca` | TLS modu ve CA dosyası (uzak sunucuda varsayılan `required`) |
+| `--ssl-mode` / `--ssl-ca` | TLS modu ve CA dosyası (başka bir sunucuda varsayılan `verify_identity`) |
 
 Panelden taşımada çalışan API kendini yeni veritabanına bağlar; bu adım başarısız olursa veriler ve ayar yerinde kalır ve panel "backend'i yeniden başlatın" uyarısı gösterir. Komut satırından taşıdıktan sonra çalışan süreç zaten eski bağlantıyı kullanmaya devam eder; backend'i yeniden başlatın:
 

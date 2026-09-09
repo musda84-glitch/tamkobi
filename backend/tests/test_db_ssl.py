@@ -16,6 +16,17 @@ os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000")
 import db_ssl  # noqa: E402
 
 
+@pytest.fixture()
+def ca_file(tmp_path):
+    """A real CA bundle, since ssl refuses to load an empty one."""
+    system = ssl.get_default_verify_paths().cafile
+    if not system or not Path(system).is_file():
+        pytest.skip("no system CA bundle to copy")
+    path = tmp_path / "ca.pem"
+    path.write_bytes(Path(system).read_bytes())
+    return str(path)
+
+
 @pytest.mark.parametrize(
     "value,expected",
     [
@@ -26,7 +37,8 @@ import db_ssl  # noqa: E402
         ("require", "required"),
         ("true", "required"),
         ("verify-ca", "verify_ca"),
-        ("verify_identity", "verify_ca"),
+        ("VERIFY_IDENTITY", "verify_identity"),
+        ("verify", "verify_identity"),
     ],
 )
 def test_normalize_mode(value, expected):
@@ -44,8 +56,8 @@ def test_local_hosts_default_to_plaintext(host):
 
 
 @pytest.mark.parametrize("host", ["db.firma.com", "10.0.0.5", "mysql"])
-def test_remote_hosts_default_to_tls(host):
-    assert db_ssl.default_mode(host) == "required"
+def test_other_machines_default_to_verified_tls(host):
+    assert db_ssl.default_mode(host) == "verify_identity"
 
 
 def test_disabled_mode_passes_no_ssl_argument():
@@ -59,6 +71,18 @@ def test_required_mode_encrypts_without_certificate_check():
     assert db_ssl.connect_kwargs({"ssl_mode": "required"})["ssl"] is not None
 
 
+def test_default_mode_verifies_the_chain_and_the_hostname():
+    ctx = db_ssl.context(db_ssl.default_mode("db.firma.com"))
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_verify_ca_checks_the_chain_but_not_the_name(ca_file):
+    ctx = db_ssl.context("verify_ca", ca_file)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is False
+
+
 def test_verify_ca_needs_an_existing_ca_file(tmp_path):
     with pytest.raises(ValueError, match="CA"):
         db_ssl.context("verify_ca")
@@ -66,25 +90,28 @@ def test_verify_ca_needs_an_existing_ca_file(tmp_path):
         db_ssl.context("verify_ca", str(tmp_path / "yok.pem"))
 
 
-def test_verify_ca_requires_the_certificate(tmp_path):
-    ca = tmp_path / "ca.pem"
-    ca.write_bytes(ssl.get_default_verify_paths().cafile and Path(ssl.get_default_verify_paths().cafile).read_bytes() or b"")
-    if not ca.stat().st_size:
-        pytest.skip("no system CA bundle to build a context from")
-    ctx = db_ssl.context("verify_ca", str(ca))
-    assert ctx.verify_mode == ssl.CERT_REQUIRED
+def test_verify_identity_may_use_the_system_store(ca_file):
+    assert db_ssl.context("verify_identity").check_hostname is True
+    assert db_ssl.context("verify_identity", ca_file).verify_mode == ssl.CERT_REQUIRED
+    with pytest.raises(ValueError, match="bulunamadı"):
+        db_ssl.context("verify_identity", "/tmp/yok-boyle-bir-ca.pem")
 
 
-def test_plaintext_warning_only_for_other_machines(caplog):
+def test_unverified_warning_only_for_other_machines(caplog):
     db_ssl._warned.clear()
     with caplog.at_level("WARNING", logger="tamkobi.db"):
-        db_ssl.warn_if_plaintext({"host": "127.0.0.1", "ssl_mode": "disabled"})
-        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "required"})
+        db_ssl.warn_if_unverified({"host": "127.0.0.1", "ssl_mode": "disabled"})
+        db_ssl.warn_if_unverified({"host": "db.firma.com", "ssl_mode": "verify_identity"})
         assert caplog.messages == []
-        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "disabled"})
-        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "disabled"})
+        db_ssl.warn_if_unverified({"host": "db.firma.com", "ssl_mode": "required"})
+        db_ssl.warn_if_unverified({"host": "db.firma.com", "ssl_mode": "disabled"})
     assert len(caplog.messages) == 1
-    assert "not encrypted" in caplog.messages[0]
+    assert "unverified" in caplog.messages[0]
+
+
+def test_explain_speaks_up_only_about_certificates():
+    assert db_ssl.explain(ValueError("Access denied for user")) == ""
+    assert "sertifika" in db_ssl.explain(ssl.SSLCertVerificationError("certificate verify failed"))
 
 
 def test_env_settings(monkeypatch):

@@ -1058,7 +1058,7 @@ class MySQLDatabase:
         if self._pool is None:
             import aiomysql
             cfg = {k: v for k, v in self._settings.items() if k in {"host", "port", "user", "password", "db", "charset", "autocommit"}}
-            db_ssl.warn_if_plaintext(self._settings)
+            db_ssl.warn_if_unverified(self._settings)
             cfg.update(db_ssl.connect_kwargs(self._settings))
             self._pool = await aiomysql.create_pool(minsize=1, maxsize=10, **cfg)
             async with self._pool.acquire() as conn:

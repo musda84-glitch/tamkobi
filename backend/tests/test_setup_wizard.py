@@ -72,12 +72,15 @@ def test_database_settings_keep_the_tls_mode(data_dir):
     assert public_defaults()["ssl_mode"] == "required"
 
 
-def test_wizard_encrypts_remote_hosts_by_default(data_dir, monkeypatch):
+def test_wizard_verifies_remote_hosts_by_default(data_dir, monkeypatch):
     from setup_install import DbProbe, _settings_from
 
     monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
     remote = _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app"))
-    assert remote["ssl_mode"] == "required"
+    assert remote["ssl_mode"] == "verify_identity"
+    # An empty mode from the form means "decide from the host", not "plaintext".
+    blank = _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode=""))
+    assert blank["ssl_mode"] == "verify_identity"
     local = _settings_from(DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app"))
     assert local["ssl_mode"] == "disabled"
     assert public_defaults()["ssl_mode"] == "disabled"
