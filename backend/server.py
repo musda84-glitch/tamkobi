@@ -89,6 +89,7 @@ import support_tickets
 import data_export
 import legal_docs
 import ubl_export
+import edoc_backup
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -187,6 +188,7 @@ async def startup_event():
     _asyncio.get_event_loop().create_task(applog.rotation_loop())
     import perfmon
     _asyncio.get_event_loop().create_task(perfmon.loop())
+    _asyncio.get_event_loop().create_task(edoc_backup.reminder_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -7762,6 +7764,7 @@ saas_docs.init(db)
 data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
 ubl_export.init(db)
+edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
@@ -7840,6 +7843,7 @@ app.include_router(demo.router)
 app.include_router(data_export.router)
 app.include_router(legal_docs.router)
 app.include_router(ubl_export.router)
+app.include_router(edoc_backup.router)
 
 @app.get("/")
 async def root():
