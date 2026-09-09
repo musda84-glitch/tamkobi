@@ -88,10 +88,17 @@ def test_store_settings_carries_tls_options():
 def test_store_settings_requires_ca_for_verification():
     with pytest.raises(ValueError, match="CA"):
         db_relocate.store_settings({"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_ca"})
+
+
+def test_reading_settings_survives_a_missing_ca_file():
+    """A CA that walked away must not break the panel that would fix it."""
+    cfg = db_relocate.store_settings(
+        {"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_ca", "ssl_ca": "/yok/ca.pem"}
+    )
+    assert cfg["ssl_ca"] == "/yok/ca.pem"
+    assert db_relocate.public_view(cfg)["ssl_mode"] == "verify_ca"
     with pytest.raises(ValueError, match="bulunamadı"):
-        db_relocate.store_settings(
-            {"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_identity", "ssl_ca": "/yok.pem"}
-        )
+        db_relocate.table_counts(cfg)
 
 
 def test_same_server_compares_host_port_and_database():

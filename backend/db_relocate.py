@@ -58,8 +58,12 @@ def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Port bir sayı olmalı.") from exc
     if not 1 <= port <= 65535:
         raise ValueError("Port 1-65535 aralığında olmalı.")
+    # Only the settings themselves are checked here. Whether the CA file is
+    # still on disk is a connection-time question, so reading a stored setting
+    # never fails and the panel can show what is wrong.
     ssl_mode, ssl_ca = db_ssl.settings(cfg)
-    db_ssl.context(ssl_mode, ssl_ca)  # rejects a mode we could not honour
+    if ssl_mode == db_ssl.VERIFY_CA and not ssl_ca:
+        raise ValueError("verify_ca modu için CA sertifika dosyası gerekir.")
     return {
         "host": host,
         "port": port,

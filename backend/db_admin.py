@@ -36,6 +36,8 @@ class MoveRequest(DbTarget):
 
 def _settings(req: DbTarget) -> Dict[str, Any]:
     try:
+        # An admin typing a CA path should hear about a typo now, not mid-copy.
+        db_ssl.context((req.ssl_mode or "").strip() or db_ssl.default_mode(req.db_host), req.ssl_ca)
         return db_relocate.store_settings(
             {
                 "host": req.db_host,
