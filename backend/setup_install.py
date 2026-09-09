@@ -306,6 +306,12 @@ async def setup_status():
 
 @router.post("/setup/test-db")
 async def setup_test_db(req: DbProbe):
+    if lock_installed():
+        raise HTTPException(status_code=409, detail="TamKobi zaten kurulu.")
+    from server import db
+
+    if await detect_installed(db):
+        raise HTTPException(status_code=409, detail="TamKobi zaten kurulu.")
     try:
         settings = _settings_from(req)
         return probe_database(settings)

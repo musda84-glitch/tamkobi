@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import axios from "axios";
 import { Check, ChevronRight, Database, Globe, Mail, ShieldCheck } from "lucide-react";
 import { API_URL } from "../api/client";
+import { readInstalledCache, resolveSetupStatus, writeInstalledCache } from "../utils/setupStatus";
 
 const emptyForm = {
   db_host: "127.0.0.1",
@@ -26,9 +27,11 @@ export default function SetupPage() {
 
   useEffect(() => {
     axios
-      .get(`${API_URL}/setup/status`)
+      .get(`${API_URL}/setup/status`, { timeout: 8000 })
       .then((r) => {
-        setStatus(r.data);
+        const next = resolveSetupStatus(r.data || {});
+        writeInstalledCache(next.installed);
+        setStatus({ ...r.data, installed: next.installed });
         const d = r.data?.defaults || {};
         setForm((f) => ({
           ...f,
@@ -38,7 +41,10 @@ export default function SetupPage() {
           db_user: d.db_user || f.db_user,
         }));
       })
-      .catch(() => setStatus({ installed: false }));
+      .catch(() => {
+        const next = resolveSetupStatus(null, { error: true, cached: readInstalledCache() });
+        setStatus({ installed: next.installed });
+      });
   }, []);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
