@@ -27,6 +27,7 @@ import mysql_backup
 from setup_state import data_dir, load_database_settings, sanitize_db_name, save_database_settings
 
 CORE_TABLES = ("docs", "meta_indexes")
+KNOWN_TABLES = ("docs", "meta_indexes", "system_logs")
 PASSWORD_ENV = "TARGET_MYSQL_PASSWORD"
 
 
@@ -151,6 +152,38 @@ def drop_database(cfg: Dict[str, Any]) -> None:
         conn.close()
 
 
+def target_state(counts: Optional[Dict[str, int]], error: Optional[str] = None) -> Dict[str, Any]:
+    """Decide whether a target may be overwritten silently.
+
+    A copy drops every table in the target schema, so only a schema that is
+    both readable and free of data counts as empty. An unreadable target is
+    never assumed empty.
+    """
+    readable = error is None and counts is not None
+    tables = dict(counts or {})
+    foreign = sorted(t for t in tables if t not in KNOWN_TABLES)
+    rows = sum(int(n or 0) for n in tables.values())
+    empty = readable and not rows and not foreign
+    if not readable:
+        summary = f"Hedef veritabanının içeriği okunamadı: {error}"
+    elif empty:
+        summary = "Hedef boş, taşımaya hazır"
+    elif foreign:
+        summary = "Hedefte TamKobi'ye ait olmayan tablolar var: " + ", ".join(foreign)
+    else:
+        summary = f"Hedefte zaten {rows} satır veri var (docs: {int(tables.get('docs') or 0)})"
+    return {
+        "tables": tables,
+        "readable": readable,
+        "error": error,
+        "foreign_tables": foreign,
+        "existing_rows": rows,
+        "existing_docs": int(tables.get("docs") or 0),
+        "empty": empty,
+        "summary": summary,
+    }
+
+
 def inspect_target(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Probe the target server, creating the database when the user may."""
     from setup_install import probe_database
@@ -158,16 +191,14 @@ def inspect_target(cfg: Dict[str, Any]) -> Dict[str, Any]:
     target = store_settings(cfg)
     info = probe_database(target)
     try:
-        counts = table_counts(target)
-    except Exception:
-        counts = {}
+        state = target_state(table_counts(target))
+    except Exception as exc:
+        state = target_state(None, error=str(exc))
     return {
         "target": public_view(target),
         "server_version": info.get("server_version"),
         "created": bool(info.get("created")),
-        "tables": counts,
-        "existing_docs": int(counts.get("docs") or 0),
-        "empty": not any(counts.get(t) for t in CORE_TABLES),
+        **state,
     }
 
 
@@ -204,8 +235,8 @@ def copy_database(
     probe = inspect_target(dst)
     if not probe["empty"] and not overwrite:
         raise ValueError(
-            f"Hedef veritabanında zaten veri var (docs: {probe['existing_docs']}). "
-            "Üzerine yazmak için 'üzerine yaz' seçeneğini kullanın."
+            f"{probe['summary']}. Taşıma hedefteki tüm tabloları siler; "
+            "devam etmek için 'üzerine yaz' seçeneğini kullanın."
         )
 
     snap, snapshot_path = _snapshot_source(src, backup_dir)

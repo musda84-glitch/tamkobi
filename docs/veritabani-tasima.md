@@ -25,7 +25,7 @@ Platform Yönetimi → **Veritabanı** (`/sistem/veritabani`, yalnızca süper a
 2. Hedef sunucu bilgilerini girip **Bağlantıyı test et**'e basın. Yetki varsa veritabanı yoksa oluşturulur; hedefte veri varsa uyarı çıkar.
 3. **Verileri taşı ve buraya bağlan**. Kopyalama öncesi mevcut veritabanının yedeği `backend/data/backups` klasörüne yazılır (Docker'da bu klasör konteynere bağlı olduğu için yedek kalıcıdır), kopyalama sonrası satır sayıları karşılaştırılır ve doğrulama geçerse uygulama yeniden başlatmaya gerek kalmadan yeni veritabanına bağlanır.
 
-Hedefte eski bir TamKobi kurulumu varsa taşımak için **üzerine yaz** kutusunu işaretlemeniz gerekir; bu, hedefteki tabloları silip yeniden oluşturur.
+Taşıma hedef şemadaki **tüm** tabloları silip yeniden oluşturduğu için, hedef ancak boş ve okunabilir olduğunda onaysız kabul edilir: içinde satır bulunan bir TamKobi kurulumu, TamKobi'ye ait olmayan tablolar (ör. başka bir uygulamanın tabloları) veya içeriği listelenemeyen bir şema için **üzerine yaz** kutusunu işaretlemeniz gerekir. Yetki eksikliği yüzünden hedefin içeriği okunamıyorsa taşıma boş varsayımıyla devam etmez.
 
 ## Komut satırından taşıma
 
@@ -52,7 +52,7 @@ TARGET_MYSQL_PASSWORD='guclu-bir-sifre' \
 | `--no-backup` | Kopyalama öncesi yedek dosyası yazmaz |
 | `--backup-dir DIR` | Yedek klasörünü değiştirir (varsayılan `backend/data/backups`, `MYSQL_BACKUP_DIR` ile de değişir) |
 
-Komut satırından taşıdıktan sonra çalışan süreç eski bağlantıyı kullanmaya devam eder; backend'i yeniden başlatın:
+Panelden taşımada çalışan API kendini yeni veritabanına bağlar; bu adım başarısız olursa veriler ve ayar yerinde kalır ve panel "backend'i yeniden başlatın" uyarısı gösterir. Komut satırından taşıdıktan sonra çalışan süreç zaten eski bağlantıyı kullanmaya devam eder; backend'i yeniden başlatın:
 
 ```bash
 docker compose up -d --no-deps --force-recreate backend

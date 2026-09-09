@@ -52,7 +52,8 @@ export const DatabasePanel = () => {
     try {
       const r = await axios.post(`${API_URL}/system/database/move`, { ...payload(), overwrite });
       setMoved(r.data);
-      toast.success("Veriler taşındı, uygulama yeni sunucuya bağlandı.");
+      if (r.data.rebound === false) toast.warning(r.data.rebind_error || "Veriler taşındı; backend'i yeniden başlatın.");
+      else toast.success("Veriler taşındı, uygulama yeni sunucuya bağlandı.");
       // The target is now the live database; a second submit with the same form would be a no-op.
       setForm(emptyTarget);
       setProbe(null);
@@ -138,14 +139,13 @@ export const DatabasePanel = () => {
         </div>
         {probe && (
           <div className={`rounded-xl px-3 py-2 ${probe.empty ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-900"}`} data-testid="db-probe">
-            MySQL {probe.server_version} · {probe.created ? "veritabanı oluşturuldu" : "veritabanı mevcut"} ·{" "}
-            {probe.empty ? "hedef boş, taşımaya hazır" : `hedefte ${tl(probe.existing_docs)} kayıt var`}
+            MySQL {probe.server_version} · {probe.created ? "veritabanı oluşturuldu" : "veritabanı mevcut"} · {probe.summary}
           </div>
         )}
         {probe && !probe.empty && (
           <label className="flex items-center gap-2 text-[11px] text-rose-700">
             <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} data-testid="db-overwrite" />
-            Hedefteki mevcut tabloları silip üzerine yaz
+            Hedefteki tüm tabloları silip üzerine yaz
           </label>
         )}
         <div className="flex flex-wrap justify-end gap-2">
@@ -172,6 +172,11 @@ export const DatabasePanel = () => {
             ))}
           </div>
           {moved.snapshot && <div className="text-[11px] text-slate-500 break-all">Yedek: {moved.snapshot}</div>}
+          {moved.rebound === false && (
+            <div className="bg-amber-50 text-amber-900 rounded-xl px-3 py-2 text-[11px]" data-testid="db-rebind-warning">
+              {moved.rebind_error}
+            </div>
+          )}
         </div>
       )}
     </div>

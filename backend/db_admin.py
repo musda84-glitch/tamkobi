@@ -98,10 +98,23 @@ async def system_database_move(req: MoveRequest, admin: dict = Depends(saas.requ
         except Exception as exc:  # pragma: no cover - surfaced to the admin UI
             logger.exception("database move failed")
             raise HTTPException(status_code=500, detail=f"Taşıma başarısız: {exc}") from exc
+        result["rebound"] = None
+        result["rebind_error"] = None
         if result.get("repointed"):
             import setup_install
 
-            await setup_install.rebind_runtime(db_relocate.store_settings(target))
+            # The data is copied and the settings are stored; a failed rebind only
+            # means this process still holds the old pool until it restarts.
+            try:
+                await setup_install.rebind_runtime(db_relocate.store_settings(target))
+                result["rebound"] = True
+            except Exception as exc:
+                logger.exception("database rebind failed after move")
+                result["rebound"] = False
+                result["rebind_error"] = (
+                    f"Veriler taşındı ve ayar kaydedildi, ancak çalışan API yeni veritabanına "
+                    f"bağlanamadı: {exc}. Backend'i yeniden başlatın."
+                )
         logger.warning(
             "database moved to %s by %s", result["target"], admin.get("email") or admin.get("id")
         )

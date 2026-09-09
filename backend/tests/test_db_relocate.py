@@ -82,6 +82,29 @@ def test_same_server_compares_host_port_and_database():
     assert db_relocate.same_server(a, {**a, "port": 3307}) is False
 
 
+def test_target_state_empty_only_when_readable_and_clean():
+    state = db_relocate.target_state({})
+    assert state["empty"] is True and state["readable"] is True
+    assert db_relocate.target_state({"docs": 0, "meta_indexes": 0, "system_logs": 0})["empty"] is True
+
+
+def test_target_state_unreadable_is_never_empty():
+    state = db_relocate.target_state(None, error="Access denied for user")
+    assert state["readable"] is False
+    assert state["empty"] is False
+    assert "okunamadı" in state["summary"]
+
+
+def test_target_state_flags_rows_and_foreign_tables():
+    rows = db_relocate.target_state({"docs": 12, "meta_indexes": 0})
+    assert rows["empty"] is False and rows["existing_docs"] == 12
+
+    foreign = db_relocate.target_state({"docs": 0, "wp_posts": 0})
+    assert foreign["empty"] is False
+    assert foreign["foreign_tables"] == ["wp_posts"]
+    assert "wp_posts" in foreign["summary"]
+
+
 def test_copy_refuses_the_current_server(data_dir):
     current = {"host": "db", "port": 3306, "user": "app", "password": "x", "db": "tamkobi"}
     with pytest.raises(ValueError, match="aynı"):
@@ -128,6 +151,15 @@ def test_live_copy_into_scratch_database(data_dir):
     except Exception as exc:  # pragma: no cover - user may lack CREATE DATABASE
         pytest.skip(f"cannot prepare scratch database: {exc}")
     try:
+        conn = mysql_backup.connect(db_relocate.dump_settings(target))
+        conn.cursor().execute("CREATE TABLE IF NOT EXISTS musteri_tablosu (id INT PRIMARY KEY)")
+        conn.close()
+        probe = db_relocate.inspect_target(target)
+        assert probe["empty"] is False
+        assert "musteri_tablosu" in probe["foreign_tables"]
+        with pytest.raises(ValueError, match="musteri_tablosu"):
+            db_relocate.copy_database(target, source=source, repoint=False, backup_dir=None)
+
         result = db_relocate.copy_database(target, source=source, overwrite=True, repoint=False, backup_dir=None)
         assert result["verified"] is True
         assert result["repointed"] is False
