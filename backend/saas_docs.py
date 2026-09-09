@@ -1,11 +1,12 @@
 """Abonelik e-Arşiv fatura PDF'i (reportlab) ve tek tıkla yenileme linki."""
 import io
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
 import jwt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -38,13 +39,31 @@ def _tl(n: float) -> str:
     return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
 
 
+_PDF_TITLES = {"e_invoice": "e-FATURA", "e_archive": "e-ARŞİV FATURA", "paper": "FATURA", "e_dispatch": "e-İRSALİYE"}
+_PDF_SCENARIO = {"e_invoice": "e-Fatura / Satış", "e_archive": "e-Arşiv / Satış", "paper": "Kağıt / Satış", "e_dispatch": "e-İrsaliye"}
+_PDF_FOOTER = {
+    "e_invoice": "e-Fatura – GİB e-Fatura uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.",
+    "e_archive": "e-Arşiv Fatura – GİB e-Arşiv uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.",
+    "paper": "Bu belge kağıt faturanın elektronik kopyasıdır.",
+    "e_dispatch": "e-İrsaliye – sevk belgesi kopyası.",
+}
+
+
+def _pdf_filename(inv: Dict[str, Any]) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(inv.get("invoice_number") or "fatura")).strip("._") or "fatura"
+    return f"{name}.pdf"
+
+
 def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[str, Any]) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
+    e_type = inv.get("e_type") or "e_archive"
+    title = _PDF_TITLES.get(e_type, "e-ARŞİV FATURA")
+    scenario = _PDF_SCENARIO.get(e_type, "e-Arşiv / Satış")
     c.setFillColor(colors.HexColor("#0f172a")); c.rect(0, h - 38 * mm, w, 38 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white); c.setFont(PDF_FONT_B, 20); c.drawString(18 * mm, h - 18 * mm, "e-ARŞİV FATURA")
-    c.setFont(PDF_FONT, 9); c.drawString(18 * mm, h - 25 * mm, f"Fatura No: {inv['invoice_number']}    Tarih: {inv['issue_date']}    Senaryo: e-Arşiv / Satış")
+    c.setFillColor(colors.white); c.setFont(PDF_FONT_B, 20); c.drawString(18 * mm, h - 18 * mm, title)
+    c.setFont(PDF_FONT, 9); c.drawString(18 * mm, h - 25 * mm, f"Fatura No: {inv.get('invoice_number', '')}    Tarih: {inv.get('issue_date', '')}    Senaryo: {scenario}")
     c.drawString(18 * mm, h - 30 * mm, f"ETTN / Takip: {inv.get('gib_tracking_id', '')}")
     c.setFillColor(colors.HexColor("#fbbf24")); c.setFont(PDF_FONT_B, 10); c.drawRightString(w - 18 * mm, h - 18 * mm, seller.get("name", ""))
     c.setFillColor(colors.white); c.setFont(PDF_FONT, 8)
@@ -53,7 +72,9 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     y = h - 52 * mm
     c.setFillColor(colors.HexColor("#0f172a")); c.setFont(PDF_FONT_B, 9); c.drawString(18 * mm, y, "ALICI")
     c.setFont(PDF_FONT, 9)
-    for i, line in enumerate([buyer.get("name", ""), f"VKN/TCKN: {buyer.get('tax_number_or_id') or '-'}", f"{buyer.get('city') or ''}  {buyer.get('email') or ''}", buyer.get("phone") or ""]):
+    buyer_tax = buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id") or "-"
+    buyer_name = buyer.get("name") or inv.get("contact_name") or ""
+    for i, line in enumerate([buyer_name, f"VKN/TCKN: {buyer_tax}", f"{buyer.get('city') or ''}  {buyer.get('email') or ''}", buyer.get("phone") or ""]):
         c.drawString(18 * mm, y - (5 + i * 4.5) * mm, str(line))
     y -= 32 * mm
     c.setFillColor(colors.HexColor("#f1f5f9")); c.rect(18 * mm, y - 2 * mm, w - 36 * mm, 8 * mm, fill=1, stroke=0)
@@ -62,28 +83,39 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     for x, t in cols:
         (c.drawRightString if t == "Tutar" else c.drawString)(x, y, t)
     y -= 8 * mm; c.setFont(PDF_FONT, 9); c.setFillColor(colors.black)
-    for it in inv["items"]:
-        c.drawString(20 * mm, y, str(it["name"])[:70]); c.drawString(118 * mm, y, f"{it['quantity']} {it.get('unit', '')}"); c.drawString(138 * mm, y, _tl(it["unit_price"])); c.drawString(160 * mm, y, f"%{it['vat_rate']}"); c.drawRightString(w - 20 * mm, y, _tl(it["total"]))
+    items = list(inv.get("items") or [])
+    vat_rates = {float(it.get("vat_rate") or 0) for it in items}
+    vat_label = f"Hesaplanan KDV (%{int(next(iter(vat_rates)))})" if len(vat_rates) == 1 else "Hesaplanan KDV"
+    if not vat_rates:
+        vat_label = "Hesaplanan KDV (%20)"
+    for it in items:
+        c.drawString(20 * mm, y, str(it.get("name") or "Kalem")[:70]); c.drawString(118 * mm, y, f"{it.get('quantity', 0)} {it.get('unit', '')}"); c.drawString(138 * mm, y, _tl(float(it.get("unit_price") or 0))); c.drawString(160 * mm, y, f"%{it.get('vat_rate', 0)}"); c.drawRightString(w - 20 * mm, y, _tl(float(it.get("total") or 0)))
         y -= 7 * mm
     y -= 4 * mm; c.setStrokeColor(colors.HexColor("#e2e8f0")); c.line(120 * mm, y + 3 * mm, w - 18 * mm, y + 3 * mm)
-    for label, val, bold in [("Ara Toplam", inv["subtotal"], False), ("Hesaplanan KDV (%20)", inv["vat_total"], False), ("Genel Toplam", inv["grand_total"], True), ("Ödenen", inv.get("paid_amount", inv["grand_total"]), False)]:
+    paid = inv["paid_amount"] if inv.get("paid_amount") is not None else inv.get("grand_total") or 0
+    for label, val, bold in [("Ara Toplam", float(inv.get("subtotal") or 0), False), (vat_label, float(inv.get("vat_total") or 0), False), ("Genel Toplam", float(inv.get("grand_total") or 0), True), ("Ödenen", float(paid or 0), False)]:
         c.setFont(PDF_FONT_B if bold else PDF_FONT, 10 if bold else 9); c.drawString(120 * mm, y, label); c.drawRightString(w - 20 * mm, y, _tl(val)); y -= 6 * mm
     c.setFont(PDF_FONT, 8); c.setFillColor(colors.HexColor("#64748b"))
-    c.drawString(18 * mm, 30 * mm, "Bu fatura online abonelik ödemesi karşılığında elektronik ortamda düzenlenmiştir; ödeme alınmıştır.")
+    if inv.get("source") == "subscription":
+        c.drawString(18 * mm, 30 * mm, "Bu fatura online abonelik ödemesi karşılığında elektronik ortamda düzenlenmiştir; ödeme alınmıştır.")
+    else:
+        c.drawString(18 * mm, 30 * mm, "Bu belge elektronik ortamda oluşturulmuştur.")
     c.drawString(18 * mm, 25 * mm, (inv.get("notes") or "")[:120])
-    c.drawString(18 * mm, 18 * mm, "e-Arşiv Fatura – GİB e-Arşiv uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.")
+    c.drawString(18 * mm, 18 * mm, _PDF_FOOTER.get(e_type, _PDF_FOOTER["e_archive"]))
     c.showPage(); c.save()
     return buf.getvalue()
 
 
 @router.get("/invoices/{invoice_id}/pdf")
-async def invoice_pdf(invoice_id: str):
+async def invoice_pdf(invoice_id: str, download: bool = Query(False)):
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
-    buyer = await _db.contacts.find_one({"_id": inv.get("contact_id")}) or {"name": inv.get("contact_name")}
-    return Response(build_invoice_pdf(inv, seller, buyer), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{inv["invoice_number"]}.pdf"'})
+    contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    buyer = contact or {"name": inv.get("contact_name"), "tax_number_or_id": inv.get("contact_tax_id")}
+    disp = "attachment" if download else "inline"
+    return Response(build_invoice_pdf(inv, seller, buyer), media_type="application/pdf", headers={"Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"'})
 
 
 # ---------------- Yenileme linki ----------------

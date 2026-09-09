@@ -88,6 +88,7 @@ import addons
 import support_tickets
 import data_export
 import legal_docs
+import ubl_export
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -7760,6 +7761,7 @@ saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.s
 saas_docs.init(db)
 data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
+ubl_export.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
@@ -7837,6 +7839,7 @@ app.include_router(platform_mail.router)
 app.include_router(demo.router)
 app.include_router(data_export.router)
 app.include_router(legal_docs.router)
+app.include_router(ubl_export.router)
 
 @app.get("/")
 async def root():
