@@ -88,6 +88,9 @@ export function lineFromProduct(prod, { invoiceType = "sales", quantity = 1 } = 
     unit_price: price,
     vat_rate: prod.vat_rate ?? 20,
     is_service: prod.type === "service",
+    gtip: prod.gtip || "",
+    origin_country: prod.origin_country || "",
+    barcode: prod.barcode || "",
   }, "unit_price");
 }
 

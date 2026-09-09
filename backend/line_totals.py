@@ -157,11 +157,38 @@ def pick_fields(item: Mapping[str, Any], fields: Iterable[str]) -> Dict[str, Any
 INVOICE_ITEM_FIELDS = (
     "product_id", "name", "quantity", "unit", "unit_price", "unit_price_incl",
     "vat_rate", "discount_percent", "discount_rate", "total", "total_incl",
-    "vat_amount", "is_service",
+    "vat_amount", "is_service", "sku", "barcode", "gtip", "origin_country",
+    "net_weight", "landed_unit_try", "note",
 )
 
 ORDER_ITEM_FIELDS = (
-    "product_id", "product_name", "sku", "quantity", "unit", "unit_price",
-    "unit_price_incl", "vat_rate", "discount_rate", "total", "total_incl",
-    "vat_amount", "is_service",
+    "product_id", "product_name", "sku", "barcode", "quantity", "unit",
+    "unit_price", "unit_price_incl", "vat_rate", "discount_rate", "total",
+    "total_incl", "vat_amount", "is_service", "note", "price_includes_vat",
 )
+
+
+def order_items_to_invoice_items(items: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Copy order lines onto invoice lines, preserving VAT, discount and dual prices.
+
+    Canonical stored unit_price is always KDV hariç. Legacy B2B lines with
+    price_includes_vat and no unit_price_incl are treated as gross.
+    Missing vat_rate falls back to 20% (invoice default), not a hardcoded overwrite
+    of an explicit 0 / 1 / 10.
+    """
+    out: List[Dict[str, Any]] = []
+    for itm in items or []:
+        d = dict(itm)
+        d["name"] = d.get("name") or d.get("product_name") or "Kalem"
+        d["product_name"] = d.get("product_name") or d.get("name")
+        d.setdefault("unit", "Adet")
+        includes = bool(d.get("price_includes_vat"))
+        has_incl = d.get("unit_price_incl") not in (None, "")
+        mode = "incl" if includes and not has_incl else "excl"
+        enrich_line(d, price_mode=mode, default_vat=20.0)
+        d["discount_percent"] = d.get("discount_rate") or 0
+        row = pick_fields(d, INVOICE_ITEM_FIELDS)
+        if "name" not in row:
+            row["name"] = d["name"]
+        out.append(row)
+    return out
