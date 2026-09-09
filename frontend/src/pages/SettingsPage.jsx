@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins } from "lucide-react";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, EyeOff } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Download } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { SmsCenter } from "../components/SmsCenter";
@@ -30,6 +31,10 @@ import { PrivacySettings } from "../components/PrivacySettings";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const TABS = [["company", "Şirket Bilgileri", Building2], ["privacy", "Gizlilik", EyeOff], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+import { DataExportPanel } from "../components/DataExportPanel";
+
+const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["privacy", "Verilerimi İndir", Download], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -364,6 +369,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
           {tab === "units" && <UnitsCategories companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
+          {tab === "privacy" && <DataExportPanel />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
           {tab === "modules" && <ModuleOrder />}
