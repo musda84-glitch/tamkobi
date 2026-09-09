@@ -66,7 +66,7 @@ export default function MyAttendancePage() {
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div><h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Clock className="w-7 h-7 text-emerald-600" /> Mesaim</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
+        <div><h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-att-title"><Clock className="w-7 h-7 text-emerald-600 shrink-0" /> Personel Giriş Çıkış Kayıtları</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-att-month" />
       </div>
       {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800" data-testid="my-att-no-employee">Giriş/çıkış yapabilmek için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</div>}

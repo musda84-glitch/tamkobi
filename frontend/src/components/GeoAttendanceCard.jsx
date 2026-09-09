@@ -40,7 +40,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
           {st?.employee ? <span className="ml-2">· {st.employee.full_name}</span> : <span className="ml-2 text-amber-300">· Kullanıcınız bir personel kartına bağlı değil</span>}
         </div>
         {t && <div className="text-xs mt-1.5 flex gap-3" data-testid="geo-today"><span>Giriş: <b className="text-emerald-300">{t.check_in || "—"}</b></span><span>Çıkış: <b className="text-rose-300">{t.check_out || "—"}</b></span>{t.hours ? <span>Süre: <b>{t.hours} sa</b></span> : null}{t.overtime_hours ? <span className="text-indigo-300">+{t.overtime_hours} sa mesai</span> : null}</div>}
-        <a href="/mesai" className="inline-block text-[11px] text-emerald-300 hover:underline mt-1" data-testid="geo-my-attendance-link">Personel kendi giriş/çıkış ve mesai kayıtlarını "Mesaim" ekranından görür →</a>
+        <a href="/mesai" className="inline-block text-[11px] text-emerald-300 hover:underline mt-1" data-testid="geo-my-attendance-link">Personel kendi giriş/çıkış kayıtlarını Personel Giriş Çıkış Kayıtları ekranından görür →</a>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => act("check_in")} disabled={!!busy || !st?.location || !st?.employee || !!t?.check_in} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkin-btn">{busy === "check_in" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Giriş Yap</button>
