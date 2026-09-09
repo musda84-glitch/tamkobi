@@ -36,6 +36,7 @@ ADDON_PATHS: Tuple[Tuple[str, str], ...] = (
     ("/api/ai/cashflow-forecast", "ai.advisor"),
     ("/api/loans/extract", "ai.finance_docs"),
     ("/api/migration/ai-map", "ai.migration"),
+    ("/api/support", "support.tickets"),
 )
 
 

@@ -38,6 +38,7 @@ import LoansPage from "./pages/LoansPage";
 import ChequesPage from "./pages/ChequesPage";
 import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
+import SupportPage from "./pages/SupportPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
 import SystemLoginPage from "./pages/SystemLoginPage";
 import WebsiteAdminPage from "./pages/WebsiteAdminPage";
@@ -83,6 +84,8 @@ export default function App() {
             <Route path="/quotes" element={<ProjectsPage section="quotes" />} />
             <Route path="/projects" element={<ProjectsPage section="projects" />} />
             <Route path="/surveys" element={<ProjectsPage section="surveys" />} />
+            <Route path="/support" element={<SupportPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />
             <Route path="/teklif/:token" element={<QuoteApprovalPage />} />

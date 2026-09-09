@@ -85,6 +85,7 @@ import applog
 
 applog.setup_logging()
 import addons
+import support_tickets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -7744,6 +7745,7 @@ rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 platform_mail.init(db)
 addons.init(db)
+support_tickets.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
@@ -7810,6 +7812,7 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(addons.router)
+app.include_router(support_tickets.router)
 app.include_router(saas_billing.router)
 app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)

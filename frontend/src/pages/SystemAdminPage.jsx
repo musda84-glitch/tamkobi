@@ -17,6 +17,7 @@ import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
 import { QuotasPanel } from "../components/saas/QuotasPanel";
 import { AddonsPanel } from "../components/saas/AddonsPanel";
+import { SupportTicketsPanel } from "../components/saas/SupportTicketsPanel";
 
 const navTitle = (pathname, page) => {
   const hit = SYSTEM_NAV.find(([p]) => p === pathname.replace(/\/+$/, "") || p === `/sistem/${page}` || (p === "/sistem" && !page));
@@ -65,7 +66,7 @@ export default function SystemAdminPage({ section: sectionFromRoute }) {
     ayarlar: <PlatformSettingsPanel />,
   };
   return (
-    <SystemLayout pendingCount={overview?.pending_requests || 0}>
+    <SystemLayout pendingCount={overview?.pending_requests || 0} openTickets={overview?.open_tickets || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
@@ -82,6 +83,7 @@ export default function SystemAdminPage({ section: sectionFromRoute }) {
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
           {page === "araclar" && <AddonsPanel />}
+          {page === "destek" && <SupportTicketsPanel onOpenCompany={setOpenId} />}
           {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}
