@@ -382,7 +382,8 @@ export default function OrdersB2BPage() {
                         </div>); })()}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {ord.total_amount?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {(ord.grand_total ?? ord.total_amount)?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {Number(ord.vat_total) > 0 && <div className="text-[10px] font-semibold text-slate-400">KDV dahil</div>}
                     </td>
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (

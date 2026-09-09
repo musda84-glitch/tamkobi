@@ -16,6 +16,9 @@ export function DocumentLineEditor({
   disabled = false,
   onAdd,
   testIdPrefix = "doc-line",
+  defaultVat = 20,
+  getProductExtra,
+  renderRowExtra,
 }) {
   const rows = (items || []).map((it) => hydrateLine(it));
   const setRows = (next) => onChange(next.map((it) => computeLine(it)));
@@ -46,7 +49,7 @@ export function DocumentLineEditor({
 
   const add = () => {
     if (onAdd) onAdd();
-    else setRows([...rows, computeLine(emptyLine())]);
+    else setRows([...rows, computeLine(emptyLine({ vat_rate: defaultVat }))]);
   };
 
   const remove = (index) => {
@@ -75,7 +78,8 @@ export function DocumentLineEditor({
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((item, idx) => (
-              <tr key={idx} className="align-top" data-testid={`${testIdPrefix}-item-${idx}`}>
+              <React.Fragment key={idx}>
+              <tr className="align-top" data-testid={`${testIdPrefix}-item-${idx}`}>
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1.5">
                     {allowService && (
@@ -111,6 +115,7 @@ export function DocumentLineEditor({
                             placeholder="Ürün ara (ad / SKU / barkod)..."
                             getLabel={(p) => p.name}
                             getSub={(p) => `SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"} • ${(p.sale_price || 0).toLocaleString("tr-TR")} ₺`}
+                            getExtra={getProductExtra}
                             getImage={(p) => p.image_url}
                             onChange={(id) => pickProduct(idx, id)}
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
@@ -151,7 +156,7 @@ export function DocumentLineEditor({
                     value={item.unit_price}
                     onChange={(e) => patch(idx, "unit_price", e.target.value)}
                     className={`${inp} text-right`}
-                    data-testid={kind === "order" ? `new-order-price-${idx}` : `${testIdPrefix}-price-excl-${idx}`}
+                    data-testid={kind === "order" ? `new-order-price-${idx}` : testIdPrefix === "inv-item" ? `inv-item-unit-price-${idx}` : `${testIdPrefix}-price-excl-${idx}`}
                   />
                 </td>
                 <td className="px-2 py-1.5">
@@ -210,6 +215,16 @@ export function DocumentLineEditor({
                   </button>
                 </td>
               </tr>
+              {renderRowExtra ? (
+                <tr className="bg-slate-50/60">
+                  <td colSpan={9} className="px-2 pb-2 pt-0">
+                    {renderRowExtra(item, idx, {
+                      patch: (field, value) => patch(idx, field, value),
+                    })}
+                  </td>
+                </tr>
+              ) : null}
+              </React.Fragment>
             ))}
           </tbody>
         </table>

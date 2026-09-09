@@ -431,16 +431,8 @@ class CargoShipment(BaseDocument):
 class OrderItem(BaseModel):
     product_id: Optional[str] = ""
     product_name: str
-    sku: str
-    barcode: Optional[str] = ""
-    quantity: int
-    unit_price: float
-    total: float
-    note: Optional[str] = None
-    vat_rate: float = 20
-    note: Optional[str] = None
-    price_includes_vat: bool = False
     sku: str = ""
+    barcode: Optional[str] = ""
     quantity: float = 1
     unit: str = "Adet"
     unit_price: float = 0.0
@@ -451,12 +443,13 @@ class OrderItem(BaseModel):
     total_incl: float = 0.0
     vat_amount: float = 0.0
     is_service: bool = False
+    note: Optional[str] = None
+    price_includes_vat: bool = False
 
 class Order(BaseDocument):
     company_id: str
     order_number: Optional[str] = None
     customer_order_number: Optional[str] = ""
-    channel: str = "manual"  # manual, b2b, trendyol, hepsiburada, amazon, shopify
     channel: str = "manual"  # manual, saha, b2b, trendyol, hepsiburada, amazon, shopify
     customer_name: str
     customer_email: Optional[str] = None

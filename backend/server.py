@@ -31,6 +31,7 @@ from line_totals import (
     enrich_items,
     invoice_document_totals,
     order_document_totals,
+    order_items_to_invoice_items,
     INVOICE_ITEM_FIELDS,
     ORDER_ITEM_FIELDS,
     pick_fields,
@@ -1901,13 +1902,25 @@ async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[Ord
         vat_rate = float(p.get("vat_rate", 20) or 0)
         includes = bool(p.get("price_includes_vat"))
         line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
-        items.append(OrderItem(
-            product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""),
-            barcode=p.get("barcode") or "",
-            quantity=int(q), unit_price=price, total=round(price * q, 2),
-            vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
-        ))
-        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""), quantity=int(q), unit_price=price, total=round(price * q, 2)))
+        d = {
+            "product_id": p["_id"],
+            "product_name": p.get("name"),
+            "sku": p.get("sku") or "",
+            "barcode": p.get("barcode") or "",
+            "quantity": q,
+            "unit": p.get("unit") or "Adet",
+            "unit_price": price,
+            "vat_rate": vat_rate,
+            "discount_rate": 0,
+            "note": line_note or None,
+            "price_includes_vat": includes,
+            "is_service": p.get("type") == "service",
+        }
+        enrich_line(d, price_mode="incl" if includes else "excl", default_vat=vat_rate)
+        payload = pick_fields(d, ORDER_ITEM_FIELDS)
+        if "product_name" not in payload:
+            payload["product_name"] = p.get("name") or "Kalem"
+        items.append(OrderItem(**payload))
     return items
 
 async def _b2b_owned_order(token: str, order_id: str) -> tuple:
@@ -2037,9 +2050,6 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["notes"] = req.get("note") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
-    update: Dict[str, Any] = {"items": [it.model_dump() for it in items], "total_amount": total, "updated_at": datetime.now(timezone.utc).isoformat()}
-    if "note" in req:
-        update["notes"] = req.get("note") or ""
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
     await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {total:,.2f} ₺ olacak şekilde düzenledi.", order_id)
@@ -6357,22 +6367,9 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         _oc = {"_id": str(uuid.uuid4()), "company_id": order.get("company_id"), "type": "customer", "name": order.get("customer_name") or "Pazaryeri Müşterisi", "tax_number_or_id": "11111111111", "phone": order.get("customer_phone"), "email": order.get("customer_email"), "address": order.get("shipping_address"), "city": order.get("city"), "balance": 0.0, "is_e_invoice_user": False, "created_at": datetime.now(timezone.utc).isoformat()}
         await db.contacts.insert_one(_oc)
 
-    inv_items = []
-    for itm in order.get("items", []):
-        inv_items.append({
-            "product_id": itm.get("product_id"),
-            "name": itm.get("product_name"),
-            "quantity": itm.get("quantity", 1),
-            "unit": "Adet",
-            "unit_price": itm.get("unit_price", 0),
-            "vat_rate": 20,
-            "discount_percent": 0.0,
-            "total": itm.get("total", 0),
-            "note": (str(itm.get("note") or itm.get("line_note") or "").strip()[:500] or None),
-            "sku": itm.get("sku") or "",
-            "barcode": itm.get("barcode") or "",
-        })
-    await _fill_stock_codes(order.get("company_id"), inv_items)
+    rows = order_items_to_invoice_items(order.get("items", []))
+    await _fill_stock_codes(order.get("company_id"), rows)
+    inv_items = [it.model_dump() for it in _invoice_item_models(rows)]
 
     inv_totals = invoice_document_totals(inv_items)
 
@@ -6395,6 +6392,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         "vat_total": inv_totals["vat_total"],
         "discount_total": inv_totals["discount_total"],
         "grand_total": inv_totals["grand_total"],
+        "price_mode": "excl",
         "currency": "TRY",
         "status": "approved",
         "gib_status": "GİB'e Gönderildi",

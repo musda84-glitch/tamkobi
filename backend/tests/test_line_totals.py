@@ -68,3 +68,56 @@ def test_order_document_totals():
     assert vat == 45.0  # 40 + 5
     assert grand == 295.0
     assert disc == 0.0
+
+
+def test_order_items_to_invoice_keeps_line_vat_and_discount():
+    from line_totals import order_items_to_invoice_items
+    rows = order_items_to_invoice_items([
+        {"product_name": "%10", "quantity": 1, "unit_price": 200, "vat_rate": 10, "discount_rate": 0, "total": 200},
+        {"product_name": "iskontolu", "quantity": 2, "unit_price": 100, "vat_rate": 20, "discount_rate": 10},
+    ])
+    a, b = rows
+    assert a["vat_rate"] == 10
+    assert a["total"] == 200.0
+    assert abs(a["total_incl"] - 220) < 0.05
+    assert abs(a["unit_price_incl"] - 220) < 0.05
+    assert b["total"] == 180.0
+    assert b["total_incl"] == 216.0
+    assert b["discount_rate"] == 10
+    t = invoice_document_totals(rows)
+    assert t["subtotal"] == 380.0
+    assert t["vat_total"] == 56.0
+    assert t["grand_total"] == 436.0
+
+
+def test_order_items_to_invoice_gross_b2b_line():
+    from line_totals import order_items_to_invoice_items
+    rows = order_items_to_invoice_items([
+        {"product_name": "B2B brüt", "quantity": 1, "unit_price": 120, "vat_rate": 20, "price_includes_vat": True},
+    ])
+    it = rows[0]
+    assert abs(it["unit_price"] - 100) < 0.05
+    assert abs(it["unit_price_incl"] - 120) < 0.05
+    assert it["total"] == 100.0
+    assert it["total_incl"] == 120.0
+
+
+def test_order_items_missing_vat_defaults_20_not_overwrite_zero():
+    from line_totals import order_items_to_invoice_items
+    missing = order_items_to_invoice_items([{"product_name": "eski", "quantity": 1, "unit_price": 100}])[0]
+    assert missing["vat_rate"] == 20
+    assert missing["total_incl"] == 120.0
+    zero = order_items_to_invoice_items([{"product_name": "ihracat", "quantity": 1, "unit_price": 100, "vat_rate": 0}])[0]
+    assert zero["vat_rate"] == 0
+    assert zero["total_incl"] == 100.0
+    items = [
+        {"product_name": "A", "quantity": 2, "unit_price": 100, "vat_rate": 20, "discount_rate": 0},
+        {"product_name": "B", "quantity": 1, "unit_price": 50, "vat_rate": 10, "discount_rate": 0},
+    ]
+    for it in items:
+        enrich_line(it, default_vat=0)
+    sub, vat, disc, grand = order_document_totals(items)
+    assert sub == 250.0
+    assert vat == 45.0  # 40 + 5
+    assert grand == 295.0
+    assert disc == 0.0

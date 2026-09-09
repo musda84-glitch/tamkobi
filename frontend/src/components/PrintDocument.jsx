@@ -113,7 +113,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
-            <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim Fiyat</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
+            <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}{!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className="text-right p-2">Tutar Hariç</th>}{!hideLine && !hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar Dahil</th>}{!hideLine && hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
               const img = it.image_url || prod.image_url;
@@ -138,8 +138,10 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                   </td>
                   <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
                   {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
+                  {!hideLine && !hideVat && <td className="p-2 text-right">{fmtM(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))}</td>}
                   {!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}
                   {!hideLine && <td className="p-2 text-right font-semibold">{fmtM(it.total)}</td>}
+                  {!hideLine && !hideVat && <td className="p-2 text-right font-bold">{fmtM(it.total_incl ?? (Number(it.total || 0) * (1 + Number(it.vat_rate || 0) / 100)))}</td>}
                 </tr>
               );
             })}</tbody>
@@ -147,10 +149,10 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
           {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
             {doc.discount_total > 0 && <div className="flex justify-between text-rose-600"><span>İskonto</span><span>-{fmtM(doc.discount_total)}</span></div>}
-            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam</span><span>{fmtM(doc.subtotal)}</span></div>}
+            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam (KDV Hariç)</span><span>{fmtM(doc.subtotal)}</span></div>}
             {!hideVat && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmtM(doc.vat_total)}</span></div>}
             {doc.withholding_amount > 0 && <div className="flex justify-between text-indigo-700"><span>Tevkifat</span><span>-{fmtM(doc.withholding_amount)}</span></div>}
-            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM"}</span><span style={{ color }}>{fmtM(total)}</span></div>
+            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM (KDV Dahil)"}</span><span style={{ color }}>{fmtM(total)}</span></div>
           </div></div>}
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">

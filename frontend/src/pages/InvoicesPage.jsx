@@ -12,6 +12,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { SearchSelect } from "../components/SearchSelect";
+import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
@@ -184,111 +185,35 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [activeCompany, filterType]);
   useEffect(() => { loadData(); }, [loadData]);
 
-  const handleAddItem = () => {
-    setFormData({
-      ...formData,
-      items: [
-        ...formData.items,
-        { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: formData.trade_kind === "export" ? 0 : 20, total: 0, gtip: "", origin_country: "" },
-      ]
-    });
-  };
-
   const handleScanAddItem = (code) => {
     const c = String(code || "").trim();
     const prod = products.find((p) => p.barcode === c || p.sku === c || (p.variants || []).some((v) => v.barcode === c));
     if (!prod) { toast.error(`Barkod eşleşmedi: ${c}`); return; }
     const pid = prod.id || prod._id;
     const existing = formData.items.findIndex((it) => it.product_id === pid);
-    if (existing >= 0) { handleItemChange(existing, "quantity", Number(formData.items[existing].quantity || 0) + 1); toast.success(`${prod.name} miktarı +1`); return; }
-    const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name);
-    if (emptyIdx >= 0) { handleItemProductSelect(emptyIdx, pid, c); }
-    else {
-      const price = buyPrice(prod, formData.invoice_type);
-      const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
-      setFormData((f) => ({
-        ...f,
-        items: [...f.items, {
-          ...lineFromProduct(prod, { invoiceType: f.invoice_type }),
-          name: v ? `${prod.name} - ${v.name}` : prod.name,
-          unit_price: v?.price || v?.sale_price || price,
-          total: v?.price || v?.sale_price || price,
-          sku: v?.sku || prod.sku || "",
-          barcode: v?.barcode || prod.barcode || "",
-          gtip: prod.gtip || "",
-          origin_country: prod.origin_country || "",
-        }],
-      }));
+    if (existing >= 0) {
+      const items = formData.items.map((it, i) => (i === existing ? computeLine({ ...it, quantity: Number(it.quantity || 0) + 1 }, "quantity") : it));
+      setFormData({ ...formData, items });
+      toast.success(`${prod.name} miktarı +1`);
+      return;
+    }
+    const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name && !it.product_name);
+    const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
+    const line = computeLine({
+      ...lineFromProduct(prod, { invoiceType: formData.invoice_type }),
+      name: v ? `${prod.name} - ${v.name}` : prod.name,
+      product_name: v ? `${prod.name} - ${v.name}` : prod.name,
+      unit_price: v?.price || v?.sale_price || buyPrice(prod, formData.invoice_type),
+      sku: v?.sku || prod.sku || "",
+      barcode: v?.barcode || prod.barcode || "",
+      vat_rate: formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : (prod.vat_rate || 20),
+    }, "unit_price");
+    if (emptyIdx >= 0) {
+      setFormData({ ...formData, items: formData.items.map((it, i) => (i === emptyIdx ? line : it)) });
+    } else {
+      setFormData((f) => ({ ...f, items: [...f.items, line] }));
     }
     toast.success(`${prod.name} eklendi`);
-  };
-
-  const handleItemProductSelect = (index, productId, scanned) => {
-    const prod = products.find(p => (p.id === productId || p._id === productId));
-    const items = [...formData.items];
-    if (prod) {
-      const price = buyPrice(prod, formData.invoice_type);
-      const code = String(scanned || "").trim();
-      const v = code ? (prod.variants || []).find((x) => x.barcode === code || x.sku === code) : null;
-      const unit = v?.price || v?.sale_price || price;
-      items[index] = {
-        ...lineFromProduct(prod, { invoiceType: formData.invoice_type, quantity: items[index]?.quantity || 1 }),
-        name: v ? `${prod.name} - ${v.name}` : prod.name,
-        unit_price: unit,
-        vat_rate: formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : (prod.vat_rate || 20),
-        sku: v?.sku || prod.sku || "",
-        barcode: v?.barcode || prod.barcode || "",
-        gtip: prod.gtip || "",
-        origin_country: prod.origin_country || "",
-      };
-      items[index].total = netPrice(items[index]) * Number(items[index].quantity || 1);
-    }
-    setFormData({ ...formData, items });
-  };
-
-  const handleItemChange = (index, field, val) => {
-    const items = [...formData.items];
-    if (field === "line_amount") {
-      const qty = Number(items[index].quantity || 0);
-      const disc = 1 - Number(items[index].discount_rate || 0) / 100;
-      const vatF = 1 + Number(items[index].vat_rate || 0) / 100;
-      const entered = Number(val || 0);
-      const factor = qty * disc;
-      items[index].unit_price = factor ? Number((entered / factor).toFixed(4)) : 0;
-      items[index].total = formData.price_mode === "incl" ? entered / vatF : entered;
-    } else {
-      items[index][field] = val;
-      if (["quantity", "unit_price", "discount_rate", "vat_rate"].includes(field)) {
-        items[index].total = Number(items[index].quantity || 0) * netPrice(items[index]) * (1 - Number(items[index].discount_rate || 0) / 100);
-      }
-    }
-    setFormData({ ...formData, items });
-  };
-
-  const handleRemoveItem = (index) => {
-    if (formData.items.length <= 1) return;
-    const items = formData.items.filter((_, i) => i !== index);
-    setFormData({ ...formData, items });
-  };
-
-  const netPrice = (item, mode = formData.price_mode) => mode === "incl" ? Number(item.unit_price || 0) / (1 + Number(item.vat_rate || 0) / 100) : Number(item.unit_price || 0);
-  const lineAmount = (item, mode = formData.price_mode) => {
-    const net = Number(item.total || 0);
-    const gross = net * (1 + Number(item.vat_rate || 0) / 100);
-    const v = mode === "incl" ? gross : net;
-    return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0;
-  };
-  const convertPriceMode = (items, from, to) => {
-    if (from === to) return items;
-    return items.map((it) => {
-      const vatF = 1 + Number(it.vat_rate || 0) / 100;
-      let unit = Number(it.unit_price || 0);
-      if (from === "excl" && to === "incl") unit *= vatF;
-      if (from === "incl" && to === "excl") unit /= vatF;
-      const next = { ...it, unit_price: Number(unit.toFixed(4)) };
-      next.total = Number(next.quantity || 0) * netPrice(next, to) * (1 - Number(next.discount_rate || 0) / 100);
-      return next;
-    });
   };
 
   const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
@@ -354,7 +279,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
     try {
       const t = calculateTotals();
-      if (formData.items.some((it) => !it.name)) { toast.error("Her satır için ürün seçin ya da hizmet adı yazın."); return; }
+      if (formData.items.some((it) => !(it.name || it.product_name))) { toast.error("Her satır için ürün seçin ya da hizmet adı yazın."); return; }
       const payload = {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...formData,
@@ -362,6 +287,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           const line = computeLine(it);
           return { ...line, unit_price: Number(Number(line.unit_price).toFixed(4)), product_id: it.is_service ? "" : it.product_id };
         }),
+        price_mode: "excl",
         withholding_rate: Number(formData.withholding_rate || 0),
         withholding_code: formData.withholding_code || null,
         general_discount_amount: t.gd,
@@ -781,12 +707,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     </select>
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Birim Fiyat Girişi</label>
-                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[11px] font-bold">
-                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m, items: convertPriceMode(formData.items, formData.price_mode, m) })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
-                      {[["excl", "KDV Hariç"], ["incl", "KDV Dahil"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, price_mode: m })} className={`flex-1 py-2 ${formData.price_mode === m ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid={`inv-price-mode-${m}`}>{l}</button>)}
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">Birim fiyat veya adet toplamı bu moda göre girilir.</p>
+                    <label className="block font-semibold text-slate-700 mb-1">Satır fiyatları</label>
+                    <p className="text-[11px] text-slate-500 leading-snug bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-line-price-hint">
+                      KDV’siz / KDV’li birim fiyat, iskonto ve KDV oranı her satırda ayrı düzenlenir; tutarlar otomatik hesaplanır.
+                    </p>
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Kayıt Durumu</label>
@@ -854,124 +778,43 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <span className="font-bold text-slate-900">Fatura Kalemleri</span>
                 </div>
                 <div className="flex justify-end"><ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle (kamera)" /></div>
-
-                <div className="grid grid-cols-12 gap-2 px-2.5 text-[10px] uppercase font-semibold text-slate-400">
-                  <div className="col-span-3">Ürün / Hizmet</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center text-rose-500">İskonto %</div><div className="col-span-2 text-right">Birim Fiyat ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1">KDV</div><div className="col-span-2 text-right">Adet Toplam ({formData.price_mode === "incl" ? "KDV Dahil" : "KDV Hariç"})</div><div className="col-span-1"></div>
-                </div>
-                {formData.items.map((item, idx) => {
-                  const picked = !item.is_service && item.product_id ? products.find((p) => (p.id || p._id) === item.product_id) : null;
-                  const costs = picked?.purchase_costs || [];
-                  return (
-                  <div key={idx} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 space-y-1.5">
-                  <div className="grid grid-cols-12 gap-2 items-start">
-                    <div className="col-span-3 flex items-start gap-1.5">
-                      <button type="button" onClick={() => { const items = [...formData.items]; items[idx] = { ...items[idx], is_service: !items[idx].is_service, product_id: "", name: items[idx].is_service ? "" : items[idx].name }; setFormData({ ...formData, items }); }} className={`shrink-0 w-7 h-7 rounded-md text-[10px] font-bold border ${item.is_service ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-500 border-slate-300"}`} title={item.is_service ? "Hizmet satırı (stok düşmez) – ürüne çevir" : "Ürün satırı – hizmete çevir"} data-testid={`inv-item-kind-${idx}`}>{item.is_service ? "H" : "Ü"}</button>
-                      {item.is_service ? (
-                        <input value={item.name} onChange={(e) => { const items = [...formData.items]; items[idx] = { ...items[idx], name: e.target.value }; setFormData({ ...formData, items }); }} placeholder="Hizmet açıklaması (örn. Danışmanlık hizmeti)" className="w-full bg-white border border-indigo-200 rounded p-1.5" data-testid={`inv-item-service-name-${idx}`} />
-                      ) : (
-                    <div className="col-span-3 flex-1 min-w-0"><SearchSelect
-                        value={item.product_id}
-                        options={products}
-                        placeholder="Ürün ara (ad / SKU / barkod)..."
-                        getLabel={(p) => p.name}
-                        getSub={(p) => `SKU ${p.sku} • ${p.barcode} • Stok ${p.stock_quantity} • satış ${moneyTry(p.sale_price)} ₺`}
-                        getExtra={(p) => purchaseCostText(p)}
-                        getImage={(p) => p.image_url}
-                        onChange={(id) => handleItemProductSelect(idx, id)}
-                        testId={`inv-item-product-${idx}`}
-                      /></div>)}
-                    </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        min="1"
-                        placeholder="Miktar"
-                        value={item.quantity}
-                        onChange={(e) => handleItemChange(idx, "quantity", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5 text-center"
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        placeholder="İsk. %"
-                        title="İskonto %"
-                        value={item.discount_rate || ""}
-                        onChange={(e) => handleItemChange(idx, "discount_rate", e.target.value)}
-                        className="w-full bg-white border border-rose-200 rounded p-1.5 text-center text-rose-700"
-                        data-testid={`inv-item-discount-${idx}`}
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="Birim Fiyat"
-                        value={item.unit_price}
-                        onChange={(e) => handleItemChange(idx, "unit_price", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5 text-right"
-                        data-testid={`inv-item-unit-price-${idx}`}
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <select
-                        value={item.vat_rate}
-                        onChange={(e) => handleItemChange(idx, "vat_rate", e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded p-1.5"
-                      >
-                        <option value="20">%20</option>
-                        <option value="10">%10</option>
-                        <option value="1">%1</option>
-                        <option value="0">%0</option>
-                      </select>
-                    </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="Adet toplam"
-                        title={formData.price_mode === "incl" ? "Satır tutarı (KDV dahil)" : "Satır tutarı (KDV hariç)"}
-                        value={lineAmount(item)}
-                        onChange={(e) => handleItemChange(idx, "line_amount", e.target.value)}
-                        className="w-full bg-white border border-emerald-200 rounded p-1.5 text-right font-bold text-slate-800"
-                        data-testid={`inv-item-line-amount-${idx}`}
-                      />
-                    </div>
-                    <div className="col-span-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="col-span-12 flex gap-2">
-                      <input value={item.gtip || ""} onChange={(e) => handleItemChange(idx, "gtip", e.target.value)} placeholder="GTIP" className="w-40 bg-white border border-slate-200 rounded p-1.5 font-mono text-[11px]" data-testid={`inv-item-gtip-${idx}`} />
-                      <input value={item.origin_country || ""} onChange={(e) => handleItemChange(idx, "origin_country", e.target.value)} placeholder="Menşe ülke" className="w-40 bg-white border border-slate-200 rounded p-1.5 text-[11px]" data-testid={`inv-item-origin-${idx}`} />
-                    </div>
-                  </div>
-                  {picked && (
-                    <div className="flex flex-wrap items-center gap-1 pl-8" data-testid={`inv-item-costs-${idx}`}>
-                      <span className="text-[10px] font-semibold text-amber-800">Önceki alış:</span>
-                      {Number(picked.purchase_price) > 0 && (
-                        <button type="button" onClick={() => handleItemChange(idx, "unit_price", picked.purchase_price)} className="px-1.5 py-0.5 rounded-md bg-white border border-amber-200 text-[10px] text-amber-900 font-semibold" data-testid={`inv-item-cost-card-${idx}`} title="Stok kartı alış fiyatı">kart {moneyTry(picked.purchase_price)} ₺</button>
-                      )}
-                      {costs.length === 0 && !(Number(picked.purchase_price) > 0) && <span className="text-[10px] text-slate-400">kayıt yok</span>}
-                      {costs.slice(0, 5).map((c, ci) => (
-                        <button key={`${c.invoice_number}-${ci}`} type="button" onClick={() => handleItemChange(idx, "unit_price", c.unit_price)} className="px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] text-amber-900" data-testid={`inv-item-cost-${idx}-${ci}`} title={`${c.invoice_number || ""} ${c.supplier || ""}`.trim()}>
-                          {c.date ? `${String(c.date).slice(8, 10)}.${String(c.date).slice(5, 7)} ` : ""}{moneyTry(c.unit_price)} ₺{c.supplier ? ` · ${c.supplier}` : ""}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  </div>
-                  );
-                })}
+                <DocumentLineEditor
+                  items={formData.items}
+                  onChange={(items) => setFormData({ ...formData, items })}
+                  products={products}
+                  kind="invoice"
+                  allowService
+                  invoiceType={formData.invoice_type}
+                  testIdPrefix="inv-item"
+                  defaultVat={formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : 20}
+                  getProductExtra={purchaseCostText}
+                  renderRowExtra={(item, idx, { patch }) => {
+                    const picked = !item.is_service && item.product_id ? products.find((p) => (p.id || p._id) === item.product_id) : null;
+                    const costs = picked?.purchase_costs || [];
+                    return (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap gap-2">
+                          <input value={item.gtip || ""} onChange={(e) => patch("gtip", e.target.value)} placeholder="GTIP" className="w-40 bg-white border border-slate-200 rounded p-1.5 font-mono text-[11px]" data-testid={`inv-item-gtip-${idx}`} />
+                          <input value={item.origin_country || ""} onChange={(e) => patch("origin_country", e.target.value)} placeholder="Menşe ülke" className="w-40 bg-white border border-slate-200 rounded p-1.5 text-[11px]" data-testid={`inv-item-origin-${idx}`} />
+                        </div>
+                        {picked && (
+                          <div className="flex flex-wrap items-center gap-1" data-testid={`inv-item-costs-${idx}`}>
+                            <span className="text-[10px] font-semibold text-amber-800">Önceki alış:</span>
+                            {Number(picked.purchase_price) > 0 && (
+                              <button type="button" onClick={() => patch("unit_price", picked.purchase_price)} className="px-1.5 py-0.5 rounded-md bg-white border border-amber-200 text-[10px] text-amber-900 font-semibold" data-testid={`inv-item-cost-card-${idx}`} title="Stok kartı alış fiyatı">kart {moneyTry(picked.purchase_price)} ₺</button>
+                            )}
+                            {costs.length === 0 && !(Number(picked.purchase_price) > 0) && <span className="text-[10px] text-slate-400">kayıt yok</span>}
+                            {costs.slice(0, 5).map((c, ci) => (
+                              <button key={`${c.invoice_number}-${ci}`} type="button" onClick={() => patch("unit_price", c.unit_price)} className="px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] text-amber-900" data-testid={`inv-item-cost-${idx}-${ci}`} title={`${c.invoice_number || ""} ${c.supplier || ""}`.trim()}>
+                                {c.date ? `${String(c.date).slice(8, 10)}.${String(c.date).slice(5, 7)} ` : ""}{moneyTry(c.unit_price)} ₺{c.supplier ? ` · ${c.supplier}` : ""}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }}
+                />
               </div>
 
               {/* Totals Summary */}
@@ -1109,13 +952,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <td className="py-2.5 font-medium text-slate-900">{it.name}{it.gtip ? <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}</div> : null}</td>
                       <td className="py-2.5 text-center">{it.quantity} {it.unit}</td>
                       <td className="py-2.5 text-right">{fmtMoney(it.unit_price, previewInvoice.currency)}</td>
+                      <td className="py-2.5 text-right">{fmtMoney(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)), previewInvoice.currency)}</td>
                       <td className="py-2.5 text-center">%{it.vat_rate}</td>
                       <td className="py-2.5 text-right font-semibold">{fmtMoney(it.total, previewInvoice.currency)}</td>
-                      <td className="py-2.5 text-right">{fmtMoney(it.unit_price)} ₺</td>
-                      <td className="py-2.5 text-right">{fmtMoney(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))} ₺</td>
-                      <td className="py-2.5 text-center">%{it.vat_rate}</td>
-                      <td className="py-2.5 text-right font-semibold">{fmtMoney(it.total)} ₺</td>
-                      <td className="py-2.5 text-right font-bold">{fmtMoney(it.total_incl ?? (Number(it.total || 0) * (1 + Number(it.vat_rate || 0) / 100)))} ₺</td>
+                      <td className="py-2.5 text-right font-bold">{fmtMoney(it.total_incl ?? (Number(it.total || 0) * (1 + Number(it.vat_rate || 0) / 100)), previewInvoice.currency)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1133,7 +973,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <span>{fmtMoney(previewInvoice.subtotal, previewInvoice.currency)}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
-                    <span>Hesaplanan KDV (%20):</span>
+                    <span>Hesaplanan KDV:</span>
                     <span>{fmtMoney(previewInvoice.vat_total, previewInvoice.currency)}</span>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-300">
