@@ -44,6 +44,7 @@ import {
   Globe,
   ScrollText
   ClipboardList
+  Smartphone
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
@@ -68,6 +69,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const { menuItems: orderedMenu, moveModule } = useAuth();
   const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/cheques": ScrollText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/sayim": ClipboardList, "/quotes": FileSignature, "/projects": Briefcase, "/surveys": Ruler, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/saha": Smartphone, "/sevk": ScanLine, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
   const { menuItems: orderedMenu, moveModulePath } = useAuth();
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/saha": Smartphone, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
+  const { menuItems: orderedMenu, moveModule, permPath } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
@@ -83,6 +86,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const routeKey = { "/sevk": "/orders", "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts" }[location.pathname] || location.pathname;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
+  if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  const denied = user?.permissions && user.role !== "admin" && user.permissions[(permPath || ((p) => p))(location.pathname)] === "none";
   const lockedModule = !moduleOn(location.pathname);
 
   const roleLabels = {
@@ -207,6 +212,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>}
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
+        <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
           {loading ? null : denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : lockedModule ? <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} /> : children}
         </main>
       </div>
