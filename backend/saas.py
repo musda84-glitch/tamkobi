@@ -409,6 +409,7 @@ async def effective(company_id: str) -> Dict[str, Any]:
     if addon_on.get("support.contact"):
         st = await _db.platform_settings.find_one({"_id": "platform"}, {"support_email": 1, "support_phone": 1}) or {}
         support = {"email": (st.get("support_email") or "").strip(), "phone": (st.get("support_phone") or "").strip()}
+    plat = await _db.platform_settings.find_one({"_id": "platform"}, {"gib_credits_sales": 1}) or {}
     res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
            "addons": addon_on, "addon_details": addon_details, "addon_overrides": (lic or {}).get("addon_overrides") or {},
            "support": support,
@@ -417,6 +418,7 @@ async def effective(company_id: str) -> Dict[str, Any]:
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly"),
            "custom_price_monthly": (lic or {}).get("custom_price_monthly"), "custom_price_yearly": (lic or {}).get("custom_price_yearly")}
+           "gib_credits_sales": bool(plat.get("gib_credits_sales"))}
     _cache[lid] = (time.time() + CACHE_TTL, dict(res))
     return res
 
