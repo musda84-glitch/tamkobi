@@ -6,10 +6,14 @@ services:
     container_name: tamkobi-mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-tamkobi}
-      MYSQL_DATABASE: ${DB_NAME:-tamkobi}
+      # Root password is NOT the app password. Replace bootstrap defaults via scripts/mysql_harden.sh
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-tamkobi}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-${DB_NAME:-tamkobi}}
       MYSQL_USER: ${MYSQL_USER:-tamkobi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
+      MYSQL_BACKUP_PASSWORD: ${MYSQL_BACKUP_PASSWORD:-}
+      MYSQL_MIGRATE_PASSWORD: ${MYSQL_MIGRATE_PASSWORD:-}
+      MYSQL_DBA_PASSWORD: ${MYSQL_DBA_PASSWORD:-}
     ports:
       - "3306:3306"
     command: --bind-address=0.0.0.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --slow-query-log=1 --long-query-time=1 --slow-query-log-file=/var/lib/mysql/tamkobi-slow.log --log-error=/var/lib/mysql/tamkobi-error.log
@@ -18,8 +22,9 @@ services:
       - ./backend/schema.mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./backend/mysql/logging.cnf:/etc/mysql/conf.d/logging.cnf:ro
       - ./backend/mysql/perf.cnf:/etc/mysql/conf.d/perf.cnf:ro
+      - ./backend/docker/mysql-init-privileges.sh:/docker-entrypoint-initdb.d/02-privileges.sh:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:-tamkobi}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-tamkobi}"]
       interval: 5s
       timeout: 5s
       retries: 20

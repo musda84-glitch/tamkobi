@@ -202,3 +202,9 @@ def test_sql_pushdown_skips_unsafe_and_numeric():
     assert "stock_quantity" not in sql
     assert "track_stock" not in sql
     assert params == ["products", "x"]
+def test_mysql_settings_no_hardcoded_password(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.delenv("MYSQL_PASSWORD", raising=False)
+    s = mysql_settings_from_env()
+    assert s["password"] == ""
