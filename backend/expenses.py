@@ -48,6 +48,7 @@ async def _next_number(company_id: str) -> str:
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
     if partner_id:
         name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, fx.try_amount(exp, exp.get("total")), f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
+        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, exp["total"], f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
         return f"{name} (Ortak)"
     if not account_id:
         raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
@@ -189,6 +190,7 @@ async def create_expense(req: Dict[str, Any]):
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
            "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None,
            "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
+           "description": req["description"].strip(), **calc, "currency": "TRY", "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
            "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
     if req.get("is_recurring"):

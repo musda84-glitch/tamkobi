@@ -4,6 +4,8 @@ import requests
 
 from conftest import API, TEST_COMPANY_ID, resolve_b2b_token
 """Partner payment source tests plus approve-without-cargo."""
+"""Partner current-account as a payment source for avans, masraf, maaş, cari."""
+import os
 import uuid
 
 import pytest
