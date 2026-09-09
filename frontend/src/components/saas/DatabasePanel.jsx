@@ -53,6 +53,10 @@ export const DatabasePanel = () => {
       const r = await axios.post(`${API_URL}/system/database/move`, { ...payload(), overwrite });
       setMoved(r.data);
       toast.success("Veriler taşındı, uygulama yeni sunucuya bağlandı.");
+      // The target is now the live database; a second submit with the same form would be a no-op.
+      setForm(emptyTarget);
+      setProbe(null);
+      setOverwrite(false);
       await load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Taşıma yapılamadı.");
