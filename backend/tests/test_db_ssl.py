@@ -126,17 +126,20 @@ def test_resolve_prefers_the_environment_then_the_host(monkeypatch):
     assert db_ssl.resolve("db.firma.com")[0] == "verify_identity"
 
 
-def test_a_new_target_never_inherits_a_weaker_mode(monkeypatch):
-    """The deployment's own `disabled` must not follow us to another server."""
-    monkeypatch.setenv("MYSQL_SSL_MODE", "disabled")
+@pytest.mark.parametrize("unverified", ["disabled", "required"])
+def test_an_unchosen_mode_is_never_unverified_for_another_host(monkeypatch, unverified):
+    """The deployment's own plaintext must not follow us to another server."""
+    monkeypatch.setenv("MYSQL_SSL_MODE", unverified)
     monkeypatch.setenv("MYSQL_SSL_CA", "/tmp/ca.pem")
     assert db_ssl.for_target("db.firma.com") == ("verify_identity", "/tmp/ca.pem")
-    assert db_ssl.for_target("127.0.0.1")[0] == "disabled"
+    assert db_ssl.for_target("127.0.0.1")[0] == unverified
 
-    # A configured CA still comes along; the name check is only dropped when
-    # the operator asks for verify_ca on the form.
+
+def test_an_unchosen_mode_follows_a_verifying_environment(monkeypatch):
+    """`verify_ca` plus a CA is how a self-signed server is repaired."""
     monkeypatch.setenv("MYSQL_SSL_MODE", "verify_ca")
-    assert db_ssl.for_target("db.firma.com") == ("verify_identity", "/tmp/ca.pem")
+    monkeypatch.setenv("MYSQL_SSL_CA", "/tmp/ca.pem")
+    assert db_ssl.for_target("db.firma.com") == ("verify_ca", "/tmp/ca.pem")
     assert db_ssl.for_target("127.0.0.1")[0] == "verify_ca"
 
     monkeypatch.delenv("MYSQL_SSL_MODE")

@@ -93,9 +93,13 @@ def test_settings_file_without_a_tls_mode_follows_the_host(data_dir, monkeypatch
     legacy("127.0.0.1")
     assert load_database_settings()["ssl_mode"] == "disabled"
 
-    # The environment may still raise the floor for such a file.
-    monkeypatch.setenv("MYSQL_SSL_MODE", "verify_identity")
-    assert load_database_settings()["ssl_mode"] == "verify_identity"
+    # A verifying environment repairs such a file without editing it, which is
+    # the way out when a remote server has a self-signed certificate.
+    legacy("db.firma.com")
+    monkeypatch.setenv("MYSQL_SSL_MODE", "verify_ca")
+    monkeypatch.setenv("MYSQL_SSL_CA", "/etc/ssl/mysql-ca.pem")
+    assert load_database_settings()["ssl_mode"] == "verify_ca"
+    assert load_database_settings()["ssl_ca"] == "/etc/ssl/mysql-ca.pem"
 
 
 def test_saving_settings_records_a_real_tls_mode(data_dir, monkeypatch):

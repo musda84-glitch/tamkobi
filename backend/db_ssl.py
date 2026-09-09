@@ -11,6 +11,14 @@ what MySQL's own ``--ssl-mode`` means:
 ``verify_ca``        the certificate must chain to the CA you name
 ``verify_identity``  the certificate must chain to a trusted CA *and* match the
                      host you typed; the default for a database on another host
+
+Which one a connection gets is decided in one place:
+
+1. A mode chosen on a form, on the command line or recorded in
+   ``database.json`` is used as it stands.
+2. Otherwise ``MYSQL_SSL_MODE`` applies — unless it is unverified and the
+   database is on another host, which is never decided for the operator.
+3. With nothing set at all, the host decides (``default_mode``).
 """
 from __future__ import annotations
 
@@ -48,8 +56,6 @@ _ALIASES = {
     "verify": VERIFY_IDENTITY,
     "verify_identity": VERIFY_IDENTITY,
 }
-
-STRENGTH = {DISABLED: 0, REQUIRED: 1, VERIFY_CA: 2, VERIFY_IDENTITY: 3}
 
 LABELS = {
     DISABLED: "şifreleme kapalı",
@@ -90,25 +96,29 @@ def resolve(host: Any) -> Tuple[str, str]:
 
 
 def for_target(host: Any) -> Tuple[str, str]:
-    """Mode for a database the operator is pointing us at right now.
+    """Mode when nobody has chosen one for this database yet.
 
     `MYSQL_SSL_MODE` was configured for the current server — commonly
-    `disabled` for a MySQL on this machine — so inheriting it would quietly
-    copy the whole ERP to someone else's server in the clear. The host's own
-    default is the floor; the environment may only raise it.
+    `disabled` for a MySQL on this machine — so following it blindly would
+    quietly hand the whole ERP to another host in the clear. It is honoured
+    whenever it verifies the certificate, and for a MySQL on this machine;
+    an unverified value never decides for a database somewhere else.
     """
-    floor = default_mode(host)
     env_mode, ca = resolve(host)
-    return (env_mode if STRENGTH[env_mode] >= STRENGTH[floor] else floor), ca
+    if env_mode not in UNVERIFIED or default_mode(host) == DISABLED:
+        return env_mode, ca
+    return VERIFY_IDENTITY, ca
 
 
 def settings(cfg: Dict[str, Any]) -> Tuple[str, str]:
-    """The mode `cfg` records, or the floor for its host when it records none.
+    """The mode `cfg` records, or `for_target` when it records none.
 
     A settings file written before this field existed says nothing about TLS.
     Reading that silence as plaintext would leave such a deployment talking to
-    a database on another host in the clear, so an absent choice falls back to
-    the rule a new target gets.
+    a database on another host in the clear, so an absent choice follows the
+    same rule a brand new target does — including `MYSQL_SSL_MODE=verify_ca`
+    with a CA path, which is how a self-signed server is repaired without
+    editing the file.
     """
     ca = str(cfg.get("ssl_ca") or "").strip()
     raw = str(cfg.get("ssl_mode") or "").strip()
