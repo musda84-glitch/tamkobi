@@ -179,6 +179,7 @@ class InvoiceItem(BaseModel):
     origin_country: Optional[str] = None
     net_weight: Optional[float] = None
     landed_unit_try: Optional[float] = None
+    note: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str
@@ -417,6 +418,7 @@ class OrderItem(BaseModel):
     quantity: int
     unit_price: float
     total: float
+    note: Optional[str] = None
 
 class Order(BaseDocument):
     company_id: str

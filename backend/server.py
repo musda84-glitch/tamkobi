@@ -1380,7 +1380,8 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         if not p or q <= 0:
             continue
         price = round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2)
-        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku") or "", barcode=p.get("barcode") or "", quantity=int(q), unit_price=price, total=round(price * q, 2)))
+        line_note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
+        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku") or "", barcode=p.get("barcode") or "", quantity=int(q), unit_price=price, total=round(price * q, 2), note=line_note or None))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     total = round(sum(i.total for i in items), 2)
@@ -5119,7 +5120,8 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
             "unit_price": itm.get("unit_price", 0),
             "vat_rate": 20,
             "discount_percent": 0.0,
-            "total": itm.get("total", 0)
+            "total": itm.get("total", 0),
+            "note": (str(itm.get("note") or itm.get("line_note") or "").strip()[:500] or None),
         })
 
     subtotal = sum(i["total"] for i in inv_items) / 1.20
