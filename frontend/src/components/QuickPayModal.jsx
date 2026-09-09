@@ -12,6 +12,7 @@ const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate
 
 export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, initialMode }) => {
 export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, initialMode, allowances }) => {
+export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, allowances }) => {
   useEscape(onClose);
   const isExpense = type === "expense";
   const [mode, setMode] = useState(initialMode || "existing");

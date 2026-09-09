@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
 import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, Utensils, Bus } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Utensils, Bus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -127,6 +128,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     if (payItem) { setPayItem(null); return; }
     onClose();
   });
+  const [allow, setAllow] = useState({ meal: "", transport: "" });
+  const [busyAllow, setBusyAllow] = useState(false);
   const reload = useCallback(() => axios.get(`${API_URL}/personnel/employees/${id}/card`).then((r) => setCard(r.data)).catch(() => toast.error("Personel kartı yüklenemedi.")), [id]);
   useEffect(() => { reload(); axios.get(`${API_URL}/companies/${companyId}/work-schedule`).then((r) => setSchedule(r.data.schedule)).catch(() => {}); }, [reload, companyId]);
   useEffect(() => {
@@ -189,6 +192,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
       await axios.put(`${API_URL}/personnel/employees/${id}`, { meal_allowance: Number(allow.meal) || 0, transport_allowance: Number(allow.transport) || 0 });
       toast.success("Yemek ve yol tutarları kaydedildi.");
       afterMoney();
+      reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
     finally { setBusyAllow(false); }
   };
