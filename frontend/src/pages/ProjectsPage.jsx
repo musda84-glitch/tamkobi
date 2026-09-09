@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase, Receipt } from "lucide-react";
 import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -169,6 +170,7 @@ export default function ProjectsPage({ section = "quotes" }) {
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
               <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
+              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
               <div className="flex gap-1" data-testid={`project-stages-${p.project_number}`}>
                 {STAGES.map(([k, l], i) => {
                   const on = p.status === k || (k === "active" && p.status === "on_hold");

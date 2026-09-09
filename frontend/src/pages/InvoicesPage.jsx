@@ -144,6 +144,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     bl_awb: "",
     certificate: "",
     trade_file_number: ""
+    project_id: ""
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);

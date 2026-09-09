@@ -222,6 +222,7 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate", "fx_source") if k in req}
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "currency", "fx_rate", "fx_source") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:

@@ -776,6 +776,7 @@ def _group_by_project(rows):
         grouped.setdefault(r.get("project_id"), []).append(r)
     return grouped
 
+
 @api_router.get("/projects")
 async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
