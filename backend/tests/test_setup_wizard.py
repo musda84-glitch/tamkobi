@@ -64,6 +64,49 @@ def test_database_settings_roundtrip(data_dir):
     assert "password" not in defaults
 
 
+def test_database_settings_keep_the_tls_mode(data_dir):
+    save_database_settings(
+        {"host": "10.0.0.8", "port": 3306, "user": "app", "password": "s3cret", "db": "shop", "ssl_mode": "required"}
+    )
+    assert load_database_settings()["ssl_mode"] == "required"
+    assert public_defaults()["ssl_mode"] == "required"
+
+
+def test_wizard_encrypts_remote_hosts_by_default(data_dir, monkeypatch):
+    from setup_install import DbProbe, _settings_from
+
+    monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
+    remote = _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app"))
+    assert remote["ssl_mode"] == "required"
+    local = _settings_from(DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app"))
+    assert local["ssl_mode"] == "disabled"
+    assert public_defaults()["ssl_mode"] == "disabled"
+
+
+def test_wizard_keeps_the_deployment_tls_mode(data_dir, monkeypatch):
+    from setup_install import DbProbe, _settings_from
+
+    monkeypatch.setenv("MYSQL_SSL_MODE", "required")
+    monkeypatch.setenv("MYSQL_HOST", "127.0.0.1")
+    assert _settings_from(DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app"))["ssl_mode"] == "required"
+    assert public_defaults()["ssl_mode"] == "required"
+    chosen = _settings_from(
+        DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app", ssl_mode="disabled")
+    )
+    assert chosen["ssl_mode"] == "disabled"
+
+
+def test_wizard_rejects_verification_without_a_ca(data_dir):
+    from fastapi import HTTPException
+    from setup_install import DbProbe, _settings_from
+
+    with pytest.raises(HTTPException) as err:
+        _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode="verify_ca"))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException):
+        _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode="belki"))
+
+
 def test_probe_live_mysql(data_dir):
     from mysql_backup import load_env
     from mysql_store import mysql_settings_from_env

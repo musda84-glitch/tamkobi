@@ -11,11 +11,15 @@ const emptyForm = {
   db_name: "tamkobi",
   db_user: "tamkobi",
   db_password: "",
+  ssl_mode: "disabled",
+  ssl_ca: "",
   site_name: "",
   admin_email: "",
   admin_password: "",
   admin_name: "",
 };
+
+const SSL_LABELS = { disabled: "Kapalı (aynı sunucudaki MySQL)", required: "TLS zorunlu", verify_ca: "TLS + CA doğrulaması" };
 
 export default function SetupPage() {
   const [status, setStatus] = useState(null);
@@ -39,6 +43,8 @@ export default function SetupPage() {
           db_port: d.db_port || f.db_port,
           db_name: d.db_name || f.db_name,
           db_user: d.db_user || f.db_user,
+          ssl_mode: d.ssl_mode || f.ssl_mode,
+          ssl_ca: d.ssl_ca || f.ssl_ca,
         }));
       })
       .catch(() => {
@@ -60,6 +66,8 @@ export default function SetupPage() {
         db_name: form.db_name,
         db_user: form.db_user,
         db_password: form.db_password,
+        ssl_mode: form.ssl_mode,
+        ssl_ca: form.ssl_ca,
       });
       setDbOk(r.data);
       setStep(3);
@@ -191,9 +199,22 @@ export default function SetupPage() {
               <label className="block text-xs font-semibold">Şifre
                 <input type="password" value={form.db_password} onChange={(e) => set("db_password", e.target.value)} className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-password" />
               </label>
+              <label className="block text-xs font-semibold">Bağlantı şifrelemesi
+                <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-mode">
+                  {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <span className="block font-normal text-[10px] text-slate-500 mt-1">
+                  MySQL bu makinede değilse şifrelemeyi açık bırakın; şifreniz ve tüm veri bu bağlantıdan geçer.
+                </span>
+              </label>
+              {form.ssl_mode === "verify_ca" && (
+                <label className="block text-xs font-semibold">CA sertifika dosyası
+                  <input required value={form.ssl_ca} onChange={(e) => set("ssl_ca", e.target.value)} placeholder="/etc/ssl/certs/mysql-ca.pem" className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-ca" />
+                </label>
+              )}
               {dbOk?.ok && (
                 <div className="text-xs text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2 flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5" /> MySQL {dbOk.server_version} · {dbOk.database}
+                  <Check className="w-3.5 h-3.5" /> MySQL {dbOk.server_version} · {dbOk.database} · {SSL_LABELS[dbOk.ssl_mode] || dbOk.ssl_mode}
                 </div>
               )}
               <div className="flex gap-2 pt-2">

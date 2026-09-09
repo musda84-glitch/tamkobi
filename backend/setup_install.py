@@ -35,6 +35,8 @@ class DbProbe(BaseModel):
     db_name: str = Field(..., min_length=1, max_length=64)
     db_user: str = Field(..., min_length=1, max_length=128)
     db_password: str = ""
+    ssl_mode: Optional[str] = None
+    ssl_ca: str = ""
 
 
 class InstallRequest(DbProbe):
@@ -49,14 +51,33 @@ def _now() -> str:
 
 
 def _settings_from(req: DbProbe) -> dict:
+    host = req.db_host.strip()
+    env_mode, env_ca = db_ssl.from_env()
+    # An explicit choice wins, then the deployment's own setting, then the
+    # host-based default (encrypted unless MySQL runs on this machine).
+    if req.ssl_mode:
+        mode = req.ssl_mode
+    elif (os.environ.get("MYSQL_SSL_MODE") or "").strip():
+        mode = env_mode
+    else:
+        mode = db_ssl.default_mode(host)
+    ca = (req.ssl_ca or "").strip() or env_ca
+    try:
+        mode = db_ssl.normalize_mode(mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if mode == db_ssl.VERIFY_CA and not ca:
+        raise HTTPException(status_code=400, detail="verify_ca modu için CA sertifika dosyası gerekir.")
     return {
-        "host": req.db_host.strip(),
+        "host": host,
         "port": int(req.db_port),
         "user": req.db_user.strip(),
         "password": req.db_password or "",
         "db": sanitize_db_name(req.db_name),
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": mode,
+        "ssl_ca": ca,
     }
 
 
@@ -116,6 +137,7 @@ def probe_database(settings: dict) -> dict:
             "server_version": version,
             "database": current or dbname,
             "created": created,
+            "ssl_mode": db_ssl.settings(settings)[0],
             "note": None if err is None else str(err),
         }
     finally:

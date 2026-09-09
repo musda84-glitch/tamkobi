@@ -142,6 +142,8 @@ def public_defaults() -> dict:
             "db_port": int(file_cfg["port"]),
             "db_name": file_cfg["db"],
             "db_user": file_cfg["user"],
+            "ssl_mode": file_cfg["ssl_mode"],
+            "ssl_ca": file_cfg["ssl_ca"],
         }
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     host, port, user, db = "127.0.0.1", 3306, "tamkobi", "tamkobi"
@@ -160,4 +162,13 @@ def public_defaults() -> dict:
             port = 3306
         user = os.environ.get("MYSQL_USER", user)
         db = os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or db
-    return {"db_host": host, "db_port": port, "db_name": db, "db_user": user}
+    env_mode, env_ca = db_ssl.from_env()
+    mode = env_mode if (os.environ.get("MYSQL_SSL_MODE") or "").strip() else db_ssl.default_mode(host)
+    return {
+        "db_host": host,
+        "db_port": port,
+        "db_name": db,
+        "db_user": user,
+        "ssl_mode": mode,
+        "ssl_ca": env_ca,
+    }
