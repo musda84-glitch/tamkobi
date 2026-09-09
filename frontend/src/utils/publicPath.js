@@ -6,6 +6,7 @@ export function isPublicPath(pathname) {
   if (p === "/b2b" || p.startsWith("/b2b/")) return true;
   return (
     p.startsWith("/fiyatlar") ||
+    p.startsWith("/web") ||
     p.startsWith("/kayit") ||
     p.startsWith("/portal/") ||
     p.startsWith("/teklif/") ||
