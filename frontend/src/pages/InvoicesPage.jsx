@@ -812,7 +812,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <span className="text-emerald-700">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
                 </div>
                 {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
-                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-local-total">
+                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">
                     <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
                     <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
                   </div>
