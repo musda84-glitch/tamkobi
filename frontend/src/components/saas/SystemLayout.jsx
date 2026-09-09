@@ -13,6 +13,9 @@ const ICONS = Object.fromEntries(SYSTEM_NAV.map(([path, , Icon]) => [path, Icon]
 const LABELS = Object.fromEntries(SYSTEM_NAV.map(([path, label]) => [path, label]));
 export const SYSTEM_NAV = [["/sistem", "Genel Bakış", LayoutGrid], ["/sistem/web", "Web Sitesi", Globe], ["/sistem/posta", "Posta Sunucusu", Mail], ["/sistem/sirketler", "Şirketler & Lisanslar", Building2], ["/sistem/kullanicilar", "Panel Yöneticileri", Users], ["/sistem/paketler", "Paketler", Package], ["/sistem/moduller", "Modül Kataloğu", Boxes], ["/sistem/talepler", "Yükseltme Talepleri", Inbox], ["/sistem/odemeler", "Ödemeler", CreditCard], ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell], ["/sistem/ayarlar", "Platform Ayarları", Settings]];
 
+const ICONS = Object.fromEntries(SYSTEM_NAV.map(([path, , Icon]) => [path, Icon]));
+const LABELS = Object.fromEntries(SYSTEM_NAV.map(([path, label]) => [path, label]));
+
 export const SystemLayout = ({ children, pendingCount = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
   const location = useLocation();
