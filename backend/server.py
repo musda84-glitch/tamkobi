@@ -70,6 +70,7 @@ import trade
 import platform_mail
 import gib_credits
 import order_pick
+import platform_mail
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -7335,6 +7336,7 @@ app.include_router(trade.router)
 app.include_router(platform_mail.router)
 app.include_router(demo.router)
 app.include_router(order_pick.router)
+app.include_router(platform_mail.router)
 
 @app.get("/")
 async def root():

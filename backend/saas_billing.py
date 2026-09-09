@@ -186,6 +186,8 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
     return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
     plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
     return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
+    plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
+    return {**s, "id": "platform", "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
 
 
 @router.put("/system/settings")
