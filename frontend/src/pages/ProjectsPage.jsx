@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase, Receipt } from "lucide-react";
+import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -56,6 +57,9 @@ const PAGE_META = {
   quotes: { title: "Teklifler", hint: "Keşif sonrası teklif; projeye veya faturaya çevirme", kind: "quote" },
   projects: { title: "Projeler", hint: "Tekliften oluşan iş / saha projesi, bütçe ve bağlı teklifler", kind: "project" },
   surveys: { title: "Keşifler", hint: "Önce keşif, sonra teklife dönüştürme", kind: "survey" },
+  quotes: { title: "Teklifler", hint: "Satış teklifi, müşteri onayı ve faturaya çevirme", kind: "quote" },
+  projects: { title: "Projeler", hint: "İş / saha projesi, bütçe ve bağlı teklifler", kind: "project" },
+  surveys: { title: "Keşifler", hint: "Saha keşfi, ölçü ve teklife dönüştürme", kind: "survey" },
 };
 
 export default function ProjectsPage({ section = "quotes" }) {

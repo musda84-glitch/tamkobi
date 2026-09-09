@@ -21,6 +21,9 @@ export const NotificationBell = ({ companyId }) => {
     if (n.ref_type === "survey") navigate("/surveys");
     if (n.ref_type === "project") navigate("/projects");
     if (n.ref_type === "order") navigate("/orders");
+    if (n.ref_type === "quote") navigate("/quotes");
+    if (n.ref_type === "survey") navigate("/surveys");
+    if (n.ref_type === "project") navigate("/projects");
   };
   return (
     <div className="relative" ref={ref}>
