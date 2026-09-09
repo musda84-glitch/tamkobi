@@ -893,6 +893,7 @@ async def seed_all_data(db):
     await db.payrolls.insert_many(payrolls)
 
     print("Successfully seeded TamKobi full demo data.")
+    print("Successfully seeded NexusHesap full demo data.")
 
 
 DEMO_SHOPFLOOR_PIN = "1234"
