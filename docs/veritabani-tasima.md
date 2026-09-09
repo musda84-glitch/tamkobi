@@ -31,10 +31,14 @@ FLUSH PRIVILEGES;
 Mod seçimi tek bir kuralla yapılır ve uygulamanın açtığı **her** bağlantı (çalışan API, istek günlüğü, yedek betiği, kurulum sihirbazı, panel, CLI) aynı kuralı izler:
 
 1. Panel/sihirbaz formunda ya da CLI'da açıkça mod seçildiyse o kullanılır (`--ssl-mode`, `--ssl-ca`).
-2. Yoksa `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri geçerlidir.
-3. O da yoksa sunucuya bakılır: `localhost`/`127.0.0.1` için `disabled`, **başka her sunucu için `verify_identity`**.
+2. Yoksa sunucuya bakılır: `localhost`/`127.0.0.1` için `disabled`, **başka her sunucu için `verify_identity`**.
+3. `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri **hâlihazırda bağlı olduğunuz** veritabanını tarif eder; uygulamanın canlı bağlantısında bu değer 2. adımın önüne geçer.
 
-Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı doğrulamayı yapar. Depodaki `docker-compose.yml` MySQL'i aynı makinede loopback üzerinden çalıştırdığı için `MYSQL_SSL_MODE: disabled` değerini açıkça yazar; `.env` dosyanızdan değiştirebilirsiniz.
+Aradaki fark önemli: `MYSQL_SSL_MODE=disabled` bu makinedeki MySQL için doğru olabilir, ama **başka bir sunucuya** taşırken miras alınmaz. Yeni bir hedef için sunucunun kendi varsayılanı tabandır; ortam değişkeni bu tabanı yükseltebilir, düşüremez. Yani panel/sihirbazda "Sunucuya göre otomatik seç" ile uzak bir veritabanına geçtiğinizde bağlantı her zaman doğrulanmış TLS ile kurulur. `MYSQL_SSL_CA` ile verdiğiniz CA dosyası ise taşınır, çünkü doğrulamayı zayıflatmaz.
+
+Formdaki "otomatik" seçeneği hangi modu seçeceğini parantez içinde yazar; doğrulamasız bir mod çıkıyorsa (bu makinedeki MySQL ya da elle seçilen `disabled`/`required`) formda uyarı görünür.
+
+Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı doğrulamayı yapar. Depodaki `docker-compose.yml` MySQL'e loopback üzerinden bağlandığı için `MYSQL_SSL_MODE` değerini boş bırakır: sunucu kuralı bu durumda `disabled` verir, ama boş bırakılması sayesinde uzak bir sunucuya geçtiğinizde doğrulama kendiliğinden devreye girer. Kendi imzalı sertifikalı özel bir sunucu için `.env` dosyanıza `MYSQL_SSL_MODE`/`MYSQL_SSL_CA` yazabilirsiniz.
 
 MySQL kendi imzaladığı sertifikayla kurulmuşsa (varsayılan kurulumların çoğu böyle) `verify_identity` "sertifika doğrulanamadı" hatası verir. İki seçeneğiniz var: sunucudaki `ca.pem` dosyasını TamKobi sunucusuna kopyalayıp `verify_ca` modunda o dosyayı vermek (önerilen), ya da bağlantı zaten özel bir ağdan geçiyorsa bilerek `required` seçmek. Panel ve sihirbazdaki hata mesajı bu iki yolu da hatırlatır. Uzak bir veritabanına bu ayar olmadan geçerseniz uygulama açılışta bağlanamaz ve aynı mesajı günlüğe yazar; `MYSQL_SSL_MODE`'u (ya da `database.json` içindeki `ssl_mode` alanını) düzeltip yeniden başlatın.
 

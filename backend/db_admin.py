@@ -35,7 +35,7 @@ class MoveRequest(DbTarget):
 
 
 def _settings(req: DbTarget) -> Dict[str, Any]:
-    env_mode, env_ca = db_ssl.resolve(req.db_host)
+    env_mode, env_ca = db_ssl.for_target(req.db_host)
     # A target on another host is verified unless the admin picks otherwise.
     mode = (req.ssl_mode or "").strip() or env_mode
     ca = (req.ssl_ca or "").strip() or env_ca

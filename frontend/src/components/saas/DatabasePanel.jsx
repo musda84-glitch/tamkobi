@@ -13,6 +13,11 @@ export const SSL_LABELS = {
   verify_ca: "Şifreli, CA doğrulamalı",
   verify_identity: "Şifreli, CA ve sunucu adı doğrulamalı",
 };
+// Mirrors db_ssl.default_mode so the form can say what "otomatik" will do.
+// The decision itself stays on the server.
+const LOCAL_HOSTS = new Set(["", "localhost", "127.0.0.1", "::1"]);
+export const autoSslMode = (host) => (LOCAL_HOSTS.has(String(host || "").trim().toLowerCase()) ? "disabled" : "verify_identity");
+export const UNVERIFIED_MODES = new Set(["disabled", "required"]);
 
 export const DatabasePanel = () => {
   const [info, setInfo] = useState(null);
@@ -82,7 +87,8 @@ export const DatabasePanel = () => {
   const rows = Object.entries(info.tables || {});
   const canMove = probe && form.db_host.trim() && (probe.empty || overwrite);
   const needsCa = form.ssl_mode === "verify_ca" || form.ssl_mode === "verify_identity";
-  const unverified = form.ssl_mode === "disabled" || form.ssl_mode === "required";
+  const effectiveSsl = form.ssl_mode || autoSslMode(form.db_host);
+  const unverified = UNVERIFIED_MODES.has(effectiveSsl);
 
   return (
     <div className="space-y-4 text-xs max-w-3xl" data-testid="saas-database-panel">
@@ -154,7 +160,7 @@ export const DatabasePanel = () => {
           <div className={needsCa ? "" : "sm:col-span-2"}>
             <label className="block font-semibold text-slate-700 mb-1">Bağlantı şifrelemesi</label>
             <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className={inputCls} data-testid="db-ssl-mode">
-              <option value="">Sunucuya göre otomatik seç</option>
+              <option value="">Sunucuya göre otomatik seç ({SSL_LABELS[autoSslMode(form.db_host)]})</option>
               {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
             <p className="text-[10px] text-slate-500 mt-1">

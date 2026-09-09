@@ -95,6 +95,20 @@ def test_live_settings_follow_the_same_rule_as_the_forms(monkeypatch):
     assert mysql_settings_from_env()["ssl_mode"] == "required"
 
 
+def test_cli_target_does_not_inherit_the_local_plaintext_mode(monkeypatch):
+    """`MYSQL_SSL_MODE=disabled` describes this machine, not the new server."""
+    import argparse
+
+    monkeypatch.setenv("MYSQL_SSL_MODE", "disabled")
+    args = argparse.Namespace(
+        url=None, host="db.firma.com", port=3306, user="app", db="tamkobi",
+        password="p", ssl_mode=None, ssl_ca=None,
+    )
+    assert db_relocate._target_from_args(args)["ssl_mode"] == "verify_identity"
+    args.ssl_mode = "required"
+    assert db_relocate._target_from_args(args)["ssl_mode"] == "required"
+
+
 def test_store_settings_carries_tls_options():
     cfg = db_relocate.store_settings(
         {"host": "db.firma.com", "user": "app", "db": "tamkobi", "ssl_mode": "REQUIRED"}

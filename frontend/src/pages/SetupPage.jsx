@@ -26,6 +26,12 @@ const SSL_LABELS = {
   verify_identity: "Şifreli, CA ve sunucu adı doğrulamalı",
 };
 
+// Mirrors db_ssl.default_mode so the form can say what "otomatik" will do; the
+// decision itself stays on the server.
+const LOCAL_HOSTS = new Set(["", "localhost", "127.0.0.1", "::1"]);
+const autoSslMode = (host) => (LOCAL_HOSTS.has(String(host || "").trim().toLowerCase()) ? "disabled" : "verify_identity");
+const UNVERIFIED_MODES = new Set(["disabled", "required"]);
+
 export default function SetupPage() {
   const [status, setStatus] = useState(null);
   const [step, setStep] = useState(1);
@@ -209,13 +215,19 @@ export default function SetupPage() {
               </label>
               <label className="block text-xs font-semibold">Bağlantı şifrelemesi
                 <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-ssl-mode">
-                  <option value="">Sunucuya göre otomatik seç</option>
+                  <option value="">Sunucuya göre otomatik seç ({SSL_LABELS[autoSslMode(form.db_host)]})</option>
                   {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
                 <span className="block font-normal text-[10px] text-slate-500 mt-1">
                   Otomatik seçimde başka bir sunucu için sertifika doğrulamalı TLS, bu makinedeki MySQL için şifresiz
                   bağlantı kullanılır. Şifreniz ve tüm veri bu bağlantıdan geçer.
                 </span>
+                {UNVERIFIED_MODES.has(form.ssl_mode || autoSslMode(form.db_host)) && (
+                  <span className="block font-normal text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1.5 mt-1" data-testid="setup-db-ssl-warning">
+                    Sertifika doğrulanmadığı için araya giren biri kendi sunucusunu TamKobi'ye gösterebilir. Bunu yalnızca
+                    bağlantı özel ağ veya VPN ile korunuyorsa seçin.
+                  </span>
+                )}
               </label>
               {(form.ssl_mode === "verify_ca" || form.ssl_mode === "verify_identity") && (
                 <label className="block text-xs font-semibold">

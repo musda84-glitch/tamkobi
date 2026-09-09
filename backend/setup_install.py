@@ -52,9 +52,9 @@ def _now() -> str:
 
 def _settings_from(req: DbProbe) -> dict:
     host = req.db_host.strip()
-    # An explicit choice from the form wins; otherwise the deployment's own
-    # rule decides (MYSQL_SSL_MODE, else verified unless MySQL is local).
-    env_mode, env_ca = db_ssl.resolve(host)
+    # An explicit choice from the form wins; otherwise the host decides and
+    # MYSQL_SSL_MODE may only raise that, never lower it for another server.
+    env_mode, env_ca = db_ssl.for_target(host)
     mode = (req.ssl_mode or "").strip() or env_mode
     ca = (req.ssl_ca or "").strip() or env_ca
     try:

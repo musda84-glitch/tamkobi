@@ -49,6 +49,8 @@ _ALIASES = {
     "verify_identity": VERIFY_IDENTITY,
 }
 
+STRENGTH = {DISABLED: 0, REQUIRED: 1, VERIFY_CA: 2, VERIFY_IDENTITY: 3}
+
 LABELS = {
     DISABLED: "şifreleme kapalı",
     REQUIRED: "şifreli, sertifika doğrulanmaz",
@@ -83,15 +85,29 @@ def from_env() -> Tuple[str, str]:
 
 
 def resolve(host: Any) -> Tuple[str, str]:
-    """The one rule every connection follows: MYSQL_SSL_MODE, else the host.
+    """Mode for the database this deployment is already configured with.
 
-    Keeping this in a single place means the running pool, the backup script
-    and the setup/relocation forms cannot disagree about what an unset
+    `MYSQL_SSL_MODE` describes that connection, so it wins here; with nothing
+    set the host decides. The running pool, the backup script and the log
+    writer all go through this, so they cannot disagree about what an unset
     variable means for a database on another machine.
     """
     ca = (os.environ.get("MYSQL_SSL_CA") or "").strip()
     raw = (os.environ.get("MYSQL_SSL_MODE") or "").strip()
     return (normalize_mode(raw) if raw else default_mode(host)), ca
+
+
+def for_target(host: Any) -> Tuple[str, str]:
+    """Mode for a database the operator is pointing us at right now.
+
+    `MYSQL_SSL_MODE` was configured for the current server — commonly
+    `disabled` for a MySQL on this machine — so inheriting it would quietly
+    copy the whole ERP to someone else's server in the clear. The host's own
+    default is the floor; the environment may only raise it.
+    """
+    floor = default_mode(host)
+    env_mode, ca = resolve(host)
+    return (env_mode if STRENGTH[env_mode] >= STRENGTH[floor] else floor), ca
 
 
 def _ca_context(ca: str) -> ssl.SSLContext:
