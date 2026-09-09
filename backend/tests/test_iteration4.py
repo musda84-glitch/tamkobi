@@ -259,6 +259,33 @@ class TestProjects:
     def test_update_missing_project_404(self, client):
         assert client.put(f"{BASE}/projects/nope_x", json={"status": "active"}, timeout=30).status_code == 404
 
+    def test_quote_convert_to_project(self, client):
+        s = client.post(f"{BASE}/surveys", json={"contact_id": "cnt_01", "contact_name": "TEST_M", "address": "TEST_Saha",
+                                                 "measurements": [{"name": "Duvar", "quantity": 10, "unit": "m2", "unit_price": 100}]}, timeout=30).json()
+        conv_q = client.post(f"{BASE}/surveys/{s['id']}/convert-to-quote", timeout=30)
+        assert conv_q.status_code == 200, conv_q.text
+        q = conv_q.json()["quote"]
+        again_q = client.post(f"{BASE}/surveys/{s['id']}/convert-to-quote", timeout=30)
+        assert again_q.status_code == 400
+        conv_p = client.post(f"{BASE}/quotes/{q['id']}/convert-to-project", timeout=30)
+        assert conv_p.status_code == 200, conv_p.text
+        p = conv_p.json()["project"]
+        assert re.match(r"^PRJ-\d{4}-\d{4}$", p["project_number"])
+        assert p["contact_id"] == "cnt_01" and p["address"] == "TEST_Saha"
+        assert p["budget"] == q["grand_total"] and p["quote_id"] == q["id"]
+        q2 = client.get(f"{BASE}/quotes/{q['id']}", timeout=30).json()
+        assert q2["project_id"] == p["id"] and q2["project_number"] == p["project_number"]
+        s2 = next(x for x in client.get(f"{BASE}/surveys", timeout=30).json() if x["id"] == s["id"])
+        assert s2["project_id"] == p["id"]
+        again_p = client.post(f"{BASE}/quotes/{q['id']}/convert-to-project", timeout=30)
+        assert again_p.status_code == 400
+        client.delete(f"{BASE}/quotes/{q['id']}", timeout=30)
+        client.delete(f"{BASE}/projects/{p['id']}", timeout=30)
+        client.delete(f"{BASE}/surveys/{s['id']}", timeout=30)
+
+    def test_convert_missing_quote_to_project_404(self, client):
+        assert client.post(f"{BASE}/quotes/nope_x/convert-to-project", timeout=30).status_code == 404
+
 
 # ---------------- Surveys ----------------
 class TestSurveys:
