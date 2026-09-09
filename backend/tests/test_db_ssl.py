@@ -114,15 +114,10 @@ def test_explain_speaks_up_only_about_certificates():
     assert "sertifika" in db_ssl.explain(ssl.SSLCertVerificationError("certificate verify failed"))
 
 
-def test_env_settings(monkeypatch):
-    monkeypatch.setenv("MYSQL_SSL_MODE", "required")
-    monkeypatch.setenv("MYSQL_SSL_CA", " /tmp/ca.pem ")
-    assert db_ssl.from_env() == ("required", "/tmp/ca.pem")
-
-
 def test_resolve_prefers_the_environment_then_the_host(monkeypatch):
     monkeypatch.setenv("MYSQL_SSL_MODE", "required")
-    assert db_ssl.resolve("db.firma.com")[0] == "required"
+    monkeypatch.setenv("MYSQL_SSL_CA", " /tmp/ca.pem ")
+    assert db_ssl.resolve("db.firma.com") == ("required", "/tmp/ca.pem")
     assert db_ssl.resolve("127.0.0.1")[0] == "required"
     monkeypatch.setenv("MYSQL_SSL_MODE", "")
     assert db_ssl.resolve("db.firma.com")[0] == "verify_identity"

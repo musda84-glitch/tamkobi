@@ -80,10 +80,6 @@ def settings(cfg: Dict[str, Any]) -> Tuple[str, str]:
     return normalize_mode(cfg.get("ssl_mode")), str(cfg.get("ssl_ca") or "").strip()
 
 
-def from_env() -> Tuple[str, str]:
-    return normalize_mode(os.environ.get("MYSQL_SSL_MODE")), (os.environ.get("MYSQL_SSL_CA") or "").strip()
-
-
 def resolve(host: Any) -> Tuple[str, str]:
     """Mode for the database this deployment is already configured with.
 
