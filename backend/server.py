@@ -2951,6 +2951,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         posted = amount if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else try_amt
         posted_ccy = acc_ccy if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else "TRY"
 
+        
         await db.bank_accounts.update_one(
             {"_id": account_id},
             {"$inc": {"current_balance": posted if is_sales else -posted}}

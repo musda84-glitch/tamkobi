@@ -373,6 +373,29 @@ export default function BankingPage() {
                   <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
                   <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
                 </div>
+            <div
+              role="button"
+              tabIndex={0}
+              key={accId}
+              onClick={() => setSelectedAccountId(isSelected ? null : accId)}
+              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : isCard ? 'border-fuchsia-200/90' : 'border-slate-200/90'}`}
+              title={isCard ? "Şirket kredi kartı — tahsilat için kullanılamaz" : "Hesap hareketlerini görmek için tıklayın"}
+              data-testid={`bank-card-${accId}`}
+            >
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className={`p-2 rounded-xl ${
+                    isBank ? 'bg-blue-50 text-blue-600' : isCash ? 'bg-emerald-50 text-emerald-600' : isCard ? 'bg-fuchsia-50 text-fuchsia-600' : 'bg-purple-50 text-purple-600'
+                  }`}>
+                    {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
+                  </div>
+                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded flex items-center gap-1 ${isCard ? "text-fuchsia-700 bg-fuchsia-100" : "text-slate-400 bg-slate-100"}`}>
+                    {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
+                  </span>
+                </div>
+                {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" title="Bu hesap banka API'sine bağlı; manuel işlem yapılamaz, hareketler bankadan çekilir" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider} · manuel işlem kapalı</div>}
+                {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
+
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
                   <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
@@ -404,6 +427,10 @@ export default function BankingPage() {
                   <div className="text-[10px] text-slate-400 uppercase font-semibold">Toplam Bakiye</div>
                   <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
+                  <div className="text-xl font-bold text-slate-900 tracking-tight">
+                    {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                  </div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
               </div>

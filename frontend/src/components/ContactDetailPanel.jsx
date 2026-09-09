@@ -14,6 +14,7 @@ import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
+import { collectableAccounts } from "./PaymentTargetSelect";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -342,6 +343,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {payForm.type === "inflow" && <p className="text-[10px] text-slate-400">Kredi kartı tahsilat için kullanılamaz.</p>}
               <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setPayForm({ ...payForm, type: "inflow" })} className={`p-2 rounded-lg border font-semibold ${payForm.type === "inflow" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="collect-type-in">Tahsilat (Müşteriden)</button><button type="button" onClick={() => setPayForm({ ...payForm, type: "outflow" })} className={`p-2 rounded-lg border font-semibold ${payForm.type === "outflow" ? "bg-rose-600 text-white border-rose-600" : ""}`} data-testid="collect-type-out">Ödeme (Cariye)</button></div>
               <div><label className="block font-semibold mb-1">Kasa / Banka</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={payForm.account_id} onChange={(v) => setPayForm({ ...payForm, account_id: v })} testId="collect-account-select" /></div>
+              <div><label className="block font-semibold mb-1">{payForm.type === "inflow" ? "Kasa / Banka / POS" : "Kasa / Banka / Kart"}</label><select value={payForm.account_id} onChange={(e) => setPayForm({ ...payForm, account_id: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-account-select">{(payForm.type === "inflow" ? collectableAccounts(accounts) : accounts).map((a) => <option key={a.id} value={a.id}>{a.account_name}{a.type === "credit_card" ? " (kart)" : ""} ({fmt(a.current_balance)} ₺)</option>)}</select></div>
+              {payForm.type === "inflow" && <p className="text-[10px] text-slate-400">Kredi kartı tahsilat için kullanılamaz.</p>}
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">Kaydet</button></div>
