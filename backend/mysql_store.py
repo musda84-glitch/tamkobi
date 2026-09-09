@@ -12,10 +12,43 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
 MISSING = object()
+SKIP_TOMBSTONE = frozenset({"sync_tombstones", "trash", "login_attempts", "activity_logs", "notifications"})
+
+
+def iso_ts(value) -> str:
+    if value is None:
+        return datetime.now(timezone.utc).isoformat()
+    if isinstance(value, datetime):
+        ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc).isoformat()
+    text = str(value).replace(" ", "T")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.now(timezone.utc).isoformat()
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def parse_ts(value: Optional[str]):
+    if not value:
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0):
@@ -901,13 +934,65 @@ class MySQLCollection:
         docs = await self._load_filtered(query)
         if not docs:
             return DeleteResult(0)
+        await self._record_tombstones(docs[:1])
         n = await self._delete_ids([docs[0]["_id"]])
         return DeleteResult(n)
 
     async def delete_many(self, query: dict):
         docs = await self._load_filtered(query)
+        await self._record_tombstones(docs)
         n = await self._delete_ids([d["_id"] for d in docs if d.get("_id") is not None])
         return DeleteResult(n)
+
+    async def _record_tombstones(self, docs: Sequence[dict]):
+        if self.name in SKIP_TOMBSTONE or not docs:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        for d in docs:
+            did = d.get("_id")
+            if not did:
+                continue
+            await self._db.sync_tombstones.insert_one({
+                "_id": f"{self.name}:{did}:{uuid.uuid4().hex[:8]}",
+                "collection": self.name,
+                "doc_id": str(did),
+                "company_id": d.get("company_id"),
+                "deleted_at": now,
+            })
+
+    async def changed_since(self, since: Optional[str] = None, company_id: Optional[str] = None, limit: int = 3000) -> Tuple[List[dict], Optional[str], bool]:
+        """SQL-level delta: rows whose docs.updated_at is >= since, optionally scoped by company_id."""
+        await self._db._ensure()
+        sql = "SELECT doc, updated_at FROM docs WHERE collection=%s"
+        args: List[Any] = [self.name]
+        parsed = parse_ts(since)
+        if parsed is not None:
+            sql += " AND updated_at >= %s"
+            args.append(parsed)
+        if company_id:
+            sql += " AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id')) = %s"
+            args.append(company_id)
+        sql += " ORDER BY updated_at ASC, id ASC LIMIT %s"
+        args.append(int(limit) + 1)
+        async with self._db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, args)
+                rows = await cur.fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        docs = []
+        cursor = since
+        for raw, updated in rows:
+            doc = loads(raw)
+            stamp = iso_ts(updated)
+            doc["_row_updated_at"] = stamp
+            docs.append(doc)
+            cursor = stamp
+        if not docs and parsed is None:
+            cursor = iso_ts(datetime.now(timezone.utc))
+        elif not docs:
+            cursor = since
+        return docs, cursor, more
 
     async def count_documents(self, query: Optional[dict] = None):
         return len(await self._load_filtered(query))
@@ -969,6 +1054,9 @@ class MySQLDatabase:
                     idxs = {r[2] for r in await cur.fetchall()}
                     for stmt in schema_upgrade_statements(cols, idxs):
                         await cur.execute(stmt)
+                        await cur.execute("CREATE INDEX idx_docs_coll_upd ON docs (collection, updated_at)")
+                    except Exception:
+                        pass
                     await cur.execute("SELECT collection, spec, unique_index FROM meta_indexes")
                     for coll, spec, uniq in await cur.fetchall():
                         fields = tuple(loads(spec).get("fields") or [])

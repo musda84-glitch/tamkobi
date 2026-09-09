@@ -70,6 +70,7 @@ const purchaseCostText = (p) => {
 };
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { computeLine, documentLineTotals, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
+import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany, addonOn } = useAuth();
@@ -176,6 +177,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setContacts(cntRes.data);
       setProjects(projRes.data);
       setProducts(prodRes.data);
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const [invoices, contacts, products, bankRes] = await Promise.all([
+        cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
+        cachedList("contacts", cid, { onCached: setContacts }),
+        cachedList("products", cid, { onCached: setProducts }),
+        axios.get(`${API_URL}/banking/accounts?company_id=${cid}`)
+      ]);
+      setInvoices(invoices);
+      setContacts(contacts);
+      setProducts(products);
       setBankAccounts(bankRes.data);
       if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {

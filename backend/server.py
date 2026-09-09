@@ -90,6 +90,7 @@ import data_export
 import legal_docs
 import ubl_export
 import edoc_backup
+import data_sync
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -7765,6 +7766,7 @@ data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
 ubl_export.init(db)
 edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
+data_sync.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
@@ -7844,6 +7846,7 @@ app.include_router(data_export.router)
 app.include_router(legal_docs.router)
 app.include_router(ubl_export.router)
 app.include_router(edoc_backup.router)
+app.include_router(data_sync.router)
 
 @app.get("/")
 async def root():

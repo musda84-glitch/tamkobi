@@ -31,6 +31,7 @@ const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
+import { cachedList, contactTypeFilter } from "../utils/dataSync";
 
 export default function ContactsPage() {
   const { activeCompany } = useAuth();
@@ -57,9 +58,10 @@ export default function ContactsPage() {
   const loadContacts = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`);
-      axios.get(`${API_URL}/contacts/flags?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`).then((r) => setFlags(r.data)).catch(() => {});
-      setContacts(res.data);
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const rows = await cachedList("contacts", cid, { filter: contactTypeFilter(filterType), onCached: setContacts });
+      axios.get(`${API_URL}/contacts/flags?company_id=${cid}`).then((r) => setFlags(r.data)).catch(() => {});
+      setContacts(rows);
     } catch (err) {
       toast.error("Cari listesi yüklenemedi.");
     } finally {

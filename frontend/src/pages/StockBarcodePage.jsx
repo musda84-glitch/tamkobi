@@ -39,6 +39,7 @@ import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
+import { cachedList, productFilter } from "../utils/dataSync";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { ScanButton } from "../components/CameraScanner";
@@ -159,10 +160,11 @@ export default function StockBarcodePage() {
   const loadProducts = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&category=${encodeURIComponent(filterCategory)}`);
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       loadCategories();
-      axios.get(`${API_URL}/products/units?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setUnits(r.data)).catch(() => {});
-      setProducts(res.data);
+      axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => setUnits(r.data)).catch(() => {});
+      const rows = await cachedList("products", cid, { filter: productFilter({ category: filterCategory }), onCached: setProducts });
+      setProducts(rows);
     } catch (err) {
       toast.error("Ürünler yüklenemedi.");
     } finally {
