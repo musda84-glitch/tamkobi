@@ -257,6 +257,12 @@ class TestB2BPortal:
         assert d["products"], "no b2b products"
         for p in d["products"]:
             assert approx(p["price"], round(float(p["list_price"]) * 0.95, 2), 0.02), p
+            assert "price_gross" in p and "price_includes_vat" in p
+            vat = float(p.get("vat_rate") or 0)
+            if p.get("price_includes_vat"):
+                assert approx(p["price_gross"], p["price"], 0.02)
+            else:
+                assert approx(p["price_gross"], round(float(p["price"]) * (1 + vat / 100), 2), 0.02)
         assert not any("raw" in (p.get("category") or "").lower() for p in d["products"]) or True
 
     def test_invalid_token_404(self, s):
@@ -266,7 +272,7 @@ class TestB2BPortal:
     def test_create_order(self, s):
         portal = s.get(f"{BASE}/public/b2b/{TOKEN}").json()
         prod = next(p for p in portal["products"] if p["id"] == "prod_01")
-        r = s.post(f"{BASE}/public/b2b/{TOKEN}/orders", json={"items": [{"product_id": "prod_01", "quantity": 2}], "note": "TEST_it10"})
+        r = s.post(f"{BASE}/public/b2b/{TOKEN}/orders", json={"items": [{"product_id": "prod_01", "quantity": 2, "note": "kutu notu"}], "note": "TEST_it10"})
         assert r.status_code == 200, r.text
         d = r.json()
         o = d["order"]
@@ -275,6 +281,8 @@ class TestB2BPortal:
         assert o["contact_id"] == "cnt_01"
         assert o["channel"] == "b2b"
         assert approx(o["total_amount"], prod["price"] * 2, 0.05)
+        assert approx(o.get("grand_total"), (prod.get("price_gross") or prod["price"]) * 2, 0.05)
+        assert (o.get("items") or [{}])[0].get("note") == "kutu notu"
         assert o["notes"] == "TEST_it10"
         assert "_id" not in o
         assert d["message"].startswith("Siparişiniz alındı")

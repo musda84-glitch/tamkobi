@@ -419,6 +419,9 @@ class OrderItem(BaseModel):
     unit_price: float
     total: float
     note: Optional[str] = None
+    vat_rate: float = 20
+    note: Optional[str] = None
+    price_includes_vat: bool = False
 
 class Order(BaseDocument):
     company_id: str
