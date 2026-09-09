@@ -300,6 +300,37 @@ async def update_company(company_id: str, req: Dict[str, Any]):
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
+def _require_company_member(user: dict, company_id: str):
+    if company_id not in (user.get("company_ids") or []):
+        raise HTTPException(status_code=403, detail="Yalnızca bu şirketin kullanıcıları gizlilik ayarını yönetebilir.")
+
+@api_router.get("/companies/{company_id}/privacy")
+async def get_company_privacy(company_id: str, user: dict = Depends(get_current_user)):
+    _require_company_member(user, company_id)
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return saas_extras.privacy_view(c)
+
+@api_router.put("/companies/{company_id}/privacy")
+async def put_company_privacy(company_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    _require_company_member(user, company_id)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Gizlilik ayarını yalnızca şirket yöneticisi değiştirebilir.")
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    if "allow_platform_access" not in req:
+        raise HTTPException(status_code=400, detail="allow_platform_access alanı gerekli.")
+    allow = bool(req.get("allow_platform_access"))
+    now = datetime.now(timezone.utc).isoformat()
+    uid = str(user.get("id") or user.get("_id") or "")
+    meta = {"updated_at": now, "updated_by": uid, "updated_by_name": user.get("name") or user.get("email")}
+    await db.companies.update_one({"_id": company_id}, {"$set": {"allow_platform_access": allow, "privacy": meta}})
+    await db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": uid, "user_name": user.get("name"), "method": "PUT", "path": f"/companies/{company_id}/privacy", "module": "/settings", "status": 200, "detail": "platform_access_on" if allow else "platform_access_off", "created_at": now})
+    c = await db.companies.find_one({"_id": company_id})
+    return {"status": "success", "message": "Yönetim paneli erişimine izin verildi." if allow else "Yönetim panelinden hesaba giriş kapatıldı.", **saas_extras.privacy_view(c)}
+
 B2B_DEFAULTS = {"enabled": True, "login_method": "both", "allow_ai_cart": True, "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
 
 @api_router.get("/companies/{company_id}/b2b-settings")

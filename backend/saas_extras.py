@@ -35,6 +35,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def platform_access_allowed(company: Optional[Dict[str, Any]]) -> bool:
+    """Company admins can opt out of platform 'Şirket Olarak Gir' (default: allowed)."""
+    if not company:
+        return True
+    return company.get("allow_platform_access", True) is not False
+
+
+def privacy_view(company: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    c = company or {}
+    meta = c.get("privacy") or {}
+    return {
+        "allow_platform_access": platform_access_allowed(c),
+        "updated_at": meta.get("updated_at"),
+        "updated_by": meta.get("updated_by"),
+        "updated_by_name": meta.get("updated_by_name"),
+    }
+
+
 # ---------------- Şirket olarak gir (impersonation) ----------------
 @router.post("/system/companies/{company_id}/impersonate")
 async def impersonate(company_id: str, request: Request, response: Response, admin: dict = Depends(saas.require_super_admin)):
@@ -42,6 +60,8 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     if not target:
         raise HTTPException(status_code=400, detail="Bu şirkette giriş yapılabilecek kullanıcı yok.")
     company = await _db.companies.find_one({"_id": company_id}) or {}
+    if not platform_access_allowed(company):
+        raise HTTPException(status_code=403, detail="Bu şirket gizlilik ayarından yönetim paneli erişimini kapatmış. Destek girişi yapılamaz.")
     payload = {"sub": target["_id"], "email": target["email"], "role": target.get("role", "admin"), "type": "access", "imp_by": admin["email"], "imp_name": admin.get("name"), "exp": datetime.now(timezone.utc) + timedelta(hours=2)}
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
     current = request.cookies.get("access_token") or request.headers.get("Authorization", "")[7:]

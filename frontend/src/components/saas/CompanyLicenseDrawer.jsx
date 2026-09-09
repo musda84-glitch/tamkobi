@@ -107,6 +107,15 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
           </div>
         </div>
         <div className="p-5 space-y-5">
+          {d.allow_platform_access === false && (
+            <div className="bg-slate-900 text-amber-200 rounded-2xl px-4 py-3 flex items-start gap-2" data-testid="drawer-privacy-blocked">
+              <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>
+                <div className="font-bold text-sm">Gizlilik: destek girişi kapalı</div>
+                <p className="text-[11px] text-slate-300 mt-0.5">Şirket yöneticisi Firma Ayarları → Gizlilik’ten yönetim paneli erişimini kapatmış. “Şirket Olarak Gir” bu hesap için çalışmaz; lisans ve paket yönetimi devam eder.</p>
+              </div>
+            </div>
+          )}
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

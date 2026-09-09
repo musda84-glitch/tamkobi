@@ -593,6 +593,7 @@ async def _company_row(c: dict) -> Dict[str, Any]:
     ei = await _db.einvoice_settings.find_one({"company_id": c["_id"]}) or {}
     einvoice = {"provider": ei.get("provider") or "", "status": ei.get("status") or "simulated", "mode": ei.get("mode") or "test", "username": ei.get("username") or "", "has_password": bool(ei.get("password_enc"))}
     return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
+    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": c.get("allow_platform_access", True) is not False, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"])}
 
 
 def _restore_active_status(lic: Optional[dict]) -> str:
