@@ -29,11 +29,19 @@ _STARTER = ["/invoices", "/dispatches", "/contacts", "/banking", "/expenses", "/
 _STANDARD = _STARTER + ["/installments", "/loans", "/projects", "/orders", "/communication", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
+DEFAULT_MODULE_PRICES = {
+    "/invoices": 249, "/dispatches": 99, "/contacts": 129, "/installments": 79, "/reports": 99,
+    "/banking": 129, "/expenses": 79, "/loans": 79, "/stock": 129, "/projects": 129,
+    "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/warehouses": 99, "/production": 199,
+    "/atolye": 99, "/personnel": 159, "/communication": 99, "/ai-advisor": 129, "/accountant": 99,
+}
+CUSTOM_PLAN_ID = "plan_custom"
 DEFAULT_PLANS = [
     {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
     {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
     {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
     {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
+    {"_id": CUSTOM_PLAN_ID, "code": "custom", "name": "Özel Paket", "tagline": "Siteden seçtiğiniz modüller", "price_monthly": 0, "price_yearly": 0, "user_limit": 5, "company_limit": 1, "modules": [], "color": "emerald", "sort": 90, "is_public": False},
 ]
 STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
@@ -59,6 +67,67 @@ def _clean(d: dict) -> dict:
 
 def catalog():
     return [{"key": k, "label": l, "category": CATEGORIES.get(k, "Genel"), "description": DESCRIPTIONS.get(k, ""), "is_core": k in CORE_MODULES} for k, l in rbac.MODULES]
+
+
+def _yearly_of(monthly) -> float:
+    return round(float(monthly or 0) * 10, 2)
+
+
+async def module_prices() -> Dict[str, float]:
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    saved = st.get("module_prices") or {}
+    out = {k: float(v) for k, v in DEFAULT_MODULE_PRICES.items()}
+    for k, v in saved.items():
+        if k in _ALL:
+            try:
+                out[k] = float(v)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+async def catalog_with_prices():
+    prices = await module_prices()
+    rows = []
+    for row in catalog():
+        if row["is_core"]:
+            rows.append({**row, "price_monthly": 0, "price_yearly": 0})
+        else:
+            monthly = prices.get(row["key"], 0)
+            rows.append({**row, "price_monthly": monthly, "price_yearly": _yearly_of(monthly)})
+    return rows
+
+
+def normalize_module_keys(raw) -> list:
+    keys = []
+    for item in raw or []:
+        k = str(item or "").strip()
+        if not k:
+            continue
+        if not k.startswith("/"):
+            k = "/" + k
+        if k in _ALL:
+            keys.append(k)
+    return list(dict.fromkeys(keys))
+
+
+def quote_modules(keys, prices: Dict[str, float]) -> Dict[str, float]:
+    monthly = round(sum(float(prices.get(k, 0) or 0) for k in keys if k in _ALL), 2)
+    return {"price_monthly": monthly, "price_yearly": _yearly_of(monthly)}
+
+
+def overrides_for(keys) -> Dict[str, bool]:
+    wanted = set(keys or [])
+    return {k: (k in wanted) for k in _ALL}
+
+
+async def ensure_custom_plan() -> dict:
+    p = await _db.saas_plans.find_one({"_id": CUSTOM_PLAN_ID})
+    if p:
+        return p
+    doc = next(x for x in DEFAULT_PLANS if x["_id"] == CUSTOM_PLAN_ID)
+    await _db.saas_plans.insert_one({**doc, "created_at": _now()})
+    return await _db.saas_plans.find_one({"_id": CUSTOM_PLAN_ID})
 
 
 async def license_id_of(company_id: str) -> str:
@@ -167,7 +236,8 @@ async def effective(company_id: str) -> Dict[str, Any]:
            "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
            "company_limit": company_limit, "company_count": len(siblings),
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
-           "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly")}
+           "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly"),
+           "custom_price_monthly": (lic or {}).get("custom_price_monthly"), "custom_price_yearly": (lic or {}).get("custom_price_yearly")}
     _cache[lid] = (time.time() + CACHE_TTL, dict(res))
     return res
 
@@ -241,8 +311,11 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
     return await _db.companies.find_one({"_id": cid})
 
 
-async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14):
-    await _db.company_licenses.update_one({"_id": company_id}, {"$setOnInsert": {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}}, upsert=True)
+async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14, module_overrides: Optional[dict] = None, extra: Optional[dict] = None):
+    doc = {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": module_overrides or {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}
+    if extra:
+        doc.update(extra)
+    await _db.company_licenses.update_one({"_id": company_id}, {"$setOnInsert": doc}, upsert=True)
     invalidate(company_id)
 
 
@@ -325,7 +398,23 @@ async def overview(_: dict = Depends(require_super_admin)):
 
 @router.get("/system/modules")
 async def system_modules(_: dict = Depends(require_super_admin)):
-    return catalog()
+    return await catalog_with_prices()
+
+
+@router.put("/system/modules/prices")
+async def save_module_prices(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    raw = req.get("prices") or req
+    prices = {}
+    for k, v in (raw or {}).items():
+        key = k if str(k).startswith("/") else "/" + str(k).lstrip("/")
+        if key not in _ALL:
+            continue
+        try:
+            prices[key] = max(0, float(v))
+        except (TypeError, ValueError):
+            continue
+    await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"module_prices": prices, "updated_at": _now()}}, upsert=True)
+    return await catalog_with_prices()
 
 
 @router.get("/system/plans")
@@ -358,7 +447,11 @@ async def update_plan(plan_id: str, req: Dict[str, Any], _: dict = Depends(requi
     p = await _db.saas_plans.find_one({"_id": plan_id})
     if not p:
         raise HTTPException(status_code=404, detail="Paket bulunamadı.")
-    await _db.saas_plans.update_one({"_id": plan_id}, {"$set": {**_plan_payload(req, p), "updated_at": _now()}})
+    payload = _plan_payload(req, p)
+    if plan_id == CUSTOM_PLAN_ID:
+        payload["is_public"] = False
+        payload["modules"] = []
+    await _db.saas_plans.update_one({"_id": plan_id}, {"$set": {**payload, "updated_at": _now()}})
     invalidate()
     return _clean(await _db.saas_plans.find_one({"_id": plan_id}))
 
@@ -368,6 +461,8 @@ async def delete_plan(plan_id: str, _: dict = Depends(require_super_admin)):
     n = await _db.company_licenses.count_documents({"plan_id": plan_id})
     if n:
         raise HTTPException(status_code=400, detail=f"Bu paketi kullanan {n} şirket var; önce paketlerini değiştirin.")
+    if plan_id == CUSTOM_PLAN_ID:
+        raise HTTPException(status_code=400, detail="Özel paket silinemez.")
     if not (await _db.saas_plans.delete_one({"_id": plan_id})).deleted_count:
         raise HTTPException(status_code=404, detail="Paket bulunamadı.")
     return {"status": "success"}

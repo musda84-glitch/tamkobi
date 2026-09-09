@@ -1,20 +1,23 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
-import { Check, Sparkles, ArrowRight, ShieldCheck, Zap, Boxes, Users, FileText, Warehouse, Factory } from "lucide-react";
+import { Check, Sparkles, ArrowRight, ShieldCheck, Boxes, Users, FileText, Warehouse, Factory } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { PLAN_COLORS, groupByCategory } from "../components/saas/saasUi";
+import { PLAN_COLORS } from "../components/saas/saasUi";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
+import ModulePackBuilder from "../components/saas/ModulePackBuilder";
+import { serializeModuleKeys } from "../utils/modulePack";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 
 export default function PricingPage() {
   const [d, setD] = useState(null);
   const [yearly, setYearly] = useState(false);
+  const [picked, setPicked] = useState([]);
   useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => setD(r.data)).catch(() => setD({ plans: [], catalog: [], trial_days: 14, brand_name: "TamKobi" })); }, []);
   const brand = siteBrand(d?.brand_name);
-  const groups = d ? groupByCategory(d.catalog || []) : {};
   const plans = d?.plans || [];
+  const catalog = d?.catalog || [];
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="pricing-page">
       <SiteHeader
@@ -22,6 +25,7 @@ export default function PricingPage() {
         right={(
           <div className="flex items-center gap-3 text-xs">
             <a href="#paketler" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-plans">Paketler</a>
+            <a href="#ozel-paket" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-custom">Kendi paketin</a>
             <Link to="/login" className="text-slate-300 hover:text-white" data-testid="pricing-login-link">Giriş Yap</Link>
             <Link to="/kayit" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-signup-link">Ücretsiz Dene</Link>
           </div>
@@ -31,7 +35,7 @@ export default function PricingPage() {
         <div className="max-w-2xl">
           <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">tamkobi.com · Bulut ERP</div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
-          <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Yönetim panelinden yayınlanan paketler burada görünür. {d?.trial_days || 14} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
+          <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Hazır paketlerden birini seçin veya modülleri tek tek işaretleyerek kendi paketini oluşturun. {d?.trial_days || 14} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8 text-xs">
           {[[FileText, "e-Fatura & cari"], [Warehouse, "Stok ve depo"], [Factory, "Üretim & e-ticaret"]].map(([I, t]) => (
@@ -62,11 +66,17 @@ export default function PricingPage() {
           </div>
         )}
       </section>
-      {d && Object.keys(groups).length > 0 && (
-        <section className="max-w-6xl mx-auto px-6 pb-20">
-          <h2 className="text-base md:text-lg font-bold mb-4 flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Tüm modüller</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{Object.entries(groups).map(([cat, mods]) => <div key={cat} className="bg-white/5 border border-white/10 rounded-2xl p-4"><div className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold mb-2">{cat}</div><ul className="space-y-1.5">{mods.map((m) => <li key={m.key}><div className="text-xs font-semibold">{m.label}</div><div className="text-[11px] text-slate-400">{m.description}</div></li>)}</ul></div>)}</div>
-          <div className="mt-10 text-[11px] text-slate-500 flex flex-wrap items-center gap-3"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Fiyatlar KDV hariçtir. Paketler Platform Yönetimi’nden yayınlanır veya gizlenir.{d.support_email && <span>Destek: {d.support_email} {d.support_phone}</span>}</div>
+      {catalog.filter((m) => !m.is_core).length > 0 && (
+        <section id="ozel-paket" className="max-w-6xl mx-auto px-6 pb-20 scroll-mt-8" data-testid="custom-pack-section">
+          <h2 className="text-base md:text-lg font-bold mb-1">Kendi paketini oluştur</h2>
+          <p className="text-sm text-slate-400 mb-5">Modülleri tek tek seçin; fiyat anında güncellenir. Deneme süresince kredi kartı gerekmez.</p>
+          <ModulePackBuilder catalog={catalog} selected={picked} onChange={setPicked} yearly={yearly} />
+          <Link
+            to={picked.length ? `/kayit?modules=${serializeModuleKeys(picked)}` : "/kayit"}
+            className={`mt-4 inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-sm ${picked.length ? "bg-emerald-500 text-slate-900 hover:bg-emerald-400" : "bg-white/10 text-slate-400 pointer-events-none"}`}
+            data-testid="custom-pack-start"
+          >{d?.trial_days || 14} gün ücretsiz başla <ArrowRight className="w-4 h-4" /></Link>
+          <div className="mt-10 text-[11px] text-slate-500 flex flex-wrap items-center gap-3"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Fiyatlar KDV hariçtir. Hazır paketler Platform Yönetimi’nden yayınlanır; modül fiyatları Modül Kataloğu’ndan değişir.{d?.support_email && <span>Destek: {d.support_email} {d.support_phone}</span>}</div>
         </section>
       )}
       <footer className="border-t border-white/10 py-6 text-center text-[11px] text-slate-500">{brand}.com · {brand} ERP</footer>

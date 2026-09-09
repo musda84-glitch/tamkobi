@@ -55,6 +55,9 @@ async def create_checkout(req: Dict[str, Any], request: Request):
     if not await _db.companies.find_one({"_id": cid}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     amount = float(plan.get("price_yearly" if period == "yearly" else "price_monthly") or 0)
+    lic = await _db.company_licenses.find_one({"_id": cid}) or {}
+    if plan.get("_id") == saas.CUSTOM_PLAN_ID or (not amount and lic.get("custom_price_monthly")):
+        amount = float(lic.get("custom_price_yearly" if period == "yearly" else "custom_price_monthly") or 0)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Bu paket için fiyat tanımlı değil.")
     origin = (req.get("origin_url") or str(request.headers.get("origin") or "")).rstrip("/")
@@ -246,7 +249,7 @@ async def reminders_log(_: dict = Depends(saas.require_super_admin)):
 async def public_plans():
     st = await settings()
     plans = [_clean(p) for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
-    return {"plans": plans, "catalog": saas.catalog(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone")}
+    return {"plans": plans, "catalog": await saas.catalog_with_prices(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "allow_custom_pack": True}
 
 
 @router.post("/public/signup")
@@ -259,7 +262,16 @@ async def public_signup(req: Dict[str, Any], response: Response):
     if await _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı bir hesap zaten var. Giriş yapın.")
     st = await settings()
-    if req.get("plan_id"):
+    wanted = saas.normalize_module_keys(req.get("modules"))
+    extra = None
+    overrides = None
+    if wanted:
+        plan = await saas.ensure_custom_plan()
+        prices = await saas.module_prices()
+        quote = saas.quote_modules(wanted, prices)
+        overrides = saas.overrides_for(wanted)
+        extra = {"custom_price_monthly": quote["price_monthly"], "custom_price_yearly": quote["price_yearly"], "notes": f"{st['trial_days']} gün deneme · {len(wanted)} modül"}
+    elif req.get("plan_id"):
         plan = await _db.saas_plans.find_one({"_id": req["plan_id"], "is_public": True})
         if not plan:
             raise HTTPException(status_code=400, detail="Seçilen paket bulunamadı.")
@@ -269,7 +281,7 @@ async def public_signup(req: Dict[str, Any], response: Response):
     await _db.companies.insert_one({"_id": cid, "name": cname, "tax_number": (req.get("tax_number") or "").strip(), "tax_office": "", "address": "", "city": (req.get("city") or "").strip(), "phone": (req.get("phone") or "").strip(), "email": email, "currency": "TRY", "source": "public_signup", "license_id": cid, "created_at": _now()})
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
     await rbac.ensure_roles(cid)
-    await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"])
+    await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
     response.set_cookie(key="access_token", value=create_access_token(uid, email, "admin"), httponly=True, max_age=86400 * 7, path="/")
     response.set_cookie(key="refresh_token", value=create_refresh_token(uid), httponly=True, max_age=86400 * 30, path="/")
     return {"status": "success", "company_id": cid, "user": {"id": uid, "email": email, "name": name, "role": "admin"}, "license": await saas.effective(cid), "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı."}

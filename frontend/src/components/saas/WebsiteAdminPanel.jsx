@@ -59,7 +59,7 @@ export const WebsiteAdminPanel = ({ plans, onChanged }) => {
         <div className="flex-1 min-w-[220px]">
           <div className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold">Müşteri web sitesi yayında</div>
           <div className="text-lg font-bold mt-0.5">{brand}.com vitrini</div>
-          <p className="text-slate-300 mt-1">Giriş yapmışken ana sayfa ERP panelini açar. Vitrini buradan veya “Siteyi aç” ile görürsünüz. {published} paket yayında · {publicPlans?.trial_days || 14} gün deneme.</p>
+          <p className="text-slate-300 mt-1">Giriş yapmışken ana sayfa ERP panelini açar. Vitrini buradan veya “Siteyi aç” ile görürsünüz. {published} paket yayında · {publicPlans?.trial_days || 14} gün deneme. Müşteriler sitede modülleri tek tek seçerek kendi paketini de oluşturabilir.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <a href={previewPath} target="_blank" rel="noreferrer" className="px-4 py-2.5 bg-emerald-400 hover:bg-emerald-300 text-slate-900 rounded-xl font-bold inline-flex items-center gap-1.5" data-testid="web-open-site"><ExternalLink className="w-4 h-4" /> Siteyi aç</a>
