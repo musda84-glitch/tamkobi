@@ -17,6 +17,7 @@ services:
       - mysql_data:/var/lib/mysql
       - ./backend/schema.mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./backend/mysql/logging.cnf:/etc/mysql/conf.d/logging.cnf:ro
+      - ./backend/mysql/perf.cnf:/etc/mysql/conf.d/perf.cnf:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:-tamkobi}"]
       interval: 5s
@@ -55,6 +56,9 @@ services:
       LOG_MAX_BYTES: "52428800"
       LOG_RETENTION_DAYS: "14"
       LOG_SQL_SLOW_MS: "200"
+      PERF_INTERVAL_SEC: "60"
+      PERF_DISK_PCT: "90"
+      PERF_MEM_PCT: "90"
     volumes:
       - backend_logs:/var/log/tamkobi
     depends_on:

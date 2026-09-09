@@ -582,6 +582,10 @@ CREATE TABLE IF NOT EXISTS docs (
   updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (collection, id),
   INDEX idx_docs_coll_company (collection, company_id)
+  company_id VARCHAR(64) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED,
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (collection, id),
+  KEY idx_docs_coll_company (collection, company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS meta_indexes (
@@ -616,6 +620,28 @@ CREATE TABLE IF NOT EXISTS system_logs (
   KEY idx_syslogs_event (event, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 """
+
+
+def schema_upgrade_statements(columns: set, indexes: set) -> List[str]:
+    """Idempotent ALTERs for databases created before generated company_id."""
+    stmts: List[str] = []
+    if "company_id" not in columns:
+        stmts.append(
+            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(64) "
+            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
+        )
+    if "idx_docs_coll_company" not in indexes:
+        stmts.append("ALTER TABLE docs ADD INDEX idx_docs_coll_company (collection, company_id)")
+    return stmts
+
+
+def _simple_eq(query: Optional[dict], field: str):
+    if not query or field not in query:
+        return None
+    val = query[field]
+    if isinstance(val, dict):
+        return None
+    return val
 
 
 class MySQLCursor:
@@ -699,6 +725,28 @@ class MySQLCollection:
             docs = await self._load_sql(sql, params)
         except Exception:
             docs = await self._load_all()
+    async def _load_by_company(self, company_id) -> List[dict]:
+        await self._db._ensure()
+        t0 = time.perf_counter()
+        async with self._db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
+                    (self.name, str(company_id)),
+                )
+                rows = await cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+        return [loads(r[0]) for r in rows]
+
+    async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
+        cid = _simple_eq(query, "company_id")
+        if cid is not None:
+            docs = await self._load_by_company(cid)
+            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
+            if not rest:
+                return docs
+            return [d for d in docs if match_query(d, rest)]
+        docs = await self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]
@@ -915,6 +963,12 @@ class MySQLDatabase:
                         await ensure_docs_query_helpers_async(cur, self._settings.get("db", "tamkobi"))
                     except Exception:
                         pass
+                    await cur.execute("SHOW COLUMNS FROM docs")
+                    cols = {r[0] for r in await cur.fetchall()}
+                    await cur.execute("SHOW INDEX FROM docs")
+                    idxs = {r[2] for r in await cur.fetchall()}
+                    for stmt in schema_upgrade_statements(cols, idxs):
+                        await cur.execute(stmt)
                     await cur.execute("SELECT collection, spec, unique_index FROM meta_indexes")
                     for coll, spec, uniq in await cur.fetchall():
                         fields = tuple(loads(spec).get("fields") or [])
@@ -1038,6 +1092,18 @@ class SyncMySQLCollection:
         _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
+    def _load_by_company(self, company_id):
+        self._db._ensure()
+        t0 = time.perf_counter()
+        with self._db._conn.cursor() as cur:
+            cur.execute(
+                "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
+                (self.name, str(company_id)),
+            )
+            rows = cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+        return [loads(r[0]) for r in rows]
+
     def _load_filtered(self, query):
         sql, params = sql_pushdown(self.name, query)
         self._db._ensure()
@@ -1047,6 +1113,14 @@ class SyncMySQLCollection:
                 docs = [loads(r[0]) for r in cur.fetchall()]
         except Exception:
             docs = self._load_all()
+        cid = _simple_eq(query, "company_id")
+        if cid is not None:
+            docs = self._load_by_company(cid)
+            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
+            if not rest:
+                return docs
+            return [d for d in docs if match_query(d, rest)]
+        docs = self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]
@@ -1188,6 +1262,12 @@ class SyncMySQLDatabase:
                     ensure_docs_query_helpers(cur, self._settings.get("db", "tamkobi"))
                 except Exception:
                     pass
+                cur.execute("SHOW COLUMNS FROM docs")
+                cols = {r[0] for r in cur.fetchall()}
+                cur.execute("SHOW INDEX FROM docs")
+                idxs = {r[2] for r in cur.fetchall()}
+                for stmt in schema_upgrade_statements(cols, idxs):
+                    cur.execute(stmt)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):

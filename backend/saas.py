@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 import rbac
 import applog
+import perfmon
 from auth_utils import hash_password, verify_password
 
 router = APIRouter(prefix="/api")
@@ -627,6 +628,21 @@ async def system_logs(category: Optional[str] = None, event: Optional[str] = Non
 @router.post("/system/logs/rotate")
 async def rotate_system_logs(_: dict = Depends(require_super_admin)):
     return applog.rotate_files()
+
+
+@router.get("/system/perf")
+async def system_perf(_: dict = Depends(require_super_admin)):
+    snap = perfmon.collect()
+    perfmon.persist_snapshot(snap)
+    snap["recommendations"] = perfmon.recommendations(snap)
+    return snap
+
+
+@router.post("/system/perf/report")
+async def system_perf_report(_: dict = Depends(require_super_admin)):
+    snap = perfmon.collect()
+    path = perfmon.write_report(snap)
+    return {"status": "ok", "path": str(path), "alerts": snap.get("alerts") or [], "ok": snap.get("ok")}
 
 
 @router.get("/system/overview")
