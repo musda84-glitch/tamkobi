@@ -44,6 +44,7 @@ import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { HeaderFxRates } from "./HeaderFxRates";
 import { isPublicPath } from "../utils/publicPath";
+import TamKobiMark from "./TamKobiMark";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -77,9 +78,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {/* Brand Header */}
         <div className="h-16 px-5 border-b border-slate-800/80 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 font-bold text-lg text-white tracking-tight" data-testid="brand-logo-btn">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
-              <Sparkles className="w-4 h-4" />
-            </div>
+            <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
             <span>Tam<span className="text-emerald-400">Kobi</span></span>
             <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
           </Link>
