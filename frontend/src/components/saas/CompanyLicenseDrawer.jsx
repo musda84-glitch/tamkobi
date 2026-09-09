@@ -36,6 +36,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
     setEiProvider(r.data.einvoice?.provider || "");
   }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: dateInputValue(l.trial_ends_at), expires_at: dateInputValue(l.expires_at), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  useEffect(() => { load(); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
@@ -48,6 +50,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const save = async () => {
     setBusy("save");
     try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: toIsoEndOfDay(f.trial_ends_at), expires_at: toIsoEndOfDay(f.expires_at), user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit), product_limit: f.product_limit === "" ? null : Number(f.product_limit), contact_limit: f.contact_limit === "" ? null : Number(f.contact_limit), storage_limit_mb: f.storage_limit_mb === "" ? null : Number(f.storage_limit_mb) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: toIsoEndOfDay(f.trial_ends_at), expires_at: toIsoEndOfDay(f.expires_at), user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
