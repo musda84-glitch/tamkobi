@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
@@ -10,15 +10,68 @@ import { useEscape } from "../utils/useEscape";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
+const BUILTIN_SIZES = [[40, 20], [50, 30], [60, 40], [100, 30], [100, 50]];
 const FIELDS = [["name", "Ürün Adı"], ["price", "Fiyat"], ["sku", "SKU / Stok Kodu"], ["barcode_text", "Barkod No"], ["variant", "Varyant"], ["category", "Kategori"], ["company", "Firma Adı"], ["text", "Serbest Metin"]];
 const ELEMENT_TYPES = [["barcode", "Barkod", BarcodeIcon], ["qr", "QR Kod", QrCode], ["field", "Metin Alanı", Type], ["logo", "Firma Logosu", ImageIcon], ["image", "Ürün Görseli", ImageIcon], ["line", "Çizgi", Minus], ["box", "Kutu", Square]];
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const uid = () => Math.random().toString(36).slice(2, 8);
-const DEFAULT_TPL = (w = 100, h = 30) => ({ name: `Etiket ${w}×${h}`, width_mm: w, height_mm: h, page: { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 }, elements: [
-  { id: uid(), type: "field", field: "name", x: 2, y: 1.5, w: w - 4, h: 7, font: 10, bold: true, align: "left" },
-  { id: uid(), type: "barcode", x: 2, y: 9, w: Math.min(60, w - 4), h: h - 12, showText: true },
-  { id: uid(), type: "field", field: "price", x: w - 36, y: 10, w: 34, h: 9, font: 16, bold: true, align: "right", vat: "incl" },
-  { id: uid(), type: "field", field: "sku", x: w - 36, y: 20, w: 34, h: 5, font: 7, align: "right" }] });
+const DEFAULT_TPL = (w = 100, h = 30) => {
+  const compact = h <= 22;
+  return {
+    name: `Etiket ${w}×${h}`,
+    width_mm: w,
+    height_mm: h,
+    page: { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 },
+    elements: compact ? [
+      { id: uid(), type: "field", field: "name", x: 1.5, y: 0.6, w: w - 3, h: 4, font: 7, bold: true, align: "left" },
+      { id: uid(), type: "barcode", x: 1.5, y: 5, w: Math.max(18, w - 18), h: h - 7.5, showText: true },
+      { id: uid(), type: "field", field: "price", x: w - 15, y: 5, w: 13.5, h: 6, font: 9, bold: true, align: "right", vat: "incl" },
+      { id: uid(), type: "field", field: "sku", x: w - 15, y: 11.5, w: 13.5, h: 4, font: 5, align: "right" },
+    ] : [
+      { id: uid(), type: "field", field: "name", x: 2, y: 1.5, w: w - 4, h: 7, font: 10, bold: true, align: "left" },
+      { id: uid(), type: "barcode", x: 2, y: 9, w: Math.min(60, w - 4), h: h - 12, showText: true },
+      { id: uid(), type: "field", field: "price", x: w - 36, y: 10, w: 34, h: 9, font: 16, bold: true, align: "right", vat: "incl" },
+      { id: uid(), type: "field", field: "sku", x: w - 36, y: 20, w: 34, h: 5, font: 7, align: "right" },
+    ],
+  };
+};
+
+const builtinTemplates = () => BUILTIN_SIZES.map(([w, h]) => ({
+  ...DEFAULT_TPL(w, h),
+  id: `builtin-${w}x${h}`,
+  name: `Hazır ${w}×${h} mm`,
+  is_builtin: true,
+}));
+
+const cardPrintTargets = (product) => {
+  if (!product) return [];
+  const pid = product.id || product._id;
+  const main = { ...product, id: pid, variant_name: "" };
+  const variants = (product.variants || []).map((v) => ({
+    ...product,
+    id: v.variant_id || v.sku || `${pid}-${v.name}`,
+    name: `${product.name} — ${v.name}`,
+    sku: v.sku || product.sku,
+    barcode: v.barcode || product.barcode,
+    sale_price: v.sale_price ?? v.price ?? product.sale_price,
+    image_url: v.image_url || product.image_url,
+    variant_name: v.name,
+    variants: undefined,
+  }));
+  return [main, ...variants];
+};
+
+const printLabelJobs = (tpl, jobs, page, sourceId) => {
+  if (!jobs.length) { toast.error("Yazdırılacak etiket yok."); return; }
+  const win = window.open("", "_blank", "width=900,height=700");
+  if (!win) { toast.error("Yazdırma penceresi açılamadı — tarayıcı pop-up engelini kontrol edin."); return; }
+  const isA4 = page.mode === "a4";
+  const cols = isA4 ? Math.max(1, Number(page.cols) || 1) : 1;
+  const gap = Number(page.gap_mm) || 0;
+  const html = document.getElementById(sourceId)?.innerHTML || "";
+  win.document.write(`<html><head><title>Etiketler</title><style>@page{size:${isA4 ? "A4" : `${tpl.width_mm}mm ${tpl.height_mm}mm`};margin:${isA4 ? "8mm" : "0"}}body{margin:0;font-family:Arial,sans-serif}.grid{display:grid;grid-template-columns:repeat(${cols},${tpl.width_mm}mm);gap:${gap}mm}.lbl{width:${tpl.width_mm}mm;height:${tpl.height_mm}mm;position:relative;overflow:hidden;${isA4 ? "" : "page-break-after:always;"}break-inside:avoid;background:#fff}svg{display:block}</style></head><body><div class="grid">${html}</div><script>setTimeout(()=>{window.print();},400)</script></body></html>`);
+  win.document.close();
+};
 
 const valueOf = (el, p, company) => {
   if (!p) return el.field === "text" ? el.text || "Metin" : `{${el.field}}`;
@@ -56,20 +109,11 @@ const PrintModal = ({ tpl, products, company, onClose, initialSel = {}, template
   const [page, setPage] = useState(tpl.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
   const list = useMemo(() => products.filter((p) => !q || p.name?.toLowerCase().includes(q.toLowerCase()) || p.sku?.toLowerCase().includes(q.toLowerCase()) || p.barcode?.includes(q)).slice(0, 200), [products, q]);
   const jobs = useMemo(() => Object.entries(sel).flatMap(([id, n]) => { const p = products.find((x) => (x.id || x._id) === id); return p && n > 0 ? Array.from({ length: n }, () => p) : []; }), [sel, products]);
-  const print = () => {
-    if (!jobs.length) { toast.error("Ürün ve adet seçin."); return; }
-    const win = window.open("", "_blank", "width=900,height=700");
-    const isA4 = page.mode === "a4";
-    const cols = isA4 ? Math.max(1, Number(page.cols) || 1) : 1;
-    const gap = Number(page.gap_mm) || 0;
-    const html = document.getElementById("label-print-source").innerHTML;
-    win.document.write(`<html><head><title>Etiketler</title><style>@page{size:${isA4 ? "A4" : `${tpl.width_mm}mm ${tpl.height_mm}mm`};margin:${isA4 ? "8mm" : "0"}}body{margin:0;font-family:Arial,sans-serif}.grid{display:grid;grid-template-columns:repeat(${cols},${tpl.width_mm}mm);gap:${gap}mm}.lbl{width:${tpl.width_mm}mm;height:${tpl.height_mm}mm;position:relative;overflow:hidden;${isA4 ? "" : "page-break-after:always;"}break-inside:avoid;background:#fff}svg{display:block}</style></head><body><div class="grid">${html}</div><script>setTimeout(()=>{window.print();},400)</script></body></html>`);
-    win.document.close();
-  };
+  const print = () => printLabelJobs(tpl, jobs, page, "label-print-source");
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()} data-testid="label-print-modal">
-        <div className="flex items-center justify-between"><b className="text-sm flex items-center gap-2">Etiket Yazdır — {templates.length > 1 ? <select value={tpl.id} onChange={(e) => onTplChange(templates.find((t) => t.id === e.target.value))} className="border rounded-lg p-1 text-xs font-normal" data-testid="label-print-tpl">{templates.map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name}</option>)}</select> : tpl.name} ({tpl.width_mm}×{tpl.height_mm} mm)</b><button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" data-testid="label-print-close"><X className="w-4 h-4" /></button></div>
+        <div className="flex items-center justify-between"><b className="text-sm flex items-center gap-2">Toplu Etiket Yazdır — {templates.length ? <select value={tpl.id || ""} onChange={(e) => onTplChange(templates.find((t) => t.id === e.target.value) || tpl)} className="border rounded-lg p-1 text-xs font-normal" data-testid="label-print-tpl">{templates.map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name}</option>)}</select> : tpl.name} ({tpl.width_mm}×{tpl.height_mm} mm)</b><button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" data-testid="label-print-close"><X className="w-4 h-4" /></button></div>
         <div className="flex flex-wrap items-center gap-2">
           <label>Sayfa: <select value={page.mode} onChange={(e) => setPage({ ...page, mode: e.target.value })} className="border rounded-lg p-1.5" data-testid="label-page-mode"><option value="thermal">Termal rulo (etiket başına sayfa)</option><option value="a4">A4 etiket kağıdı</option></select></label>
           {page.mode === "a4" && <><label>Sütun <input type="number" min="1" max="8" value={page.cols} onChange={(e) => setPage({ ...page, cols: Number(e.target.value) })} className="w-14 border rounded-lg p-1.5" data-testid="label-page-cols" /></label><label>Boşluk mm <input type="number" min="0" step="0.5" value={page.gap_mm} onChange={(e) => setPage({ ...page, gap_mm: Number(e.target.value) })} className="w-16 border rounded-lg p-1.5" /></label></>}
@@ -155,16 +199,126 @@ export const LabelDesigner = ({ companyId, products, company }) => {
             </>)}
           </div>
         </div>)}
-      {printing && tpl && <PrintModal tpl={tpl} products={products} company={company} onClose={() => setPrinting(false)} />}
+      {printing && tpl && <PrintModal tpl={tpl} templates={tpls} onTplChange={(t) => t && setTpl(t)} products={products} company={company} onClose={() => setPrinting(false)} />}
     </div>
   );
 };
 
-export const LabelQuickPrint = ({ companyId, product, products, company, onClose }) => {
-  const [tpls, setTpls] = useState(null);
+export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDesigner }) => {
+  useEscape(onClose);
+  const builtins = useMemo(() => builtinTemplates(), []);
+  const targets = useMemo(() => cardPrintTargets(product), [product]);
+  const [saved, setSaved] = useState([]);
   const [tpl, setTpl] = useState(null);
-  useEffect(() => { axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => { setTpls(r.data); setTpl(r.data.find((t) => t.is_default) || r.data[0] || DEFAULT_TPL(100, 50)); }).catch(() => { setTpls([]); setTpl(DEFAULT_TPL(100, 50)); }); }, [companyId]);
-  if (!tpl) return null;
-  const pid = product.id || product._id;
-  return <PrintModal tpl={tpl} templates={tpls || []} onTplChange={setTpl} products={products.some((p) => (p.id || p._id) === pid) ? products : [product, ...products]} company={company} initialSel={{ [pid]: 1 }} onClose={onClose} />;
+  const [copies, setCopies] = useState(1);
+  const [page, setPage] = useState({ mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
+  const [targetId, setTargetId] = useState(targets[0]?.id);
+
+  useEffect(() => {
+    axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => {
+      const list = Array.isArray(r.data) ? r.data : [];
+      setSaved(list);
+      const pick = list.find((t) => t.is_default) || list[0] || builtins.find((t) => t.id === "builtin-50x30") || builtins[0];
+      setTpl(pick);
+      setPage(pick.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
+    }).catch(() => {
+      setSaved([]);
+      const pick = builtins.find((t) => t.id === "builtin-50x30") || builtins[0];
+      setTpl(pick);
+      setPage(pick.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
+    });
+  }, [companyId, builtins]);
+
+  const options = useMemo(() => [...saved, ...builtins], [saved, builtins]);
+  const target = targets.find((t) => t.id === targetId) || targets[0];
+  const jobs = useMemo(() => (target ? Array.from({ length: Math.max(1, copies) }, () => target) : []), [target, copies]);
+
+  const applyTpl = (next) => {
+    if (!next) return;
+    setTpl(next);
+    setPage(next.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
+  };
+
+  if (!tpl || !target) return null;
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-5 space-y-3 text-xs text-slate-800" onClick={(e) => e.stopPropagation()} data-testid="label-quick-modal">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <b className="text-sm flex items-center gap-2 text-slate-900"><Tag className="w-4 h-4 text-emerald-600" /> Etiket Yazdır</b>
+            <div className="mt-1 font-semibold text-slate-900 truncate" data-testid="label-quick-product-name">{product.name}</div>
+            <div className="text-[10px] text-slate-400 font-mono">{product.sku}{product.barcode ? ` · ${product.barcode}` : ""}</div>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg shrink-0" data-testid="label-print-close"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block space-y-1">
+            <span className="font-semibold text-slate-700">Etiket şablonu</span>
+            <select
+              value={tpl.id || ""}
+              onChange={(e) => applyTpl(options.find((t) => t.id === e.target.value))}
+              className="w-full border rounded-lg p-2 bg-slate-50"
+              data-testid="label-print-tpl"
+            >
+              {saved.length > 0 && (
+                <optgroup label="Kayıtlı şablonlar">
+                  {saved.map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name} ({t.width_mm}×{t.height_mm} mm)</option>)}
+                </optgroup>
+              )}
+              <optgroup label="Hazır etiket şablonları">
+                {builtins.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </optgroup>
+            </select>
+          </label>
+          {targets.length > 1 && (
+            <label className="block space-y-1">
+              <span className="font-semibold text-slate-700">Bu kart / varyant</span>
+              <select value={target.id} onChange={(e) => setTargetId(e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="label-quick-target">
+                {targets.map((t, i) => <option key={t.id} value={t.id}>{i === 0 ? "Stok kartı" : t.variant_name} ({t.sku || t.barcode || "kod yok"})</option>)}
+              </select>
+            </label>
+          )}
+          <label className="block space-y-1">
+            <span className="font-semibold text-slate-700">Adet</span>
+            <input type="number" min="1" max="200" value={copies} onChange={(e) => setCopies(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} className="w-full border rounded-lg p-2 font-bold" data-testid="label-quick-copies" />
+          </label>
+          <label className="block space-y-1">
+            <span className="font-semibold text-slate-700">Sayfa</span>
+            <select value={page.mode} onChange={(e) => setPage({ ...page, mode: e.target.value })} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="label-page-mode">
+              <option value="thermal">Termal rulo (etiket başına sayfa)</option>
+              <option value="a4">A4 etiket kağıdı</option>
+            </select>
+          </label>
+        </div>
+        {page.mode === "a4" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label>Sütun <input type="number" min="1" max="8" value={page.cols} onChange={(e) => setPage({ ...page, cols: Number(e.target.value) })} className="w-14 border rounded-lg p-1.5" data-testid="label-page-cols" /></label>
+            <label>Boşluk mm <input type="number" min="0" step="0.5" value={page.gap_mm} onChange={(e) => setPage({ ...page, gap_mm: Number(e.target.value) })} className="w-16 border rounded-lg p-1.5" /></label>
+          </div>
+        )}
+
+        {saved.length === 0 && (
+          <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2" data-testid="label-quick-no-saved">
+            Kayıtlı şablon yok — hazır boyutlardan birini seçin veya{" "}
+            <button type="button" className="text-emerald-700 font-semibold underline" data-testid="label-quick-open-designer" onClick={() => { onClose(); onOpenDesigner?.(); }}>Etiket Tasarımı</button>
+            {" "}sekmesinden kendi şablonunuzu kaydedin.
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-500">{tpl.width_mm}×{tpl.height_mm} mm · {jobs.length} etiket</span>
+          <button onClick={() => printLabelJobs(tpl, jobs, page, "label-quick-print-source")} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="label-print-btn">
+            <Printer className="w-4 h-4" /> Yazdır
+          </button>
+        </div>
+
+        <div className="bg-slate-50 p-4 rounded-xl flex justify-center overflow-x-auto" data-testid="label-quick-preview">
+          <div className="shadow border bg-white"><LabelCanvas tpl={tpl} product={target} company={company} scale={tpl.width_mm >= 80 ? 1.4 : 2} /></div>
+        </div>
+        <div id="label-quick-print-source" className="hidden">{jobs.map((p, i) => <div key={i} className="lbl"><LabelCanvas tpl={tpl} product={p} company={company} scale={1} /></div>)}</div>
+      </div>
+    </div>
+  );
 };
