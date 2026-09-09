@@ -80,7 +80,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
               <Sparkles className="w-4 h-4" />
             </div>
-            <span>Nexus<span className="text-emerald-400">Hesap</span></span>
+            <span>Tam<span className="text-emerald-400">Kobi</span></span>
             <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
           </Link>
           <button onClick={() => setMobileMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white">
