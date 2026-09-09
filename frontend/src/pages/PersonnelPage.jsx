@@ -435,7 +435,7 @@ export default function PersonnelPage() {
           </div>
         </div>
       )}
-      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
+      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
       {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
     </div>
   );
