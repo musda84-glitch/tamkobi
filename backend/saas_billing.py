@@ -84,6 +84,7 @@ async def _apply_payment(tx: dict):
     if not r.modified_count:
         return
     if tx.get("product_type") == "gib_credits":
+    if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
         await gib_credits.apply_purchase(tx)
         return
     lic = await _db.company_licenses.find_one({"_id": tx["company_id"]}) or {}

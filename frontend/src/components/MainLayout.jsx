@@ -53,6 +53,7 @@ import { AccountMenu } from "./AccountMenu";
 import { AccountMenu } from "./AccountMenu";
 import TamKobiMark from "./TamKobiMark";
 import AppSidebarNav from "./AppSidebarNav";
+import { AccountMenu } from "./AccountMenu";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();

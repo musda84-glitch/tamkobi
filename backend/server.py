@@ -68,6 +68,7 @@ import gib_credits
 import order_pick
 import trade
 import platform_mail
+import gib_credits
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -2833,6 +2834,9 @@ async def accept_incoming_invoice(invoice_id: str):
         "gib_status": "Gelen E-Fatura Onaylandı",
         "direction": "incoming",
         "accepted_at": now,
+        "message": f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}",
+        "tracking_id": tracking_id,
+        "gib_credits_left": remaining,
     }
     if inv.get("status") == "draft":
         if not inv.get("effects_applied"):
