@@ -1,6 +1,8 @@
 import asyncio
 from dotenv import load_dotenv
 load_dotenv()
+from setup_state import apply_saved_secrets
+apply_saved_secrets()
 
 import os
 import uuid
@@ -91,6 +93,7 @@ import legal_docs
 import ubl_export
 import edoc_backup
 import data_sync
+import setup_install
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -158,21 +161,25 @@ async def startup_event():
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
         if jwt_secret_is_insecure():
             logger.warning("JWT_SECRET is missing or a known default — set a long random JWT_SECRET in backend/.env")
-        await seed_all_data(db)
-        await seed_partners(db)
-        await seed_shopfloor_pins(db)
-        await demo.tag_legacy_seed()
-        await saas.seed()
-        await db.users.create_index("email", unique=True)
-        await db.products.create_index("sku")
-        await db.products.create_index("barcode")
-        await db.contacts.create_index("tax_number_or_id")
-        await db.invoices.create_index("invoice_number")
-        await db.orders.create_index("order_number")
-        await db.login_attempts.create_index("identifier")
-        logger.info("TamKobi backend startup complete. Seed & indexes ready.")
-        logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
-        applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
+        installed = await setup_install.detect_installed(db)
+        if not installed:
+            logger.info("TamKobi is not installed. Open /kurulum to finish setup.")
+        else:
+            await seed_all_data(db)
+            await seed_partners(db)
+            await seed_shopfloor_pins(db)
+            await demo.tag_legacy_seed()
+            await saas.seed()
+            await db.users.create_index("email", unique=True)
+            await db.products.create_index("sku")
+            await db.products.create_index("barcode")
+            await db.contacts.create_index("tax_number_or_id")
+            await db.invoices.create_index("invoice_number")
+            await db.orders.create_index("order_number")
+            await db.login_attempts.create_index("identifier")
+            logger.info("TamKobi backend startup complete. Seed & indexes ready.")
+            logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
+            applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
         logger.error(f"Startup error: {e}")
         applog.log_error("startup_failed", str(e), exc=e)
@@ -7461,6 +7468,7 @@ for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", 
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)
+app.include_router(setup_install.router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
 app.include_router(fx.router)

@@ -5,6 +5,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { Toaster } from "sonner";
 import MainLayout from "./components/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SetupGuard from "./components/SetupGuard";
 import Dashboard from "./pages/Dashboard";
 import InvoicesPage from "./pages/InvoicesPage";
 import ContactsPage from "./pages/ContactsPage";
@@ -44,6 +45,7 @@ import SystemLoginPage from "./pages/SystemLoginPage";
 import WebsiteAdminPage from "./pages/WebsiteAdminPage";
 import PricingPage from "./pages/PricingPage";
 import HomeOrApp from "./pages/HomeOrApp";
+import SetupPage from "./pages/SetupPage";
 import SignupPage from "./pages/SignupPage";
 import LegalPage from "./pages/LegalPage";
 import PaymentResultPage from "./pages/PaymentResultPage";
@@ -61,10 +63,12 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Toaster position="top-right" richColors closeButton />
+        <SetupGuard>
         <MainLayout>
           <ProtectedRoute>
           <Routes>
             <Route path="/" element={<HomeOrApp />} />
+            <Route path="/kurulum" element={<SetupPage />} />
             <Route path="/panel" element={<Dashboard />} />
             <Route path="/invoices" element={<InvoicesPage />} />
             <Route path="/dis-ticaret" element={<TradePage />} />
@@ -130,6 +134,7 @@ export default function App() {
           </Routes>
           </ProtectedRoute>
         </MainLayout>
+        </SetupGuard>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -86,6 +86,13 @@ class DeleteResult:
 
 
 def mysql_settings_from_env() -> Dict[str, Any]:
+    try:
+        from setup_state import load_database_settings
+        file_cfg = load_database_settings()
+    except Exception:
+        file_cfg = None
+    if file_cfg:
+        return file_cfg
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     if url.startswith("mysql"):
         # Accept mysql://, mysql+pymysql://, mysql+aiomysql://
@@ -1030,6 +1037,14 @@ class MySQLDatabase:
         self._indexes: Dict[str, List[Tuple[tuple, bool]]] = {}
         self._cols: Dict[str, MySQLCollection] = {}
         self.name = self._settings.get("db", "tamkobi")
+
+    async def reconfigure(self, settings: dict):
+        """Reconnect the pool after the first-run wizard writes new credentials."""
+        await self.close()
+        self._settings = dict(settings)
+        self.name = self._settings.get("db", "tamkobi")
+        self._indexes = {}
+        await self._ensure()
 
     async def _ensure(self):
         if self._pool is None:

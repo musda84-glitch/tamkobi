@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import { Check, Sparkles, ArrowRight, ShieldCheck, Boxes, Users, FileText, Warehouse, Factory } from "lucide-react";
-import { API_URL } from "../context/AuthContext";
+import { API_URL, useAuth } from "../context/AuthContext";
 import { PLAN_COLORS } from "../components/saas/saasUi";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
@@ -13,6 +13,7 @@ import { LegalFooterLinks } from "../components/LegalConsent";
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 
 export default function PricingPage() {
+  const { authenticated } = useAuth() || {};
   const [d, setD] = useState(null);
   const [yearly, setYearly] = useState(false);
   const [picked, setPicked] = useState([]);
@@ -28,8 +29,14 @@ export default function PricingPage() {
           <div className="flex items-center gap-3 text-xs">
             <a href="#paketler" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-plans">Paketler</a>
             <a href="#ozel-paket" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-custom">Kendi paketin</a>
-            <Link to="/login" className="text-slate-300 hover:text-white" data-testid="pricing-login-link">Giriş Yap</Link>
-            <Link to="/kayit" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-signup-link">Ücretsiz Dene</Link>
+            {authenticated ? (
+              <Link to="/panel" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-go-panel">Panele git</Link>
+            ) : (
+              <>
+                <Link to="/login" className="text-slate-300 hover:text-white" data-testid="pricing-login-link">Giriş Yap</Link>
+                <Link to="/kayit" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-signup-link">Ücretsiz Dene</Link>
+              </>
+            )}
           </div>
         )}
       />

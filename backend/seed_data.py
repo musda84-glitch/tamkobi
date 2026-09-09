@@ -20,9 +20,9 @@ async def seed_partners(db):
     ])
 
 async def seed_all_data(db):
-    # 1. Check if seeded
-    existing_admin = await db.users.find_one({"email": "admin@nexus.com"})
-    if existing_admin:
+    # Skip when any user exists so a wizard-created admin is not overwritten
+    # by the Nexus demo dataset on the next boot.
+    if await db.users.find_one({}):
         return
 
     company_id = "comp_nexus_main_01"

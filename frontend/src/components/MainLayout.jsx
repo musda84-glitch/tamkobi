@@ -56,12 +56,12 @@ import {
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
-  const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, authenticated, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
+  const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const ICONS = {
-    "/": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt,
+    "/": LayoutDashboard, "/panel": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt,
     "/loans": Landmark, "/cheques": ScrollText, "/contacts": Users, "/banking": Landmark, "/stock": Package,
     "/sayim": ClipboardList, "/quotes": FileSignature, "/projects": Briefcase, "/surveys": Ruler,
     "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/saha": Smartphone, "/sevk": ScanLine,
@@ -81,7 +81,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     }
   };
 
-  const publicSite = isPublicPath(location.pathname) && (location.pathname === "/" ? !authenticated : true);
+  const publicSite = isPublicPath(location.pathname);
   if (publicSite) return <>{children}</>;
   const routeKey = (permPath || ((p) => p))(location.pathname);
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
