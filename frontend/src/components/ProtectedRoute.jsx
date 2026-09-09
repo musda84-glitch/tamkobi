@@ -1,22 +1,9 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { isPublicPath } from "../utils/publicPath";
 
-export function isPublicPath(pathname) {
-  const p = pathname || "/";
-  if (p === "/" || p === "/login") return true;
-  if (p === "/sistem" || p.startsWith("/sistem/")) return true;
-  if (p === "/b2b" || p.startsWith("/b2b/")) return true;
-  return (
-    p.startsWith("/fiyatlar") ||
-    p.startsWith("/kayit") ||
-    p.startsWith("/portal/") ||
-    p.startsWith("/teklif/") ||
-    p.startsWith("/davet/") ||
-    p.startsWith("/odeme/") ||
-    p.startsWith("/yenile/")
-  );
-}
+export { isPublicPath };
 
 /** ERP shell routes require a real session (no demo-admin fallback). */
 export default function ProtectedRoute({ children }) {

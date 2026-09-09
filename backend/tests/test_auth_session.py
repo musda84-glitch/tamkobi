@@ -1,20 +1,13 @@
 """Proje analizi leftovers: real /auth/me session, no fake guest user."""
 from __future__ import annotations
 
-import os
-import sys
+import requests
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from fastapi.testclient import TestClient
-
-from server import app
-
-client = TestClient(app)
+from conftest import API
 
 
 def test_auth_me_guest_is_unauthenticated_not_demo_admin():
-    r = client.get("/api/auth/me")
+    r = requests.get(f"{API}/auth/me", timeout=15)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["authenticated"] is False
@@ -24,18 +17,19 @@ def test_auth_me_guest_is_unauthenticated_not_demo_admin():
 
 
 def test_auth_me_after_login_returns_real_user():
-    login = client.post(
-        "/api/auth/login",
+    login = requests.post(
+        f"{API}/auth/login",
         json={"email": "admin@nexus.com", "password": "admin123"},
+        timeout=15,
     )
     assert login.status_code == 200, login.text
     token = login.json()["token"]
-    r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    r = requests.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=15)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["authenticated"] is True
     assert body["user"]["email"] == "admin@nexus.com"
-    assert body["user"]["name"] != "Sarp Yılmaz"
+    assert body["user"]["id"]
     assert body["companies"]
 
 

@@ -43,7 +43,7 @@ import {
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { HeaderFxRates } from "./HeaderFxRates";
-import { isPublicPath } from "./ProtectedRoute";
+import { isPublicPath } from "../utils/publicPath";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();

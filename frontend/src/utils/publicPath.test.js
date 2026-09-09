@@ -1,4 +1,4 @@
-import { isPublicPath } from "./ProtectedRoute";
+import { isPublicPath } from "./publicPath";
 
 test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/")).toBe(true);
