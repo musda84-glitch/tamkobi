@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, Briefcase } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -18,7 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
@@ -167,7 +167,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         <div className="flex items-center gap-1 px-6 border-b">
           {TABS.map(([k, l, Icon]) => (
             <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
-              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
+              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "projects" ? (data.projects || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
             </button>
           ))}
         </div>
@@ -235,6 +235,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <tbody className="divide-y divide-slate-100">
                 {(data.quotes || []).length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Teklif yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Teklif oluştur</button></td></tr>}
                 {(data.quotes || []).map((q) => <tr key={q.id} data-testid={`detail-quote-${q.quote_number}`}><td className="py-2 font-mono font-semibold"><button onClick={() => setEditQuote(q)} className="hover:underline text-emerald-700" data-testid={`detail-quote-open-${q.quote_number}`}>{q.quote_number}</button></td><td className="py-2">{q.title}</td><td className="py-2 text-slate-500">{q.issue_date}</td><td className="py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td><td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${q.status === "accepted" ? "bg-emerald-50 text-emerald-700" : q.status === "rejected" ? "bg-rose-50 text-rose-700" : q.status === "sent" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{statusTr(q.status)}{q.approval?.status === "pending" && q.status === "sent" ? " • Onay bekliyor" : ""}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setEditQuote(q)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-quote-edit-${q.quote_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc({ ...q, _docType: "quote" })} className="px-2 py-1 border rounded-md text-[10px] font-semibold">Yazdır</button>{!q.invoice_id && <button onClick={() => convertQuote(q)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-convert-${q.quote_number}`}>Faturaya Çevir</button>}</div></td></tr>)}
+              </tbody>
+            </table>
+          )}
+          {tab === "projects" && (
+            <table className="w-full text-left">
+              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Proje</th><th className="py-2">Ad</th><th className="py-2">Durum</th><th className="py-2 text-right">Bütçe</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {(data.projects || []).length === 0 && <tr><td colSpan={4} className="py-6 text-center text-slate-400">Proje yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Proje oluştur</button></td></tr>}
+                {[...(data.projects || [])].sort((a, b) => Number(b.status === "completed") - Number(a.status === "completed")).map((p) => (
+                  <tr key={p.id} className={p.status === "completed" ? "bg-emerald-50/40" : ""} data-testid={`detail-project-${p.project_number}`}>
+                    <td className="py-2 font-mono font-semibold">{p.project_number}</td>
+                    <td className="py-2">{p.name}</td>
+                    <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${p.status === "completed" ? "bg-emerald-50 text-emerald-700" : p.status === "active" ? "bg-blue-50 text-blue-700" : p.status === "on_hold" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`} data-testid={`detail-project-status-${p.project_number}`}>{statusTr(p.status)}</span></td>
+                    <td className="py-2 text-right font-bold">{fmt(p.budget)} ₺</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}

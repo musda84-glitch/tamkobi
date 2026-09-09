@@ -33,8 +33,9 @@ class TestContactOverview:
         r = s.get(f"{BASE}/contacts/cnt_01/overview", timeout=TIMEOUT)
         assert r.status_code == 200, r.text[:400]
         d = r.json()
-        for key in ("contact", "summary", "invoices", "payments", "orders", "communications"):
+        for key in ("contact", "summary", "invoices", "payments", "orders", "communications", "quotes", "surveys", "projects"):
             assert key in d, f"missing {key}"
+        assert isinstance(d["projects"], list)
         assert d["contact"]["id"] == "cnt_01"
         summary = d["summary"]
         for key in ("invoice_count", "draft_count", "total_invoiced", "total_paid",
