@@ -49,6 +49,7 @@ import trash
 import migration
 import pricing
 import edocs
+import n11faturam
 import saas
 import saas_billing
 import saas_extras
@@ -253,6 +254,12 @@ async def put_b2b_settings(company_id: str, req: Dict[str, Any]):
     return {"status": "success", "settings": {**B2B_DEFAULTS, **allowed}}
 
 EINVOICE_PROVIDERS = {
+    "n11faturam": {
+        "name": "n11 Faturam (Digital Planet)",
+        "fields": ["username", "password", "corporate_code"],
+        "docs": "https://www.n11faturam.com/",
+        "hint": "n11 Faturam portalinden Kurum Kodu (CorporateCode), kullanıcı adı ve şifre. Test ortamı Digital Planet sandbox, canlı www.n11faturam.com SOAP servisidir.",
+    },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
     "uyumsoft": {"name": "Uyumsoft", "fields": ["username", "password"], "docs": "https://www.uyumsoft.com/"},
@@ -268,9 +275,10 @@ async def einvoice_providers():
 async def get_einvoice_settings(company_id: Optional[str] = "comp_nexus_main_01"):
     s = await db.einvoice_settings.find_one({"company_id": company_id})
     if not s:
-        return {"company_id": company_id, "provider": "", "mode": "test", "username": "", "has_password": False, "status": "simulated", "alias": ""}
+        return {"company_id": company_id, "provider": "", "mode": "test", "username": "", "has_password": False, "status": "simulated", "alias": "", "corporate_code": ""}
     return {"id": str(s["_id"]), "company_id": company_id, "provider": s.get("provider", ""), "mode": s.get("mode", "test"), "username": s.get("username", ""),
-            "api_url": s.get("api_url", ""), "alias": s.get("alias", ""), "has_password": bool(s.get("password_enc")), "status": s.get("status", "simulated"), "updated_at": s.get("updated_at")}
+            "api_url": s.get("api_url", ""), "alias": s.get("alias", ""), "corporate_code": s.get("corporate_code", ""),
+            "has_password": bool(s.get("password_enc")), "status": s.get("status", "simulated"), "updated_at": s.get("updated_at")}
 
 @api_router.put("/einvoice/settings")
 async def save_einvoice_settings(req: Dict[str, Any]):
@@ -279,14 +287,59 @@ async def save_einvoice_settings(req: Dict[str, Any]):
     if provider and provider not in EINVOICE_PROVIDERS:
         raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
     update = {"provider": provider, "mode": req.get("mode", "test"), "username": (req.get("username") or "").strip(), "api_url": req.get("api_url", ""), "alias": req.get("alias", ""),
-              "updated_at": datetime.now(timezone.utc).isoformat()}
+              "corporate_code": (req.get("corporate_code") or "").strip(), "updated_at": datetime.now(timezone.utc).isoformat()}
     if req.get("password"):
         update["password_enc"] = comm_service.encrypt(req["password"])
     existing = await db.einvoice_settings.find_one({"company_id": company_id})
-    has_creds = bool(update["username"] and (update.get("password_enc") or (existing or {}).get("password_enc")))
+    has_pwd = bool(update.get("password_enc") or (existing or {}).get("password_enc"))
+    has_creds = bool(update["username"] and has_pwd)
+    if provider == "n11faturam":
+        has_creds = has_creds and bool(update.get("corporate_code") or (existing or {}).get("corporate_code"))
     update["status"] = "configured" if provider and has_creds else "simulated"
     await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
     return await get_einvoice_settings(company_id)
+
+
+def _einvoice_password(settings: dict) -> str:
+    enc = (settings or {}).get("password_enc")
+    if not enc:
+        return ""
+    try:
+        return comm_service.decrypt(enc)
+    except Exception:
+        return ""
+
+
+@api_router.post("/einvoice/test")
+async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_01"):
+    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    if s.get("provider") != "n11faturam":
+        raise HTTPException(status_code=400, detail="Bağlantı denemesi n11 Faturam için açık. Entegratör olarak n11 Faturam seçip kaydedin.")
+    pwd = _einvoice_password(s)
+    info = await n11faturam.test_login(s, pwd)
+    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": {"status": "configured", "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return info
+
+
+@api_router.post("/einvoice/incoming/sync")
+async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14):
+    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    if s.get("provider") != "n11faturam" or s.get("status") != "configured":
+        raise HTTPException(status_code=400, detail="Gelen kutu n11 Faturam bağlantısı kaydedildikten sonra açılır.")
+    pwd = _einvoice_password(s)
+    rows = await n11faturam.list_incoming(s, pwd, days=days)
+    pulled, skipped = [], 0
+    for row in rows:
+        xml_bytes = row.get("xml")
+        if not xml_bytes:
+            skipped += 1
+            continue
+        doc = await edocs.ingest_ubl_bytes(company_id, xml_bytes, filename=f"n11-{(row.get('invoice_id') or row.get('uuid') or 'gelen')}.xml", source="n11faturam")
+        if doc:
+            pulled.append(doc)
+        else:
+            skipped += 1
+    return {"status": "success", "pulled": len(pulled), "skipped": skipped, "items": pulled, "message": f"{len(pulled)} yeni gelen e-fatura alındı, {skipped} atlandı."}
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
                           "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True}
@@ -1930,6 +1983,22 @@ async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_0
     local = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
     settings = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     live = settings.get("status") == "configured"
+    if live and settings.get("provider") == "n11faturam":
+        pwd = _einvoice_password(settings)
+        try:
+            remote = await n11faturam.lookup_user(settings, pwd, tid)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"n11 Faturam GİB sorgusu başarısız: {e}")
+        is_efatura = bool(remote.get("is_e_invoice_user"))
+        alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
+        msg = "Cari kayıtlarınızda bulundu." if local else (
+            f"n11 Faturam: {remote.get('name') or tid} e-Fatura mükellefi." if is_efatura else "n11 Faturam: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
+        )
+        return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": is_efatura, "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
+                "alias": alias, "source": "n11faturam", "name": remote.get("name") or "",
+                "local_contact": clean_doc(local) if local else None, "message": msg}
     # Gerçek entegratör bağlı değilse GİB mükellef sorgusu SİMÜLE edilir (VKN'ler mükellef kabul edilir)
     is_efatura = local.get("is_e_invoice_user") if local else len(tid) == 10
     return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": bool(is_efatura), "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
@@ -1998,6 +2067,33 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     if inv.get("e_type") == "paper":
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})
         return {"status": "success", "message": "Kağıt fatura olarak kesildi. Matbu belgeyi yazdırabilirsiniz.", "tracking_id": None}
+
+    settings = await db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    if settings.get("provider") == "n11faturam" and settings.get("status") == "configured" and inv.get("e_type") in ("e_invoice", "e_archive"):
+        pwd = _einvoice_password(settings)
+        contact = await db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+        company = await db.companies.find_one({"_id": inv.get("company_id")}) or {}
+        sent = await n11faturam.send_document(settings, pwd, {**inv, "id": invoice_id}, contact, company)
+        tracking_id = sent.get("ettn") or sent.get("invoice_id")
+        patch = {
+            "status": "approved",
+            "gib_status": "n11 Faturam ile GİB'e iletildi",
+            "gib_tracking_id": tracking_id,
+            "gib_uuid": sent.get("ettn"),
+            "integrator": "n11faturam",
+            "gib_document_url": sent.get("document_url") or "",
+        }
+        if sent.get("invoice_id"):
+            patch["gib_invoice_id"] = sent["invoice_id"]
+        await db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+        return {
+            "status": "success",
+            "message": f"Fatura n11 Faturam üzerinden GİB'e iletildi. ETTN: {tracking_id}",
+            "tracking_id": tracking_id,
+            "document_url": sent.get("document_url") or "",
+            "provider": "n11faturam",
+        }
+
     tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     export = inv.get("e_type") == "e_export" or inv.get("trade_kind") == "export"
     gib_status = "e-İhracat GİB'e iletildi" if export else "Başarıyla İletildi (GİB Onaylı)"
