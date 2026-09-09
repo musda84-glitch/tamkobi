@@ -9,6 +9,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
+import { ProjectTrackingModal } from "../components/ProjectTrackingModal";
 import { MapPin, LocateFixed } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useNavigate } from "react-router-dom";
@@ -76,6 +77,7 @@ export default function ProjectsPage({ section = "quotes" }) {
   const [printDoc, setPrintDoc] = useState(null);
   const [planQuote, setPlanQuote] = useState(null);
   const [approvalQuote, setApprovalQuote] = useState(null);
+  const [trackProject, setTrackProject] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [expModal, setExpModal] = useState(null);
   const [expMeta, setExpMeta] = useState({ categories: [], accounts: [], contacts: [], employees: [] });
@@ -200,6 +202,11 @@ export default function ProjectsPage({ section = "quotes" }) {
                 {p.can_invoice && <button type="button" onClick={() => act(() => axios.post(`${API_URL}/projects/${p.id}/invoice`, {}), "Proje faturalandı.")} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`project-invoice-${p.project_number}`}><FileText className="w-3 h-3" /> Faturala</button>}
                 {p.invoice_number && !p.can_invoice && <span className="font-mono text-[10px] text-emerald-700">{p.invoice_number}</span>}
                 <button onClick={() => del("projects", p.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
+              <div className="flex items-center gap-1 pt-2 border-t">
+                <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1 text-[11px]" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
+                <button onClick={() => setTrackProject(p)} className={`px-2 py-1 rounded-lg font-semibold ${p.tracking?.token ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`} title="Müşteriye girişsiz durum takip linki gönder" data-testid={`project-track-${p.project_number}`}>{p.tracking?.token ? "Takip Linki" : "Takibe Gönder"}</button>
+                <button onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="ml-auto flex items-center gap-1 px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif Oluştur <ArrowRight className="w-3 h-3" /></button>
+                <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
           ))}
@@ -269,6 +276,7 @@ export default function ProjectsPage({ section = "quotes" }) {
       )}
       {expModal && <ExpenseModal companyId={companyId} initial={expModal} categories={expMeta.categories} accounts={expMeta.accounts} contacts={expMeta.contacts} employees={expMeta.employees} projects={projects} onClose={() => setExpModal(null)} onSaved={() => { setExpModal(null); load(); }} />}
       {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
+      {trackProject && <ProjectTrackingModal project={trackProject} contact={contacts.find((c) => c.id === trackProject.contact_id)} onClose={() => setTrackProject(null)} onSent={load} />}
       {planQuote && <InstallmentPlanModal doc={planQuote} kind="quote" companyId={companyId} onClose={() => setPlanQuote(null)} onChanged={load} />}
       {printDoc && <PrintDocument docType={printDoc.type} doc={printDoc.doc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={companyId} docType="quote" onClose={() => setEditTpl(false)} />}

@@ -24,6 +24,7 @@ import AccountPage from "./pages/AccountPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import InstallmentsPage from "./pages/InstallmentsPage";
 import QuoteApprovalPage from "./pages/QuoteApprovalPage";
+import ProjectTrackingPage from "./pages/ProjectTrackingPage";
 import ShopFloorPage from "./pages/ShopFloorPage";
 import StockCountKioskPage from "./pages/StockCountKioskPage";
 import OrderPickKioskPage from "./pages/OrderPickKioskPage";
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />
             <Route path="/teklif/:token" element={<QuoteApprovalPage />} />
+            <Route path="/proje/:token" element={<ProjectTrackingPage />} />
             <Route path="/atolye" element={<ShopFloorPage />} />
             <Route path="/sayim" element={<StockCountKioskPage />} />
             <Route path="/sevk" element={<OrderPickKioskPage />} />
