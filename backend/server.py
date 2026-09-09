@@ -45,6 +45,7 @@ import rbac
 import expenses
 import finance
 import fx
+from card_match import sanitize_card_fields
 import attendance
 import trash
 import migration
@@ -2603,7 +2604,7 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
 
 @api_router.post("/banking/accounts")
 async def create_bank_account(account: BankAccount):
-    doc = account.to_mongo()
+    doc = sanitize_card_fields(account.to_mongo())
     await db.bank_accounts.insert_one(doc)
     return clean_doc(doc)
 
@@ -2622,6 +2623,19 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
         allowed["current_balance"] = float(req["current_balance"] or 0)
     if not allowed:
         return clean_doc(acc)
+    allowed_keys = {
+        "bank_name", "account_name", "iban", "account_number", "currency",
+        "pos_commission_rate", "card_holder", "card_last4", "card_expiry", "card_limit",
+    }
+    allowed = {k: req[k] for k in allowed_keys if k in req}
+    if "pos_commission_rate" in allowed:
+        allowed["pos_commission_rate"] = float(allowed["pos_commission_rate"] or 0)
+    if "card_limit" in allowed and allowed["card_limit"] is not None and allowed["card_limit"] != "":
+        allowed["card_limit"] = float(allowed["card_limit"])
+    elif "card_limit" in allowed:
+        allowed["card_limit"] = None
+    allowed = sanitize_card_fields(allowed)
+    allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.bank_accounts.update_one({"_id": account_id}, {"$set": allowed})
     return clean_doc(await db.bank_accounts.find_one({"_id": account_id}))
 

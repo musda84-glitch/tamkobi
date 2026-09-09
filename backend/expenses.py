@@ -60,10 +60,62 @@ async def _post_payment(exp: dict, account_id: str, pay_date: str):
 
 
 async def _reverse_payment(exp: dict):
+    if exp.get("source") == "card_statement":
+        return
     bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"]})
     if bt:
         await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
         await _db.bank_transactions.delete_one({"_id": bt["_id"]})
+
+
+async def record_card_spend(
+    company_id: str,
+    *,
+    date: str,
+    category: str,
+    description: str,
+    amount: float,
+    account_id: str,
+    account_name: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    bank_tx_id: Optional[str] = None,
+) -> dict:
+    """Paid expense already reflected on the card statement — do not post another bank payment."""
+    calc = _calc({"amount": abs(float(amount or 0)), "vat_rate": 0, "vat_included": True})
+    if calc["total"] <= 0:
+        return {}
+    contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
+    cat = (category or "Diğer").strip() or "Diğer"
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "expense_number": await _next_number(company_id),
+        "date": date,
+        "category": cat,
+        "description": (description or "Kart harcaması").strip()[:200],
+        **calc,
+        "currency": "TRY",
+        "payment_status": "paid",
+        "account_id": account_id,
+        "account_name": account_name,
+        "paid_date": date,
+        "contact_id": contact["_id"] if contact else None,
+        "contact_name": contact["name"] if contact else (contact_name or None),
+        "employee_id": None,
+        "employee_name": None,
+        "document_no": "",
+        "notes": "Kredi kartı ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin.",
+        "is_recurring": False,
+        "recurrence": "monthly",
+        "source": "card_statement",
+        "bank_transaction_id": bank_tx_id,
+        "created_at": _now(),
+    }
+    await _db.expenses.insert_one(doc)
+    if cat not in DEFAULT_CATEGORIES:
+        await add_category({"company_id": company_id, "name": cat})
+    return _clean(doc)
 
 
 @router.get("/expenses/categories")
@@ -171,7 +223,7 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
         upd["contact_id"] = c["_id"] if c else None
         upd["contact_name"] = c["name"] if c else upd.get("contact_name")
     merged = {**exp, **upd}
-    if exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or req.get("account_id") and req["account_id"] != exp.get("account_id")):
+    if exp.get("source") != "card_statement" and exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or req.get("account_id") and req["account_id"] != exp.get("account_id")):
         await _reverse_payment(exp)
         acc_id = req.get("account_id") or exp["account_id"]
         upd["account_name"] = await _post_payment(merged, acc_id, exp.get("paid_date") or merged["date"])
@@ -201,6 +253,8 @@ async def unpay_expense(expense_id: str):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp or exp.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bulunamadı.")
+    if exp.get("source") == "card_statement":
+        raise HTTPException(status_code=400, detail="Kart ekstresi masrafının ödemesi kart hareketinden gelir; geri alınamaz.")
     await _reverse_payment(exp)
     await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
