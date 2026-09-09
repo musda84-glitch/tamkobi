@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Upload, Download, Loader2, RotateCcw, CheckCircle2, AlertTriangle, Plug, FileSpreadsheet, ArrowRight, Sparkles } from "lucide-react";
-import { API_URL } from "../context/AuthContext";
+import { API_URL, useAuth } from "../context/AuthContext";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const dl = (url, name) => axios.get(url, { responseType: "blob" }).then((r) => { const a = document.createElement("a"); a.href = URL.createObjectURL(r.data); a.download = name; a.click(); }).catch(() => toast.error("İndirilemedi."));
@@ -53,6 +53,7 @@ const BizimHesapCard = ({ companyId, onImported }) => {
 };
 
 const ExcelWizard = ({ companyId, meta, onImported }) => {
+  const { addonOn } = useAuth();
   const [entity, setEntity] = useState("contacts");
   const [source, setSource] = useState("bizimhesap");
   const [parsed, setParsed] = useState(null);
@@ -76,7 +77,7 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
   const reset = () => { setParsed(null); setPreview(null); setResult(null); setMapping({}); setAiNote(""); };
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4 text-xs" data-testid="excel-wizard">
-      <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel / CSV ile Veri Aktarımı</b><span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Yapay zekâ destekli: farklı sistemlerin Excel başlıklarını AI eşler</span></div>
+      <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel / CSV ile Veri Aktarımı</b>{addonOn("ai.migration") && <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Yapay zekâ destekli: farklı sistemlerin Excel başlıklarını AI eşler</span>}</div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
         <div><label className="block font-semibold mb-1">Kaynak sistem</label><select value={source} onChange={(e) => setSource(e.target.value)} disabled={!!parsed} className={inp} data-testid="mig-source">{meta.sources.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></div>
         <div><label className="block font-semibold mb-1">Veri türü</label><select value={entity} onChange={(e) => { setEntity(e.target.value); reset(); }} disabled={!!parsed} className={inp} data-testid="mig-entity">{meta.entities.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}</select></div>
@@ -91,7 +92,7 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
         </label>)}
       {parsed && !result && (<>
         <div className="border border-slate-200 rounded-xl overflow-hidden">
-          <div className="bg-slate-50 px-3 py-2 font-semibold flex items-center justify-between gap-2"><span>Sütun eşleme — {parsed.filename} · {parsed.row_count} satır</span><div className="flex items-center gap-2"><button type="button" onClick={aiMap} disabled={busy === "ai"} className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mig-ai-map"> {busy === "ai" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI ile Eşle</button><span className="text-slate-400">* zorunlu</span></div></div>
+          <div className="bg-slate-50 px-3 py-2 font-semibold flex items-center justify-between gap-2"><span>Sütun eşleme — {parsed.filename} · {parsed.row_count} satır</span><div className="flex items-center gap-2">{addonOn("ai.migration") && <button type="button" onClick={aiMap} disabled={busy === "ai"} className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mig-ai-map"> {busy === "ai" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} AI ile Eşle</button>}<span className="text-slate-400">* zorunlu</span></div></div>
           {aiNote && <div className="px-3 py-1.5 bg-purple-50 text-purple-900 text-[11px] border-b border-purple-100" data-testid="mig-ai-note"><Sparkles className="w-3 h-3 inline mr-1" />{aiNote}</div>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 p-3">{parsed.fields.map((f) => (
             <div key={f.key} className="flex items-center gap-2 py-0.5" data-testid={`mig-map-${f.key}`}><span className={`w-48 shrink-0 ${f.required ? "font-bold text-slate-900" : "text-slate-600"}`}>{f.label}{f.required ? " *" : ""}</span><ArrowRight className="w-3 h-3 text-slate-300" />

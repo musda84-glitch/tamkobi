@@ -56,6 +56,9 @@ def privacy_view(company: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # ---------------- Şirket olarak gir (impersonation) ----------------
 @router.post("/system/companies/{company_id}/impersonate")
 async def impersonate(company_id: str, request: Request, response: Response, admin: dict = Depends(saas.require_super_admin)):
+    import addons as _addons
+    if not await _addons.is_on(company_id, "support.impersonate"):
+        raise HTTPException(status_code=403, detail="Bu müşteri için 'şirket olarak gir' destek aracı kapalı.")
     target = await _db.users.find_one({"company_ids": company_id, "role": "admin", "is_active": {"$ne": False}}) or await _db.users.find_one({"company_ids": company_id})
     if not target:
         raise HTTPException(status_code=400, detail="Bu şirkette giriş yapılabilecek kullanıcı yok.")

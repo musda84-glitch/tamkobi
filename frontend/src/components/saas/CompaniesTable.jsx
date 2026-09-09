@@ -46,6 +46,7 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
                   )}
                   <button onClick={() => onOpen(r.id)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-800" data-testid={`company-manage-${r.id}`}><Settings2 className="w-3.5 h-3.5" /> Yönet</button>
                 </td>
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{r.license?.addons?.["support.impersonate"] !== false && <button onClick={() => impersonate(r)} className="px-3 py-1.5 border border-amber-300 text-amber-800 bg-amber-50 rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-amber-100 mr-1.5" title="Bu şirkete yönetici olarak gir (destek modu)" data-testid={`company-impersonate-${r.id}`}><LogIn className="w-3.5 h-3.5" /> Şirket Olarak Gir</button>}<button onClick={() => onOpen(r.id)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-800" data-testid={`company-manage-${r.id}`}><Settings2 className="w-3.5 h-3.5" /> Yönet</button></td>
               </tr>))}
           </tbody>
         </table>

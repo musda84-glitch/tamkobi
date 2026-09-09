@@ -34,7 +34,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, addonOn } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -118,10 +118,12 @@ export default function Dashboard() {
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1.5">
+            {addonOn("ai.advisor") && (
             <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider border border-indigo-500/30">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
               Nexus AI Finans Danışmanı
             </div>
+            )}
             <h1 className="text-xl md:text-2xl font-bold tracking-tight">
               {activeCompany?.name || "Nexus Teknoloji"} Finansal Özeti
             </h1>
@@ -129,6 +131,7 @@ export default function Dashboard() {
               Tüm pazaryeri siparişleriniz senkronize edildi. Bekleyen {stats.pending_orders_count} sipariş ve {stats.low_stock_count} kritik stok uyarısı bulunuyor.
             </p>
           </div>
+          {addonOn("ai.advisor") && (
           <Link
             to="/ai-advisor"
             className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex-shrink-0"
@@ -137,6 +140,7 @@ export default function Dashboard() {
             <span>AI Nakit Tahmini & Analiz</span>
             <ChevronRight className="w-4 h-4" />
           </Link>
+          )}
         </div>
       </div>
 

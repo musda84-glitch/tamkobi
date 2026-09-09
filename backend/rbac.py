@@ -186,6 +186,13 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             blocked = await _license_guard(request, user, module)
             if blocked is not None:
                 return blocked
+        try:
+            import addons as _addons
+            addon_block = await _addons.guard_request(request, user, path)
+            if addon_block is not None:
+                return addon_block
+        except Exception:
+            pass
         if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):

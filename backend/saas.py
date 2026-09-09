@@ -395,6 +395,25 @@ async def effective(company_id: str) -> Dict[str, Any]:
            "company_count": len(siblings),
            "plan_defaults": {k: int((plan or {}).get(k) or 0) for k in QUOTA_KEYS},
            "quota_overrides": {k: (lic or {}).get(k) for k in QUOTA_KEYS},
+    plan_company_limit = int((plan or {}).get("company_limit") or 0)
+    lic_company_limit = (lic or {}).get("company_limit")
+    company_limit = int(lic_company_limit) if lic_company_limit is not None else plan_company_limit
+    import addons as _addons
+    addon_details = await _addons.resolve(company_id, lic=lic, plan=plan, locked=locked)
+    addon_on = {k: bool(v.get("enabled")) for k, v in addon_details.items()}
+    if not locked:
+        mods["/ai-advisor"] = bool(addon_on.get("ai.advisor", mods.get("/ai-advisor")))
+    else:
+        mods["/ai-advisor"] = False
+    support = None
+    if addon_on.get("support.contact"):
+        st = await _db.platform_settings.find_one({"_id": "platform"}, {"support_email": 1, "support_phone": 1}) or {}
+        support = {"email": (st.get("support_email") or "").strip(), "phone": (st.get("support_phone") or "").strip()}
+    res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
+           "addons": addon_on, "addon_details": addon_details, "addon_overrides": (lic or {}).get("addon_overrides") or {},
+           "support": support,
+           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
+           "company_limit": company_limit, "company_count": len(siblings),
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly"),
            "custom_price_monthly": (lic or {}).get("custom_price_monthly"), "custom_price_yearly": (lic or {}).get("custom_price_yearly")}
@@ -928,7 +947,12 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
         ov.pop(key, None)
     else:
         ov[key] = enabled
-    await _db.company_licenses.update_one({"_id": lid}, {"$set": {"module_overrides": ov, "updated_at": _now()}, "$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "created_at": _now()}}, upsert=True)
+    patch: Dict[str, Any] = {"module_overrides": ov, "updated_at": _now()}
+    if key == "/ai-advisor":
+        aov = dict(lic.get("addon_overrides") or {})
+        aov["ai.advisor"] = enabled
+        patch["addon_overrides"] = aov
+    await _db.company_licenses.update_one({"_id": lid}, {"$set": patch, "$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "created_at": _now()}}, upsert=True)
     invalidate(lid)
     return await effective(company_id)
 

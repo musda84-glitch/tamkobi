@@ -60,6 +60,10 @@ import AppSidebarNav from "./AppSidebarNav";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
+import { SupportContactBar } from "./SupportContactBar";
+
+export default function MainLayout({ children, onOpenQuickAction }) {
+  const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, addonOn, loading, authenticated } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -200,7 +204,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <span>Yeni Fatura</span>
             </Link>)}
 
-            {feature("header_ai") && (<Link
+            {feature("header_ai") && addonOn("ai.advisor") && (<Link
               to="/ai-advisor"
               className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-purple-600/30 transition"
               data-testid="quick-ai-btn"
@@ -213,6 +217,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
         {/* Page View Body */}
         {user?.impersonation && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-slate-900 text-amber-200 text-xs rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="impersonation-banner"><span><ShieldCheck className="inline w-3.5 h-3.5 mr-1" /> <b>Destek modu:</b> {activeCompany?.name} şirketine {user.impersonation.name || user.impersonation.by} tarafından girildi. Yaptığınız işlemler bu şirkete kaydedilir.</span><button onClick={exitImpersonation} className="px-3 py-1 bg-amber-400 text-slate-900 rounded-lg font-bold" data-testid="impersonation-exit">Destek modunu bitir</button></div>}
+        <SupportContactBar />
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>}
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
         <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
