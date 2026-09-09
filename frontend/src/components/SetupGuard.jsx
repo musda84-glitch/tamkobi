@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { API_URL } from "../api/client";
+import { readInstalledCache, resolveSetupStatus, writeInstalledCache } from "../utils/setupStatus";
 
 export default function SetupGuard({ children }) {
   const location = useLocation();
@@ -12,10 +13,14 @@ export default function SetupGuard({ children }) {
     axios
       .get(`${API_URL}/setup/status`)
       .then((r) => {
-        if (!cancelled) setStatus(r.data || { installed: false });
+        if (cancelled) return;
+        const next = resolveSetupStatus(r.data || {});
+        writeInstalledCache(next.installed);
+        setStatus(next);
       })
       .catch(() => {
-        if (!cancelled) setStatus({ installed: false });
+        if (cancelled) return;
+        setStatus(resolveSetupStatus(null, { error: true, cached: readInstalledCache() }));
       });
     return () => {
       cancelled = true;

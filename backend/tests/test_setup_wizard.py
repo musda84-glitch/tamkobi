@@ -84,3 +84,10 @@ def test_apply_saved_jwt_when_insecure(data_dir, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "change-me")
     apply_saved_secrets()
     assert os.environ["JWT_SECRET"] == "wizard-generated-secret-value-not-default"
+
+
+def test_migrate_fails_hard_only_when_installed():
+    from migrate import migrate_error_exit_code
+
+    assert migrate_error_exit_code(False) == 0
+    assert migrate_error_exit_code(True) == 1
