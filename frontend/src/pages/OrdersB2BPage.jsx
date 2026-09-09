@@ -26,6 +26,7 @@ import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban, ScanLine } from "lucide-react";
 import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, ScanLine } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -507,6 +508,7 @@ export default function OrdersB2BPage() {
                           {moreMenu === ord.id && (
                             <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
                               {[
+                                [ScanLine, "Depoda topla / sevk", () => navigate(`/sevk?order=${ord.id || ord._id}`), `pick-order-btn-${ord.order_number}`, "hover:bg-emerald-50 hover:text-emerald-800", !["shipped", "completed", "cancelled", "returned"].includes(ord.order_status)],
                                 [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
                                 [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", ord.cancel_request?.status === "pending"],
                                 [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", ord.cancel_request?.status === "pending"],
