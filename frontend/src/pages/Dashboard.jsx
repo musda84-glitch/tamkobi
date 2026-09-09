@@ -67,10 +67,10 @@ export default function Dashboard() {
     {
       title: "Toplam Kasa & Banka",
       value: `${stats.total_bank_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
-      sub: "Garanti, İş, POS ve Nakit Kasa",
+      sub: "Nakit, banka ve POS bakiyeleri",
       icon: Wallet,
       color: "text-emerald-600 bg-emerald-50 border-emerald-100",
-      trend: "+%14.2 bu ay"
+      trend: stats.total_stock_value ? `Stok değeri ${Number(stats.total_stock_value).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} ₺` : "Güncel bakiye"
     },
     {
       title: "Müşteri Alacakları",
@@ -78,15 +78,15 @@ export default function Dashboard() {
       sub: "Tahsil edilecek vadeli cari bakiye",
       icon: ArrowDownRight,
       color: "text-blue-600 bg-blue-50 border-blue-100",
-      trend: "6 cari hesap"
+      trend: `${stats.receivable_count || 0} cari hesap`
     },
     {
       title: "Tedarikçi Borçları",
       value: `${stats.total_payables?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
-      sub: "Ödenecek hammadde ve kargo borcu",
+      sub: "Ödenecek hammadde ve hizmet borcu",
       icon: ArrowUpRight,
       color: "text-amber-600 bg-amber-50 border-amber-100",
-      trend: "3 vadesi gelen"
+      trend: `${stats.payable_count || 0} cari`
     },
     {
       title: "Net Aylık Kâr",
@@ -94,13 +94,23 @@ export default function Dashboard() {
       sub: "Ciro: " + (stats.monthly_sales?.toLocaleString('tr-TR') || 0) + " ₺",
       icon: TrendingUp,
       color: "text-indigo-600 bg-indigo-50 border-indigo-100",
-      trend: "%32 net kâr marjı"
+      trend: stats.sales_change_pct == null ? "Önceki ay yok" : `${stats.sales_change_pct > 0 ? "+" : ""}${stats.sales_change_pct}% ciro (önceki aya)`
     }
   ];
 
   return (
     <div className="space-y-8" data-testid="dashboard-view">
       <OverviewPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+      {stats.decision?.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="dashboard-decision">
+          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Yönetici karar özeti</div>
+          <div className="flex flex-wrap gap-2">
+            {stats.decision.map((d, i) => (
+              <Link key={i} to={d.path || "/reports"} className="text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 font-semibold text-slate-800" data-testid={`dashboard-decision-${i}`}>{d.text}</Link>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Top Banner / AI Fast Advisory */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden border border-slate-800">
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -148,8 +158,8 @@ export default function Dashboard() {
                 <div className="text-2xl font-bold text-slate-900 tracking-tight">{kpi.value}</div>
                 <div className="text-[11px] text-slate-500 mt-0.5">{kpi.sub}</div>
               </div>
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                <span className="text-emerald-600 font-medium">{kpi.trend}</span>
+              <div className={`pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]`}>
+                <span className={`font-medium ${String(kpi.trend).startsWith("-") ? "text-rose-600" : "text-emerald-600"}`}>{kpi.trend}</span>
               </div>
             </div>
           );
@@ -225,7 +235,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
             <div className="absolute text-center">
               <span className="text-xs font-semibold text-slate-700">En Çok</span>
-              <div className="text-sm font-bold text-slate-900">Trendyol</div>
+              <div className="text-sm font-bold text-slate-900">{(stats.channels_breakdown || []).slice().sort((a, b) => b.value - a.value)[0]?.name || "—"}</div>
             </div>
           </div>
           <div className="space-y-1.5 pt-2 border-t border-slate-100 text-xs">

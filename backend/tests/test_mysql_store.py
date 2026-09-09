@@ -11,6 +11,7 @@ from mysql_store import (
     mysql_settings_from_env,
     project_doc,
     sort_docs,
+    sql_pushdown,
 )
 
 
@@ -136,3 +137,58 @@ def test_database_url_sqlalchemy_style(monkeypatch):
     assert s["user"] == "bob"
     assert s["password"] == "pw"
     assert s["db"] == "tamkobi"
+
+
+def test_sql_pushdown_company_and_id():
+    sql, params = sql_pushdown("invoices", {"company_id": "c1", "_id": "inv-9"})
+    assert sql.startswith("SELECT doc FROM docs WHERE")
+    assert "collection=%s" in sql
+    assert "company_id=%s" in sql
+    assert "id=%s" in sql
+    assert params == ["invoices", "c1", "inv-9"]
+
+
+def test_sql_pushdown_id_in():
+    sql, params = sql_pushdown("contacts", {"_id": {"$in": ["a", "b"]}})
+    assert "id IN (%s,%s)" in sql
+    assert params == ["contacts", "a", "b"]
+
+
+def test_sql_pushdown_date_range():
+    sql, params = sql_pushdown(
+        "invoices",
+        {"company_id": "c1", "issue_date": {"$gte": "2026-01-01", "$lte": "2026-12-31"}},
+    )
+    assert ">=" in sql and "<=" in sql
+    assert params == ["invoices", "c1", "2026-01-01", "2026-12-31"]
+
+
+def test_sql_pushdown_in_ne_nin():
+    sql, params = sql_pushdown(
+        "invoices",
+        {
+            "status": {"$ne": "cancelled"},
+            "invoice_type": {"$in": ["sales", "purchase"]},
+            "payment_status": {"$nin": ["paid"]},
+        },
+    )
+    assert "<>" in sql
+    assert "IN (%s,%s)" in sql
+    assert "NOT IN (%s)" in sql
+    assert params == ["invoices", "cancelled", "sales", "purchase", "paid"]
+
+
+def test_sql_pushdown_regex_prefix():
+    sql, params = sql_pushdown("invoices", {"issue_date": {"$regex": "^2026-09"}})
+    assert "LIKE %s" in sql
+    assert params == ["invoices", "2026-09%"]
+
+
+def test_sql_pushdown_skips_unsafe_and_numeric():
+    sql, params = sql_pushdown(
+        "products",
+        {"$or": [{"a": 1}], "stock_quantity": 3, "track_stock": False, "ok": "x"},
+    )
+    assert "stock_quantity" not in sql
+    assert "track_stock" not in sql
+    assert params == ["products", "x"]

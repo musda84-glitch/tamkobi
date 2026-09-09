@@ -85,6 +85,114 @@ def loads(raw) -> dict:
     return json.loads(raw)
 
 
+_SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DATEISH = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?")
+_PREFIX_RE = re.compile(r"^\^[\w.\-/]+$")
+
+
+def _json_unquote(field: str) -> str:
+    return f"JSON_UNQUOTE(JSON_EXTRACT(doc,'$.{field}'))"
+
+
+def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
+    """Prefilter `docs` in MySQL. Caller still applies match_query for correctness."""
+    if query and list(query.keys()) == ["_id"] and not isinstance(query.get("_id"), dict):
+        return "SELECT doc FROM docs WHERE collection=%s AND id=%s", [collection, str(query["_id"])]
+    clauses = ["collection=%s"]
+    params: list = [collection]
+    for k, v in (query or {}).items():
+        if str(k).startswith("$") or not _SAFE_FIELD.match(k):
+            continue
+        if k == "_id" and not isinstance(v, dict):
+            clauses.append("id=%s")
+            params.append(str(v))
+            continue
+        if k == "_id" and isinstance(v, dict) and "$in" in v and v["$in"]:
+            ids = [str(x) for x in v["$in"]]
+            ph = ",".join(["%s"] * len(ids))
+            clauses.append(f"id IN ({ph})")
+            params.extend(ids)
+            continue
+        if k == "company_id" and not isinstance(v, dict):
+            clauses.append("company_id=%s")
+            params.append(str(v))
+            continue
+        expr = _json_unquote(k)
+        if not isinstance(v, dict):
+            if isinstance(v, bool) or isinstance(v, (int, float)):
+                continue
+            clauses.append(f"{expr} = %s")
+            params.append(str(v))
+            continue
+        if "$regex" in v:
+            rx = str(v.get("$regex") or "")
+            if _PREFIX_RE.match(rx):
+                clauses.append(f"{expr} LIKE %s")
+                params.append(rx[1:] + "%")
+        for op, sqlop in (("$gte", ">="), ("$lte", "<="), ("$gt", ">"), ("$lt", "<")):
+            if op not in v:
+                continue
+            val = v[op]
+            if isinstance(val, bool) or isinstance(val, (int, float)):
+                continue
+            sval = str(val)
+            if not _DATEISH.match(sval):
+                continue
+            clauses.append(f"{expr} {sqlop} %s")
+            params.append(sval)
+        if "$ne" in v and isinstance(v["$ne"], str):
+            clauses.append(f"({expr} <> %s OR {expr} IS NULL)")
+            params.append(v["$ne"])
+        if "$in" in v and v["$in"] and all(isinstance(x, str) for x in v["$in"]):
+            ph = ",".join(["%s"] * len(v["$in"]))
+            clauses.append(f"{expr} IN ({ph})")
+            params.extend(v["$in"])
+        if "$nin" in v and v["$nin"] and all(isinstance(x, str) for x in v["$nin"]):
+            ph = ",".join(["%s"] * len(v["$nin"]))
+            clauses.append(f"({expr} NOT IN ({ph}) OR {expr} IS NULL)")
+            params.extend(v["$nin"])
+    return "SELECT doc FROM docs WHERE " + " AND ".join(clauses), params
+
+
+def ensure_docs_query_helpers(cur, db_name: str) -> None:
+    """Stored company_id + index so tenant report queries skip other firms."""
+    cur.execute(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME='company_id'",
+        (db_name,),
+    )
+    if int((cur.fetchone() or [0])[0] or 0) == 0:
+        cur.execute(
+            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(191) "
+            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
+        )
+    cur.execute(
+        "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME='idx_docs_coll_company'",
+        (db_name,),
+    )
+    if int((cur.fetchone() or [0])[0] or 0) == 0:
+        cur.execute("CREATE INDEX idx_docs_coll_company ON docs (collection, company_id)")
+
+
+async def ensure_docs_query_helpers_async(cur, db_name: str) -> None:
+    await cur.execute(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME='company_id'",
+        (db_name,),
+    )
+    row = await cur.fetchone()
+    if int((row or [0])[0] or 0) == 0:
+        await cur.execute(
+            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(191) "
+            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
+        )
+    await cur.execute(
+        "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME='idx_docs_coll_company'",
+        (db_name,),
+    )
+    row = await cur.fetchone()
+    if int((row or [0])[0] or 0) == 0:
+        await cur.execute("CREATE INDEX idx_docs_coll_company ON docs (collection, company_id)")
+
+
 def values_at(doc: Any, path: str) -> List[Any]:
     if not path:
         return [doc]
@@ -439,8 +547,10 @@ CREATE TABLE IF NOT EXISTS docs (
   collection VARCHAR(128) NOT NULL,
   id VARCHAR(191) NOT NULL,
   doc JSON NOT NULL,
+  company_id VARCHAR(191) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED,
   updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (collection, id)
+  PRIMARY KEY (collection, id),
+  INDEX idx_docs_coll_company (collection, company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS meta_indexes (
@@ -518,13 +628,22 @@ class MySQLCollection:
                 rows = await cur.fetchall()
         return [loads(r[0]) for r in rows]
 
+    async def _load_sql(self, sql: str, params: list) -> List[dict]:
+        await self._db._ensure()
+        async with self._db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+        return [loads(r[0]) for r in rows]
+
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
-        docs = await self._load_all()
+        sql, params = sql_pushdown(self.name, query)
+        try:
+            docs = await self._load_sql(sql, params)
+        except Exception:
+            docs = await self._load_all()
         if not query:
             return docs
-        # fast path: _id equality
-        if list(query.keys()) == ["_id"] and not isinstance(query.get("_id"), dict):
-            return [d for d in docs if d.get("_id") == query["_id"]]
         return [d for d in docs if match_query(d, query)]
 
     async def _save(self, doc: dict):
@@ -727,6 +846,10 @@ class MySQLDatabase:
                 async with conn.cursor() as cur:
                     for stmt in [s.strip() for s in SCHEMA_SQL.split(";") if s.strip()]:
                         await cur.execute(stmt)
+                    try:
+                        await ensure_docs_query_helpers_async(cur, self._settings.get("db", "tamkobi"))
+                    except Exception:
+                        pass
                     await cur.execute("SELECT collection, spec, unique_index FROM meta_indexes")
                     for coll, spec, uniq in await cur.fetchall():
                         fields = tuple(loads(spec).get("fields") or [])
@@ -848,11 +971,16 @@ class SyncMySQLCollection:
             return [loads(r[0]) for r in cur.fetchall()]
 
     def _load_filtered(self, query):
-        docs = self._load_all()
+        sql, params = sql_pushdown(self.name, query)
+        self._db._ensure()
+        try:
+            with self._db._conn.cursor() as cur:
+                cur.execute(sql, params)
+                docs = [loads(r[0]) for r in cur.fetchall()]
+        except Exception:
+            docs = self._load_all()
         if not query:
             return docs
-        if list(query.keys()) == ["_id"] and not isinstance(query.get("_id"), dict):
-            return [d for d in docs if d.get("_id") == query["_id"]]
         return [d for d in docs if match_query(d, query)]
 
     def _save(self, doc: dict):
@@ -979,6 +1107,10 @@ class SyncMySQLDatabase:
             with self._conn.cursor() as cur:
                 for stmt in [s.strip() for s in SCHEMA_SQL.split(";") if s.strip()]:
                     cur.execute(stmt)
+                try:
+                    ensure_docs_query_helpers(cur, self._settings.get("db", "tamkobi"))
+                except Exception:
+                    pass
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
