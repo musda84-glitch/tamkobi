@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Briefcase, Receipt } from "lucide-react";
 import { Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
 import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Eye, EyeOff } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -116,12 +117,18 @@ export default function ProjectsPage({ section = "quotes" }) {
   const del = (coll, id) => act(() => axios.delete(`${API_URL}/${coll}/${id}`), "Silindi.");
 
   const [showArchived, setShowArchived] = useState(false);
+  const [showCompletedProjects, setShowCompletedProjects] = useState(false);
   const activeQuotes = quotes.filter((q) => q.status === "draft" || (q.status === "sent" && (!q.approval || q.approval.status === "pending")));
   const activeSurveys = surveys.filter((s) => s.status === "planned");
+  const completedProjects = projects.filter((p) => p.status === "completed");
+  const activeProjects = projects.filter((p) => p.status !== "completed");
   const visibleQuotes = showArchived ? quotes : activeQuotes;
   const visibleSurveys = showArchived ? surveys : activeSurveys;
+  const visibleProjects = showCompletedProjects ? projects : activeProjects;
   const hiddenCount = tab === "quotes" ? quotes.length - activeQuotes.length : tab === "surveys" ? surveys.length - activeSurveys.length : 0;
   const kind = meta.kind;
+  const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, visibleProjects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
+  const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
 
   return (
     <div className="space-y-6" data-testid={`${tab}-page`}>
@@ -135,6 +142,27 @@ export default function ProjectsPage({ section = "quotes" }) {
           <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="rounded" />
           {tab === "quotes" ? "Gönderilen / sonuçlanan teklifleri göster" : "Yapılan keşifleri göster"} ({hiddenCount})
         </label>
+      <div className="flex items-center gap-1 border-b border-slate-200">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
+        {tab === "projects" ? (
+          <button
+            type="button"
+            onClick={() => setShowCompletedProjects((v) => !v)}
+            className={`ml-auto mb-px inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${showCompletedProjects ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+            data-testid="toggle-completed-projects"
+          >
+            {showCompletedProjects ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showCompletedProjects ? "Tamamlananları gizle" : "Tamamlananları göster"}
+            {completedProjects.length ? ` (${completedProjects.length})` : ""}
+          </button>
+        ) : (
+          <label className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500 pb-1 cursor-pointer" data-testid="show-archived-toggle">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="rounded" />
+            {tab === "quotes" ? "Gönderilen / sonuçlanan teklifleri göster" : "Yapılan keşifleri göster"} ({hiddenCount})
+          </label>
+        )}
+      </div>
+      {tab === "projects" && !showCompletedProjects && completedProjects.length > 0 && (
+        <p className="text-[11px] text-slate-400 -mt-3" data-testid="completed-projects-hint">{completedProjects.length} tamamlanan proje gizlendi — cari kartındaki Projeler sekmesinde durur.</p>
       )}
       {tab !== "projects" && !showArchived && hiddenCount > 0 && <p className="text-[11px] text-slate-400 -mt-3" data-testid="archived-hint">{hiddenCount} kayıt gizlendi — gönderilen teklifler ve yapılan keşifler ilgili carinin müşteri panelinde görünür.</p>}
 
@@ -171,6 +199,10 @@ export default function ProjectsPage({ section = "quotes" }) {
           {projects.map((p) => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
+          {visibleProjects.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">{projects.length ? "Açık proje yok — tamamlananlar cari kartındaki Projeler sekmesinde." : "Henüz proje yok."}</div>}
+          {visibleProjects.map((p) => (
+            <div key={p.id} className={`bg-white border rounded-2xl p-4 space-y-2 text-xs ${p.status === "completed" ? "border-emerald-200" : "border-slate-200"}`} data-testid={`project-card-${p.project_number}`}>
+              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
               <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
               <div className="flex gap-1" data-testid={`project-stages-${p.project_number}`}>
