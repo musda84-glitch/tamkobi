@@ -1601,6 +1601,7 @@ async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[Ord
             quantity=int(q), unit_price=price, total=round(price * q, 2),
             vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
         ))
+        items.append(OrderItem(product_id=p["_id"], product_name=p.get("name"), sku=p.get("sku", ""), quantity=int(q), unit_price=price, total=round(price * q, 2)))
     return items
 
 async def _b2b_owned_order(token: str, order_id: str) -> tuple:
@@ -1742,6 +1743,9 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["notes"] = req.get("note") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    update: Dict[str, Any] = {"items": [it.model_dump() for it in items], "total_amount": total, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if "note" in req:
+        update["notes"] = req.get("note") or ""
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
     await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {total:,.2f} ₺ olacak şekilde düzenledi.", order_id)

@@ -361,6 +361,7 @@ export default function B2BPortalPage() {
         )}
         {tab === "orders" && <OrdersList orders={d.orders} products={d.products} company={d.company} />}
         {tab === "orders" && <OrdersList orders={d.orders} token={token} products={d.products} company={d.company} onChanged={load} />}
+        {tab === "orders" && <OrdersList orders={d.orders} token={token} products={d.products} onChanged={load} />}
         {tab === "statement" && <StatementList invoices={d.invoices} company={d.company} balance={d.contact.balance} />}
         {tab === "installments" && <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">{d.installments.length === 0 && <div className="p-8 text-center text-slate-400">Bekleyen taksit yok.</div>}{d.installments.map((i) => <div key={i.id} className={`p-3 flex items-center gap-3 ${i.is_overdue ? "bg-rose-50/60" : ""}`}><CalendarClock className={`w-4 h-4 shrink-0 ${i.is_overdue ? "text-rose-600" : "text-slate-400"}`} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{i.invoice_number} • {i.label}</div><div className="text-slate-500">Vade {i.due_date}{i.is_overdue ? ` — ${-i.days_left} gün gecikti` : ` — ${i.days_left} gün kaldı`}</div></div><b className="text-sm whitespace-nowrap">{fmt(i.amount - (i.paid_amount || 0))} ₺</b></div>)}</div>}
       </div>

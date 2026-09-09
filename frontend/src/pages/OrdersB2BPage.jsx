@@ -25,6 +25,7 @@ import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument"
 import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban, ScanLine } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -427,6 +428,7 @@ export default function OrdersB2BPage() {
                           </div>
                         </div>
                       )}
+                      {ord.cancel_request?.status === "pending" && <div className="mt-1 text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>}
                     </td>
                     <td className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_32px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
@@ -500,6 +502,24 @@ export default function OrdersB2BPage() {
                             ))}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        <div className="relative inline-block justify-self-center">
+                          <button onClick={() => setMoreMenu(moreMenu === ord.id ? null : ord.id)} className={`p-1.5 rounded-lg transition ${moreMenu === ord.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
+                          {moreMenu === ord.id && (
+                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl p-1.5 w-56 text-left" data-testid={`order-more-menu-${ord.order_number}`} onMouseLeave={() => setMoreMenu(null)}>
+                              {[
+                                [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, "hover:bg-indigo-50 hover:text-indigo-700", true],
+                                [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", ord.cancel_request?.status === "pending"],
+                                [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", ord.cancel_request?.status === "pending"],
+                                [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, "hover:bg-rose-50 hover:text-rose-700", !["returned"].includes(ord.order_status)],
+                                [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, "hover:bg-orange-50 hover:text-orange-700", true],
+                                [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, "hover:bg-slate-100 hover:text-slate-900", true],
+                                [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, "hover:bg-violet-50 hover:text-violet-700", true],
+                              ].filter((it) => it[5]).map(([Ico, label, fn, tid, cls]) => (
+                                <button key={tid} onClick={() => { setMoreMenu(null); fn(); }} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-700 transition ${cls}`} data-testid={tid}><Ico className="w-4 h-4 shrink-0" /><span className="truncate">{label}</span></button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
