@@ -39,6 +39,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
   const [inputMessage, setInputMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [forecast, setForecast] = useState(null);
+  const [aiBadge, setAiBadge] = useState("Yapay Zeka Destekli");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -54,6 +55,9 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
     }
   }, [activeCompany]);
   useEffect(() => { loadForecast(); }, [loadForecast]);
+  useEffect(() => {
+    axios.get(`${API_URL}/ai/status`).then((r) => { if (r.data?.badge) setAiBadge(r.data.badge); }).catch(() => {});
+  }, []);
 
   const handleSendMessage = async (msgText) => {
     const textToSend = msgText || inputMessage;
@@ -99,7 +103,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
         <div>
           <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider mb-1">
             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-            <span>OpenAI GPT-5.4 Destekli</span>
+            <span>{aiBadge} Destekli</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Nexus AI Finansal Danışman</h1>
           <p className="text-xs sm:text-sm text-slate-500">Mali Müşavir Seviyesinde Nakit Akış Analizi, Vergi ve Büyüme Öngörüleri</p>

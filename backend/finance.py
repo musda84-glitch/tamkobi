@@ -1,14 +1,14 @@
 """Krediler (loans) + kredi kartı ekstresi: AI ile PDF'den ödeme planı / ekstre hareketi aktarımı."""
 import io
 import json
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from bank_guard import assert_manual_allowed
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from ai_service import make_chat
+from emergentintegrations.llm.chat import UserMessage
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -48,10 +48,10 @@ async def _pdf_text(file: UploadFile) -> str:
 
 
 async def _ask_json(system: str, text: str) -> dict:
-    key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY tanımlı değil.")
-    chat = LlmChat(api_key=key, session_id=f"fin-{uuid.uuid4().hex[:8]}", system_message=system).with_model("anthropic", "claude-sonnet-4-6")
+    try:
+        chat = await make_chat(f"fin-{uuid.uuid4().hex[:8]}", system, purpose="extract")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     raw = str(await chat.send_message(UserMessage(text=f"METİN:\n\n{text[:25000]}"))).strip()
     a, b = raw.find("{"), raw.rfind("}")
     if a == -1:

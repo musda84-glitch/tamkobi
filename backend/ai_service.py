@@ -3,12 +3,156 @@ import json
 import logging
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
+import comm_service
+
 logger = logging.getLogger(__name__)
 
+AI_PROVIDERS = {
+    "emergent": {
+        "label": "Emergent",
+        "hint": "Tek anahtar ile OpenAI, Anthropic ve Gemini modellerini kullanır. Anahtar boş bırakılırsa sunucudaki EMERGENT_LLM_KEY kullanılır.",
+        "models": [
+            {"id": "gpt-5.4", "vendor": "openai", "label": "GPT-5.4"},
+            {"id": "gpt-4.1", "vendor": "openai", "label": "GPT-4.1"},
+            {"id": "claude-sonnet-4-6", "vendor": "anthropic", "label": "Claude Sonnet 4.6"},
+            {"id": "claude-opus-4-6", "vendor": "anthropic", "label": "Claude Opus 4.6"},
+            {"id": "gemini-2.5-pro", "vendor": "gemini", "label": "Gemini 2.5 Pro"},
+            {"id": "gemini-2.5-flash", "vendor": "gemini", "label": "Gemini 2.5 Flash"},
+        ],
+    },
+    "openai": {
+        "label": "OpenAI",
+        "hint": "Doğrudan OpenAI API anahtarı (sk-...). Danışman ve belge ayrıştırma aynı sağlayıcıyı kullanır.",
+        "models": [
+            {"id": "gpt-5.4", "vendor": "openai", "label": "GPT-5.4"},
+            {"id": "gpt-4.1", "vendor": "openai", "label": "GPT-4.1"},
+            {"id": "gpt-4o", "vendor": "openai", "label": "GPT-4o"},
+        ],
+    },
+    "anthropic": {
+        "label": "Anthropic",
+        "hint": "Doğrudan Anthropic API anahtarı. Fatura/sipariş/stok ayrıştırma ve danışman Claude modellerini kullanır.",
+        "models": [
+            {"id": "claude-sonnet-4-6", "vendor": "anthropic", "label": "Claude Sonnet 4.6"},
+            {"id": "claude-opus-4-6", "vendor": "anthropic", "label": "Claude Opus 4.6"},
+        ],
+    },
+    "google": {
+        "label": "Google Gemini",
+        "hint": "Doğrudan Google AI Studio / Gemini API anahtarı.",
+        "models": [
+            {"id": "gemini-2.5-pro", "vendor": "gemini", "label": "Gemini 2.5 Pro"},
+            {"id": "gemini-2.5-flash", "vendor": "gemini", "label": "Gemini 2.5 Flash"},
+        ],
+    },
+}
+
+AI_DEFAULTS = {
+    "enabled": True,
+    "provider": "emergent",
+    "advisor_model": "gpt-5.4",
+    "extract_model": "claude-sonnet-4-6",
+}
+
+
+# LlmChat.with_model vendor ids (Google's SDK name is "gemini", not "google").
+SDK_VENDORS = {"openai": "openai", "anthropic": "anthropic", "google": "gemini"}
+
+
+def vendor_for_model(model: str) -> str:
+    m = (model or "").lower()
+    if m.startswith("claude"):
+        return "anthropic"
+    if m.startswith("gemini"):
+        return "gemini"
+    return "openai"
+
+
+def sdk_vendor(provider: str, model: str) -> str:
+    if provider in SDK_VENDORS:
+        return SDK_VENDORS[provider]
+    return vendor_for_model(model)
+
+
+def _model_ids(provider: str) -> list:
+    return [m["id"] for m in (AI_PROVIDERS.get(provider) or AI_PROVIDERS["emergent"])["models"]]
+
+
+def _clamp_model(provider: str, model: str, fallback: str) -> str:
+    ids = _model_ids(provider)
+    if model in ids:
+        return model
+    return fallback if fallback in ids else (ids[0] if ids else fallback)
+
+
+def normalize_ai(raw: dict | None) -> dict:
+    p = {**AI_DEFAULTS, **(raw or {})}
+    provider = p.get("provider") if p.get("provider") in AI_PROVIDERS else "emergent"
+    advisor = _clamp_model(provider, p.get("advisor_model") or "", AI_DEFAULTS["advisor_model"])
+    extract = _clamp_model(provider, p.get("extract_model") or "", AI_DEFAULTS["extract_model"])
+    return {
+        "enabled": bool(p.get("enabled", True)),
+        "provider": provider,
+        "advisor_model": advisor,
+        "extract_model": extract,
+        "api_key_enc": p.get("api_key_enc") or "",
+        "last_test": p.get("last_test"),
+    }
+
+
+def public_ai_status(cfg: dict) -> dict:
+    provider = cfg.get("provider") or "emergent"
+    meta = AI_PROVIDERS.get(provider) or AI_PROVIDERS["emergent"]
+    models = {m["id"]: m for m in meta["models"]}
+    advisor = cfg.get("advisor_model") or ""
+    extract = cfg.get("extract_model") or ""
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "configured": bool(cfg.get("api_key")),
+        "provider": provider,
+        "provider_label": meta["label"],
+        "advisor_model": advisor,
+        "extract_model": extract,
+        "advisor_label": (models.get(advisor) or {}).get("label") or advisor,
+        "extract_label": (models.get(extract) or {}).get("label") or extract,
+        "badge": f"{meta['label']} {(models.get(advisor) or {}).get('label') or advisor}".strip(),
+    }
+
+
+async def load_ai_settings() -> dict:
+    try:
+        import saas_billing
+        st = await saas_billing.settings()
+        cfg = normalize_ai(st.get("ai") or {})
+    except Exception:
+        cfg = normalize_ai({})
+    key = ""
+    if cfg.get("api_key_enc"):
+        try:
+            key = comm_service.decrypt(cfg["api_key_enc"])
+        except Exception:
+            key = ""
+    if not key:
+        key = (os.environ.get("EMERGENT_LLM_KEY") or "").strip()
+    cfg["api_key"] = key
+    cfg["has_key"] = bool(cfg.get("api_key_enc"))
+    cfg["has_env_key"] = bool((os.environ.get("EMERGENT_LLM_KEY") or "").strip())
+    return cfg
+
+
+async def make_chat(session_id: str, system_message: str, purpose: str = "extract"):
+    cfg = await load_ai_settings()
+    if not cfg.get("enabled", True):
+        raise RuntimeError("AI entegrasyonu platform panelinden kapatılmış.")
+    key = cfg.get("api_key") or ""
+    if not key:
+        raise RuntimeError("Yapay zeka API anahtarı yapılandırılmamış. Platform Yönetimi → AI Entegrasyonu ekranından anahtar girin.")
+    model = cfg["advisor_model"] if purpose == "advisor" else cfg["extract_model"]
+    vendor = sdk_vendor(cfg.get("provider") or "emergent", model)
+    return LlmChat(api_key=key, session_id=session_id, system_message=system_message).with_model(vendor, model)
+
+
 async def get_financial_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        return "Yapay Zeka API anahtarı yapılandırılmamış. Lütfen sistem yöneticinizle görüşün."
 
     system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
 Kullanıcının şirketine dair güncel veriler:
@@ -28,16 +172,18 @@ Görevin:
 4. Yanıtlarını okunması kolay, maddeli ve şık formatta tutmak."""
 
     try:
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"finance-session-{company_context.get('company_id', 'default')}",
-            system_message=system_prompt
-        ).with_model("openai", "gpt-5.4")
+        chat = await make_chat(
+            f"finance-session-{company_context.get('company_id', 'default')}",
+            system_prompt,
+            purpose="advisor",
+        )
 
         # Combine short conversation if provided
         user_msg = UserMessage(text=prompt)
         response_text = await chat.send_message(user_msg)
         return response_text
+    except RuntimeError as e:
+        return str(e)
     except Exception as e:
         logger.error(f"Error invoking emergentintegrations: {e}")
         # Fallback intelligent local response if network/quota temporary issue
@@ -61,10 +207,7 @@ KDV oranı yoksa 20 kullan. Birim yoksa "Adet". Tarihleri ISO'ya çevir. Bulamad
 
 
 async def extract_invoice_from_text(text: str) -> dict:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
-    chat = LlmChat(api_key=api_key, session_id=f"inv-extract-{abs(hash(text[:200]))}", system_message=INVOICE_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    chat = await make_chat(f"inv-extract-{abs(hash(text[:200]))}", INVOICE_SYSTEM, purpose="extract")
     raw = await chat.send_message(UserMessage(text=f"FATURA METNİ:\n\n{text[:20000]}"))
     raw = str(raw).strip()
     if raw.startswith("```"):
@@ -92,10 +235,7 @@ Kurallar: Aynı müşteriye ait satırları tek siparişte topla (belge/sipariş
 
 
 async def extract_orders_from_text(text: str) -> dict:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
-    chat = LlmChat(api_key=api_key, session_id=f"ord-extract-{abs(hash(text[:200]))}", system_message=ORDER_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    chat = await make_chat(f"ord-extract-{abs(hash(text[:200]))}", ORDER_SYSTEM, purpose="extract")
     raw = str(await chat.send_message(UserMessage(text=f"SİPARİŞ BELGESİ:\n\n{text[:30000]}"))).strip()
     start, end = raw.find("{"), raw.rfind("}")
     if start == -1 or end == -1:
@@ -119,10 +259,7 @@ Kurallar: Her satır/kalem bir üründür. Sayılarda Türkçe biçim (1.234,56)
 
 
 async def extract_products_from_text(text: str) -> dict:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
-    chat = LlmChat(api_key=api_key, session_id=f"prod-extract-{abs(hash(text[:200]))}", system_message=PRODUCT_SYSTEM).with_model("anthropic", "claude-sonnet-4-6")
+    chat = await make_chat(f"prod-extract-{abs(hash(text[:200]))}", PRODUCT_SYSTEM, purpose="extract")
     raw = str(await chat.send_message(UserMessage(text=f"STOK / ÜRÜN BELGESİ:\n\n{text[:30000]}"))).strip()
     start, end = raw.find("{"), raw.rfind("}")
     if start == -1 or end == -1:
@@ -159,11 +296,8 @@ async def extract_products_from_text(text: str) -> dict:
 
 async def ai_map_columns(entity_label: str, fields: list, columns: list, sample_rows: list) -> dict:
     """Excel sütunlarını hedef alanlara eşle: {"mapping": {field: column|null}, "notes": "..."}"""
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY tanımlı değil.")
     sys_msg = "Sen bir veri aktarım uzmanısın. Türkçe muhasebe/ERP Excel dosyalarındaki sütun başlıklarını verilen hedef alanlara eşlersin. Yalnızca JSON döndür: {\"mapping\": {\"hedef_alan\": \"Sütun Başlığı veya null\"}, \"notes\": \"kısa Türkçe açıklama\"}. Aynı sütunu iki alana verme. Emin değilsen null bırak. Örnek satır değerlerine bakarak (VKN 10 hane, TCKN 11 hane, telefon, e-posta, tarih, para) karar ver."
-    chat = LlmChat(api_key=api_key, session_id=f"mig-map-{abs(hash(str(columns)))}", system_message=sys_msg).with_model("anthropic", "claude-sonnet-4-6")
+    chat = await make_chat(f"mig-map-{abs(hash(str(columns)))}", sys_msg, purpose="extract")
     prompt = f"VERİ TÜRÜ: {entity_label}\nHEDEF ALANLAR (key: açıklama):\n" + "\n".join(f"- {f['key']}: {f['label']}{' (zorunlu)' if f.get('required') else ''}" for f in fields) + f"\n\nEXCEL SÜTUNLARI: {json.dumps(columns, ensure_ascii=False)}\n\nÖRNEK SATIRLAR:\n{json.dumps(sample_rows[:5], ensure_ascii=False, default=str)[:6000]}"
     raw = str(await chat.send_message(UserMessage(text=prompt))).strip()
     start, end = raw.find("{"), raw.rfind("}")
