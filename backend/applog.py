@@ -216,12 +216,13 @@ def persist_record(rec: dict) -> None:
     _persist_lock = 1
     try:
         from mysql_store import mysql_settings_from_env
+        import db_ssl
         import pymysql
         cfg = mysql_settings_from_env()
         conn = pymysql.connect(
             host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
             password=cfg["password"], database=cfg["db"], charset="utf8mb4",
-            autocommit=True, connect_timeout=2,
+            autocommit=True, connect_timeout=2, **db_ssl.connect_kwargs(cfg),
         )
         try:
             details = {k: v for k, v in rec.items() if k not in {
@@ -263,12 +264,14 @@ def persist_record(rec: dict) -> None:
 def query_logs(category: Optional[str] = None, event: Optional[str] = None,
                user_email: Optional[str] = None, limit: int = 100) -> list:
     from mysql_store import mysql_settings_from_env
+    import db_ssl
     import pymysql
     cfg = mysql_settings_from_env()
     conn = pymysql.connect(
         host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
         password=cfg["password"], database=cfg["db"], charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor, connect_timeout=5,
+        **db_ssl.connect_kwargs(cfg),
     )
     where, args = ["1=1"], []
     if category:
@@ -304,11 +307,13 @@ def purge_system_logs(retention_days: Optional[int] = None) -> int:
         return 0
     days = int(retention_days if retention_days is not None else LOG_RETENTION_DAYS)
     from mysql_store import mysql_settings_from_env
+    import db_ssl
     import pymysql
     cfg = mysql_settings_from_env()
     conn = pymysql.connect(
         host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
         password=cfg["password"], database=cfg["db"], charset="utf8mb4", autocommit=True,
+        **db_ssl.connect_kwargs(cfg),
     )
     try:
         with conn.cursor() as cur:
