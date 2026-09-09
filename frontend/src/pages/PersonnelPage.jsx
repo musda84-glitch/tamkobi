@@ -4,6 +4,13 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { printPayslip } from "../utils/payslip";
 import { toast } from "sonner";
+import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
+import { AttendancePanel } from "../components/AttendancePanel";
+import { EmployeeCardModal } from "../components/EmployeeCardModal";
+import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
+import { QuickPayModal } from "../components/QuickPayModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+
 import {
   UserCheck,
   Plus,
@@ -19,12 +26,6 @@ import {
   CreditCard
   , CalendarDays, Gift
 } from "lucide-react";
-import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
-import { AttendancePanel } from "../components/AttendancePanel";
-import { EmployeeCardModal } from "../components/EmployeeCardModal";
-import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
-import { QuickPayModal } from "../components/QuickPayModal";
-import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();

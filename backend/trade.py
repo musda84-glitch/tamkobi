@@ -173,7 +173,6 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
 
 
 @router.get("/trade-files/meta")
-async def trade_meta():
 async def trade_meta(company_id: Optional[str] = "comp_nexus_main_01", date: Optional[str] = None):
     defaults = await fx.defaults_map(company_id, date, fetch=True)
     return {
@@ -182,8 +181,7 @@ async def trade_meta(company_id: Optional[str] = "comp_nexus_main_01", date: Opt
         "regimes_export": REGIMES_EXPORT,
         "certificates": CERTIFICATES,
         "currencies": CURRENCIES,
-        "fx_defaults": FX_DEFAULTS,
-        "fx_defaults": defaults,
+        "fx_defaults": defaults or FX_DEFAULTS,
         "statuses": STATUSES,
     }
 
@@ -324,7 +322,6 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         contact_tax_id=contact.get("tax_number_or_id") or "",
         items=items,
         currency=d.get("currency") or "USD",
-        fx_rate=fx,
         fx_rate=rate,
         fx_source=d.get("fx_source") or "manual",
         trade_kind=kind,
@@ -347,7 +344,6 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
     extra_inv = {
         "trade_file_id": d["_id"], "trade_file_number": d.get("file_number"),
         "trade_kind": kind, "incoterm": d.get("incoterm"), "country": d.get("country"),
-        "fx_rate": fx, "currency": d.get("currency") or "USD",
         "fx_rate": rate, "currency": d.get("currency") or "USD",
         "fx_source": d.get("fx_source") or "manual",
         "customs_office": d.get("customs_office"),

@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-  ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, RefreshCw, ScanLine, Truck,
-} from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { resolveImageUrl } from "../utils/imageUrl";
+
+import {
+  ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, RefreshCw, ScanLine, Truck,
+} from "lucide-react";
 
 const ST = {
   idle: ["Bekliyor", "bg-slate-100 text-slate-600"],

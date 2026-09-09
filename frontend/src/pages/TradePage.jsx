@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -12,7 +13,6 @@ const emptyItem = () => ({ product_id: "", name: "", sku: "", gtip: "", origin_c
 const emptyForm = (kind) => ({
   kind, contact_id: "", contact_name: "", country: "", customs_office: "", customs_broker: "",
   regime_code: kind === "import" ? "4000" : "1000", incoterm: kind === "import" ? "CIF" : "FOB",
-  currency: "USD", fx_rate: 42.5, bl_awb: "", container_no: "", declaration_no: "", declaration_date: "",
   currency: "USD", fx_rate: "", fx_source: "tcmb", bl_awb: "", container_no: "", declaration_no: "", declaration_date: "",
   dab_no: "", certificate: "", freight: 0, insurance: 0, customs_duty_rate: 0, otv_rate: 0, kkdf_rate: 0,
   stamp_tax: 0, import_vat_rate: kind === "import" ? 20 : 0, notes: "", file_date: new Date().toISOString().slice(0, 10),
@@ -37,20 +37,11 @@ export default function TradePage() {
     try {
       const [f, m, c, p] = await Promise.all([
         axios.get(`${API_URL}/trade-files?company_id=${companyId}&kind=${kind}`),
-        meta ? Promise.resolve({ data: meta }) : axios.get(`${API_URL}/trade-files/meta`),
         axios.get(`${API_URL}/trade-files/meta`, { params: { company_id: companyId } }),
         axios.get(`${API_URL}/contacts?company_id=${companyId}`),
         axios.get(`${API_URL}/products?company_id=${companyId}`),
       ]);
       setRows(f.data || []);
-      if (!meta) setMeta(m.data);
-      setContacts(c.data || []);
-      setProducts(p.data || []);
-    } catch { toast.error("Dış ticaret dosyaları yüklenemedi."); }
-  }, [companyId, kind, meta]);
-  useEffect(() => { load(); }, [load]);
-
-  const openNew = () => { setEditing(null); setForm(emptyForm(kind)); };
       setMeta(m.data);
       setContacts(c.data || []);
       setProducts(p.data || []);

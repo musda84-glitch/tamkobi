@@ -3,6 +3,8 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { CargoConfigModal } from "../components/CargoConfigModal";
 import { toast } from "sonner";
+import { BarcodeRenderer } from "../components/BarcodeRenderer";
+
 import {
   Truck,
   CheckCircle2,
@@ -15,7 +17,6 @@ import {
   Settings,
   QrCode
 } from "lucide-react";
-import { BarcodeRenderer } from "../components/BarcodeRenderer";
 
 export default function CargoPage() {
   const { activeCompany } = useAuth();

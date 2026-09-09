@@ -3,6 +3,24 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse } from "../components/InvoiceContextMenu";
+import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+import { GibContactLookup } from "../components/GibContactLookup";
+import { BarcodeRenderer } from "../components/BarcodeRenderer";
+import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { SearchSelect } from "../components/SearchSelect";
+import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
+import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
+import { SourceBadge } from "../components/SourceBadge";
+import { QuickContactForm } from "../components/QuickContactForm";
+import { FxPicker } from "../components/FxPicker";
+import { fmtMoney } from "../utils/money";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
+import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
+
 import {
   FileText,
   Plus,
@@ -23,23 +41,6 @@ import {
   MoreVertical,
   MousePointerClick,
   FileCheck2, Pencil, Trash2, CheckCircle } from "lucide-react";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse } from "../components/InvoiceContextMenu";
-import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
-import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
-import { GibContactLookup } from "../components/GibContactLookup";
-import { BarcodeRenderer } from "../components/BarcodeRenderer";
-import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
-import { SearchSelect } from "../components/SearchSelect";
-import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
-import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
-import { SourceBadge } from "../components/SourceBadge";
-import { QuickContactForm } from "../components/QuickContactForm";
-import { FxPicker } from "../components/FxPicker";
-import { fmtMoney } from "../utils/money";
-import { fmtMoney } from "../utils/money";
-import { FxPicker } from "../components/FxPicker";
 
 const typeBadge = (inv) => {
   if (inv.trade_kind === "export" || inv.e_type === "e_export") return ["İhracat", "bg-sky-50 text-sky-800"];
@@ -68,9 +69,6 @@ const purchaseCostText = (p) => {
   }
   return `Alış ${bits.join(" · ")}`;
 };
-import { DocumentLineEditor } from "../components/DocumentLineEditor";
-import { computeLine, documentLineTotals, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
-import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany, addonOn } = useAuth();
@@ -146,8 +144,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     dab_no: "",
     bl_awb: "",
     certificate: "",
-    trade_file_number: ""
-    project_id: ""
+    trade_file_number: "",
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
@@ -177,16 +174,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setContacts(cntRes.data);
       setProjects(projRes.data);
       setProducts(prodRes.data);
-      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-      const [invoices, contacts, products, bankRes] = await Promise.all([
-        cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
-        cachedList("contacts", cid, { onCached: setContacts }),
-        cachedList("products", cid, { onCached: setProducts }),
-        axios.get(`${API_URL}/banking/accounts?company_id=${cid}`)
-      ]);
-      setInvoices(invoices);
-      setContacts(contacts);
-      setProducts(products);
       setBankAccounts(bankRes.data);
       if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {
@@ -202,8 +189,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       ...formData,
       items: [
         ...formData.items,
-        { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: formData.trade_kind === "export" ? 0 : 20, total: 0, gtip: "", origin_country: "" }
-        emptyLine()
+        { product_id: "", name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: formData.trade_kind === "export" ? 0 : 20, total: 0, gtip: "", origin_country: "" },
       ]
     });
   };
@@ -219,11 +205,20 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (emptyIdx >= 0) { handleItemProductSelect(emptyIdx, pid, c); }
     else {
       const price = buyPrice(prod, formData.invoice_type);
-      setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: price, vat_rate: prod.vat_rate || 20, total: price, discount_rate: 0 }] }));
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
       const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
-      setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: v ? `${prod.name} - ${v.name}` : prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: v?.price || v?.sale_price || price, vat_rate: prod.vat_rate || 20, total: v?.price || v?.sale_price || price, discount_rate: 0, sku: v?.sku || prod.sku || "", barcode: v?.barcode || prod.barcode || "" }] }));
-      setFormData((f) => ({ ...f, items: [...f.items, lineFromProduct(prod, { invoiceType: f.invoice_type })] }));
+      setFormData((f) => ({
+        ...f,
+        items: [...f.items, {
+          ...lineFromProduct(prod, { invoiceType: f.invoice_type }),
+          name: v ? `${prod.name} - ${v.name}` : prod.name,
+          unit_price: v?.price || v?.sale_price || price,
+          total: v?.price || v?.sale_price || price,
+          sku: v?.sku || prod.sku || "",
+          barcode: v?.barcode || prod.barcode || "",
+          gtip: prod.gtip || "",
+          origin_country: prod.origin_country || "",
+        }],
+      }));
     }
     toast.success(`${prod.name} eklendi`);
   };
@@ -233,33 +228,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const items = [...formData.items];
     if (prod) {
       const price = buyPrice(prod, formData.invoice_type);
-      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
       const code = String(scanned || "").trim();
       const v = code ? (prod.variants || []).find((x) => x.barcode === code || x.sku === code) : null;
+      const unit = v?.price || v?.sale_price || price;
       items[index] = {
-        product_id: prod.id || prod._id,
+        ...lineFromProduct(prod, { invoiceType: formData.invoice_type, quantity: items[index]?.quantity || 1 }),
         name: v ? `${prod.name} - ${v.name}` : prod.name,
-        quantity: 1,
-        unit: prod.unit || "Adet",
-        unit_price: price,
+        unit_price: unit,
         vat_rate: formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : (prod.vat_rate || 20),
-        total: price,
-        unit_price: v?.price || v?.sale_price || price,
-        vat_rate: formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : (prod.vat_rate || 20),
-        total: v?.price || v?.sale_price || price,
         sku: v?.sku || prod.sku || "",
         barcode: v?.barcode || prod.barcode || "",
         gtip: prod.gtip || "",
-        origin_country: prod.origin_country || ""
-        unit_price: v?.price || v?.sale_price || price,
-        vat_rate: prod.vat_rate || 20,
-        total: v?.price || v?.sale_price || price,
-        sku: v?.sku || prod.sku || "",
-        barcode: v?.barcode || prod.barcode || ""
+        origin_country: prod.origin_country || "",
       };
       items[index].total = netPrice(items[index]) * Number(items[index].quantity || 1);
     }
-    if (prod) items[index] = lineFromProduct(prod, { invoiceType: formData.invoice_type, quantity: items[index]?.quantity || 1 });
     setFormData({ ...formData, items });
   };
 
@@ -307,9 +290,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       return next;
     });
   };
-    const items = formData.items.map((it, i) => (i === index ? computeLine({ ...it, [field]: val }, field) : it));
-    setFormData({ ...formData, items });
-  };
 
   const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
   const calculateTotals = () => {
@@ -328,9 +308,38 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const openEditInvoice = (inv) => {
     setEditingInvoice(inv);
     setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, currency: inv.currency || "TRY", fx_rate: inv.fx_rate || 1, fx_source: inv.fx_source || "try", trade_kind: inv.trade_kind || "", incoterm: inv.incoterm || "", country: inv.country || "", customs_office: inv.customs_office || "", regime_code: inv.regime_code || "", declaration_no: inv.declaration_no || "", declaration_date: inv.declaration_date || "", dab_no: inv.dab_no || "", bl_awb: inv.bl_awb || "", certificate: inv.certificate || "", trade_file_number: inv.trade_file_number || "", items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, currency: inv.currency || "TRY", fx_rate: inv.fx_rate || 1, fx_source: inv.fx_source || "try", trade_kind: inv.trade_kind || "", incoterm: inv.incoterm || "", country: inv.country || "", customs_office: inv.customs_office || "", project_id: inv.project_id || "", regime_code: inv.regime_code || "", declaration_no: inv.declaration_no || "", declaration_date: inv.declaration_date || "", dab_no: inv.dab_no || "", bl_awb: inv.bl_awb || "", certificate: inv.certificate || "", trade_file_number: inv.trade_file_number || "", items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: inv.price_mode || "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })) });
+    setFormData({
+      ...formData,
+      invoice_type: inv.invoice_type || "sales",
+      e_type: inv.e_type || "paper",
+      status: "draft",
+      contact_id: inv.contact_id || "",
+      contact_name: inv.contact_name || "",
+      issue_date: (inv.issue_date || "").slice(0, 10),
+      due_date: (inv.due_date || "").slice(0, 10),
+      notes: inv.notes || "",
+      withholding_rate: inv.withholding_rate || 0,
+      withholding_code: inv.withholding_code || "",
+      price_mode: inv.price_mode || "excl",
+      general_discount_rate: inv.general_discount_rate || 0,
+      general_discount_amount: inv.general_discount_amount || 0,
+      currency: inv.currency || "TRY",
+      fx_rate: inv.fx_rate || 1,
+      fx_source: inv.fx_source || "try",
+      trade_kind: inv.trade_kind || "",
+      incoterm: inv.incoterm || "",
+      country: inv.country || "",
+      customs_office: inv.customs_office || "",
+      project_id: inv.project_id || "",
+      regime_code: inv.regime_code || "",
+      declaration_no: inv.declaration_no || "",
+      declaration_date: inv.declaration_date || "",
+      dab_no: inv.dab_no || "",
+      bl_awb: inv.bl_awb || "",
+      certificate: inv.certificate || "",
+      trade_file_number: inv.trade_file_number || "",
+      items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
+    });
     setShowNewModal(true);
   };
   const handleDeleteInvoice = async (inv) => {
@@ -584,16 +593,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
                       <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
-                    <td className="px-4 py-3 text-center w-[300px] min-w-[300px]">
-                      {(() => {
-                        const incoming = isIncomingPurchaseInvoice(inv);
-                        return (
-                      <div className="grid grid-cols-7 gap-1 justify-items-center items-center" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" ? (
                           <>
                             <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                             <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="Taslağı sil (çöp kutusu)" data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
-                            <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                             {!incoming ? (
                               <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                             ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -605,9 +608,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <span className="w-7 h-7" aria-hidden="true" />
                           </>
                         )}
-                            {!incoming && <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>}
-                          </div>
-                        ) : <span className="w-7" />}
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -928,8 +928,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         <option value="0">%0</option>
                       </select>
                     </div>
-                    <div className="col-span-2 text-right font-bold text-slate-800">
-                      {fmtMoney(item.total, formData.currency)}
                     <div className="col-span-2">
                       <input
                         type="number"
@@ -972,34 +970,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     </div>
                   )}
                   </div>
-                  </div>
-                  {picked && (
-                    <div className="flex flex-wrap items-center gap-1 pl-8" data-testid={`inv-item-costs-${idx}`}>
-                      <span className="text-[10px] font-semibold text-amber-800">Önceki alış:</span>
-                      {Number(picked.purchase_price) > 0 && (
-                        <button type="button" onClick={() => handleItemChange(idx, "unit_price", picked.purchase_price)} className="px-1.5 py-0.5 rounded-md bg-white border border-amber-200 text-[10px] text-amber-900 font-semibold" data-testid={`inv-item-cost-card-${idx}`} title="Stok kartı alış fiyatı">kart {moneyTry(picked.purchase_price)} ₺</button>
-                      )}
-                      {costs.length === 0 && !(Number(picked.purchase_price) > 0) && <span className="text-[10px] text-slate-400">kayıt yok</span>}
-                      {costs.slice(0, 5).map((c, ci) => (
-                        <button key={`${c.invoice_number}-${ci}`} type="button" onClick={() => handleItemChange(idx, "unit_price", c.unit_price)} className="px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] text-amber-900" data-testid={`inv-item-cost-${idx}-${ci}`} title={`${c.invoice_number || ""} ${c.supplier || ""}`.trim()}>
-                          {c.date ? `${String(c.date).slice(8, 10)}.${String(c.date).slice(5, 7)} ` : ""}{moneyTry(c.unit_price)} ₺{c.supplier ? ` · ${c.supplier}` : ""}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  </div>
                   );
                 })}
-                <DocumentLineEditor
-                  items={formData.items}
-                  onChange={(items) => setFormData({ ...formData, items })}
-                  products={products}
-                  kind="invoice"
-                  allowService
-                  invoiceType={formData.invoice_type}
-                  onAdd={handleAddItem}
-                  testIdPrefix="inv-item"
-                />
               </div>
 
               {/* Totals Summary */}
@@ -1009,10 +981,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <span className="font-semibold">{money(totals.itemsSum)}</span>
                 </div>
                 {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
-                  <span>Mal / Hizmet Toplamı (KDV Hariç):</span>
-                  <span className="font-semibold">{fmtMoney(totals.itemsSum)} ₺</span>
-                </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{fmtMoney(totals.lineDiscount)} ₺</span></div>}
                 <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
                   <span>Genel İskonto:</span>
                   <div className="flex items-center gap-1">
@@ -1036,21 +1004,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
                   <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
                   <span className="text-emerald-700">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{fmtMoney(totals.gd)} ₺</span>
-                  </div>
-                </div>
-                <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
-                  <span>Ara Toplam (KDV Hariç):</span>
-                  <span className="font-semibold">{fmtMoney(totals.subtotal)} ₺</span>
-                </div>
-                <div className="flex justify-between w-80">
-                  <span>Toplam KDV:</span>
-                  <span className="font-semibold">{fmtMoney(totals.vat)} ₺</span>
-                </div>
-                {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{fmtMoney(totals.withholding)} ₺</span></div>}
-                <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
-                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam (KDV Dahil):"}</span>
-                  <span className="text-emerald-700">{fmtMoney(totals.grandTotal)} ₺</span>
                 </div>
                 {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
                   <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">

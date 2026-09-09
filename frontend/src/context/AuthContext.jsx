@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -7,8 +8,6 @@ import { groupIdOf } from "../navGroups";
 const AuthContext = createContext(null);
 
 export { API_URL, BACKEND_URL } from "../api/client";
-export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
-export const API_URL = `${BACKEND_URL}/api`;
 axios.defaults.withCredentials = true;
 
 export const AuthProvider = ({ children }) => {
@@ -39,7 +38,6 @@ export const AuthProvider = ({ children }) => {
     { label: "Teklifler", path: "/quotes" },
     { label: "Projeler", path: "/projects" },
     { label: "Keşifler", path: "/surveys" },
-    { label: "Teklif / Proje / Keşif", path: "/projects", badge: "Yeni" },
     { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
     { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
     { label: "Siparişler", path: "/orders", badge: "B2B" },
@@ -51,31 +49,17 @@ export const AuthProvider = ({ children }) => {
     { label: "Personel & Bordro", path: "/personnel" },
     { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
-    { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
+    { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices" };
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices", "/sayim": "/stock", "/sevk": "/orders", "/saha": "/orders" };
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
-  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sayim": "/stock" };
-  const perms = user?.permissions;
-  const can = (path, level = "view") => {
-    const key = path === "/sayim" ? "/stock" : path;
-    return !perms || user?.role === "admin" || (level === "view" ? perms[key] !== "none" : perms[key] === "edit");
-  };
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sevk": "/orders" };
-  const perms = user?.permissions;
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/saha": "/orders" };
-  const perms = user?.permissions;
-  const permPath = (path) => LICENSE_KEY[path] || path;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
-  const moduleOn = (path) => !license?.modules || license.modules[path] !== false;
-  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const addonOn = (key) => !license?.addons || license.addons[key] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
@@ -195,10 +179,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can,  feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, permPath, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can, permPath, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

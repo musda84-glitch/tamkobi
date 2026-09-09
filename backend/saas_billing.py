@@ -84,12 +84,6 @@ async def _apply_payment(tx: dict):
     r = await _db.payment_transactions.update_one({"_id": tx["_id"], "applied": {"$ne": True}}, {"$set": {"applied": True, "applied_at": _now()}})
     if not r.modified_count:
         return
-    if tx.get("product_type") == "gib_credits":
-    if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
-        await gib_credits.apply_purchase(tx)
-        return
-    lic = await _db.company_licenses.find_one({"_id": tx["company_id"]}) or {}
-    cur = lic.get("expires_at")
     if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
         await gib_credits.apply_purchase(tx)
         return

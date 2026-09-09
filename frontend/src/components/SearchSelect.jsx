@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from "react";
 import { Search, ChevronDown, Package } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";

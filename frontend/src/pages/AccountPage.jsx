@@ -1,12 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Building2, CreditCard, Loader2, Plus, Settings, Wallet } from "lucide-react";
-import { API_URL, useAuth } from "../context/AuthContext";
-import { MyPlanPanel } from "../components/saas/MyPlanPanel";
-
-const TABS = [["sirketler", "Şirketlerim", Building2], ["kontor", "GİB Kontör", Wallet], ["paket", "Paketim", CreditCard], ["ayarlar", "Firma ayarları", Settings]];
 import { useSearchParams } from "react-router-dom";
 import { Building2, CreditCard, KeyRound, Loader2, Plus, Settings, UserRound, Wallet } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -22,14 +16,10 @@ const TABS = [
 ];
 
 export default function AccountPage() {
-  const { activeCompany, companies, switchCompany, reloadSession, refreshLicense, user, license } = useAuth();
+  const { activeCompany, companies, switchCompany, reloadSession, refreshLicense, user } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") || "sirketler";
-  const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id;
-  useEffect(() => { if (tab === "ayarlar") navigate("/settings", { replace: true }); }, [tab, navigate]);
-  const companyId = activeCompany?.id || activeCompany?._id;
-  const salesOn = !!license?.gib_credits_sales;
   const setTab = (k) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -38,36 +28,23 @@ export default function AccountPage() {
       return next;
     });
   };
-  useEffect(() => {
-    if (license && tab === "kontor" && !salesOn) setTab("sirketler");
-  }, [tab, salesOn, license]);
-  const tabs = TABS.filter(([k]) => k !== "kontor" || salesOn);
   return (
     <div className="space-y-5" data-testid="account-page">
       <div>
         <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-600 font-semibold">Hesap</div>
         <h1 className="text-2xl font-bold text-slate-900">Hesabım</h1>
-        <p className="text-sm text-slate-500">Yalnızca sizin şirketleriniz. Yeni yasal şirket açın, GİB kontörü alın, firma ayarlarına buradan geçin.</p>
+        <p className="text-sm text-slate-500">Yalnızca sizin şirketleriniz. Profilinizi yönetin, yeni yasal şirket açın, GİB kontörü satın alın ve firma ayarlarını buradan düzenleyin.</p>
       </div>
       <div className="flex gap-1 bg-white border border-slate-200 rounded-2xl p-1 w-fit flex-wrap">
         {TABS.map(([k, l, Icon]) => (
-          <button key={k} type="button" onClick={() => setParams({ tab: k })} className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`} data-testid={`account-tab-${k}`}>
-        <p className="text-sm text-slate-500">Yalnızca sizin şirketleriniz. Profilinizi yönetin, yeni yasal şirket açın, GİB kontörü satın alın ve firma ayarlarını buradan düzenleyin.</p>
-        <p className="text-sm text-slate-500">Yalnızca sizin şirketleriniz. Profilinizi yönetin, yeni yasal şirket açın{salesOn ? ", GİB kontörü satın alın" : ""} ve firma ayarlarını buradan düzenleyin.</p>
-      </div>
-      <div className="flex gap-1 bg-white border border-slate-200 rounded-2xl p-1 w-fit flex-wrap">
-        {tabs.map(([k, l, Icon]) => (
           <button key={k} type="button" onClick={() => setTab(k)} className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`} data-testid={`account-tab-${k}`}>
             <Icon className="w-3.5 h-3.5" /> {l}
           </button>
         ))}
       </div>
-      {tab === "sirketler" && <CompaniesTab companyId={companyId} companies={companies} switchCompany={switchCompany} reloadSession={reloadSession} refreshLicense={refreshLicense} canAdd={!user?.role || user.role === "admin" || user?.is_super_admin} />}
-      {tab === "kontor" && <GibCreditsPanel companyId={companyId} />}
-      {tab === "paket" && companyId && <MyPlanPanel companyId={companyId} />}
       {tab === "profil" && <ProfileTab user={user} />}
       {tab === "sirketler" && <CompaniesTab companyId={companyId} companies={companies} switchCompany={switchCompany} reloadSession={reloadSession} refreshLicense={refreshLicense} canAdd={!user?.role || user.role === "admin" || user?.is_super_admin} />}
-      {tab === "kontor" && salesOn && <GibCreditsPanel companyId={companyId} />}
+      {tab === "kontor" && <GibCreditsPanel companyId={companyId} />}
       {tab === "paket" && companyId && <MyPlanPanel companyId={companyId} />}
       {tab === "ayarlar" && <SettingsPage embedded />}
     </div>
@@ -150,9 +127,6 @@ const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refr
         })}
       </ul>
       {canAdd && (
-        <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-4 gap-2 items-end" data-testid="account-add-form">
-          <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
-          <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
         <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-5 gap-2 items-end" data-testid="account-add-form">
           <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
           <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
@@ -200,11 +174,6 @@ export const GibCreditsPanel = ({ companyId }) => {
           <p className="text-slate-300 mt-1">Her e-fatura veya e-arşiv gönderimi 1 kontör düşer. Kağıt fatura kontör kullanmaz. Kontör lisansınızdaki tüm şirketlerde ortaktır.</p>
         </div>
       </div>
-      {d.sales_enabled === false && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-4 py-3" data-testid="gib-sales-closed">
-          GİB kontör satışı şu an kapalı. Bakiye ve hareketlerinizi görebilirsiniz; paket satın almak için platform yöneticinizle iletişime geçin.
-        </div>
-      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
         {(d.packs || []).map((p) => (
           <div key={p.id} className={`bg-white border rounded-2xl p-4 flex flex-col ${p.popular ? "border-amber-400 ring-2 ring-amber-400/20" : "border-slate-200"}`} data-testid={`gib-pack-${p.id}`}>

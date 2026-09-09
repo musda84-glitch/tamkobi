@@ -1,6 +1,7 @@
-import React, { useId } from "react";
 
 /** Compact TamKobi mark: TK monogram on an emerald→indigo tile. */
+import React, { useId } from "react";
+
 export default function TamKobiMark({ className = "w-8 h-8", title = "TamKobi" }) {
   const uid = useId().replace(/:/g, "");
   const fill = `tk-fill-${uid}`;

@@ -183,36 +183,3 @@ def test_live_remote_root_locked():
 
     with pytest.raises(Exception):
         connect("root", pw, "tamkobi")
-
-
-
-def test_live_backup_cannot_write():
-    env = _env_passwords()
-    pw = env.get("MYSQL_BACKUP_PASSWORD") or ""
-    if not pw or pw.startswith("change-me"):
-        pytest.skip("MYSQL_BACKUP_PASSWORD not configured")
-    from mysql_users import connect
-
-    conn = connect(BACKUP_USER, pw, "tamkobi")
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM docs")
-        cur.fetchone()
-        with pytest.raises(Exception):
-            cur.execute(
-                "INSERT INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
-                ("_priv_probe", "1", "{}"),
-            )
-    finally:
-        conn.close()
-
-
-def test_live_remote_root_locked():
-    env = _env_passwords()
-    pw = env.get("MYSQL_ROOT_PASSWORD") or ""
-    if not pw or pw in {"tamkobi", "change-me-root"}:
-        pytest.skip("MYSQL_ROOT_PASSWORD not rotated")
-    from mysql_users import connect
-
-    with pytest.raises(Exception):
-        connect("root", pw, "tamkobi")

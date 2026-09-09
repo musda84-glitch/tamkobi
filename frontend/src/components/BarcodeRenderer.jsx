@@ -1,6 +1,7 @@
-import React from "react";
 
 // Simple SVG Barcode Generator (Code128 / EAN simulation)
+import React from "react";
+
 export const BarcodeRenderer = ({ code = "8680001234011", width = 200, height = 50, showText = true, compact = false }) => {
   const bars = [];
   let totalWidth = 0;

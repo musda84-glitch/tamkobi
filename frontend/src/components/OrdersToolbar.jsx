@@ -1,10 +1,10 @@
+
 import React from "react";
 import { Search, ArrowUpDown, X } from "lucide-react";
 import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
 import { orderGross } from "../utils/orderMoney";
 
-const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}${i.note ? ` (${i.note})` : ""}`).join(", ") }, { key: "total_amount", label: "Tutar", num: true }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = { q: "", status: "all", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "date_desc" };

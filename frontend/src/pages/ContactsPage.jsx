@@ -2,6 +2,17 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
+import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
+import { ContactDetailPanel } from "../components/ContactDetailPanel";
+import { ContactRow } from "../components/ContactRow";
+import { ContactForm } from "../components/ContactForm";
+import { ExportButtons } from "../components/ExportButtons";
+import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
+import { useEscape } from "../utils/useEscape";
+import { useSearchParams } from "react-router-dom";
+import { cachedList, contactTypeFilter } from "../utils/dataSync";
+
 import {
   Users,
   Plus,
@@ -21,17 +32,7 @@ import {
   Navigation,
   Filter
 } from "lucide-react";
-import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
-import { ContactLocationModal, mapsLink } from "../components/ContactLocationModal";
-import { ContactDetailPanel } from "../components/ContactDetailPanel";
-import { ContactRow } from "../components/ContactRow";
-import { ContactForm } from "../components/ContactForm";
-import { ExportButtons } from "../components/ExportButtons";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
-import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
-import { useEscape } from "../utils/useEscape";
-import { useSearchParams } from "react-router-dom";
-import { cachedList, contactTypeFilter } from "../utils/dataSync";
 
 export default function ContactsPage() {
   const { activeCompany } = useAuth();

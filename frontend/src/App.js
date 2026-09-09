@@ -1,8 +1,8 @@
+
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { Toaster } from "sonner";
-
 import MainLayout from "./components/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Dashboard from "./pages/Dashboard";
@@ -53,6 +53,7 @@ import B2BResetPage from "./pages/B2BResetPage";
 import B2BAdminPage from "./pages/B2BAdminPage";
 import FieldSalesPage from "./pages/FieldSalesPage";
 import TradePage from "./pages/TradePage";
+
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -86,7 +87,6 @@ export default function App() {
             <Route path="/projects" element={<ProjectsPage section="projects" />} />
             <Route path="/surveys" element={<ProjectsPage section="surveys" />} />
             <Route path="/support" element={<SupportPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />
             <Route path="/teklif/:token" element={<QuoteApprovalPage />} />

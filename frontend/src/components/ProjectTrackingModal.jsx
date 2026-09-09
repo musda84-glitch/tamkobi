@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
@@ -40,7 +41,18 @@ export const ProjectTrackingModal = ({ project, contact, onClose, onSent }) => {
         {(res || link) && (
           <div className="bg-slate-50 border rounded-xl p-3 space-y-2" data-testid="track-result">
             <div className="flex items-center gap-2"><span className="font-semibold text-slate-700">Takip linki:</span><a href={res?.link || link} target="_blank" rel="noreferrer" className="text-emerald-700 underline truncate flex-1 font-mono" data-testid="track-link">{res?.link || link}</a><button onClick={() => copy(res?.link || link)} className="p-1 border rounded-md bg-white" title="Kopyala" data-testid="track-copy"><Copy className="w-3.5 h-3.5" /></button><a href={res?.link || link} target="_blank" rel="noreferrer" className="p-1 border rounded-md bg-white" title="Önizle" data-testid="track-preview"><Eye className="w-3.5 h-3.5" /></a></div>
-            {res?.results && Object.entries(res.results).map(([k, v]) => <div key={k} className="flex items-center gap-2"><span className="w-16 font-bold uppercase text-slate-500">{k}</span><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${v.status === "sent" ? "bg-emerald-50 text-emerald-700" : v.status === "simulated" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>{v.status === "sent" ? "Gönderildi" : v.status === "simulated" ? "SİMÜLE" : "Hata"}</span><span className="text-slate-500 truncate flex-1">{v.detail}</span>{v.wa_link && <a href={v.wa_link} target="_blank" rel="noreferrer" className="text-green-700 font-semibold underline">WhatsApp'ta aç</a></div>)}
+            {res?.results && Object.entries(res.results).map(([k, v]) => {
+              const st = v.status === "sent" ? "bg-emerald-50 text-emerald-700" : v.status === "simulated" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700";
+              const label = v.status === "sent" ? "Gönderildi" : v.status === "simulated" ? "SİMÜLE" : "Hata";
+              return (
+                <div key={k} className="flex items-center gap-2">
+                  <span className="w-16 font-bold uppercase text-slate-500">{k}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${st}`}>{label}</span>
+                  <span className="text-slate-500 truncate flex-1">{v.detail}</span>
+                  {v.wa_link && <a href={v.wa_link} target="_blank" rel="noreferrer" className="text-green-700 font-semibold underline">WhatsApp ta aç</a>}
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="flex justify-end gap-2 border-t pt-2">

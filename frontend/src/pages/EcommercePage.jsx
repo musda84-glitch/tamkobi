@@ -4,6 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { ProductMappingPanel } from "../components/ProductMappingPanel";
 import { ChannelCatalogModal, CHANNEL_FIELD_LABELS } from "../components/ChannelCatalogModal";
+
 import {
   ShoppingCart,
   CheckCircle2,

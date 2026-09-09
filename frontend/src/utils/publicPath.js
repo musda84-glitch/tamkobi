@@ -11,8 +11,10 @@ export function isPublicPath(pathname) {
     p.startsWith("/kayit") ||
     p.startsWith("/portal/") ||
     p.startsWith("/teklif/") ||
+    p.startsWith("/proje/") ||
     p.startsWith("/davet/") ||
     p.startsWith("/odeme/") ||
-    p.startsWith("/yenile/")
+    p.startsWith("/yenile/") ||
+    p.startsWith("/yasal")
   );
 }

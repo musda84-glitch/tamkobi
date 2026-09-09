@@ -3,6 +3,14 @@ import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { PartnersPanel } from "../components/PartnersPanel";
+import { cachedList } from "../utils/dataSync";
+import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
+import { CardStatementImport } from "../components/CardStatementImport";
+import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
+import { AccountStatementPrint } from "../components/AccountStatementPrint";
+import { TxRowMenu } from "../components/TxRowMenu";
+
 import {
   Landmark,
   Wallet,
@@ -17,19 +25,10 @@ import {
   Users,
   Link2,
   Pencil,
-  Trash2
-  Sparkles
   Trash2,
+  Sparkles,
   Printer
 } from "lucide-react";
-import { PartnersPanel } from "../components/PartnersPanel";
-import { cachedList } from "../utils/dataSync";
-import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
-import { CardStatementImport } from "../components/CardStatementImport";
-import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
-import { AccountStatementPrint } from "../components/AccountStatementPrint";
-import { TxRowMenu } from "../components/TxRowMenu";
-import { AccountStatementPrint } from "../components/AccountStatementPrint";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -138,55 +137,9 @@ export default function BankingPage() {
     e.preventDefault();
     try {
       const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-      const payload = { ...newAccount, current_balance: Number(newAccount.current_balance || 0) };
-      if (editingAccount) {
-        const { current_balance: _bal, ...meta } = payload;
-        await axios.put(`${API_URL}/banking/accounts/${editingAccount.id || editingAccount._id}`, meta);
-        toast.success("Hesap güncellendi.");
-      } else {
-        await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload });
-        toast.success("Banka/Kasa hesabı başarıyla eklendi.");
-      }
-      setShowAddAccountModal(false);
-      setEditingAccount(null);
-      setNewAccount(emptyAccountForm);
-      loadBankingData();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
-    }
-  };
-
-  const openEditAccount = (acc, e) => {
-    e?.stopPropagation();
-    setEditingAccount(acc);
-    setNewAccount({
-      type: acc.type || "bank",
-      bank_name: acc.bank_name || "",
-      account_name: acc.account_name || "",
-      account_number: acc.account_number || "",
-      iban: acc.iban || "",
-      currency: acc.currency || "TRY",
-      current_balance: acc.current_balance || 0,
-      pos_commission_rate: acc.pos_commission_rate || 1.5
-    });
-    setShowAddAccountModal(true);
-  };
-
-  const handleDeleteAccount = async (acc, e) => {
-    e?.stopPropagation();
-    const name = `${acc.bank_name || ""} — ${acc.account_name || ""}`.trim();
-    if (!window.confirm(`"${name}" silinsin mi? Hareketi olan hesaplar silinemez.`)) return;
-    try {
-      const r = await axios.delete(`${API_URL}/banking/accounts/${acc.id || acc._id}`);
-      toast.success(r.data.message || "Hesap silindi.");
-      if (selectedAccountId === (acc.id || acc._id)) setSelectedAccountId(null);
-      loadBankingData();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Hesap silinemedi.");
       const isCard = newAccount.type === "credit_card";
       const last4 = String(newAccount.card_last4 || "").replace(/\D/g, "").slice(-4);
       const payload = {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         type: newAccount.type,
         bank_name: newAccount.bank_name,
         account_name: newAccount.account_name,
@@ -203,17 +156,23 @@ export default function BankingPage() {
         payload.account_number = newAccount.account_number;
         if (newAccount.type === "pos") payload.pos_commission_rate = Number(newAccount.pos_commission_rate || 0);
       }
-      const created = (await axios.post(`${API_URL}/banking/accounts`, payload)).data;
-      toast.success(isCard ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz." : "Banka/Kasa hesabı başarıyla eklendi.");
-      setShowAddAccountModal(false);
-      setNewAccount(emptyAccountForm);
-      await loadBankingData();
-      if (isCard) {
-        setStmtAccount({ ...created, id: created.id || created._id });
+      if (editingAccount) {
+        const { current_balance: _bal, ...meta } = payload;
+        await axios.put(`${API_URL}/banking/accounts/${editingAccount.id || editingAccount._id}`, meta);
+        toast.success("Hesap güncellendi.");
+        setShowAddAccountModal(false);
+        setEditingAccount(null);
+        setNewAccount(emptyAccountForm);
+        loadBankingData();
+      } else {
+        const created = (await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload })).data;
+        toast.success(isCard ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz." : "Banka/Kasa hesabı başarıyla eklendi.");
+        setShowAddAccountModal(false);
+        setEditingAccount(null);
+        setNewAccount(emptyAccountForm);
+        await loadBankingData();
+        if (isCard) setStmtAccount({ ...created, id: created.id || created._id });
       }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
-      loadBankingData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
     }
@@ -230,7 +189,11 @@ export default function BankingPage() {
       iban: acc.iban || "",
       currency: acc.currency || "TRY",
       current_balance: acc.current_balance || 0,
-      pos_commission_rate: acc.pos_commission_rate || 1.5
+      pos_commission_rate: acc.pos_commission_rate || 1.5,
+      card_holder: acc.card_holder || "",
+      card_last4: acc.card_last4 || "",
+      card_expiry: acc.card_expiry || "",
+      card_limit: acc.card_limit ?? "",
     });
     setShowAddAccountModal(true);
   };
@@ -337,10 +300,7 @@ export default function BankingPage() {
 
       {tab === "accounts" && (<>
       <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={() => { setCashTick((n) => n + 1); loadBankingData(); }} />
-      {/* Grouped account cards — same pattern as Ortaklar Hesabı */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
-      {/* Account Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {partnerSummary && partnerSummary.partner_count > 0 && (
           <button onClick={() => setTab("partners")} className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left" data-testid="partners-account-card">
             <div className="space-y-2">
@@ -375,50 +335,6 @@ export default function BankingPage() {
                   <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
                   <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
                 </div>
-            <div
-              role="button"
-              tabIndex={0}
-              key={accId}
-              onClick={() => setSelectedAccountId(isSelected ? null : accId)}
-              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : isCard ? 'border-fuchsia-200/90' : 'border-slate-200/90'}`}
-              title={isCard ? "Şirket kredi kartı — tahsilat için kullanılamaz" : "Hesap hareketlerini görmek için tıklayın"}
-              data-testid={`bank-card-${accId}`}
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className={`p-2 rounded-xl ${
-                    isBank ? 'bg-blue-50 text-blue-600' : isCash ? 'bg-emerald-50 text-emerald-600' : isCard ? 'bg-fuchsia-50 text-fuchsia-600' : 'bg-purple-50 text-purple-600'
-                  }`}>
-                    {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
-                  </div>
-                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded flex items-center gap-1 ${isCard ? "text-fuchsia-700 bg-fuchsia-100" : "text-slate-400 bg-slate-100"}`}>
-                    {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
-                  </span>
-                </div>
-                {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" title="Bu hesap banka API'sine bağlı; manuel işlem yapılamaz, hareketler bankadan çekilir" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider} · manuel işlem kapalı</div>}
-                {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
-
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
-                  <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
-                  <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
-                  <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
-                  {isCard && (
-                    <div className="mt-1 space-y-1">
-                      <div className="text-[11px] font-mono text-slate-500">
-                        {acc.card_holder ? `${acc.card_holder} · ` : ""}{acc.card_last4 ? `**** ${acc.card_last4}` : "**** ----"}
-                        {acc.card_expiry ? ` · ${acc.card_expiry}` : ""}
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span>
-                        <button onClick={(e) => { e.stopPropagation(); setStmtFile(null); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button>
-                      </div>
-                    </div>
-                  )}
-                  {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span>{addonOn("ai.finance_docs") && <button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button>}</div>}
-                  {acc.iban && acc.iban !== '-' && (
-                    <div className="text-[11px] font-mono text-slate-400 mt-1 truncate">{acc.iban}</div>
-                  )}
                 {g.type === "credit_card" && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">Tahsilat kapalı · masraf / ekstre</div>}
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
@@ -427,13 +343,8 @@ export default function BankingPage() {
               </div>
               <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
                 <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Toplam Bakiye</div>
                   <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
-                  <div className="text-xl font-bold text-slate-900 tracking-tight">
-                    {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-                  </div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
               </div>
@@ -514,18 +425,6 @@ export default function BankingPage() {
             <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            {selectedAccount || openGroup ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedAccount ? (
-              <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
-                <span className="text-slate-500">{visibleTx.length} hareket</span>
-                <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-                <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-              </div>
-            ) : (
-              <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
-              <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
-            )}
             <button
               type="button"
               onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}
@@ -589,7 +488,6 @@ export default function BankingPage() {
           company={activeCompany}
           account={selectedAccount || null}
           title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}
-          title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : "Son Finansal Hareketler"}
           transactions={visibleTx}
           onClose={() => setPrintTx(false)}
         />
@@ -688,9 +586,7 @@ export default function BankingPage() {
           <div className={`bg-white rounded-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto ${newAccount.type === "credit_card" ? "max-w-lg" : "max-w-md"}`} data-testid="add-account-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">{editingAccount ? "Hesabı Düzelt" : "Yeni Banka / Kasa / POS Hesabı"}</h3>
-              <button onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); }} className="text-slate-400">
-              <h3 className="text-base font-bold text-slate-900">Yeni Banka / Kasa / POS Hesabı</h3>
-              <button onClick={() => { setShowAddAccountModal(false); setStmtFile(null); }} className="text-slate-400">
+              <button type="button" onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); setStmtFile(null); }} className="text-slate-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -836,8 +732,7 @@ export default function BankingPage() {
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
                   type="button"
-                  onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); }}
-                  onClick={() => { setShowAddAccountModal(false); setStmtFile(null); }}
+                  onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); setStmtFile(null); }}
                   className="px-3 py-1.5 border rounded-lg text-xs"
                 >
                   İptal

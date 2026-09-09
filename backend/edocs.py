@@ -208,11 +208,8 @@ async def approve_edoc(doc_id: str, req: Dict[str, Any]):
     ubl_like = d.get("source") in ("ubl_xml", "n11faturam")
     inv = {"_id": str(uuid.uuid4()), "company_id": d["company_id"], "invoice_number": d.get("number") or f"GELEN-{uuid.uuid4().hex[:6].upper()}", "invoice_type": "dispatch" if d["kind"] == "dispatch" else "purchase", "e_type": "e_dispatch" if d["kind"] == "dispatch" else ("e_invoice" if ubl_like else "paper"),
            "direction": "incoming", "contact_id": d["contact_id"], "contact_name": d["contact_name"], "contact_tax_id": d["supplier"].get("tax_id"), "issue_date": d.get("issue_date") or _now()[:10], "due_date": d.get("issue_date") or _now()[:10], "items": items, "subtotal": round(sub, 2), "vat_total": round(vat, 2), "discount_total": 0.0,
-           "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "gib_status": "received" if ubl_like else None, "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
            "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
            "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)" if ubl_like and d.get("kind") != "dispatch" else ("received" if ubl_like else None),
-           "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
-           "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)" if d.get("source") == "ubl_xml" and d.get("kind") != "dispatch" else ("received" if d.get("source") == "ubl_xml" else None),
            "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
     await _db.invoices.insert_one(inv)
     if d["kind"] == "invoice":

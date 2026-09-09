@@ -1,10 +1,9 @@
+
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, CheckCircle2, XCircle } from "lucide-react";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, CheckCircle2, XCircle } from "lucide-react";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, Briefcase } from "lucide-react";
-import { API_URL } from "../context/AuthContext";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, CheckCircle2, XCircle, Briefcase } from "lucide-react";
+import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
 import { ReceiptPrint } from "./ReceiptPrint";
@@ -16,16 +15,12 @@ import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
-import { collectableAccounts } from "./PaymentTargetSelect";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, fmtMoney, hydrateLine } from "../utils/documentLines";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock], ["cheques", "Çek / Senet", ScrollText]];
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {

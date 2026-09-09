@@ -1,8 +1,6 @@
+
 import React, { useEffect, useState } from "react";
-import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Sparkles } from "lucide-react";
 import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Sparkles, Mail } from "lucide-react";
-import React from "react";
-import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { API_URL } from "../../context/AuthContext";

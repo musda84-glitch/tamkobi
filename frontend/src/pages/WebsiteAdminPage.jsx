@@ -1,3 +1,8 @@
+
+/**
+ * Dedicated TamKobi vitrin page. Must not share SystemAdminPage's :section matching —
+ * /sistem/web used to render an empty "Genel Bakış" shell when the section param was missing.
+ */
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -5,10 +10,6 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout } from "../components/saas/SystemLayout";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 
-/**
- * Dedicated TamKobi vitrin page. Must not share SystemAdminPage's :section matching —
- * /sistem/web used to render an empty "Genel Bakış" shell when the section param was missing.
- */
 export default function WebsiteAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
   const [overview, setOverview] = useState(null);

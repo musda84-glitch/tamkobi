@@ -1054,6 +1054,7 @@ class MySQLDatabase:
                     idxs = {r[2] for r in await cur.fetchall()}
                     for stmt in schema_upgrade_statements(cols, idxs):
                         await cur.execute(stmt)
+                    try:
                         await cur.execute("CREATE INDEX idx_docs_coll_upd ON docs (collection, updated_at)")
                     except Exception:
                         pass

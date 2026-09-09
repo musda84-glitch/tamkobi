@@ -241,7 +241,6 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
     if "project_id" in upd:
         upd["project_id"] = upd["project_id"] or None
     merged = {**exp, **upd}
-    if exp.get("source") != "card_statement" and exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or req.get("account_id") and req["account_id"] != exp.get("account_id")):
     new_acc = req["account_id"] if "account_id" in req else exp.get("account_id")
     new_partner = req["partner_id"] if "partner_id" in req else exp.get("partner_id")
     if new_partner:

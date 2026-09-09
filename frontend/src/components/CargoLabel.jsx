@@ -1,3 +1,4 @@
+
 import React from "react";
 import { X, Printer } from "lucide-react";
 import { BarcodeRenderer } from "./BarcodeRenderer";

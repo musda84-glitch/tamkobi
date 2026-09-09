@@ -3,7 +3,6 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { NAV_GROUPS, groupIdOf } from "../navGroups";
 import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
 import { CompaniesTable } from "../components/saas/CompaniesTable";
@@ -14,22 +13,12 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
-import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
-import { QuotasPanel } from "../components/saas/QuotasPanel";
-import { AddonsPanel } from "../components/saas/AddonsPanel";
-import { SupportTicketsPanel } from "../components/saas/SupportTicketsPanel";
 
-const navTitle = (pathname, page) => {
-  const hit = SYSTEM_NAV.find(([p]) => p === pathname.replace(/\/+$/, "") || p === `/sistem/${page}` || (p === "/sistem" && !page));
-  return (hit || SYSTEM_NAV[0])[1];
-};
-
-export default function SystemAdminPage({ section: sectionFromRoute }) {
+export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
   const { pathname } = useLocation();
-  const { section: sectionParam } = useParams();
-  const fromPath = pathname.replace(/\/+$/, "").split("/")[2] || "";
-  const page = String(sectionFromRoute !== undefined ? sectionFromRoute : (sectionParam || fromPath || "")).toLowerCase();
+  const { section } = useParams();
+  const page = (section || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -52,21 +41,9 @@ export default function SystemAdminPage({ section: sectionFromRoute }) {
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const title = navTitle(pathname, page);
-  const panels = {
-    "": <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />,
-    web: <WebsiteAdminPanel plans={plans} onChanged={changed} />,
-    sirketler: <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />,
-    kullanicilar: <PlatformUsersPanel />,
-    paketler: <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />,
-    moduller: <ModuleCatalog catalog={catalog} plans={plans} />,
-    talepler: <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />,
-    odemeler: <PaymentsPanel />,
-    hatirlatmalar: <RemindersPanel />,
-    ayarlar: <PlatformSettingsPanel />,
-  };
+  const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
   return (
-    <SystemLayout pendingCount={overview?.pending_requests || 0} openTickets={overview?.open_tickets || 0}>
+    <SystemLayout pendingCount={overview?.pending_requests || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
@@ -75,21 +52,15 @@ export default function SystemAdminPage({ section: sectionFromRoute }) {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
-          {page === "posta" && <PlatformMailPanel />}
           {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
-          {page === "kotalar" && <QuotasPanel onOpenCompany={setOpenId} />}
           {page === "kullanicilar" && <PlatformUsersPanel />}
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} onChanged={changed} />}
-          {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} />}
-          {page === "araclar" && <AddonsPanel />}
-          {page === "destek" && <SupportTicketsPanel onOpenCompany={setOpenId} />}
           {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}
           {page === "ai" && <AiProviderPanel />}
           {page === "ayarlar" && <PlatformSettingsPanel />}
-          {panels[page] || <div className="text-sm text-slate-600">Bu bölüm bulunamadı.</div>}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
@@ -119,27 +90,6 @@ const ModuleCatalog = ({ catalog, plans, onChanged }) => {
         </table>
       </div>
       <button onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-60" data-testid="mod-prices-save">{busy ? "Kaydediliyor…" : "Fiyatları kaydet"}</button>
-const ModuleCatalog = ({ catalog, plans }) => {
-  const order = Object.fromEntries(NAV_GROUPS.map((g, i) => [g.id, i]));
-  const sorted = [...(catalog || [])].sort((a, b) => (order[groupIdOf(a.key)] ?? 99) - (order[groupIdOf(b.key)] ?? 99));
-  const groups = [];
-  for (const m of sorted) {
-    const cat = m.category || "Genel";
-    const last = groups[groups.length - 1];
-    if (!last || last.cat !== cat) groups.push({ cat, items: [m] });
-    else last.items.push(m);
-  }
-  return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto text-xs" data-testid="saas-module-catalog">
-      <table className="w-full min-w-[720px]">
-        <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Modül</th><th className="px-3 py-2.5 text-left">Kategori</th><th className="px-3 py-2.5 text-left">Açıklama</th>{plans.map((p) => <th key={p.id} className="px-3 py-2.5 text-center">{p.name}</th>)}</tr></thead>
-        <tbody className="divide-y divide-slate-100">{groups.map((g) => (
-          <React.Fragment key={g.cat}>
-            <tr className="bg-slate-50/80"><td colSpan={3 + plans.length} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{g.cat}</td></tr>
-            {g.items.map((m) => <tr key={m.key} data-testid={`catalog-row-${m.key.replace("/", "") || "dashboard"}`}><td className="px-3 py-2 font-semibold text-slate-800">{m.label}{m.is_core && <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-500 px-1 rounded">çekirdek</span>}</td><td className="px-3 py-2 text-slate-500">{m.category}</td><td className="px-3 py-2 text-slate-500">{m.description}</td>{plans.map((p) => <td key={p.id} className="px-3 py-2 text-center">{m.is_core || p.modules.includes(m.key) ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}</td>)}</tr>)}
-          </React.Fragment>
-        ))}</tbody>
-      </table>
     </div>
   );
 };

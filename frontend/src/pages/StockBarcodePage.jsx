@@ -3,6 +3,18 @@ import axios from "axios";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { StockCountPanel } from "../components/StockCountPanel";
+import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
+import { ProductionOrderModal } from "../components/ProductionOrderModal";
+import { ProductProfitPanel } from "../components/ProductProfitPanel";
+import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
+import { BarcodeRenderer } from "../components/BarcodeRenderer";
+import { ProductDetailModal } from "../components/ProductDetailModal";
+import { cachedList, productFilter } from "../utils/dataSync";
+import { AiStockImportModal } from "../components/AiStockImportModal";
+import { resolveImageUrl } from "../utils/imageUrl";
+import { ScanButton } from "../components/CameraScanner";
+
 import {
   Package,
   Plus,
@@ -25,9 +37,6 @@ import {
   Sparkles,
   ShoppingCart,
 } from "lucide-react";
-import { StockCountPanel } from "../components/StockCountPanel";
-import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
-import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,14 +44,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
-import { ProductProfitPanel } from "../components/ProductProfitPanel";
-import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
-import { BarcodeRenderer } from "../components/BarcodeRenderer";
-import { ProductDetailModal } from "../components/ProductDetailModal";
-import { cachedList, productFilter } from "../utils/dataSync";
-import { AiStockImportModal } from "../components/AiStockImportModal";
-import { resolveImageUrl } from "../utils/imageUrl";
-import { ScanButton } from "../components/CameraScanner";
 
 export default function StockBarcodePage() {
   const { activeCompany, addonOn } = useAuth();

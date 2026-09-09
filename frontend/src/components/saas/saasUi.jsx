@@ -1,3 +1,4 @@
+
 import React from "react";
 
 export const fmtTL = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 }) + " ₺";

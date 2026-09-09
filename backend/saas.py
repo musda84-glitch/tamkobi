@@ -71,15 +71,6 @@ DEFAULT_MODULE_PRICES = {
     "/atolye": 99, "/personnel": 159, "/communication": 99, "/ai-advisor": 129, "/accountant": 99,
 }
 CUSTOM_PLAN_ID = "plan_custom"
-DEFAULT_PLANS = [
-    {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
-    {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
-    {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
-    {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
-    {"_id": CUSTOM_PLAN_ID, "code": "custom", "name": "Özel Paket", "tagline": "Siteden seçtiğiniz modüller", "price_monthly": 0, "price_yearly": 0, "user_limit": 5, "company_limit": 1, "modules": [], "color": "emerald", "sort": 90, "is_public": False},
-# 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
-QUOTA_KEYS = ("user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb")
-DEFAULT_PLANS = [
 # 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
 QUOTA_KEYS = ("user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb")
 DEFAULT_PLANS = [
@@ -87,6 +78,7 @@ DEFAULT_PLANS = [
     {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "product_limit": 1500, "contact_limit": 800, "storage_limit_mb": 2048, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
     {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "product_limit": 8000, "contact_limit": 3000, "storage_limit_mb": 10240, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
     {"_id": "plan_enterprise", "code": "enterprise", "name": "Kurumsal", "tagline": "Tüm modüller, sınırsız kullanıcı, üretim & atölye", "price_monthly": 2499, "price_yearly": 24990, "user_limit": 0, "company_limit": 0, "product_limit": 0, "contact_limit": 0, "storage_limit_mb": 0, "modules": _ALL, "color": "amber", "sort": 4, "is_public": True},
+    {"_id": CUSTOM_PLAN_ID, "code": "custom", "name": "Özel Paket", "tagline": "Siteden seçtiğiniz modüller", "price_monthly": 0, "price_yearly": 0, "user_limit": 5, "company_limit": 1, "product_limit": 1500, "contact_limit": 800, "storage_limit_mb": 2048, "modules": [], "color": "emerald", "sort": 90, "is_public": False},
 ]
 STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
@@ -290,7 +282,6 @@ async def seed():
             extra_all = [k for k in _ALL if k not in synced]
             synced = synced + extra_all
         if synced != list((cur or {}).get("modules") or []):
-        if synced != mods:
             await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"modules": synced}})
     async for lic in _db.company_licenses.find({}):
         ov = dict(lic.get("module_overrides") or {})
@@ -300,18 +291,6 @@ async def seed():
                 if k not in ov:
                     ov[k] = ov["/projects"]
                     changed = True
-        for child, parent in PANEL_MODULE_FROM.items():
-            if parent in ov and child not in ov:
-                ov[child] = ov[parent]
-                await _db.saas_plans.update_one({"_id": p["_id"]}, {"$set": {"modules": mods + extra}})
-    async for lic in _db.company_licenses.find({}):
-        ov = dict(lic.get("module_overrides") or {})
-        if "/projects" not in ov:
-            continue
-        changed = False
-        for k in ("/quotes", "/surveys"):
-            if k not in ov:
-                ov[k] = ov["/projects"]
         for child, parent in PANEL_MODULE_FROM.items():
             if parent in ov and child not in ov:
                 ov[child] = ov[parent]
@@ -385,19 +364,6 @@ async def effective(company_id: str) -> Dict[str, Any]:
     if end_dt:
         days_left = max(0, -(-int((end_dt - now_dt).total_seconds()) // 86400))
     siblings = await companies_on_license(lid)
-    res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
-           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL),
-           "user_limit": resolve_quota_limit(plan, lic, "user_limit"),
-           "company_limit": resolve_quota_limit(plan, lic, "company_limit"),
-           "product_limit": resolve_quota_limit(plan, lic, "product_limit"),
-           "contact_limit": resolve_quota_limit(plan, lic, "contact_limit"),
-           "storage_limit_mb": resolve_quota_limit(plan, lic, "storage_limit_mb"),
-           "company_count": len(siblings),
-           "plan_defaults": {k: int((plan or {}).get(k) or 0) for k in QUOTA_KEYS},
-           "quota_overrides": {k: (lic or {}).get(k) for k in QUOTA_KEYS},
-    plan_company_limit = int((plan or {}).get("company_limit") or 0)
-    lic_company_limit = (lic or {}).get("company_limit")
-    company_limit = int(lic_company_limit) if lic_company_limit is not None else plan_company_limit
     import addons as _addons
     addon_details = await _addons.resolve(company_id, lic=lic, plan=plan, locked=locked)
     addon_on = {k: bool(v.get("enabled")) for k, v in addon_details.items()}
@@ -413,11 +379,18 @@ async def effective(company_id: str) -> Dict[str, Any]:
     res = {"company_id": company_id, "license_id": lid, "plan_id": plan["_id"] if plan else None, "plan_name": plan["name"] if plan else "Sınırsız", "plan_color": (plan or {}).get("color", "slate"), "status": status, "status_label": STATUS_LABELS.get(status, status), "locked": locked, "modules": mods,
            "addons": addon_on, "addon_details": addon_details, "addon_overrides": (lic or {}).get("addon_overrides") or {},
            "support": support,
-           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL), "user_limit": (lic or {}).get("user_limit") if (lic or {}).get("user_limit") is not None else (plan or {}).get("user_limit", 0),
-           "company_limit": company_limit, "company_count": len(siblings),
+           "enabled_count": sum(1 for k, v in mods.items() if v and k not in CORE_MODULES), "total_count": len(_ALL),
+           "user_limit": resolve_quota_limit(plan, lic, "user_limit"),
+           "company_limit": resolve_quota_limit(plan, lic, "company_limit"),
+           "product_limit": resolve_quota_limit(plan, lic, "product_limit"),
+           "contact_limit": resolve_quota_limit(plan, lic, "contact_limit"),
+           "storage_limit_mb": resolve_quota_limit(plan, lic, "storage_limit_mb"),
+           "company_count": len(siblings),
+           "plan_defaults": {k: int((plan or {}).get(k) or 0) for k in QUOTA_KEYS},
+           "quota_overrides": {k: (lic or {}).get(k) for k in QUOTA_KEYS},
            "trial_ends_at": (lic or {}).get("trial_ends_at"), "expires_at": (lic or {}).get("expires_at"),
            "days_left": days_left, "module_overrides": (lic or {}).get("module_overrides", {}), "notes": (lic or {}).get("notes", ""), "billing_period": (lic or {}).get("billing_period", "monthly"),
-           "custom_price_monthly": (lic or {}).get("custom_price_monthly"), "custom_price_yearly": (lic or {}).get("custom_price_yearly")}
+           "custom_price_monthly": (lic or {}).get("custom_price_monthly"), "custom_price_yearly": (lic or {}).get("custom_price_yearly"),
            "gib_credits_sales": bool(plat.get("gib_credits_sales"))}
     _cache[lid] = (time.time() + CACHE_TTL, dict(res))
     return res

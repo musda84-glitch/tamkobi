@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
-import { API_URL } from "../context/AuthContext";
-import { useAuth } from "../context/AuthContext";
+import { API_URL, useAuth } from "../context/AuthContext";
 import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
+
 import {
   TrendingUp,
   TrendingDown,
