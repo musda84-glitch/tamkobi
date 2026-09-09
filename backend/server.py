@@ -31,6 +31,7 @@ from auth_utils import (
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
 )
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
+from seed_data import seed_all_data, seed_partners
 import demo
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
@@ -7416,6 +7417,7 @@ app.include_router(platform_mail.router)
 app.include_router(demo.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
+app.include_router(demo.router)
 
 @app.get("/")
 async def root():
