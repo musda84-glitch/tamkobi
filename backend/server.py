@@ -1473,6 +1473,57 @@ async def _remember_category(company_id: str, name: Optional[str]):
     if name and name.strip():
         await db.product_categories.update_one({"company_id": company_id, "name": name.strip()}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name.strip(), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
+def _purchase_cost_row(inv: dict, it: dict) -> Optional[Dict[str, Any]]:
+    try:
+        price = float(it.get("unit_price") or 0)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    date = inv.get("issue_date") or (str(inv.get("created_at") or "")[:10])
+    try:
+        qty = float(it.get("quantity") or 0)
+    except (TypeError, ValueError):
+        qty = 0
+    return {
+        "date": date,
+        "unit_price": round(price, 4),
+        "quantity": qty,
+        "supplier": inv.get("contact_name") or "",
+        "invoice_number": inv.get("invoice_number") or "",
+    }
+
+
+async def _purchase_costs_by_product(company_id: str, limit_each: int = 8) -> Dict[str, list]:
+    invs = await db.invoices.find(
+        {"company_id": company_id, "invoice_type": "purchase", "status": {"$nin": ["cancelled", "void", "rejected"]}},
+        {"items": 1, "issue_date": 1, "contact_name": 1, "invoice_number": 1, "created_at": 1},
+    ).sort("issue_date", -1).to_list(4000)
+    out: Dict[str, list] = {}
+    for inv in invs:
+        for it in inv.get("items") or []:
+            pid = it.get("product_id")
+            if not pid:
+                continue
+            rows = out.setdefault(pid, [])
+            if len(rows) >= limit_each:
+                continue
+            row = _purchase_cost_row(inv, it)
+            if row:
+                rows.append(row)
+    return out
+
+
+def _with_purchase_costs(product: dict, hist: list) -> dict:
+    d = clean_doc(product)
+    d["purchase_costs"] = hist
+    d["last_purchase_price"] = hist[0]["unit_price"] if hist else None
+    d["last_purchase_date"] = hist[0]["date"] if hist else None
+    d["last_purchase_supplier"] = hist[0]["supplier"] if hist else None
+    d["avg_purchase_price"] = round(sum(x["unit_price"] for x in hist) / len(hist), 4) if hist else None
+    return d
+
+
 @api_router.get("/products")
 async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False):
     query = {"company_id": company_id}
@@ -1486,7 +1537,8 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
     if type and type != "all":
         query["type"] = type
     products = await db.products.find(query).to_list(10000)
-    return clean_docs(products)
+    cost_map = await _purchase_costs_by_product(company_id) if products else {}
+    return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
 
 @api_router.post("/products")
 async def create_product(product: Product):
@@ -1549,12 +1601,29 @@ async def get_product_by_barcode(barcode: str, company_id: Optional[str] = "comp
     result["matched_variant"] = matched_variant
     return result
 
+@api_router.get("/products/{product_id}/purchase-costs")
+async def product_purchase_costs(product_id: str, company_id: Optional[str] = None):
+    product = await db.products.find_one({"_id": product_id})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    cid = company_id or product.get("company_id")
+    hist = (await _purchase_costs_by_product(cid, limit_each=20)).get(product_id) or []
+    return {
+        "product_id": product_id,
+        "card_purchase_price": float(product.get("purchase_price") or 0),
+        "last_purchase_price": hist[0]["unit_price"] if hist else None,
+        "avg_purchase_price": round(sum(x["unit_price"] for x in hist) / len(hist), 4) if hist else None,
+        "costs": hist,
+    }
+
+
 @api_router.get("/products/{product_id}")
 async def get_product(product_id: str):
     product = await db.products.find_one({"_id": product_id})
     if not product:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    return clean_doc(product)
+    hist = (await _purchase_costs_by_product(product.get("company_id"), limit_each=12)).get(product_id) or []
+    return _with_purchase_costs(product, hist)
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
