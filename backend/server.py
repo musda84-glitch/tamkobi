@@ -1671,6 +1671,25 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
     )
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
+@api_router.post("/public/b2b/{token}/change-password")
+async def b2b_change_password(token: str, req: Dict[str, Any]):
+    c = await _b2b_contact(token)
+    current = str(req.get("current_password") or "")
+    new_pw = str(req.get("new_password") or "").strip()
+    if len(new_pw) < 6:
+        raise HTTPException(status_code=400, detail="Yeni şifre en az 6 karakter olmalı.")
+    stored = c.get("b2b_password_hash") or ""
+    if stored:
+        if not current or not verify_password(current, stored):
+            raise HTTPException(status_code=400, detail="Mevcut şifre hatalı.")
+        if verify_password(new_pw, stored):
+            raise HTTPException(status_code=400, detail="Yeni şifre mevcut şifreyle aynı olamaz.")
+    await db.contacts.update_one(
+        {"_id": c["_id"]},
+        {"$set": {"b2b_password_hash": hash_password(new_pw), "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "success", "message": "Şifreniz güncellendi."}
+
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)

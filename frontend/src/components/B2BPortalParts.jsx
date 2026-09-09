@@ -48,6 +48,13 @@ export const b2bOrderGross = (o) => {
 
 
 export const B2BHeader = ({ company, contact }) => {
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock, KeyRound, Loader2 } from "lucide-react";
+import { resolveImageUrl } from "../utils/imageUrl";
+import { statusTr } from "../utils/labels";
+import { API_URL } from "../context/AuthContext";
+
+export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+
 export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   const bal = contact.balance || 0;
   const [open, setOpen] = useState(false);
