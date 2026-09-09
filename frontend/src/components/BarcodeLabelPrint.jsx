@@ -19,13 +19,20 @@ const Check = ({ k, label, opts, setOpts }) => (
 
 const isEan13 = (c) => /^\d{13}$/.test(c) && (10 - (c.slice(0, 12).split("").reduce((s, d, i) => s + Number(d) * (i % 2 ? 3 : 1), 0) % 10)) % 10 === Number(c[12]);
 
-export const Barcode = ({ value, height = 40, width = 1.6, fontSize = 11 }) => {
+export const Barcode = ({ value, height = 40, width = 1.6, fontSize = 11, displayValue = true, className = "max-w-full" }) => {
   const ref = useRef(null);
+  const showText = displayValue && fontSize > 0;
   useEffect(() => {
     if (!ref.current || !value) return;
-    try { JsBarcode(ref.current, String(value), { format: isEan13(String(value)) ? "EAN13" : "CODE128", height, width, fontSize, margin: 0, displayValue: true, textMargin: 1, font: "monospace" }); } catch { /* invalid code */ }
-  }, [value, height, width, fontSize]);
-  return <svg ref={ref} className="max-w-full" />;
+    try {
+      JsBarcode(ref.current, String(value), {
+        format: isEan13(String(value)) ? "EAN13" : "CODE128",
+        height, width, fontSize: showText ? fontSize : 0,
+        margin: 0, displayValue: showText, textMargin: showText ? 1 : 0, font: "monospace"
+      });
+    } catch { /* invalid code */ }
+  }, [value, height, width, fontSize, showText]);
+  return <svg ref={ref} className={className} />;
 };
 
 export const BarcodeLabelPrint = ({ product, company, onClose }) => {

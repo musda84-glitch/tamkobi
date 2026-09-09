@@ -53,6 +53,7 @@ import saas
 import saas_billing
 import saas_extras
 import saas_docs
+import trade
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1650,7 +1651,13 @@ async def quick_stock_adjust(req: Dict[str, Any]):
 @api_router.get("/invoices")
 async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None):
     query = {"company_id": company_id}
-    if type and type != "all":
+    if type == "export":
+        query["trade_kind"] = "export"
+        query["invoice_type"] = {"$ne": "dispatch"}
+    elif type == "import":
+        query["trade_kind"] = "import"
+        query["invoice_type"] = {"$ne": "dispatch"}
+    elif type and type != "all":
         query["invoice_type"] = type
     else:
         query["invoice_type"] = {"$ne": "dispatch"}
@@ -1714,15 +1721,28 @@ async def create_invoice(invoice: Invoice):
         if invoice.invoice_type == "dispatch":
             invoice.invoice_number = await _next_number("IRS", db.invoices)
         else:
-            prefix = "NX" if invoice.invoice_type == "sales" else "AL"
             year = datetime.now().strftime("%Y")
             count = await db.invoices.count_documents({"company_id": invoice.company_id}) + 1
+            if invoice.trade_kind == "export" or invoice.e_type == "e_export":
+                prefix = "IHR"
+            elif invoice.trade_kind == "import":
+                prefix = "ITH"
+            elif invoice.invoice_type == "sales":
+                prefix = "NX"
+            else:
+                prefix = "AL"
             invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
     if invoice.invoice_type == "dispatch":
         invoice.e_type = "e_dispatch"
         invoice.status = "draft"
         invoice.gib_status = "Taslak (e-İrsaliye)"
         invoice.payment_status = "n/a"
+        for it in invoice.items:
+            it.vat_rate = 0
+
+    if invoice.trade_kind == "export" or invoice.e_type == "e_export":
+        if invoice.e_type not in ("e_export", "paper"):
+            invoice.e_type = "e_export"
         for it in invoice.items:
             it.vat_rate = 0
 
@@ -1806,7 +1826,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="Kesilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number"}}
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
         items = allowed.get("items", inv.get("items", []))
         items_sum = sum(float(i.get("total", 0)) for i in items)
@@ -1857,17 +1877,19 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})
         return {"status": "success", "message": "Kağıt fatura olarak kesildi. Matbu belgeyi yazdırabilirsiniz.", "tracking_id": None}
     tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    export = inv.get("e_type") == "e_export" or inv.get("trade_kind") == "export"
+    gib_status = "e-İhracat GİB'e iletildi" if export else "Başarıyla İletildi (GİB Onaylı)"
     await db.invoices.update_one(
         {"_id": invoice_id},
         {"$set": {
             "status": "approved",
-            "gib_status": "Başarıyla İletildi (GİB Onaylı)",
+            "gib_status": gib_status,
             "gib_tracking_id": tracking_id
         }}
     )
     return {
         "status": "success",
-        "message": f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}",
+        "message": (f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking_id}" if export else f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}"),
         "tracking_id": tracking_id
     }
 
@@ -5719,6 +5741,7 @@ trash.init(db)
 migration.init(db)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace})
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
+trade.init(db, create_invoice)
 
 async def _restore_bank_tx(doc, _related):
     await _reverse_tx_effects(doc, +1)
@@ -5764,6 +5787,7 @@ app.include_router(saas.router)
 app.include_router(saas_billing.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
+app.include_router(trade.router)
 
 @app.get("/")
 async def root():

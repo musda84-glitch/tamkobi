@@ -42,6 +42,7 @@ import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
 import B2BResetPage from "./pages/B2BResetPage";
 import B2BAdminPage from "./pages/B2BAdminPage";
+import TradePage from "./pages/TradePage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
 export default function App() {
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="/" element={<HomeOrApp />} />
             <Route path="/panel" element={<Dashboard />} />
             <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/dis-ticaret" element={<TradePage />} />
             <Route path="/contacts" element={<ContactsPage />} />
             <Route path="/banking" element={<BankingPage />} />
             <Route path="/stock" element={<StockBarcodePage />} />

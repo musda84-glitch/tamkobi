@@ -2,11 +2,11 @@ import React from "react";
 import { Search, ArrowUpDown, X, CalendarDays } from "lucide-react";
 import { ExportButtons } from "./ExportButtons";
 
-const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi" }, { key: "gib_status", label: "GİB" }];
+const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi" }, { key: "gib_status", label: "GİB" }];
 
 export const SORT_OPTIONS = [["date_desc", "Tarih (yeni → eski)"], ["date_asc", "Tarih (eski → yeni)"], ["due_asc", "Vade (yakın önce)"], ["amount_desc", "Tutar (çoktan aza)"], ["amount_asc", "Tutar (azdan çoğa)"], ["contact_asc", "Cari (A → Z)"], ["number_desc", "Fatura No"]];
 const PAY = [["all", "Tümü"], ["unpaid", "Ödenmedi"], ["partially_paid", "Kısmi"], ["paid", "Ödendi"], ["overdue", "Vadesi Geçti"]];
-const ETYPE = [["all", "Tüm Belgeler"], ["e_fatura", "E-Fatura"], ["e_arsiv", "E-Arşiv"], ["paper", "Kağıt"], ["e_irsaliye", "E-İrsaliye"]];
+const ETYPE = [["all", "Tüm Belgeler"], ["e_invoice", "E-Fatura"], ["e_archive", "E-Arşiv"], ["e_export", "e-İhracat"], ["paper", "Kağıt"], ["e_dispatch", "E-İrsaliye"]];
 const PRESETS = [["", "Tüm zamanlar"], ["today", "Bugün"], ["week", "Bu hafta"], ["month", "Bu ay"], ["quarter", "Bu çeyrek"], ["year", "Bu yıl"]];
 
 export const presetRange = (p) => {

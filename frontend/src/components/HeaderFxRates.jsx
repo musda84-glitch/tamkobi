@@ -37,9 +37,10 @@ export const HeaderFxRates = ({ companyId }) => {
     if (!companyId || masked) return;
     try {
       const r = await axios.get(`${API_URL}/fx/rates`, { ...cred, params: { company_id: companyId, fetch } });
-      setPack(r.data);
-    } catch (e) {
-      if (e.response?.status === 404) setPack(null);
+      setPack(r.data || { date: "", rates: {} });
+    } catch {
+      // Keep the chip visible even if TCMB/API is down — user can still type a rate.
+      setPack((p) => p || { date: "", rates: {} });
     }
   }, [companyId, masked]);
 
@@ -54,14 +55,15 @@ export const HeaderFxRates = ({ companyId }) => {
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
-  if (masked || !companyId || !pack) return null;
+  if (masked || !companyId) return null;
+  const view = pack || { date: "", rates: {} };
 
-  const src = sourceLabel(pack);
+  const src = sourceLabel(view);
   const fetchTcmb = async () => {
     setBusy("fetch");
     try {
-      const r = await axios.post(`${API_URL}/fx/fetch`, { date: pack.date }, { ...cred, params: { company_id: companyId } });
-      setPack({ ...pack, date: r.data.date, source: "tcmb", rates: r.data.rates || pack.rates });
+      const r = await axios.post(`${API_URL}/fx/fetch`, { date: view.date }, { ...cred, params: { company_id: companyId } });
+      setPack({ ...view, date: r.data.date, source: "tcmb", rates: r.data.rates || view.rates });
       setDraft({});
       toast.success(r.data.message || "TCMB kurları alındı.");
     } catch (e) {
@@ -69,11 +71,11 @@ export const HeaderFxRates = ({ companyId }) => {
     } finally { setBusy(""); }
   };
   const saveRow = async (code) => {
-    const rate = Number(draft[code] ?? pack.rates?.[code]?.rate);
+    const rate = Number(draft[code] ?? view.rates?.[code]?.rate);
     if (!rate) return toast.error("Kur girin.");
     setBusy(code);
     try {
-      const row = await axios.put(`${API_URL}/fx/rates`, { date: pack.date, currency: code, rate }, { ...cred, params: { company_id: companyId } });
+      const row = await axios.put(`${API_URL}/fx/rates`, { date: view.date, currency: code, rate }, { ...cred, params: { company_id: companyId } });
       setPack((p) => ({ ...p, source: "manual", rates: { ...(p?.rates || {}), [code]: row.data } }));
       setDraft((d) => { const n = { ...d }; delete n[code]; return n; });
       toast.success(`${code} kuru kaydedildi.`);
@@ -96,7 +98,7 @@ export const HeaderFxRates = ({ companyId }) => {
           {CHIP_CODES.map((code) => (
             <span key={code} className="whitespace-nowrap">
               <span className="font-semibold text-slate-500">{code}</span>{" "}
-              <span className="font-bold text-slate-800">{fmtRate(pack.rates?.[code]?.rate)}</span>
+              <span className="font-bold text-slate-800">{fmtRate(view.rates?.[code]?.rate)}</span>
             </span>
           ))}
         </span>
@@ -112,7 +114,7 @@ export const HeaderFxRates = ({ companyId }) => {
             <div>
               <div className="font-bold text-slate-900">Döviz kurları</div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                {src.kind === "manual" ? "Ayarlı (manuel) kur" : "Otomatik TCMB kuru"} · {pack.date || "bugün"}
+                {src.kind === "manual" ? "Ayarlı (manuel) kur" : src.kind === "empty" ? "Kur henüz yok — TCMB çekin veya yazın" : "Otomatik TCMB kuru"} · {view.date || "bugün"}
               </div>
             </div>
             {canEdit && (
@@ -129,7 +131,7 @@ export const HeaderFxRates = ({ companyId }) => {
           </div>
           <div className="divide-y divide-slate-100">
             {EDIT_CODES.map((code) => {
-              const row = pack.rates?.[code] || {};
+              const row = view.rates?.[code] || {};
               const val = draft[code] ?? row.rate ?? "";
               return (
                 <div key={code} className="flex items-center gap-2 py-1.5" data-testid={`header-fx-row-${code}`}>
