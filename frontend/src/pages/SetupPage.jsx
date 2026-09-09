@@ -27,7 +27,7 @@ export default function SetupPage() {
 
   useEffect(() => {
     axios
-      .get(`${API_URL}/setup/status`)
+      .get(`${API_URL}/setup/status`, { timeout: 8000 })
       .then((r) => {
         const next = resolveSetupStatus(r.data || {});
         writeInstalledCache(next.installed);

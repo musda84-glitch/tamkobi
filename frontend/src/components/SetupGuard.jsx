@@ -11,7 +11,7 @@ export default function SetupGuard({ children }) {
   useEffect(() => {
     let cancelled = false;
     axios
-      .get(`${API_URL}/setup/status`)
+      .get(`${API_URL}/setup/status`, { timeout: 8000 })
       .then((r) => {
         if (cancelled) return;
         const next = resolveSetupStatus(r.data || {});
