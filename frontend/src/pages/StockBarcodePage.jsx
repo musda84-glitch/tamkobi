@@ -337,6 +337,7 @@ export default function StockBarcodePage() {
         </div>
       )}
       {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }} />}
+      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
