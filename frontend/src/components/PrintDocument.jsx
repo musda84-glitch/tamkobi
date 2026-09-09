@@ -7,6 +7,7 @@ import { moneySuffix } from "../utils/money";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 import { Barcode } from "./BarcodeLabelPrint";
 import { moneySuffix } from "../utils/money";
+import { Barcode } from "./BarcodeLabelPrint";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
@@ -54,6 +55,15 @@ const LineStockBarcode = ({ item, productsById, index }) => {
     <span className="shrink-0" data-testid={`print-item-barcode-${index}`}>
       <Barcode value={code} height={14} width={0.55} fontSize={0} displayValue={false} className="block h-[14px] w-[52px]" />
     </span>
+  const p = findLineProduct(item, productsById);
+  const code = lineStockCode(item, productsById);
+  if (!code) return null;
+  const sku = String(item.sku || p?.sku || "").trim();
+  return (
+    <div className="mt-1 max-w-[220px]" data-testid={`print-item-barcode-${index}`}>
+      <Barcode value={code} height={28} width={1.15} fontSize={9} />
+      {sku && sku !== code && <div className="text-[10px] text-slate-400 font-mono">SKU {sku}</div>}
+    </div>
   );
 };
 
@@ -206,6 +216,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
               </tr>
             ))}</tbody>
             <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || prodImgs[it.product_id]) ? <img src={resolveImageUrl(it.image_url || prodImgs[it.product_id])} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{(it.sku || it.barcode) && tpl.show_barcode && <div className="text-[10px] text-slate-400 font-mono">{it.sku}{it.barcode ? ` • ${it.barcode}` : ""}</div>}{tpl.show_item_notes !== false && itemNote(it) && <div className="mt-1 text-[10px] text-slate-600 italic whitespace-pre-wrap border-l-2 border-slate-200 pl-1.5" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmt(it.unit_price)} ₺</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmt(it.total)} ₺</td>}</tr>)}</tbody>
+            <tbody>{items.map((it, i) => <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>{tpl.show_images !== false && <td className="p-1">{(it.image_url || productsById[it.product_id]?.image_url) ? <img src={resolveImageUrl(it.image_url || productsById[it.product_id]?.image_url)} alt="" className="w-10 h-10 object-cover rounded border" /> : null}</td>}<td className="p-2">{it.name || it.product_name}{!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}{tpl.show_barcode && <LineStockBarcode item={it} productsById={productsById} index={i} />}{tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>{!hideLine && <td className="p-2 text-right">{fmt(it.unit_price)} ₺</td>}{!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}{!hideLine && <td className="p-2 text-right font-semibold">{fmt(it.total)} ₺</td>}</tr>)}</tbody>
           </table>
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
           {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>

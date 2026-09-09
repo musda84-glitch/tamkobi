@@ -205,6 +205,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     else {
       const price = buyPrice(prod, formData.invoice_type);
       setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: price, vat_rate: prod.vat_rate || 20, total: price, discount_rate: 0 }] }));
+      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
       const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
       setFormData((f) => ({ ...f, items: [...f.items, { product_id: pid, name: v ? `${prod.name} - ${v.name}` : prod.name, quantity: 1, unit: prod.unit || "Adet", unit_price: v?.price || v?.sale_price || price, vat_rate: prod.vat_rate || 20, total: v?.price || v?.sale_price || price, discount_rate: 0, sku: v?.sku || prod.sku || "", barcode: v?.barcode || prod.barcode || "" }] }));
     }
@@ -216,6 +217,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const items = [...formData.items];
     if (prod) {
       const price = buyPrice(prod, formData.invoice_type);
+      const price = formData.invoice_type === "sales" ? prod.sale_price : prod.purchase_price;
       const code = String(scanned || "").trim();
       const v = code ? (prod.variants || []).find((x) => x.barcode === code || x.sku === code) : null;
       items[index] = {
@@ -233,6 +235,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         barcode: v?.barcode || prod.barcode || "",
         gtip: prod.gtip || "",
         origin_country: prod.origin_country || ""
+        unit_price: v?.price || v?.sale_price || price,
+        vat_rate: prod.vat_rate || 20,
+        total: v?.price || v?.sale_price || price,
+        sku: v?.sku || prod.sku || "",
+        barcode: v?.barcode || prod.barcode || ""
       };
       items[index].total = netPrice(items[index]) * Number(items[index].quantity || 1);
     }
