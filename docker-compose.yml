@@ -45,6 +45,11 @@ services:
     environment:
       MYSQL_HOST: 127.0.0.1
       MYSQL_PORT: "3306"
+      # MySQL is this machine, reached over loopback, so plaintext is stated
+      # here rather than left to the host-based default. A database on another
+      # host needs verify_identity (or verify_ca with MYSQL_SSL_CA).
+      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-disabled}
+      MYSQL_SSL_CA: ${MYSQL_SSL_CA:-}
       MYSQL_USER: ${MYSQL_USER:-tamkobi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
       MYSQL_DATABASE: ${DB_NAME:-tamkobi}

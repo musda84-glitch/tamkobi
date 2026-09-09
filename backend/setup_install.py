@@ -52,15 +52,10 @@ def _now() -> str:
 
 def _settings_from(req: DbProbe) -> dict:
     host = req.db_host.strip()
-    env_mode, env_ca = db_ssl.from_env()
-    # An explicit choice wins, then the deployment's own setting, then the
-    # host-based default (encrypted unless MySQL runs on this machine).
-    if (req.ssl_mode or "").strip():
-        mode = req.ssl_mode
-    elif (os.environ.get("MYSQL_SSL_MODE") or "").strip():
-        mode = env_mode
-    else:
-        mode = db_ssl.default_mode(host)
+    # An explicit choice from the form wins; otherwise the deployment's own
+    # rule decides (MYSQL_SSL_MODE, else verified unless MySQL is local).
+    env_mode, env_ca = db_ssl.resolve(host)
+    mode = (req.ssl_mode or "").strip() or env_mode
     ca = (req.ssl_ca or "").strip() or env_ca
     try:
         mode = db_ssl.normalize_mode(mode)

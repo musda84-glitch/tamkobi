@@ -300,11 +300,12 @@ def _target_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         target["password"] = args.password
     elif not target["password"]:
         target["password"] = os.environ.get(PASSWORD_ENV, "")
+    env_mode, env_ca = db_ssl.resolve(target["host"])
     return store_settings(
         {
             **target,
-            "ssl_mode": args.ssl_mode or db_ssl.default_mode(target["host"]),
-            "ssl_ca": args.ssl_ca or target.get("ssl_ca") or "",
+            "ssl_mode": args.ssl_mode or env_mode,
+            "ssl_ca": args.ssl_ca or target.get("ssl_ca") or env_ca,
         }
     )
 

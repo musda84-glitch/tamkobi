@@ -102,9 +102,10 @@ def mysql_settings_from_env() -> Dict[str, Any]:
             url = "mysql://" + url.split("://", 1)[1]
         parsed = urlparse(url)
         db = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
-        ssl_mode, ssl_ca = db_ssl.from_env()
+        host = parsed.hostname or "127.0.0.1"
+        ssl_mode, ssl_ca = db_ssl.resolve(host)
         return {
-            "host": parsed.hostname or "127.0.0.1",
+            "host": host,
             "port": parsed.port or 3306,
             "user": unquote(parsed.username or "root"),
             "password": unquote(parsed.password or ""),
@@ -114,9 +115,10 @@ def mysql_settings_from_env() -> Dict[str, Any]:
             "ssl_mode": ssl_mode,
             "ssl_ca": ssl_ca,
         }
-    ssl_mode, ssl_ca = db_ssl.from_env()
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
+    ssl_mode, ssl_ca = db_ssl.resolve(host)
     return {
-        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "host": host,
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": os.environ.get("MYSQL_USER", "tamkobi"),
         "password": os.environ.get("MYSQL_PASSWORD") or "",

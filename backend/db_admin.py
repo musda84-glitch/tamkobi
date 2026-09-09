@@ -35,9 +35,13 @@ class MoveRequest(DbTarget):
 
 
 def _settings(req: DbTarget) -> Dict[str, Any]:
+    env_mode, env_ca = db_ssl.resolve(req.db_host)
+    # A target on another host is verified unless the admin picks otherwise.
+    mode = (req.ssl_mode or "").strip() or env_mode
+    ca = (req.ssl_ca or "").strip() or env_ca
     try:
         # An admin typing a CA path should hear about a typo now, not mid-copy.
-        db_ssl.context((req.ssl_mode or "").strip() or db_ssl.default_mode(req.db_host), req.ssl_ca)
+        db_ssl.context(mode, ca)
         return db_relocate.store_settings(
             {
                 "host": req.db_host,
@@ -45,9 +49,8 @@ def _settings(req: DbTarget) -> Dict[str, Any]:
                 "user": req.db_user,
                 "password": req.db_password,
                 "db": req.db_name,
-                # A target on another host is verified unless the admin picks otherwise.
-                "ssl_mode": (req.ssl_mode or "").strip() or db_ssl.default_mode(req.db_host),
-                "ssl_ca": req.ssl_ca,
+                "ssl_mode": mode,
+                "ssl_ca": ca,
             }
         )
     except ValueError as exc:

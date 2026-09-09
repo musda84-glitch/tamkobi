@@ -77,6 +77,24 @@ def test_public_view_hides_password():
     assert "s3cret" not in str(view)
 
 
+def test_live_settings_follow_the_same_rule_as_the_forms(monkeypatch):
+    """The running pool must not read an unset variable as plaintext."""
+    from mysql_store import mysql_settings_from_env
+
+    monkeypatch.setattr(db_relocate, "load_database_settings", lambda: None)
+    monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("TAMKOBI_DATA_DIR", "/tmp/tamkobi-no-such-dir")
+    monkeypatch.setenv("MYSQL_HOST", "db.firma.com")
+    assert mysql_settings_from_env()["ssl_mode"] == "verify_identity"
+    monkeypatch.setenv("MYSQL_HOST", "127.0.0.1")
+    assert mysql_settings_from_env()["ssl_mode"] == "disabled"
+    monkeypatch.setenv("MYSQL_SSL_MODE", "required")
+    monkeypatch.setenv("MYSQL_HOST", "db.firma.com")
+    assert mysql_settings_from_env()["ssl_mode"] == "required"
+
+
 def test_store_settings_carries_tls_options():
     cfg = db_relocate.store_settings(
         {"host": "db.firma.com", "user": "app", "db": "tamkobi", "ssl_mode": "REQUIRED"}

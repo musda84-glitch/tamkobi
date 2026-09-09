@@ -43,10 +43,10 @@ def load_env(repo_root: Optional[Path] = None) -> None:
     _load_dotenv(root / ".env")
 
 
-def _ssl_from_env() -> Dict[str, Any]:
+def _ssl_for(host: str) -> Dict[str, Any]:
     import db_ssl
 
-    mode, ca = db_ssl.from_env()
+    mode, ca = db_ssl.resolve(host)
     return {"ssl_mode": mode, "ssl_ca": ca}
 
 
@@ -58,23 +58,25 @@ def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, d
         parsed = urlparse(url)
         database = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
         database = database.split("?")[0] or "tamkobi"
+        host = parsed.hostname or os.environ.get("MYSQL_HOST", "127.0.0.1")
         return {
-            "host": parsed.hostname or os.environ.get("MYSQL_HOST", "127.0.0.1"),
+            "host": host,
             "port": parsed.port or int(os.environ.get("MYSQL_PORT", "3306")),
             "user": user or unquote(parsed.username or os.environ.get("MYSQL_USER", "tamkobi")),
             "password": password if password is not None else unquote(parsed.password or os.environ.get("MYSQL_PASSWORD", "tamkobi")),
             "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or database,
             "charset": "utf8mb4",
-            **_ssl_from_env(),
+            **_ssl_for(host),
         }
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
     return {
-        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "host": host,
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": user or os.environ.get("MYSQL_USER", "tamkobi"),
         "password": password if password is not None else os.environ.get("MYSQL_PASSWORD", os.environ.get("DB_PASSWORD", "tamkobi")),
         "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
-        **_ssl_from_env(),
+        **_ssl_for(host),
     }
 
 

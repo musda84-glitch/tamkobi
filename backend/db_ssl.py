@@ -82,6 +82,18 @@ def from_env() -> Tuple[str, str]:
     return normalize_mode(os.environ.get("MYSQL_SSL_MODE")), (os.environ.get("MYSQL_SSL_CA") or "").strip()
 
 
+def resolve(host: Any) -> Tuple[str, str]:
+    """The one rule every connection follows: MYSQL_SSL_MODE, else the host.
+
+    Keeping this in a single place means the running pool, the backup script
+    and the setup/relocation forms cannot disagree about what an unset
+    variable means for a database on another machine.
+    """
+    ca = (os.environ.get("MYSQL_SSL_CA") or "").strip()
+    raw = (os.environ.get("MYSQL_SSL_MODE") or "").strip()
+    return (normalize_mode(raw) if raw else default_mode(host)), ca
+
+
 def _ca_context(ca: str) -> ssl.SSLContext:
     if ca and not os.path.isfile(ca):
         raise ValueError(f"CA sertifika dosyası bulunamadı: {ca}")

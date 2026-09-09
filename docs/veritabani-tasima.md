@@ -28,11 +28,17 @@ FLUSH PRIVILEGES;
 | `verify_ca` | Şifreli; sertifika verdiğiniz CA dosyasıyla doğrulanır (sunucu adı kontrol edilmez) |
 | `verify_identity` | Şifreli; sertifika güvenilen bir CA'ya bağlanmalı **ve** yazdığınız sunucu adıyla eşleşmeli |
 
-Panelde, kurulum sihirbazında ve komut satırında başka bir sunucu için varsayılan `verify_identity`'dir; `localhost`/`127.0.0.1` için `disabled`. `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri açıkça verilirse onlar geçerli olur; komut satırında `--ssl-mode` ve `--ssl-ca` bayrakları vardır. Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı doğrulamayı yapar.
+Mod seçimi tek bir kuralla yapılır ve uygulamanın açtığı **her** bağlantı (çalışan API, istek günlüğü, yedek betiği, kurulum sihirbazı, panel, CLI) aynı kuralı izler:
 
-MySQL kendi imzaladığı sertifikayla kurulmuşsa (varsayılan kurulumların çoğu böyle) `verify_identity` "sertifika doğrulanamadı" hatası verir. İki seçeneğiniz var: sunucudaki `ca.pem` dosyasını TamKobi sunucusuna kopyalayıp `verify_ca` modunda o dosyayı vermek (önerilen), ya da bağlantı zaten özel bir ağdan geçiyorsa bilerek `required` seçmek. Hata mesajı bu iki yolu da hatırlatır.
+1. Panel/sihirbaz formunda ya da CLI'da açıkça mod seçildiyse o kullanılır (`--ssl-mode`, `--ssl-ca`).
+2. Yoksa `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri geçerlidir.
+3. O da yoksa sunucuya bakılır: `localhost`/`127.0.0.1` için `disabled`, **başka her sunucu için `verify_identity`**.
 
-Hiçbir yerde ayar yapılmamışsa ve veritabanı başka bir makinedeyse bağlantı kurulur ama günlüğe bir kez uyarı yazılır (`MySQL connection to ... is encrypted but unverified` / `is not encrypted`).
+Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı doğrulamayı yapar. Depodaki `docker-compose.yml` MySQL'i aynı makinede loopback üzerinden çalıştırdığı için `MYSQL_SSL_MODE: disabled` değerini açıkça yazar; `.env` dosyanızdan değiştirebilirsiniz.
+
+MySQL kendi imzaladığı sertifikayla kurulmuşsa (varsayılan kurulumların çoğu böyle) `verify_identity` "sertifika doğrulanamadı" hatası verir. İki seçeneğiniz var: sunucudaki `ca.pem` dosyasını TamKobi sunucusuna kopyalayıp `verify_ca` modunda o dosyayı vermek (önerilen), ya da bağlantı zaten özel bir ağdan geçiyorsa bilerek `required` seçmek. Panel ve sihirbazdaki hata mesajı bu iki yolu da hatırlatır. Uzak bir veritabanına bu ayar olmadan geçerseniz uygulama açılışta bağlanamaz ve aynı mesajı günlüğe yazar; `MYSQL_SSL_MODE`'u (ya da `database.json` içindeki `ssl_mode` alanını) düzeltip yeniden başlatın.
+
+Doğrulamasız bir modu bilerek seçtiyseniz ve veritabanı başka bir makinedeyse, günlüğe bir kez uyarı yazılır (`MySQL connection to ... is encrypted but unverified` / `is not encrypted`).
 
 ## Panelden taşıma
 

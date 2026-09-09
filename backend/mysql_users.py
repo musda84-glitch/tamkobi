@@ -135,7 +135,7 @@ def connect(user: str, password: str, database: Optional[str] = None, **override
 
     cfg = mysql_admin_settings()
     cfg.update(overrides)
-    mode, ca = db_ssl.from_env()
+    mode, ca = db_ssl.resolve(cfg["host"])
     return pymysql.connect(
         host=cfg["host"],
         port=int(cfg["port"]),
