@@ -10,6 +10,7 @@ connection path in the app can share one description of the three modes:
 """
 from __future__ import annotations
 
+import logging
 import os
 import ssl
 from typing import Any, Dict, Optional, Tuple
@@ -90,3 +91,19 @@ def connect_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
     mode, ca = settings(cfg)
     ctx = context(mode, ca)
     return {"ssl": ctx} if ctx is not None else {}
+
+
+_warned: set = set()
+
+
+def warn_if_plaintext(cfg: Dict[str, Any]) -> None:
+    """Say so, once per host, when a connection to another machine is unencrypted."""
+    host = str(cfg.get("host") or "").strip()
+    if settings(cfg)[0] != DISABLED or default_mode(host) == DISABLED or host in _warned:
+        return
+    _warned.add(host)
+    logging.getLogger("tamkobi.db").warning(
+        "MySQL connection to %s is not encrypted; set MYSQL_SSL_MODE=required "
+        "unless the link is already private",
+        host,
+    )

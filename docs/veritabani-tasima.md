@@ -27,7 +27,9 @@ FLUSH PRIVILEGES;
 | `required` | Şifreli; sunucu sertifikası doğrulanmaz. MySQL 8'in kendi ürettiği sertifikayla da çalışır |
 | `verify_ca` | Şifreli; sunucu sertifikası verdiğiniz CA dosyasıyla doğrulanır |
 
-Panelde ve komut satırında uzak sunucular için varsayılan `required`'dır; `localhost`/`127.0.0.1` için `disabled`. Komut satırında `--ssl-mode` ve `--ssl-ca` ile, çalışan uygulamada `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleriyle ayarlanır. Taşımada kullanılan mod `database.json` dosyasına da yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı şekilde şifreli kalır.
+Panelde, kurulum sihirbazında ve komut satırında uzak sunucular için varsayılan `required`'dır; `localhost`/`127.0.0.1` için `disabled`. `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleri açıkça verilirse onlar geçerli olur; komut satırında `--ssl-mode` ve `--ssl-ca` bayrakları vardır. Taşımada (ve kurulumda) kullanılan mod `database.json` dosyasına yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı şekilde şifreli kalır.
+
+Hiçbir yerde ayar yapılmamışsa ve veritabanı başka bir makinedeyse bağlantı şifresiz kurulur ama günlüğe bir kez uyarı yazılır (`MySQL connection to ... is not encrypted`).
 
 Sunucunuz TLS desteklemiyorsa `disabled` seçebilirsiniz; bu durumda bağlantıyı VPN veya özel ağ ile koruyun.
 

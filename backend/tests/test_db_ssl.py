@@ -75,6 +75,18 @@ def test_verify_ca_requires_the_certificate(tmp_path):
     assert ctx.verify_mode == ssl.CERT_REQUIRED
 
 
+def test_plaintext_warning_only_for_other_machines(caplog):
+    db_ssl._warned.clear()
+    with caplog.at_level("WARNING", logger="tamkobi.db"):
+        db_ssl.warn_if_plaintext({"host": "127.0.0.1", "ssl_mode": "disabled"})
+        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "required"})
+        assert caplog.messages == []
+        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "disabled"})
+        db_ssl.warn_if_plaintext({"host": "db.firma.com", "ssl_mode": "disabled"})
+    assert len(caplog.messages) == 1
+    assert "not encrypted" in caplog.messages[0]
+
+
 def test_env_settings(monkeypatch):
     monkeypatch.setenv("MYSQL_SSL_MODE", "required")
     monkeypatch.setenv("MYSQL_SSL_CA", " /tmp/ca.pem ")
