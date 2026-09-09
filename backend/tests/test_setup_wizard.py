@@ -72,6 +72,41 @@ def test_database_settings_keep_the_tls_mode(data_dir):
     assert public_defaults()["ssl_mode"] == "required"
 
 
+def test_settings_file_without_a_tls_mode_follows_the_host(data_dir, monkeypatch):
+    """A database.json from before the TLS field must not mean plaintext."""
+    import json
+
+    from mysql_store import mysql_settings_from_env
+
+    def legacy(host: str) -> None:
+        (data_dir / "database.json").write_text(
+            json.dumps({"host": host, "port": 3306, "user": "app", "password": "s3cret", "db": "shop"}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setenv("MYSQL_SSL_MODE", "disabled")
+    legacy("db.firma.com")
+    assert load_database_settings()["ssl_mode"] == "verify_identity"
+    assert mysql_settings_from_env()["ssl_mode"] == "verify_identity"
+    assert public_defaults()["ssl_mode"] == "verify_identity"
+
+    legacy("127.0.0.1")
+    assert load_database_settings()["ssl_mode"] == "disabled"
+
+    # The environment may still raise the floor for such a file.
+    monkeypatch.setenv("MYSQL_SSL_MODE", "verify_identity")
+    assert load_database_settings()["ssl_mode"] == "verify_identity"
+
+
+def test_saving_settings_records_a_real_tls_mode(data_dir, monkeypatch):
+    """What is written back must not read as "no choice" next time."""
+    monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
+    save_database_settings({"host": "db.firma.com", "port": 3306, "user": "app", "password": "p", "db": "shop"})
+    import json
+
+    assert json.loads((data_dir / "database.json").read_text(encoding="utf-8"))["ssl_mode"] == "verify_identity"
+
+
 def test_wizard_verifies_remote_hosts_by_default(data_dir, monkeypatch):
     from setup_install import DbProbe, _settings_from
 

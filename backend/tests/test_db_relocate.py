@@ -36,7 +36,8 @@ def test_store_settings_normalizes():
         "db": "tamkobi_app",
         "charset": "utf8mb4",
         "autocommit": True,
-        "ssl_mode": "disabled",
+        # Nothing was said about TLS, and the database is on another host.
+        "ssl_mode": "verify_identity",
         "ssl_ca": "",
     }
 
@@ -73,7 +74,7 @@ def test_settings_from_url_rejects_other_schemes():
 
 def test_public_view_hides_password():
     view = db_relocate.public_view({"host": "db", "port": 3306, "user": "app", "password": "s3cret", "db": "tamkobi"})
-    assert view == {"host": "db", "port": 3306, "db": "tamkobi", "user": "app", "ssl_mode": "disabled", "ssl_ca": ""}
+    assert view == {"host": "db", "port": 3306, "db": "tamkobi", "user": "app", "ssl_mode": "verify_identity", "ssl_ca": ""}
     assert "s3cret" not in str(view)
 
 

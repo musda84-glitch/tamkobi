@@ -76,10 +76,6 @@ def default_mode(host: Any) -> str:
     return DISABLED if str(host or "").strip().lower() in LOCAL_HOSTS else VERIFY_IDENTITY
 
 
-def settings(cfg: Dict[str, Any]) -> Tuple[str, str]:
-    return normalize_mode(cfg.get("ssl_mode")), str(cfg.get("ssl_ca") or "").strip()
-
-
 def resolve(host: Any) -> Tuple[str, str]:
     """Mode for the database this deployment is already configured with.
 
@@ -104,6 +100,22 @@ def for_target(host: Any) -> Tuple[str, str]:
     floor = default_mode(host)
     env_mode, ca = resolve(host)
     return (env_mode if STRENGTH[env_mode] >= STRENGTH[floor] else floor), ca
+
+
+def settings(cfg: Dict[str, Any]) -> Tuple[str, str]:
+    """The mode `cfg` records, or the floor for its host when it records none.
+
+    A settings file written before this field existed says nothing about TLS.
+    Reading that silence as plaintext would leave such a deployment talking to
+    a database on another host in the clear, so an absent choice falls back to
+    the rule a new target gets.
+    """
+    ca = str(cfg.get("ssl_ca") or "").strip()
+    raw = str(cfg.get("ssl_mode") or "").strip()
+    if raw:
+        return normalize_mode(raw), ca
+    mode, env_ca = for_target(cfg.get("host"))
+    return mode, (ca or env_ca)
 
 
 def _ca_context(ca: str) -> ssl.SSLContext:

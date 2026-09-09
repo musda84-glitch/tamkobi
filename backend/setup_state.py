@@ -73,6 +73,9 @@ def load_database_settings() -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         port = 3306
     db = str(raw.get("db") or raw.get("database") or "").strip() or "tamkobi"
+    # Files written before the TLS field existed record no mode; db_ssl reads
+    # that silence as "decide from the host", not as plaintext.
+    ssl_mode, ssl_ca = db_ssl.settings({**raw, "host": host})
     return {
         "host": host,
         "port": port,
@@ -81,12 +84,13 @@ def load_database_settings() -> Optional[Dict[str, Any]]:
         "db": db,
         "charset": "utf8mb4",
         "autocommit": True,
-        "ssl_mode": db_ssl.normalize_mode(raw.get("ssl_mode")),
-        "ssl_ca": str(raw.get("ssl_ca") or "").strip(),
+        "ssl_mode": ssl_mode,
+        "ssl_ca": ssl_ca,
     }
 
 
 def save_database_settings(settings: dict) -> None:
+    ssl_mode, ssl_ca = db_ssl.settings(settings)
     _atomic_write(
         database_path(),
         {
@@ -97,8 +101,8 @@ def save_database_settings(settings: dict) -> None:
             "db": settings["db"],
             "charset": "utf8mb4",
             "autocommit": True,
-            "ssl_mode": db_ssl.normalize_mode(settings.get("ssl_mode")),
-            "ssl_ca": str(settings.get("ssl_ca") or "").strip(),
+            "ssl_mode": ssl_mode,
+            "ssl_ca": ssl_ca,
         },
     )
 
