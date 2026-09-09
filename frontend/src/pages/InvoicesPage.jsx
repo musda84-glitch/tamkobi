@@ -36,6 +36,7 @@ import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
+import { FxPicker, fmtMoney } from "../components/FxPicker";
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany } = useAuth();
@@ -55,7 +56,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [searchParams, setSearchParams] = useSearchParams();
   const contactFilter = searchParams.get("contact_id") || "";
   const visibleInvoices = useMemo(() => applyInvoiceFilters(invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter), filters), [invoices, contactFilter, filters]);
-  const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.grand_total) || 0), 0), [visibleInvoices]);
+  const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
   const [printInv, setPrintInv] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
@@ -95,7 +96,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     ],
     notes: "Teşekkür ederiz.",
     general_discount_rate: 0,
-    general_discount_amount: 0
+    general_discount_amount: 0,
+    currency: "TRY",
+    fx_rate: 1,
+    fx_source: "try"
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
@@ -210,7 +214,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const openEditInvoice = (inv) => {
     setEditingInvoice(inv);
     setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
+    setFormData({ ...formData, invoice_type: inv.invoice_type || "sales", e_type: inv.e_type || "paper", status: "draft", contact_id: inv.contact_id || "", contact_name: inv.contact_name || "", issue_date: (inv.issue_date || "").slice(0, 10), due_date: (inv.due_date || "").slice(0, 10), notes: inv.notes || "", withholding_rate: inv.withholding_rate || 0, withholding_code: inv.withholding_code || "", price_mode: "excl", general_discount_rate: inv.general_discount_rate || 0, general_discount_amount: inv.general_discount_amount || 0, currency: inv.currency || "TRY", fx_rate: inv.fx_rate || 1, fx_source: inv.fx_source || "try", items: (inv.items || []).map((it) => ({ ...it, is_service: it.is_service || !it.product_id })) });
     setShowNewModal(true);
   };
   const handleDeleteInvoice = async (inv) => {
@@ -396,7 +400,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</div>
+                      <div className="font-bold text-slate-900">{fmtMoney(inv.grand_total, inv.currency || "TRY")}</div>
+                      {(inv.currency || "TRY") !== "TRY" && inv.local_total != null && <div className="text-[10px] text-slate-400">{fmtMoney(inv.local_total, "TRY")}</div>}
                       <div className="text-[10px] text-slate-400">{inv.invoice_type === 'dispatch' ? "KDV'siz (Sevk)" : 'KDV Dahil'}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -583,7 +588,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Düzenleme Tarihi</label>
                   <input
@@ -601,6 +606,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
                   />
+                </div>
+                <div className="sm:col-span-2">
+                  <FxPicker companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
                 </div>
               </div>
 
@@ -729,8 +737,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{totals.withholding.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span></div>}
                 <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
                   <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700">{totals.grandTotal.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                  <span className="text-emerald-700">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
                 </div>
+                {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
+                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-local-total">
+                    <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
+                    <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
@@ -845,8 +859,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-300">
                     <span>Ödenecek Tutar:</span>
-                    <span className="text-emerald-700">{previewInvoice.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                    <span className="text-emerald-700">{fmtMoney(previewInvoice.grand_total, previewInvoice.currency || "TRY")}</span>
                   </div>
+                  {(previewInvoice.currency || "TRY") !== "TRY" && previewInvoice.local_total != null && (
+                    <div className="flex justify-between text-slate-500" data-testid="inv-preview-local-total">
+                      <span>TL karşılığı (kur {Number(previewInvoice.fx_rate || 0).toLocaleString("tr-TR")}):</span>
+                      <span className="font-semibold">{fmtMoney(previewInvoice.local_total, "TRY")}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -869,7 +889,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <span className="font-semibold text-slate-700">Fatura:</span> {paymentModalInvoice.invoice_number} ({paymentModalInvoice.contact_name})
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Tahsilat/Ödeme Tutarı (₺)</label>
+                <label className="block font-semibold text-slate-700 mb-1">Tahsilat/Ödeme Tutarı ({paymentModalInvoice.currency === "TRY" || !paymentModalInvoice.currency ? "₺" : paymentModalInvoice.currency})</label>
                 <input
                   type="number"
                   value={paymentAmount}
@@ -877,6 +897,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900 text-sm"
                   data-testid="payment-amount-input"
                 />
+                {(paymentModalInvoice.currency || "TRY") !== "TRY" && Number(paymentModalInvoice.fx_rate) > 0 && (
+                  <div className="text-[11px] text-slate-500 mt-1">TL karşılığı ≈ {fmtMoney((Number(paymentAmount) || 0) * Number(paymentModalInvoice.fx_rate), "TRY")} (kur {Number(paymentModalInvoice.fx_rate).toLocaleString("tr-TR")})</div>
+                )}
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Kasa / Banka / POS / Ortak Seçin</label>

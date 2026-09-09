@@ -196,6 +196,10 @@ class Invoice(BaseDocument):
     withholding_amount: float = 0.0
     price_mode: str = "excl"  # excl: KDV hariç, incl: KDV dahil girildi (net'e çevrilir)
     currency: str = "TRY"
+    fx_rate: float = 1.0
+    fx_date: Optional[str] = None
+    fx_source: Optional[str] = None
+    local_total: float = 0.0
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
     gib_status: Optional[str] = "Taslak"  # Taslak, GİB'e Gönderildi, Başarıyla İletildi, İptal Edildi
     gib_tracking_id: Optional[str] = None
