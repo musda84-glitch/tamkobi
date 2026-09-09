@@ -39,6 +39,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Teklifler", path: "/quotes" },
     { label: "Projeler", path: "/projects" },
     { label: "Keşifler", path: "/surveys" },
+    { label: "Teklif / Proje / Keşif", path: "/projects", badge: "Yeni" },
     { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
     { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
     { label: "Siparişler", path: "/orders", badge: "B2B" },
@@ -58,6 +59,12 @@ export const AuthProvider = ({ children }) => {
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
+  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/sayim": "/stock" };
+  const perms = user?.permissions;
+  const can = (path, level = "view") => {
+    const key = path === "/sayim" ? "/stock" : path;
+    return !perms || user?.role === "admin" || (level === "view" ? perms[key] !== "none" : perms[key] === "edit");
+  };
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[path] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
