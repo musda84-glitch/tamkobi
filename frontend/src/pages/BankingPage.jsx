@@ -28,6 +28,7 @@ import { CardStatementImport } from "../components/CardStatementImport";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
+import { AccountStatementPrint } from "../components/AccountStatementPrint";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -512,6 +513,8 @@ export default function BankingPage() {
           )}
           <div className="flex flex-wrap items-center gap-2">
             {selectedAccount || openGroup ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedAccount ? (
               <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
                 <span className="text-slate-500">{visibleTx.length} hareket</span>
                 <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
@@ -519,6 +522,7 @@ export default function BankingPage() {
               </div>
             ) : (
               <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
+              <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
             )}
             <button
               type="button"
@@ -583,6 +587,7 @@ export default function BankingPage() {
           company={activeCompany}
           account={selectedAccount || null}
           title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}
+          title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : "Son Finansal Hareketler"}
           transactions={visibleTx}
           onClose={() => setPrintTx(false)}
         />
