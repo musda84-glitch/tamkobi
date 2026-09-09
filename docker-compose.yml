@@ -27,20 +27,21 @@ services:
     build: ./backend
     container_name: tamkobi-backend
     restart: always
-    ports:
-      - "8000:8000"
+    # Host network: compose bridge (172.18) cannot reach the public internet in
+    # this environment (BizimHesap, GİB, Stripe…). docker0 (172.17) can; host
+    # can. Uvicorn binds :8000 on the host directly (no ports: mapping).
+    network_mode: host
     env_file:
       - ./backend/env.example
       - path: ./backend/.env
         required: false
     environment:
-      # Compose network hostname is `mysql`, not 127.0.0.1
-      MYSQL_HOST: mysql
+      MYSQL_HOST: 127.0.0.1
       MYSQL_PORT: "3306"
       MYSQL_USER: ${MYSQL_USER:-tamkobi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
       MYSQL_DATABASE: ${DB_NAME:-tamkobi}
-      DATABASE_URL: mysql://${MYSQL_USER:-tamkobi}:${MYSQL_PASSWORD:-tamkobi}@mysql:3306/${DB_NAME:-tamkobi}
+      DATABASE_URL: mysql://${MYSQL_USER:-tamkobi}:${MYSQL_PASSWORD:-tamkobi}@127.0.0.1:3306/${DB_NAME:-tamkobi}
       CORS_ORIGINS: http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80,http://localhost:3000,http://127.0.0.1:3000,http://tamkobi.com,https://tamkobi.com,http://www.tamkobi.com,https://www.tamkobi.com
       PUBLIC_APP_URL: http://localhost
       REACT_APP_BACKEND_URL: http://localhost:8000
@@ -62,6 +63,9 @@ services:
         REACT_APP_BACKEND_URL: ""
     container_name: tamkobi-frontend
     restart: always
+    extra_hosts:
+      - "backend:host-gateway"
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
     depends_on:

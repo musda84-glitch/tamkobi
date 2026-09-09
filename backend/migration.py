@@ -458,8 +458,16 @@ async def migration_rollback(batch_id: str):
 
 
 # ---------------- BizimHesap API ----------------
-def _bh_headers(token: str) -> Dict[str, str]:
-    return {"Key": BIZIMHESAP_KEY, "Token": token, "Accept": "application/json"}
+def _bh_headers(token: str, firm_id: str = "") -> Dict[str, str]:
+    h = {
+        "Key": BIZIMHESAP_KEY,
+        "Token": token,
+        "Accept": "application/json",
+        "User-Agent": "TamKobi/1.0 (BizimHesap entegrasyonu)",
+    }
+    if firm_id:
+        h["FirmId"] = firm_id
+    return h
 
 
 def _unwrap(payload: Any) -> List[dict]:
@@ -487,18 +495,37 @@ def _pick(d: dict, *keys, default=None):
     return default
 
 
-async def _bh_get(path: str, token: str) -> Any:
+def _bh_http_detail(path: str, r: httpx.Response) -> str:
+    snippet = (r.text or "").strip().replace("\n", " ")[:180]
     try:
-        async with httpx.AsyncClient(base_url=BIZIMHESAP_BASE, timeout=40.0) as client:
-            r = await client.get(path, headers=_bh_headers(token))
+        body = r.json()
+        if isinstance(body, dict):
+            snippet = str(body.get("errorText") or body.get("Message") or body.get("message") or snippet)
+    except ValueError:
+        pass
+    return snippet
+
+
+async def _bh_get(path: str, token: str, firm_id: str = "", timeout: float = 40.0) -> Any:
+    try:
+        async with httpx.AsyncClient(base_url=BIZIMHESAP_BASE, timeout=httpx.Timeout(timeout, connect=12.0), follow_redirects=True) as client:
+            r = await client.get(path, headers=_bh_headers(token, firm_id))
+    except httpx.ConnectTimeout:
+        raise HTTPException(status_code=502, detail="BizimHesap sunucusuna bağlanılamadı (zaman aşımı). Sunucunun internet çıkışını kontrol edin.")
+    except httpx.ConnectError as e:
+        raise HTTPException(status_code=502, detail=f"BizimHesap sunucusuna bağlanılamadı: {e}")
+    except httpx.ReadTimeout:
+        raise HTTPException(status_code=502, detail=f"BizimHesap {path} yanıt vermedi (zaman aşımı). Katalog büyükse birkaç dakika sonra tekrar deneyin.")
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"BizimHesap bağlantı hatası: {type(e).__name__}")
     if r.status_code in (401, 403):
-        raise HTTPException(status_code=400, detail="BizimHesap token geçersiz veya yetkisiz (401/403).")
+        extra = _bh_http_detail(path, r)
+        raise HTTPException(status_code=400, detail=f"BizimHesap token veya Firma ID geçersiz ({r.status_code}). {extra}".strip())
     if r.status_code == 429:
         raise HTTPException(status_code=429, detail="BizimHesap istek sınırı aşıldı (429). 1-2 dakika bekleyip tekrar deneyin.")
     if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"BizimHesap {path} hatası: HTTP {r.status_code}")
+        extra = _bh_http_detail(path, r)
+        raise HTTPException(status_code=502, detail=f"BizimHesap {path} hatası: HTTP {r.status_code}" + (f" — {extra}" if extra else ""))
     try:
         return r.json()
     except ValueError:
@@ -522,14 +549,26 @@ async def bh_put_config(req: Dict[str, Any]):
     return await bh_get_config(company_id)
 
 
+async def _bh_creds(company_id: str, token: str = "", firm_id: str = "") -> tuple[str, str]:
+    c = await _db.migration_api_configs.find_one({"company_id": company_id, "provider": "bizimhesap"}) or {}
+    tok = (token or "").strip()
+    fid = (firm_id or "").strip() or str(c.get("firm_id") or "").strip()
+    if not tok:
+        if not c.get("token_enc"):
+            raise HTTPException(status_code=400, detail="Önce BizimHesap token'ını kaydedin.")
+        try:
+            tok = comm_service.decrypt(c["token_enc"])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Kayıtlı token çözülemedi. Token'ı yeniden kaydedin.")
+    return tok, fid
+
+
 async def _bh_token(company_id: str) -> str:
-    c = await _db.migration_api_configs.find_one({"company_id": company_id, "provider": "bizimhesap"})
-    if not c or not c.get("token_enc"):
-        raise HTTPException(status_code=400, detail="Önce BizimHesap token'ını kaydedin.")
-    return comm_service.decrypt(c["token_enc"])
+    tok, _fid = await _bh_creds(company_id)
+    return tok
 
 
-async def _bh_products(company_id: str, token: str, force: bool = False) -> tuple[List[dict], bool]:
+async def _bh_products(company_id: str, token: str, firm_id: str = "", force: bool = False) -> tuple[List[dict], bool]:
     """/products ağır ve hız sınırlı → 15 dk önbellek. (ürünler, önbellekten_mi)"""
     key = {"company_id": company_id, "provider": "bizimhesap", "kind": "products"}
     cache = await _db.migration_api_cache.find_one(key)
@@ -541,7 +580,7 @@ async def _bh_products(company_id: str, token: str, force: bool = False) -> tupl
         if age < 900:
             return cache["items"], True
     try:
-        items = _unwrap(await _bh_get("/products", token))
+        items = _unwrap(await _bh_get("/products", token, firm_id, timeout=90.0))
     except HTTPException as e:
         if e.status_code == 429 and cache:
             return cache["items"], True
@@ -553,26 +592,33 @@ async def _bh_products(company_id: str, token: str, force: bool = False) -> tupl
 @router.post("/migration/bizimhesap/test")
 async def bh_test(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    token = await _bh_token(company_id)
-    warehouses = _unwrap(await _bh_get("/warehouses", token))
-    products, cached = await _bh_products(company_id, token, force=bool(req.get("force")))
+    token, firm_id = await _bh_creds(company_id, req.get("token") or "", req.get("firm_id") or "")
+    warehouses = _unwrap(await _bh_get("/warehouses", token, firm_id, timeout=30.0))
     wh = [{"id": str(_pick(w, "id", "warehouseId", "depoId", "code", default="")), "name": _pick(w, "name", "title", "warehouseName", "depoAdi", default="Depo")} for w in warehouses]
+    product_error = None
+    products: List[dict] = []
+    cached = False
+    try:
+        products, cached = await _bh_products(company_id, token, firm_id, force=bool(req.get("force")))
+    except HTTPException as e:
+        product_error = e.detail
     active = sum(1 for p in products if str(p.get("isActive", 1)) in ("1", "True", "true"))
     res = {"ok": True, "cached": cached, "product_count": len(products), "active_count": active, "with_barcode": sum(1 for p in products if p.get("barcode")), "with_code": sum(1 for p in products if p.get("code")), "warehouses": wh,
-           "sample": [{k: p.get(k) for k in ("title", "code", "barcode", "price", "buyingPrice", "unit", "tax", "quantity", "category", "brand")} for p in products[:3]], "product_fields": sorted({k for p in products[:50] for k in p.keys()})}
-    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_test": {"at": _now(), "product_count": len(products), "warehouse_count": len(wh)}}})
+           "sample": [{k: p.get(k) for k in ("title", "code", "barcode", "price", "buyingPrice", "unit", "tax", "quantity", "category", "brand")} for p in products[:3]], "product_fields": sorted({k for p in products[:50] for k in p.keys()}),
+           "product_error": product_error, "firm_id": firm_id}
+    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_test": {"at": _now(), "product_count": len(products), "warehouse_count": len(wh), "product_error": product_error}}})
     return res
 
 
 @router.post("/migration/bizimhesap/import")
 async def bh_import(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    token = await _bh_token(company_id)
+    token, firm_id = await _bh_creds(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
-    products, _cached = await _bh_products(company_id, token)
+    products, _cached = await _bh_products(company_id, token, firm_id)
     stock: Dict[str, float] = {}
     if req.get("with_stock") and req.get("warehouse_id"):
-        for it in _unwrap(await _bh_get(f"/inventory/{req['warehouse_id']}", token)):
+        for it in _unwrap(await _bh_get(f"/inventory/{req['warehouse_id']}", token, firm_id)):
             try:
                 q = float(str(_pick(it, "qty", "quantity", "stock", default=0) or 0).replace(",", "."))
             except (TypeError, ValueError):
@@ -640,11 +686,11 @@ async def bh_import(req: Dict[str, Any]):
 async def bh_import_customers(req: Dict[str, Any]):
     """BizimHesap /customers → cariler (ünvan, VKN, vergi dairesi, telefon, e-posta, adres, yetkili, bakiye, çek/senet)."""
     company_id = req.get("company_id", "comp_nexus_main_01")
-    token = await _bh_token(company_id)
+    token, firm_id = await _bh_creds(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
     invert = bool(req.get("invert_sign", False))
     only_bal = bool(req.get("only_with_balance", False))
-    customers = _unwrap(await _bh_get("/customers", token))
+    customers = _unwrap(await _bh_get("/customers", token, firm_id, timeout=90.0))
     batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "contacts", "entity_label": ENTITIES["contacts"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /customers", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now()}
     total_bal = 0.0
     for c in customers:
