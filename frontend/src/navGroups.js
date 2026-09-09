@@ -48,6 +48,7 @@ const PATH_GROUP = {
   "/personnel": "ik",
   "/mesai": "ik",
   "/communication": "iletisim",
+  "/support": "iletisim",
   "/ai-advisor": "ai",
   "/settings": "sistem",
   "/trash": "sistem",
