@@ -294,8 +294,24 @@ def drop_database(name: str) -> None:
         conn.close()
 
 
-def restore_snapshot(snap: dict, target_db: str, drop_tables: bool = True, as_root: bool = False) -> dict:
-    if as_root:
+INSERT_CHUNK = 200
+
+
+def restore_snapshot(
+    snap: dict,
+    target_db: str,
+    drop_tables: bool = True,
+    as_root: bool = False,
+    settings: Optional[dict] = None,
+) -> dict:
+    """Recreate every table from `snap` in `target_db`.
+
+    `settings` restores into an arbitrary server (another host); without it the
+    target is the configured local server, optionally reached as root.
+    """
+    if settings is not None:
+        cfg = dict(settings)
+    elif as_root:
         ensure_database(target_db, as_root=True)
         cfg = _root_settings(target_db)
     else:
@@ -322,7 +338,9 @@ def restore_snapshot(snap: dict, target_db: str, drop_tables: bool = True, as_ro
                 col_sql = ", ".join(f"`{c}`" for c in cols)
                 sql = f"INSERT INTO `{table}` ({col_sql}) VALUES ({placeholders})"
                 payload = [tuple(_bind(v) for v in row) for row in rows]
-                cur.executemany(sql, payload)
+                # Chunked so a large docs table stays under max_allowed_packet.
+                for start in range(0, len(payload), INSERT_CHUNK):
+                    cur.executemany(sql, payload[start : start + INSERT_CHUNK])
             restored[table] = len(rows)
         cur.execute("SET FOREIGN_KEY_CHECKS=1")
         return restored
