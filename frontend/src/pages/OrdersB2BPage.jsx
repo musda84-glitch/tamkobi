@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { useSearchParams } from "react-router-dom";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Ban, ScanLine } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -42,6 +42,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+import { orderGross, lineGross } from "../utils/orderMoney";
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -103,6 +104,15 @@ export default function OrdersB2BPage() {
   };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
+  const resolveCancel = async (ord, action) => {
+    const ok = window.confirm(action === "accept" ? `${ord.order_number} iptal edilsin mi?` : `${ord.order_number} iptal talebi reddedilsin mi?`);
+    if (!ok) return;
+    try {
+      const r = await axios.post(`${API_URL}/orders/${ord.id}/resolve-cancel-request`, { action });
+      toast.success(r.data.message);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "İşlem yapılamadı."); }
+  };
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams] = useSearchParams();
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
@@ -112,11 +122,11 @@ export default function OrdersB2BPage() {
   const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
   const visibleOrders = useMemo(() => {
     const list = applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF);
-    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
+    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: orderGross(o), order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
     return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
   }, [orders, customerFilter, ordF, sort]);
   const SortTh = ({ k, children, className = "" }) => <th className={`px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>{children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span></th>;
-  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
+  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + orderGross(o), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -303,6 +313,7 @@ export default function OrdersB2BPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button onClick={() => navigate("/sevk")} className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="open-pick-kiosk-btn"><ScanLine className="w-4 h-4" /> Depo Sevkiyatı</button>
           <button onClick={() => setNewOrder(true)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="new-order-btn"><Plus className="w-4 h-4" /> Yeni Sipariş</button>
           <button onClick={() => setAutoShip(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /> Toplu Kargola</button>
           <button onClick={() => setAiImport(true)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /> AI ile Yükle (PDF/Excel)</button>
@@ -344,7 +355,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="order_number">Sipariş No & Kanal</SortTh>
                   <SortTh k="customer_name">Müşteri / Alıcı</SortTh>
                   <SortTh k="items">Ürünler</SortTh>
-                  <SortTh k="total_amount" className="text-right">Tutar</SortTh>
+                  <SortTh k="total_amount" className="text-right">Tutar<span className="block text-[9px] font-semibold text-slate-400 normal-case tracking-normal">KDV dahil</span></SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
                   <th className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">İşlemler</th>
                 </tr>
@@ -374,18 +385,18 @@ export default function OrdersB2BPage() {
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${lineGross({ ...it, quantity: 1, total: it.unit_price }).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
                             </div>))}
                           </div>
                           {items.length > 2 && <button type="button" onClick={() => setExpandedItems(open ? null : ord.id)} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
                         </div>); })()}
                     </td>
-                    <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {ord.total_amount?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                    <td className="px-4 py-3 text-right font-bold text-slate-900" data-testid={`order-total-${ord.order_number}`}>
+                      {orderGross(ord).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺
                     </td>
                     <td className="px-4 py-3">
-                      {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
+                      {ord.channel && !["b2b", "manual", "saha"].includes(ord.channel) ? (
                         <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
                           <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold ${["shipped", "completed"].includes(ord.order_status) ? "bg-emerald-50 text-emerald-700" : ["cancelled", "returned", "partially_returned"].includes(ord.order_status) ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(ord.order_status)}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {ord.marketplace_status}</div>}
@@ -403,9 +414,19 @@ export default function OrdersB2BPage() {
                         <option value="preparing">Hazırlanıyor</option>
                         <option value="shipped">Kargolandı</option>
                         <option value="completed">Tamamlandı</option>
+                        <option value="cancelled">İptal</option>
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
+                      {ord.cancel_request?.status === "pending" && (
+                        <div className="mt-1 space-y-1">
+                          <div className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 inline-block" data-testid={`cancel-request-badge-${ord.order_number}`}>İptal talebi{ord.cancel_request?.reason ? ` · ${ord.cancel_request.reason}` : ""}</div>
+                          <div className="flex flex-wrap gap-1">
+                            <button type="button" onClick={() => resolveCancel(ord, "accept")} className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600 text-white hover:bg-emerald-700" data-testid={`accept-cancel-btn-${ord.order_number}`}>Onayla</button>
+                            <button type="button" onClick={() => resolveCancel(ord, "reject")} className="px-2 py-0.5 rounded-md text-[10px] font-bold border border-rose-200 text-rose-700 hover:bg-rose-50" data-testid={`reject-cancel-btn-${ord.order_number}`}>Reddet</button>
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">
                       <div className="grid grid-cols-[28px_112px_128px_28px_32px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
@@ -466,6 +487,10 @@ export default function OrdersB2BPage() {
                           <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
                             {[
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
+                              [ScanLine, "Depoda topla / sevk", () => navigate(`/sevk?order=${ord.id || ord._id}`), `pick-order-btn-${ord.order_number}`, !["shipped", "completed", "cancelled", "returned"].includes(ord.order_status)],
+                              [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
+                              [Ban, "İptal talebini onayla", () => resolveCancel(ord, "accept"), `accept-cancel-menu-${ord.order_number}`, ord.cancel_request?.status === "pending"],
+                              [X, "İptal talebini reddet", () => resolveCancel(ord, "reject"), `reject-cancel-menu-${ord.order_number}`, ord.cancel_request?.status === "pending"],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
                               [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, true],

@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, Utensils, Bus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -42,6 +44,29 @@ const Docs = ({ card, companyId, reload }) => {
   );
 };
 
+const ShopfloorPinCard = ({ empId, hasPin, reload }) => {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (e) => {
+    e.preventDefault(); setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/employees/${empId}/shopfloor-pin`, { password: pin });
+      toast.success(r.data.message); setPin(""); reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <form onSubmit={save} className="border border-slate-200 rounded-xl p-4 space-y-2" data-testid="emp-shopfloor-pin-form">
+      <div className="font-bold text-slate-900 flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-emerald-600" /> Atölye şifresi</div>
+      <p className="text-[11px] text-slate-500">Üretim ekranında operatör seçilirken istenir. {hasPin ? "Kayıtlı bir şifre var — yeni şifre yazarak değiştirin." : "Henüz şifre yok; en az 4 karakter belirleyin."}</p>
+      <div className="flex gap-2">
+        <input type="password" required minLength={4} value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Yeni atölye şifresi" className="flex-1 border rounded-lg p-2" data-testid="emp-shopfloor-pin" />
+        <button disabled={busy || pin.length < 4} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-bold disabled:opacity-50" data-testid="emp-shopfloor-pin-save">{busy ? "…" : "Kaydet"}</button>
+      </div>
+    </form>
+  );
+};
+
 const UserTab = ({ card, reload }) => {
   const { user: me } = useAuth();
   const [roles, setRoles] = useState([]);
@@ -55,22 +80,29 @@ const UserTab = ({ card, reload }) => {
       toast.success(r.data.message); reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); } finally { setBusy(false); }
   };
+  const pinCard = <ShopfloorPinCard empId={card.employee.id} hasPin={!!card.employee.has_shopfloor_pin} reload={reload} />;
   if (card.user) return (
-    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-1" data-testid="emp-user-linked">
-      <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
-      <div><b>E-posta:</b> {card.user.email}</div><div><b>Rol:</b> {card.user.role}</div><div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div><div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
-      <div className="text-slate-500 pt-1">Rol/şifre değişikliği için Firma Ayarları → Kullanıcılar & Roller.</div>
+    <div className="space-y-3">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-1" data-testid="emp-user-linked">
+        <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
+        <div><b>E-posta:</b> {card.user.email}</div><div><b>Rol:</b> {card.user.role}</div><div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div><div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
+        <div className="text-slate-500 pt-1">Rol/şifre değişikliği için Firma Ayarları → Kullanıcılar & Roller. Bağlı hesap şifresi atölye girişinde de geçerlidir.</div>
+      </div>
+      {pinCard}
     </div>
   );
   return (
-    <form onSubmit={create} className="space-y-3 text-xs" data-testid="emp-create-user-form">
-      {card.pending_invite && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Bekleyen davet var: {card.pending_invite.email} — <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline">linki kopyala</button></div>}
-      <div><label className="block font-semibold mb-1">E-posta (giriş adı)</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-email" /></div>
-      <div><label className="block font-semibold mb-1">Rol</label><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
-      <div className="flex gap-2">{[["invite", "E-posta ile davet gönder"], ["password", "Şifreyi ben belirleyeyim"]].map(([k, l]) => <button type="button" key={k} onClick={() => setForm({ ...form, mode: k })} className={`flex-1 border rounded-lg p-2 font-semibold ${form.mode === k ? "bg-slate-900 text-white" : "bg-white"}`} data-testid={`emp-user-mode-${k}`}>{l}</button>)}</div>
-      {form.mode === "password" && <div><label className="block font-semibold mb-1">Şifre (en az 6)</label><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-password" /></div>}
-      <button disabled={busy} className="w-full py-2 bg-emerald-600 text-white rounded-lg font-bold flex items-center justify-center gap-1.5" data-testid="emp-user-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : form.mode === "invite" ? <Mail className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />} {form.mode === "invite" ? "Davet Gönder" : "Kullanıcıyı Oluştur"}</button>
-    </form>
+    <div className="space-y-3">
+      <form onSubmit={create} className="space-y-3 text-xs" data-testid="emp-create-user-form">
+        {card.pending_invite && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Bekleyen davet var: {card.pending_invite.email} — <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline">linki kopyala</button></div>}
+        <div><label className="block font-semibold mb-1">E-posta (giriş adı)</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-email" /></div>
+        <div><label className="block font-semibold mb-1">Rol</label><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
+        <div className="flex gap-2">{[["invite", "E-posta ile davet gönder"], ["password", "Şifreyi ben belirleyeyim"]].map(([k, l]) => <button type="button" key={k} onClick={() => setForm({ ...form, mode: k })} className={`flex-1 border rounded-lg p-2 font-semibold ${form.mode === k ? "bg-slate-900 text-white" : "bg-white"}`} data-testid={`emp-user-mode-${k}`}>{l}</button>)}</div>
+        {form.mode === "password" && <div><label className="block font-semibold mb-1">Şifre (en az 6)</label><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-password" /></div>}
+        <button disabled={busy} className="w-full py-2 bg-emerald-600 text-white rounded-lg font-bold flex items-center justify-center gap-1.5" data-testid="emp-user-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : form.mode === "invite" ? <Mail className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />} {form.mode === "invite" ? "Davet Gönder" : "Kullanıcıyı Oluştur"}</button>
+      </form>
+      {pinCard}
+    </div>
   );
 };
 
@@ -84,6 +116,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
+  const [allow, setAllow] = useState({ meal: "", transport: "" });
+  const [busyAllow, setBusyAllow] = useState(false);
   useEscape(() => {
     if (quickPay) return;
     if (payItem) { setPayItem(null); return; }
@@ -126,6 +160,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     setBusyPay(true);
     try {
       const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { account_id: payAccountId });
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
       toast.success(res.data.message);
       setPayItem(null);
       afterMoney();
@@ -134,6 +169,21 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     } finally { setBusyPay(false); }
   };
   const btn = "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap";
+  useEffect(() => {
+    if (!card?.employee) return;
+    setAllow({ meal: card.employee.meal_allowance ?? 0, transport: card.employee.transport_allowance ?? 0 });
+  }, [card?.employee?.meal_allowance, card?.employee?.transport_allowance, card?.employee?.id]);
+  const saveAllowances = async (ev) => {
+    ev.preventDefault();
+    setBusyAllow(true);
+    try {
+      await axios.put(`${API_URL}/personnel/employees/${id}`, { meal_allowance: Number(allow.meal) || 0, transport_allowance: Number(allow.transport) || 0 });
+      toast.success("Yemek ve yol tutarları kaydedildi.");
+      afterMoney();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+    finally { setBusyAllow(false); }
+  };
+  const b = card?.balance || {};
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
@@ -152,18 +202,39 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           {!card ? <div className="text-slate-400">Yükleniyor…</div> : (<>
             {tab === "summary" && (
               <div className="space-y-4">
+                <div className={`rounded-xl p-3 border ${Number(b.remaining) < 0 ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"}`} data-testid="emp-stat-remaining">
+                  <div className="text-[10px] uppercase font-semibold text-slate-500">{Number(b.remaining) < 0 ? "Personel borcu" : "Kalan alacak"}</div>
+                  <div className={`text-xl font-black ${Number(b.remaining) < 0 ? "text-rose-700" : "text-emerald-800"}`} data-testid="emp-remaining-amount">{fmt(b.remaining)} ₺</div>
+                  <div className="mt-1 text-[10px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>Ödenmemiş maaş {fmt(b.unpaid_payroll)} ₺</span>
+                    <span>Masraf {fmt(b.unpaid_expenses)} ₺</span>
+                    {Number(b.meal_due) > 0 && <span>Yemek {fmt(b.meal_due)} ₺</span>}
+                    {Number(b.transport_due) > 0 && <span>Yol {fmt(b.transport_due)} ₺</span>}
+                    {Number(b.bonus_pending) > 0 && <span>Prim {fmt(b.bonus_pending)} ₺</span>}
+                    {Number(b.advances) > 0 && <span>Avans −{fmt(b.advances)} ₺</span>}
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <Stat label="Net Maaş" value={`${fmt(e.salary)} ₺`} sub={`Bordro brüt ${fmt(e.payroll_salary || e.salary * 1.4)} ₺${e.second_salary ? ` · 2. maaş ${fmt(e.second_salary)} ₺` : ""}`} testid="emp-stat-salary" /><Stat label="Kalan İzin" value={`${card.leave_balance.remaining} / ${card.leave_balance.annual} gün`} testid="emp-stat-leave" />
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
                 </div>
+                <form onSubmit={saveAllowances} className="border border-slate-200 rounded-xl p-3 space-y-2" data-testid="emp-allowance-form">
+                  <div className="font-bold text-slate-800">Aylık masraflar (karttan)</div>
+                  <p className="text-[10px] text-slate-500">Yemek ve yol tutarları personel kartından belirlenir. Bu ay henüz masraf yazılmamış kısım kalan alacağa eklenir; Masraf butonunda önerilir.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-0.5"><span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 uppercase"><Utensils className="w-3 h-3" /> Yemek (₺ / ay)</span><input type="number" min="0" step="0.01" value={allow.meal} onChange={(e) => setAllow((s) => ({ ...s, meal: e.target.value }))} className="w-full bg-slate-50 border rounded-lg p-1.5" data-testid="emp-card-meal" /></label>
+                    <label className="space-y-0.5"><span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 uppercase"><Bus className="w-3 h-3" /> Yol / ulaşım (₺ / ay)</span><input type="number" min="0" step="0.01" value={allow.transport} onChange={(e) => setAllow((s) => ({ ...s, transport: e.target.value }))} className="w-full bg-slate-50 border rounded-lg p-1.5" data-testid="emp-card-transport" /></label>
+                  </div>
+                  <div className="flex justify-end"><button type="submit" disabled={busyAllow} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-card-allowance-save">{busyAllow ? "…" : "Kaydet"}</button></div>
+                </form>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {e.status === "active" ? "Aktif" : e.status}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
                 <div className="text-slate-500">Belgeler: {card.documents.length} · Bordro: {card.payrolls.length} dönem · Ödenen maaş toplamı: {fmt(card.totals.paid_salary)} ₺</div>
               </div>
             )}
             {tab === "docs" && <Docs card={card} companyId={companyId} reload={reload} />}
             {tab === "salary" && (
-              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
-                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td></tr>)}</tbody></table>
+              <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th><th className="text-right">Ödeme</th></tr></thead>
+                <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td><td className="text-right">{p.status !== "paid" ? <button type="button" onClick={() => setPayItem(p)} className="px-2 py-0.5 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`emp-card-pay-${p.period}`}>Öde</button> : <span className="text-emerald-700 font-semibold">Ödendi</span>}</td></tr>)}</tbody></table>
             )}
             {tab === "leaves" && (
               <div className="space-y-3"><div className="grid grid-cols-3 gap-2"><Stat label="Yıllık Hak" value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
@@ -179,6 +250,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         </div>
       </div>
       {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
+      {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} allowances={{ meal: e.meal_allowance, transport: e.transport_allowance }} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
       {payItem && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
@@ -193,6 +265,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 <select value={payAccountId} onChange={(ev) => setPayAccountId(ev.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="emp-card-salary-account">
                   {accounts.map((b) => <option key={b.id || b._id} value={b.id || b._id}>{b.account_name || b.bank_name} ({fmt(b.current_balance)} ₺)</option>)}
                 </select>
+                <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAccountId} onChange={setPayAccountId} includePartners={false} testId="emp-card-salary-account" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">

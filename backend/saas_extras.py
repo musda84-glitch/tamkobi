@@ -103,7 +103,8 @@ async def issue_subscription_invoice(tx: dict) -> Optional[str]:
     to = [e for e in {admin.get("email"), customer.get("email")} if e]
     if to:
         try:
-            acc = await _deps["mail_account"](platform_cid)
+            import platform_mail
+            acc = await platform_mail.resolve_smtp_account("billing") or await _deps["mail_account"](platform_cid)
             rows = "".join(f"<tr><td style='padding:6px 10px;border:1px solid #e2e8f0'>{i['name']}</td><td style='padding:6px 10px;border:1px solid #e2e8f0;text-align:right'>{i['total']:,.2f} ₺</td></tr>" for i in inv["items"])
             html = f"<div style='font-family:Arial,sans-serif;max-width:640px'><h2 style='color:#0f172a'>e-Arşiv Fatura {inv['invoice_number']}</h2><p>Sayın {contact['name']},<br>{tx['plan_name']} paketi {period_label.lower()} abonelik ödemeniz için e-Arşiv faturanız oluşturulmuştur.</p><table style='border-collapse:collapse;width:100%'>{rows}<tr><td style='padding:6px 10px;text-align:right'>KDV %20</td><td style='padding:6px 10px;text-align:right'>{vat:,.2f} ₺</td></tr><tr><td style='padding:6px 10px;text-align:right;font-weight:bold'>Genel Toplam</td><td style='padding:6px 10px;text-align:right;font-weight:bold'>{gross:,.2f} ₺</td></tr></table><p style='color:#64748b;font-size:12px'>ETTN/Takip: {inv['gib_tracking_id']} · Tarih: {inv['issue_date']} · Ödeme alındı.</p></div>"
             import saas_docs
@@ -190,6 +191,8 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     item = await saas_billing.resolve_checkout_item(req)
     cid = item["company_id"]
     company = await _db.companies.find_one({"_id": cid})
+    if not company:
+        raise HTTPException(status_code=400, detail="Paket veya şirket bulunamadı.")
     amount = float(item["amount"])
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Bu paket için fiyat tanımlı değil.")

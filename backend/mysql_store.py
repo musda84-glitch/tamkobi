@@ -481,6 +481,27 @@ def apply_update(doc: dict, update: dict, query: Optional[dict] = None, is_inser
     return out
 
 
+def new_upsert_doc(update: dict, query: Optional[dict] = None) -> dict:
+    """Build the inserted document for update_one(..., upsert=True).
+
+    Mongo keeps equality filters (especially ``_id``) as the new document's
+    identity. Generating a random ``_id`` first skipped copying the filter
+    ``_id``, so trial/payment licenses were stored under a UUID nobody looked up.
+    """
+    new_doc = apply_update({}, update, query, is_insert=True)
+    for k, v in (query or {}).items():
+        if str(k).startswith("$") or isinstance(v, dict):
+            continue
+        if k not in new_doc:
+            _set_path(new_doc, k, v)
+    qid = (query or {}).get("_id")
+    if qid is not None and not isinstance(qid, dict):
+        new_doc["_id"] = qid
+    if not new_doc.get("_id"):
+        new_doc["_id"] = str(uuid.uuid4())
+    return new_doc
+
+
 def project_doc(doc: dict, projection: Optional[dict]) -> dict:
     if not projection:
         return copy.deepcopy(doc)
@@ -731,6 +752,7 @@ class MySQLCollection:
             if not upsert:
                 return UpdateResult(0, 0, None)
             new_doc = document_from_upsert(update, query)
+            new_doc = new_upsert_doc(update, query)
             await self._save(new_doc)
             return UpdateResult(0, 1, new_doc["_id"])
         old = docs[0]
@@ -1022,6 +1044,7 @@ class SyncMySQLCollection:
             if not upsert:
                 return UpdateResult(0, 0, None)
             new_doc = document_from_upsert(update, query)
+            new_doc = new_upsert_doc(update, query)
             self._save(new_doc)
             return UpdateResult(0, 1, new_doc["_id"])
         old = docs[0]

@@ -2,8 +2,10 @@ import React from "react";
 import { Search, ArrowUpDown, X } from "lucide-react";
 import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
+import { orderGross } from "../utils/orderMoney";
 
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}${i.note ? ` (${i.note})` : ""}`).join(", ") }, { key: "total_amount", label: "Tutar", num: true }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
+const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = { q: "", status: "all", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "date_desc" };
 const STATUS = [["all", "Tüm Durumlar"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
@@ -24,7 +26,7 @@ export const applyOrderFilters = (orders, f) => {
     if (f.to && d > f.to) return false;
     return true;
   });
-  const cmp = { date_desc: (a, b) => (b.order_date || "").localeCompare(a.order_date || ""), date_asc: (a, b) => (a.order_date || "").localeCompare(b.order_date || ""), amount_desc: (a, b) => (b.total_amount || 0) - (a.total_amount || 0), amount_asc: (a, b) => (a.total_amount || 0) - (b.total_amount || 0),
+  const cmp = { date_desc: (a, b) => (b.order_date || "").localeCompare(a.order_date || ""), date_asc: (a, b) => (a.order_date || "").localeCompare(b.order_date || ""), amount_desc: (a, b) => orderGross(b) - orderGross(a), amount_asc: (a, b) => orderGross(a) - orderGross(b),
     customer: (a, b) => (a.customer_name || "").localeCompare(b.customer_name || "", "tr"), number: (a, b) => (b.order_number || "").localeCompare(a.order_number || "") }[f.sort];
   return cmp ? [...list].sort(cmp) : list;
 };

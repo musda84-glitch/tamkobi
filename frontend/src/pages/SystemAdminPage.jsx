@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { NAV_GROUPS, groupIdOf } from "../navGroups";
 import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
 import { CompaniesTable } from "../components/saas/CompaniesTable";
@@ -13,6 +14,8 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
+import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
+import { QuotasPanel } from "../components/saas/QuotasPanel";
 
 const navTitle = (pathname, page) => {
   const hit = SYSTEM_NAV.find(([p]) => p === pathname.replace(/\/+$/, "") || p === `/sistem/${page}` || (p === "/sistem" && !page));
@@ -70,7 +73,9 @@ export default function SystemAdminPage({ section: sectionFromRoute }) {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
+          {page === "posta" && <PlatformMailPanel />}
           {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {page === "kotalar" && <QuotasPanel onOpenCompany={setOpenId} />}
           {page === "kullanicilar" && <PlatformUsersPanel />}
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} onChanged={changed} />}
@@ -109,6 +114,27 @@ const ModuleCatalog = ({ catalog, plans, onChanged }) => {
         </table>
       </div>
       <button onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-60" data-testid="mod-prices-save">{busy ? "Kaydediliyor…" : "Fiyatları kaydet"}</button>
+const ModuleCatalog = ({ catalog, plans }) => {
+  const order = Object.fromEntries(NAV_GROUPS.map((g, i) => [g.id, i]));
+  const sorted = [...(catalog || [])].sort((a, b) => (order[groupIdOf(a.key)] ?? 99) - (order[groupIdOf(b.key)] ?? 99));
+  const groups = [];
+  for (const m of sorted) {
+    const cat = m.category || "Genel";
+    const last = groups[groups.length - 1];
+    if (!last || last.cat !== cat) groups.push({ cat, items: [m] });
+    else last.items.push(m);
+  }
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto text-xs" data-testid="saas-module-catalog">
+      <table className="w-full min-w-[720px]">
+        <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Modül</th><th className="px-3 py-2.5 text-left">Kategori</th><th className="px-3 py-2.5 text-left">Açıklama</th>{plans.map((p) => <th key={p.id} className="px-3 py-2.5 text-center">{p.name}</th>)}</tr></thead>
+        <tbody className="divide-y divide-slate-100">{groups.map((g) => (
+          <React.Fragment key={g.cat}>
+            <tr className="bg-slate-50/80"><td colSpan={3 + plans.length} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{g.cat}</td></tr>
+            {g.items.map((m) => <tr key={m.key} data-testid={`catalog-row-${m.key.replace("/", "") || "dashboard"}`}><td className="px-3 py-2 font-semibold text-slate-800">{m.label}{m.is_core && <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-500 px-1 rounded">çekirdek</span>}</td><td className="px-3 py-2 text-slate-500">{m.category}</td><td className="px-3 py-2 text-slate-500">{m.description}</td>{plans.map((p) => <td key={p.id} className="px-3 py-2 text-center">{m.is_core || p.modules.includes(m.key) ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}</td>)}</tr>)}
+          </React.Fragment>
+        ))}</tbody>
+      </table>
     </div>
   );
 };

@@ -166,6 +166,9 @@ async def ensure_rates(company_id: str, on_date: Optional[str] = None, fetch: bo
         except HTTPException:
             # Header chip and settings must still load; user can type a rate or retry TCMB.
             pass
+        iso2, rates, url = await fetch_tcmb(iso)
+        rows = await _upsert_rates(company_id, iso2, rates, "tcmb", url)
+        iso, fetched, source = iso2, True, "tcmb"
     return {
         "date": iso,
         "source": source,

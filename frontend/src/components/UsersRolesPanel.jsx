@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye } from "lucide-react";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { groupMenuItems } from "../navGroups";
 
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
 const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-sky-700", edit: "bg-emerald-100 text-emerald-700" };
@@ -108,7 +109,25 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
     try { await axios.put(`${API_URL}/roles/${role.id}`, { name: rename }); toast.success("Rol adı güncellendi."); setRename(null); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
   const del = async () => { if (!window.confirm(`${role.name} rolü silinsin mi?`)) return; try { await axios.delete(`${API_URL}/roles/${role.id}`); toast.success("Rol silindi."); setSel(rolesData.roles[0].id); reload(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const savePolicy = async (key, val) => {
+    try {
+      await axios.put(`${API_URL}/roles/policies`, { company_id: companyId, [key]: val });
+      toast.success(val ? "Politika açıldı." : "Politika kapatıldı.");
+      reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+  };
   return (
+    <div className="space-y-4">
+      <div className="bg-white border border-indigo-200 rounded-xl p-3 text-xs" data-testid="company-policies">
+        <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><UserCheck className="w-3.5 h-3.5 text-indigo-600" /> Firma politikaları</div>
+        <label className="flex items-start gap-2 bg-indigo-50/50 border border-indigo-100 rounded-lg px-2.5 py-2 cursor-pointer" data-testid="policy-row-cash-dual-approval">
+          <input type="checkbox" checked={!!rolesData.policies?.cash_dual_approval} onChange={(e) => savePolicy("cash_dual_approval", e.target.checked)} className="mt-0.5 accent-indigo-600" data-testid="policy-cash-dual-approval" />
+          <span>
+            <span className="font-semibold text-slate-800">Entegre olmayan kasa/banka işlemlerinde diğer yöneticiden onay iste</span>
+            <div className="text-[10px] text-slate-500 leading-tight">Açıkken kâr payı dağıtımı (hemen öde), ortak para koy/çek ve virman hemen uygulanmaz; başka bir Banka &amp; Kasa yetkilisinin onayı gerekir. Entegre hesaplar zaten manuel işleme kapalıdır.</div>
+          </span>
+        </label>
+      </div>
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
       <div className="space-y-2">
         {rolesData.roles.map((r) => <button key={r.id} onClick={() => { setSel(r.id); setRename(null); }} className={`w-full text-left px-3 py-2 rounded-xl border flex justify-between ${r.id === role?.id ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-slate-50"}`} data-testid={`role-btn-${r.code}`}><span className="font-semibold">{r.name}{!r.is_system && <span className="ml-1 text-[9px] opacity-60">özel</span>}</span><span className="opacity-60">{r.user_count} kul.</span></button>)}
@@ -144,15 +163,23 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
                 <span><span className="font-semibold text-slate-800">{f.label}</span>{f.help && <div className="text-[10px] text-slate-500 leading-tight">{f.help}</div>}</span>
               </label>))}</div>
           </div>)}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-          {rolesData.modules.map((m) => (
-            <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
-              <span className="font-semibold text-slate-700">{m.label}</span>
-              <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+        <div className="space-y-3">
+          {groupMenuItems((rolesData.modules || []).map((m) => ({ ...m, path: m.key }))).map((g) => (
+            <div key={g.id} className="border border-slate-100 rounded-xl p-2.5">
+              {g.label && <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5 px-0.5">{g.label}</div>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {g.items.map((m) => (
+                  <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
+                    <span className="font-semibold text-slate-700">{m.label}</span>
+                    <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>
       </div>
+    </div>
     </div>
   );
 };

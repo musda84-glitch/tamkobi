@@ -214,6 +214,37 @@ def imap_set_flag(a: dict, folder: str, uid: str, flag: str, add: bool = True):
     finally:
         c.logout()
 
+def _smtp_kwargs(a: dict) -> dict:
+    kwargs = dict(
+        hostname=a["smtp_host"],
+        port=int(a["smtp_port"]),
+        username=a.get("smtp_user") or a["email"],
+        password=a["password"],
+        timeout=30,
+    )
+    if int(a["smtp_port"]) == 465:
+        kwargs["use_tls"] = True
+    else:
+        kwargs["start_tls"] = True
+    return kwargs
+
+
+async def smtp_login_test(a: dict) -> Dict[str, Any]:
+    """AUTH only — Exchange/Odoo tarzı sunucu bağlantı testi, mail göndermez."""
+    kw = _smtp_kwargs(a)
+    username, password = kw.pop("username"), kw.pop("password")
+    smtp = aiosmtplib.SMTP(**kw)
+    await smtp.connect()
+    try:
+        await smtp.login(username, password)
+        return {"ok": True, "message": "SMTP girişi başarılı."}
+    finally:
+        try:
+            await smtp.quit()
+        except Exception:
+            pass
+
+
 async def smtp_send(a: dict, to: List[str], subject: str, body: str, html: Optional[str] = None,
                     cc: Optional[List[str]] = None, attachments: Optional[List[Dict[str, Any]]] = None) -> None:
     msg = EmailMessage()
@@ -221,6 +252,8 @@ async def smtp_send(a: dict, to: List[str], subject: str, body: str, html: Optio
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
+    if a.get("reply_to"):
+        msg["Reply-To"] = a["reply_to"]
     msg["Subject"] = subject
     msg.set_content(body)
     if html:
@@ -228,12 +261,7 @@ async def smtp_send(a: dict, to: List[str], subject: str, body: str, html: Optio
     for att in attachments or []:
         maintype, _, subtype = (att.get("content_type") or "application/octet-stream").partition("/")
         msg.add_attachment(att["data"], maintype=maintype, subtype=subtype or "octet-stream", filename=Path(att.get("filename") or "dosya").name)
-    kwargs = dict(hostname=a["smtp_host"], port=int(a["smtp_port"]), username=a["email"], password=a["password"], timeout=30)
-    if int(a["smtp_port"]) == 465:
-        kwargs["use_tls"] = True
-    else:
-        kwargs["start_tls"] = True
-    await aiosmtplib.send(msg, **kwargs)
+    await aiosmtplib.send(msg, **_smtp_kwargs(a))
 
 async def run_blocking(fn, *args):
     return await asyncio.to_thread(fn, *args)

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Building2, ChevronDown, Plus, Settings, Wallet, Check, Loader2 } from "lucide-react";
+import { Building2, ChevronDown, Plus, Settings, UserRound, Wallet, Check, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
 export const AccountMenu = () => {
@@ -85,6 +86,7 @@ export const AccountMenu = () => {
             <form onSubmit={create} className="px-3 py-2 space-y-1.5 border-t border-slate-700" data-testid="account-new-company-form">
               <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ünvan" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-name" />
               <input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} placeholder="VKN" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-tax" />
+              <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Şehir" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-city" />
               <div className="flex gap-1.5">
                 <button type="submit" disabled={busy} className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-60 inline-flex items-center justify-center gap-1" data-testid="account-new-co-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Aç</button>
                 <button type="button" onClick={() => setAdding(false)} className="px-2 py-1.5 text-slate-400">Vazgeç</button>
@@ -98,6 +100,8 @@ export const AccountMenu = () => {
           </Link>
           <Link to="/hesap?tab=sirketler" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-page"><Building2 className="w-3.5 h-3.5" /> Hesabım</Link>
           <Link to="/settings" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>
+          <Link to="/hesap?tab=profil" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-profile"><UserRound className="w-3.5 h-3.5" /> Profilim</Link>
+          <Link to="/hesap?tab=ayarlar" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>
         </div>
       )}
     </div>

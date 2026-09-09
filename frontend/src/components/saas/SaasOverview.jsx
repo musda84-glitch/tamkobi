@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Sparkles } from "lucide-react";
+import { Building2, Users, Wallet, AlertTriangle, Inbox, Globe, Sparkles, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { API_URL } from "../../context/AuthContext";
@@ -29,6 +30,10 @@ export const SaasOverview = ({ data, catalog, onOpenCompany, onGoRequests }) => 
       <Link to="/sistem/web" className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 hover:bg-emerald-100/70" data-testid="overview-go-web">
         <span className="font-semibold text-emerald-900 inline-flex items-center gap-2"><Globe className="w-4 h-4" /> TamKobi müşteri sitesi yayında — vitrini yönetmek için tıklayın</span>
         <span className="text-emerald-800 font-bold">Web Sitesi →</span>
+      </Link>
+      <Link to="/sistem/posta" className="flex flex-wrap items-center justify-between gap-3 bg-sky-50 border border-sky-200 rounded-2xl px-4 py-3 hover:bg-sky-100/70" data-testid="overview-go-mail">
+        <span className="font-semibold text-sky-900 inline-flex items-center gap-2"><Mail className="w-4 h-4" /> Posta sunucusu — hangi panel maili hangi kutuyu kullanır</span>
+        <span className="text-sky-800 font-bold">Posta →</span>
       </Link>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Müşteri Şirket" value={data.companies} sub={`${data.by_status.active || 0} aktif · ${data.by_status.trial || 0} deneme`} testId="stat-companies" />

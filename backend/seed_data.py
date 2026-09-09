@@ -526,12 +526,45 @@ async def seed_all_data(db):
             "grand_total": 28800.0,
             "currency": "TRY",
             "status": "approved",
+            "direction": "incoming",
+            "gib_response": "accepted",
             "gib_status": "Gelen E-Fatura Onaylandı",
             "gib_tracking_id": "GIB-IN-20260601-112233",
             "payment_status": "unpaid",
             "paid_amount": 0.0,
             "notes": "Hammadde girişi deposu: DEP-03",
             "source_channel": "manual",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        },
+        {
+            "_id": "inv_incoming_pending",
+            "company_id": company_id,
+            "invoice_type": "purchase",
+            "e_type": "e_invoice",
+            "direction": "incoming",
+            "invoice_number": "GLN202600000088",
+            "contact_id": "cnt_03",
+            "contact_name": "Mikro Çip & Komponent İthalat A.Ş.",
+            "contact_tax_id": "6201948273",
+            "issue_date": today_str,
+            "due_date": (datetime.now(timezone.utc) + timedelta(days=8)).strftime("%Y-%m-%d"),
+            "items": [
+                {"product_id": "prod_raw_01", "name": "Bluetooth 5.3 Ses İşlemci Çipi", "quantity": 10, "unit": "Adet", "unit_price": 240.0, "vat_rate": 20, "discount_percent": 0.0, "total": 2400.0}
+            ],
+            "subtotal": 2400.0,
+            "vat_total": 480.0,
+            "discount_total": 0.0,
+            "grand_total": 2880.0,
+            "currency": "TRY",
+            "status": "approved",
+            "effects_applied": True,
+            "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)",
+            "gib_tracking_id": "GIB-IN-20260908-880011",
+            "payment_status": "unpaid",
+            "paid_amount": 0.0,
+            "notes": "GİB'den gelen ticari fatura — 8 gün içinde onayla veya reddet.",
+            "source": "edoc_inbox",
+            "source_channel": "edoc",
             "created_at": datetime.now(timezone.utc).isoformat()
         }
     ]
@@ -782,6 +815,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 4,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         },
         {
@@ -798,6 +832,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 2,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         },
         {
@@ -814,6 +849,7 @@ async def seed_all_data(db):
             "status": "active",
             "annual_leave_days": 14,
             "used_leave_days": 0,
+            "shopfloor_pin_hash": hash_password("1234"),
             "created_at": datetime.now(timezone.utc).isoformat()
         }
     ]
@@ -857,3 +893,14 @@ async def seed_all_data(db):
     await db.payrolls.insert_many(payrolls)
 
     print("Successfully seeded TamKobi full demo data.")
+
+
+DEMO_SHOPFLOOR_PIN = "1234"
+
+
+async def seed_shopfloor_pins(db):
+    """Demo personeline atölye şifresi (1234) — yalnızca henüz şifresi yoksa."""
+    for eid in ("emp_01", "emp_02", "emp_03"):
+        emp = await db.employees.find_one({"_id": eid})
+        if emp and not emp.get("shopfloor_pin_hash"):
+            await db.employees.update_one({"_id": eid}, {"$set": {"shopfloor_pin_hash": hash_password(DEMO_SHOPFLOOR_PIN)}})

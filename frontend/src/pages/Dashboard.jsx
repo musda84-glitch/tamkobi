@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { useAuth } from "../context/AuthContext";
 import { OverviewPanel } from "../components/OverviewPanel";
+import { DemoContentCard } from "../components/DemoContentCard";
 import {
   TrendingUp,
   TrendingDown,
@@ -111,6 +112,7 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      <DemoContentCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} variant="dashboard" />
       {/* Top Banner / AI Fast Advisory */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden border border-slate-800">
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>

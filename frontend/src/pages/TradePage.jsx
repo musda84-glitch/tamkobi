@@ -5,6 +5,7 @@ import { Globe, Plus, Ship, Plane, FileText, Trash2, RefreshCw, X, Calculator } 
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { fmtMoney } from "../utils/money";
+import { FxPicker } from "../components/FxPicker";
 import { statusTr } from "../utils/labels";
 
 const emptyItem = () => ({ product_id: "", name: "", sku: "", gtip: "", origin_country: "", quantity: 1, unit: "Adet", unit_price_fx: 0, net_weight: 0 });
@@ -12,6 +13,7 @@ const emptyForm = (kind) => ({
   kind, contact_id: "", contact_name: "", country: "", customs_office: "", customs_broker: "",
   regime_code: kind === "import" ? "4000" : "1000", incoterm: kind === "import" ? "CIF" : "FOB",
   currency: "USD", fx_rate: 42.5, bl_awb: "", container_no: "", declaration_no: "", declaration_date: "",
+  currency: "USD", fx_rate: "", fx_source: "tcmb", bl_awb: "", container_no: "", declaration_no: "", declaration_date: "",
   dab_no: "", certificate: "", freight: 0, insurance: 0, customs_duty_rate: 0, otv_rate: 0, kkdf_rate: 0,
   stamp_tax: 0, import_vat_rate: kind === "import" ? 20 : 0, notes: "", file_date: new Date().toISOString().slice(0, 10),
   status: "draft", items: [emptyItem()],
@@ -36,6 +38,7 @@ export default function TradePage() {
       const [f, m, c, p] = await Promise.all([
         axios.get(`${API_URL}/trade-files?company_id=${companyId}&kind=${kind}`),
         meta ? Promise.resolve({ data: meta }) : axios.get(`${API_URL}/trade-files/meta`),
+        axios.get(`${API_URL}/trade-files/meta`, { params: { company_id: companyId } }),
         axios.get(`${API_URL}/contacts?company_id=${companyId}`),
         axios.get(`${API_URL}/products?company_id=${companyId}`),
       ]);
@@ -48,6 +51,25 @@ export default function TradePage() {
   useEffect(() => { load(); }, [load]);
 
   const openNew = () => { setEditing(null); setForm(emptyForm(kind)); };
+      setMeta(m.data);
+      setContacts(c.data || []);
+      setProducts(p.data || []);
+    } catch { toast.error("Dış ticaret dosyaları yüklenemedi."); }
+  }, [companyId, kind]);
+  useEffect(() => { load(); }, [load]);
+
+  const openNew = async () => {
+    setEditing(null);
+    const f = emptyForm(kind);
+    try {
+      const r = await axios.get(`${API_URL}/fx/quote`, { params: { company_id: companyId, currency: "USD" } });
+      f.fx_rate = r.data.rate;
+      f.fx_source = r.data.source;
+    } catch {
+      if (meta?.fx_defaults?.USD) { f.fx_rate = meta.fx_defaults.USD; }
+    }
+    setForm(f);
+  };
   const openEdit = (r) => { setEditing(r); setForm({ ...emptyForm(r.kind), ...r, items: (r.items || []).length ? r.items : [emptyItem()] }); };
   const setF = (k, v) => setForm((s) => ({ ...s, [k]: v }));
   const setItem = (i, k, v) => setForm((s) => ({ ...s, items: s.items.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)) }));
@@ -175,6 +197,7 @@ export default function TradePage() {
               <div><label className="font-semibold block mb-1">Gümrük müşaviri</label><input value={form.customs_broker} onChange={(e) => setF("customs_broker", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" /></div>
               <div><label className="font-semibold block mb-1">Döviz</label><select value={form.currency} onChange={(e) => { const c = e.target.value; setForm((s) => ({ ...s, currency: c, fx_rate: meta?.fx_defaults?.[c] || s.fx_rate })); }} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-currency">{(meta?.currencies || ["USD"]).map((c) => <option key={c}>{c}</option>)}</select></div>
               <div><label className="font-semibold block mb-1">Kur (₺)</label><input type="number" step="0.0001" value={form.fx_rate} onChange={(e) => setF("fx_rate", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-fx" /></div>
+              <div className="sm:col-span-2"><FxPicker companyId={companyId} date={form.file_date} currency={form.currency} rate={form.fx_rate} source={form.fx_source} onChange={(p) => setForm((s) => ({ ...s, ...p }))} testId="trade" rateTestId="trade-fx" /></div>
               <div><label className="font-semibold block mb-1">Konşimento / AWB</label><input value={form.bl_awb} onChange={(e) => setF("bl_awb", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-bl" /></div>
               <div><label className="font-semibold block mb-1">Konteyner no</label><input value={form.container_no} onChange={(e) => setF("container_no", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" /></div>
               <div><label className="font-semibold block mb-1">Beyanname no</label><input value={form.declaration_no} onChange={(e) => setF("declaration_no", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-declaration" /></div>

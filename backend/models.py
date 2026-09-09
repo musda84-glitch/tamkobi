@@ -175,6 +175,8 @@ class InvoiceItem(BaseModel):
     discount_rate: float = 0.0
     total: float
     is_service: bool = False
+    sku: Optional[str] = ""
+    barcode: Optional[str] = ""
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
     net_weight: Optional[float] = None
@@ -222,10 +224,16 @@ class Invoice(BaseDocument):
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
     gib_status: Optional[str] = "Taslak"  # Taslak, GİB'e Gönderildi, Başarıyla İletildi, İptal Edildi
     gib_tracking_id: Optional[str] = None
+    gib_response: Optional[str] = None  # incoming e-invoice: accepted | rejected
+    direction: Optional[str] = None  # incoming = GİB'den gelen alış e-faturası (kesilmez)
+    source: Optional[str] = None  # edoc_inbox, manual, …
+    edoc_id: Optional[str] = None
     payment_status: str = "unpaid"  # unpaid, partially_paid, paid
     paid_amount: float = 0.0
     notes: Optional[str] = None
     source_channel: Optional[str] = "manual"  # manual, trendyol, hepsiburada, b2b, amazon, shopify
+    project_id: Optional[str] = None
+    project_number: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Banka, Kasa, POS
@@ -432,6 +440,7 @@ class Order(BaseDocument):
     order_number: Optional[str] = None
     customer_order_number: Optional[str] = ""
     channel: str = "manual"  # manual, b2b, trendyol, hepsiburada, amazon, shopify
+    channel: str = "manual"  # manual, saha, b2b, trendyol, hepsiburada, amazon, shopify
     customer_name: str
     customer_email: Optional[str] = None
     customer_phone: Optional[str] = None
@@ -441,12 +450,16 @@ class Order(BaseDocument):
     total_amount: float
     currency: str = "TRY"
     order_status: str = "pending"  # pending, approved, preparing, shipped, completed, cancelled
+    contact_id: Optional[str] = None
+    notes: Optional[str] = None
+    salesperson_name: Optional[str] = None
     cargo_carrier: Optional[str] = None
     cargo_tracking_number: Optional[str] = None
     cargo_barcode: Optional[str] = None
     is_invoiced: bool = False
     invoice_id: Optional[str] = None
     order_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    cancel_request: Optional[Dict[str, Any]] = None
 
 # Üretim & Reçete (BOM)
 class RecipeItem(BaseModel):
@@ -505,6 +518,8 @@ class Employee(BaseDocument):
     phone: str
     email: str
     salary: float  # Net Maaş
+    meal_allowance: float = 0.0  # Aylık yemek
+    transport_allowance: float = 0.0  # Aylık yol / ulaşım
     start_date: str
     status: str = "active"  # active, on_leave, terminated
     annual_leave_days: int = 14

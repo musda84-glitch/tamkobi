@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { API_URL } from "../api/client";
+import { groupIdOf } from "../navGroups";
 
 const AuthContext = createContext(null);
 
@@ -28,15 +29,21 @@ export const AuthProvider = ({ children }) => {
     { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
     { label: "Masraflar", path: "/expenses", badge: "Gider" },
     { label: "Krediler", path: "/loans", badge: "Banka" },
+    { label: "Çek / Senet", path: "/cheques", badge: "Vade" },
     { label: "Cari Hesaplar", path: "/contacts" },
     { label: "Taksitler", path: "/installments", badge: "Vade" },
     { label: "Raporlar", path: "/reports", badge: "Excel" },
     { label: "Banka & Kasa & POS", path: "/banking" },
     { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
-    { label: "Teklif / Proje / Keşif", path: "/projects", badge: "Yeni" },
+    { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
+    { label: "Teklifler", path: "/quotes" },
+    { label: "Projeler", path: "/projects" },
+    { label: "Keşifler", path: "/surveys" },
     { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
     { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
     { label: "Siparişler", path: "/orders", badge: "B2B" },
+    { label: "Saha Sipariş", path: "/saha", badge: "Tablet" },
+    { label: "Depo Sevkiyatı", path: "/sevk", badge: "Tablet" },
     { label: "Depo & Transfer", path: "/warehouses" },
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
@@ -52,7 +59,7 @@ export const AuthProvider = ({ children }) => {
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
-  const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
+  const moduleOn = (path) => !license?.modules || license.modules[path] !== false;
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
@@ -71,6 +78,16 @@ export const AuthProvider = ({ children }) => {
   const moveModule = (from, to) => {
     if (to < 0 || to >= menuItems.length) return;
     const paths = menuItems.map((m) => m.path);
+    const [moved] = paths.splice(from, 1);
+    paths.splice(to, 0, moved);
+    persistOrder(paths);
+  };
+  const moveModulePath = (fromPath, toPath) => {
+    if (groupIdOf(fromPath) !== groupIdOf(toPath)) return;
+    const paths = menuItems.map((m) => m.path);
+    const from = paths.indexOf(fromPath);
+    const to = paths.indexOf(toPath);
+    if (from < 0 || to < 0 || from === to) return;
     const [moved] = paths.splice(from, 1);
     paths.splice(to, 0, moved);
     persistOrder(paths);
@@ -160,7 +177,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, resetModuleOrder, can, feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can,  feature, license, moduleOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );

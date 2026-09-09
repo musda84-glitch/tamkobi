@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -18,6 +19,10 @@ import { FxRatesPanel } from "../components/FxRatesPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Entegratörü", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+import { DemoContentCard } from "../components/DemoContentCard";
+
+const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -41,7 +46,6 @@ const CompanyForm = ({ companyId }) => {
 };
 
 const EInvoiceSettings = ({ companyId }) => {
-  const [providers, setProviders] = useState([]);
   const [s, setS] = useState(null);
   const [password, setPassword] = useState("");
   const [testing, setTesting] = useState(false);
@@ -58,6 +62,29 @@ const EInvoiceSettings = ({ companyId }) => {
       toast.success(r.data.message || "n11 Faturam bağlantısı başarılı.");
       const st = await axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`);
       setS(st.data); setPassword("");
+  const [apiKey, setApiKey] = useState("");
+  const [testing, setTesting] = useState(false);
+  useEffect(() => { axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`).then((st) => setS(st.data)); }, [companyId]);
+  if (!s) return null;
+  const fields = s.fields || [];
+  const isN11 = s.provider === "n11faturam";
+  const payload = () => ({ company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias, corporate_code: s.corporate_code, password, api_key: apiKey });
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await axios.put(`${API_URL}/einvoice/settings`, payload());
+      setS(r.data); setPassword(""); setApiKey("");
+      toast.success(r.data.status === "configured" ? "Bağlantı bilgileri kaydedildi." : "Kaydedildi — kimlik bilgisi girilmediği için SİMÜLE mod.");
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+  };
+  const testConn = async () => {
+    setTesting(true);
+    try {
+      await axios.put(`${API_URL}/einvoice/settings`, payload());
+      const r = await axios.post(`${API_URL}/einvoice/test`, null, { params: { company_id: companyId } });
+      toast.success(r.data.message || "n11 Faturam bağlantısı başarılı.");
+      const st = await axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`);
+      setS(st.data); setPassword(""); setApiKey("");
     } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı denemesi başarısız."); } finally { setTesting(false); }
   };
   return (
@@ -75,6 +102,31 @@ const EInvoiceSettings = ({ companyId }) => {
         {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
         <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
       </div>
+      <div className="flex items-center justify-between"><h3 className="text-sm font-bold">E-Fatura bağlantısı</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${s.status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="einvoice-status">{s.status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}</span></div>
+      {!s.assigned ? (
+        <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="einvoice-unassigned">Bu şirket için entegratör henüz seçilmedi. Entegratör ataması yalnızca Platform Yönetimi → Şirketler ekranından yapılır. Atandıktan sonra bağlantı bilgilerini buradan girin.</p>
+      ) : (
+        <>
+          <p className="text-slate-500">{isN11 ? "n11 Faturam kurum kodu, kullanıcı adı ve şifre. Kaydettikten sonra Bağlantıyı dene ile oturumu doğrulayın; fatura kesimi ve GİB mükellef sorgusu canlıya geçer." : "Platformun atadığı entegratör için bağlantı bilgilerini girin. Anahtar yoksa GİB gönderimleri simüle edilir."}</p>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" data-testid="einvoice-assigned-provider">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
+            <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || s.provider}</div>
+            {s.docs ? <a href={s.docs} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-700 font-semibold">Dokümantasyon</a> : null}
+          </div>
+          {s.hint ? <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2">{s.hint}</p> : null}
+          <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setS({ ...s, mode: "test" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "test" ? "bg-amber-500 text-white border-amber-500" : ""}`} data-testid="einvoice-mode-test">Test Ortamı</button><button type="button" onClick={() => setS({ ...s, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="einvoice-mode-live">Canlı</button></div>
+          {fields.includes("corporate_code") && <div><label className="block font-semibold mb-1">{isN11 ? "Kurum Kodu (CorporateCode)" : "Kurum kodu"}</label><input value={s.corporate_code || ""} onChange={(e) => setS({ ...s, corporate_code: e.target.value })} className={inputCls} data-testid="einvoice-corporate-code-input" placeholder={isN11 ? "n11 Faturam kurum kodu" : ""} /></div>}
+          {fields.includes("api_url") && <div><label className="block font-semibold mb-1">API URL</label><input value={s.api_url || ""} onChange={(e) => setS({ ...s, api_url: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-api-url" /></div>}
+          {fields.includes("username") && <div><label className="block font-semibold mb-1">{isN11 ? "Kullanıcı Adı (LoginName)" : "Kullanıcı Adı"}</label><input value={s.username || ""} onChange={(e) => setS({ ...s, username: e.target.value })} className={inputCls} data-testid="einvoice-username-input" /></div>}
+          {fields.includes("password") && <div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div>}
+          {fields.includes("api_key") && <div><label className="block font-semibold mb-1">API anahtarı {s.has_api_key && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputCls} data-testid="einvoice-api-key" /></div>}
+          <div><label className="block font-semibold mb-1">GİB Etiket / Alias</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} data-testid="einvoice-alias" /></div>
+          <div className="flex justify-end gap-2">
+            {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
+            <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
+          </div>
+        </>
+      )}
     </form>
   );
 };
@@ -110,15 +162,28 @@ const WhatsAppSettings = ({ companyId }) => {
 
 const ModuleOrder = () => {
   const { menuItems, moveModule, resetModuleOrder } = useAuth();
+  const groups = groupMenuItems(menuItems);
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-2" data-testid="module-order-settings">
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-3" data-testid="module-order-settings">
       <div className="flex justify-between items-center"><h3 className="text-sm font-bold">Modül Sıralama</h3><button onClick={resetModuleOrder} className="text-slate-500 hover:underline">Varsayılana dön</button></div>
-      <p className="text-slate-500">Sol menüde modülleri sürükleyip bırakarak da sıralayabilirsiniz.</p>
-      {menuItems.map((m, i) => (
-        <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
-          <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
-          <button onClick={() => moveModule(i, i - 1)} disabled={i === 0} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
-          <button onClick={() => moveModule(i, i + 1)} disabled={i === menuItems.length - 1} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+      <p className="text-slate-500">Sol menü paket kategorileriyle (Muhasebe, Finans, Satış…) aynı klasörlerdedir. Aynı paket içinde sürükleyerek veya oklarla sıralayabilirsiniz.</p>
+      {groups.map((g) => (
+        <div key={g.id} className="space-y-1.5">
+          {g.label && <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-1">{g.label}</div>}
+          {g.items.map((m) => {
+            const i = menuItems.findIndex((x) => x.path === m.path);
+            const prev = menuItems[i - 1];
+            const next = menuItems[i + 1];
+            const canUp = prev && groupIdOf(prev.path) === groupIdOf(m.path);
+            const canDown = next && groupIdOf(next.path) === groupIdOf(m.path);
+            return (
+              <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
+                <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
+                <button onClick={() => moveModule(i, i - 1)} disabled={!canUp} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
+                <button onClick={() => moveModule(i, i + 1)} disabled={!canDown} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
@@ -201,12 +266,21 @@ export const B2BSettings = ({ companyId }) => {
   );
 };
 
-export default function SettingsPage() {
+export default function SettingsPage({ embedded = false }) {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-  const tab = searchParams.get("tab") || "company";
+  const tabKey = embedded ? "ayar" : "tab";
+  const tab = searchParams.get(tabKey) || "company";
+  const setTab = (k) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set(tabKey, k);
+      if (embedded) next.set("tab", "ayarlar");
+      return next;
+    });
+  };
   const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   useEffect(() => { if (tab === "b2b") navigate("/b2b-yonetim", { replace: true }); }, [tab, navigate]);
@@ -214,16 +288,32 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6" data-testid="settings-page">
       <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Hesabınız altındaki şirket bilgileri, form şablonları ve entegrasyonlar. GİB kontör almak için <button type="button" className="font-semibold text-emerald-700 underline" onClick={() => navigate("/hesap?tab=kontor")}>Hesap → GİB Kontör</button>.</p></div>
+      {!embedded && (
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1>
+          <p className="text-xs sm:text-sm text-slate-500">Hesabınız altındaki şirket bilgileri, form şablonları ve entegrasyonlar. GİB kontör almak için <button type="button" className="font-semibold text-emerald-700 underline" onClick={() => navigate("/hesap?tab=kontor")}>Hesap → GİB Kontör</button>.</p>
+        </div>
+      )}
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
-          {TABS.map(([k, l, Icon]) => (
-            <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
-              <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
-            </button>
-          ))}
+          {SETTINGS_TAB_GROUPS.map((g) => {
+            const tabs = TABS.filter(([k]) => g.tabs.includes(k));
+            if (!tabs.length) return null;
+            const groupActive = g.tabs.includes(tab);
+            return (
+              <div key={g.id} className={`flex lg:flex-col gap-1 shrink-0 lg:shrink-0 ${groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
+                <div className={`hidden lg:block px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
+                {tabs.map(([k, l, Icon]) => (
+                  <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
+                    <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
-          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
+          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><DemoContentCard companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
           {tab === "plan" && <MyPlanPanel companyId={companyId} />}
           {tab === "print" && <PrintSettings companyId={companyId} />}
           {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}

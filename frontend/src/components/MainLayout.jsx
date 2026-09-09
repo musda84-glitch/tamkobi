@@ -21,6 +21,7 @@ import {
   LogOut,
   PlusCircle,
   QrCode,
+  ScanLine,
   ArrowRightLeft,
   Sparkles,
   ShieldCheck,
@@ -28,6 +29,8 @@ import {
   X,
   MailOpen,
   Briefcase,
+  FileSignature,
+  Ruler,
   Settings,
   Calculator,
   CalendarClock,
@@ -36,6 +39,10 @@ import {
   Trash2,
   Inbox,
   Globe
+  ClipboardList,
+  Smartphone,
+  Globe,
+  ScrollText
 } from "lucide-react";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
@@ -43,6 +50,9 @@ import { HeaderFxRates } from "./HeaderFxRates";
 import { isPublicPath } from "../utils/publicPath";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
+import { AccountMenu } from "./AccountMenu";
+import TamKobiMark from "./TamKobiMark";
+import AppSidebarNav from "./AppSidebarNav";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -51,14 +61,18 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
   const { menuItems: orderedMenu, moveModule } = useAuth();
+  const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/cheques": ScrollText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/sayim": ClipboardList, "/quotes": FileSignature, "/projects": Briefcase, "/surveys": Ruler, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/saha": Smartphone, "/sevk": ScanLine, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
+  const { menuItems: orderedMenu, moveModulePath } = useAuth();
   const menuItems = orderedMenu.map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
-  const [dragIdx, setDragIdx] = useState(null);
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
   const publicSite = isPublicPath(location.pathname) && (location.pathname === "/" ? !authenticated : true);
   if (publicSite) return <>{children}</>;
   const routeKey = { "/dis-ticaret": "/invoices" }[location.pathname] || location.pathname;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
+  const publicSite = location.pathname === "/" && !authenticated;
+  if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/web", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
   const lockedModule = !moduleOn(location.pathname);
 
   const roleLabels = {
@@ -90,45 +104,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         <AccountMenu />
 
         {/* Navigation Menu */}
-        <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
-          {menuItems.map((item, idx) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                draggable
-                onDragStart={() => setDragIdx(idx)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => { if (dragIdx !== null && dragIdx !== idx) moveModule(dragIdx, idx); setDragIdx(null); }}
-                title="Sürükleyip sıralayabilirsiniz"
-                onClick={() => setMobileMenuOpen(false)}
-                data-testid={`nav-item-${item.path.replace('/', '') || 'dashboard'}`}
-                className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  isActive
-                    ? item.isAi
-                      ? "bg-gradient-to-r from-purple-600/90 to-indigo-600/90 text-white shadow-md shadow-purple-900/40"
-                      : item.isSystem ? "bg-amber-500 text-slate-900 shadow-md shadow-amber-900/40" : "bg-emerald-600 text-white shadow-md shadow-emerald-950/40"
-                    : item.isAi
-                    ? "text-purple-300 hover:bg-purple-950/40 hover:text-white"
-                    : item.isSystem ? "text-amber-300 hover:bg-amber-950/40 hover:text-white border border-amber-500/20 mt-2" : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`}
-              >
-                <div className="flex items-center gap-2.5 truncate">
-                  <Icon className={`w-4 h-4 ${isActive ? (item.isSystem ? 'text-slate-900' : 'text-white') : item.isAi ? 'text-purple-400' : item.isSystem ? 'text-amber-400' : 'text-slate-400'}`} />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                    isActive ? 'bg-white/20 text-white' : item.isAi ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-800 text-slate-400'
-                  }`}>
-                    {item.badge}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700" data-testid="app-sidebar-nav">
+          <AppSidebarNav items={menuItems} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
         </nav>
 
         {/* User Card & Logout */}
@@ -218,7 +195,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {/* Page View Body */}
         {user?.impersonation && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-slate-900 text-amber-200 text-xs rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="impersonation-banner"><span><ShieldCheck className="inline w-3.5 h-3.5 mr-1" /> <b>Destek modu:</b> {activeCompany?.name} şirketine {user.impersonation.name || user.impersonation.by} tarafından girildi. Yaptığınız işlemler bu şirkete kaydedilir.</span><button onClick={exitImpersonation} className="px-3 py-1 bg-amber-400 text-slate-900 rounded-lg font-bold" data-testid="impersonation-exit">Destek modunu bitir</button></div>}
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>}
-        <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
+        <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
           {loading ? null : denied ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied"><div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div><div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div></div> : lockedModule ? <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} /> : children}
         </main>
       </div>

@@ -16,6 +16,7 @@ export function useFxRates(companyId, onDate) {
 
 /** Fatura / masraf / dış ticaret formlarında para birimi + kur. */
 export function FxPicker({ companyId, date, currency, rate, source, onChange, testId = "fx" }) {
+export function FxPicker({ companyId, date, currency, rate, source, onChange, testId = "fx", rateTestId }) {
   const pack = useFxRates(companyId, date);
   const ccy = currency || "TRY";
   const applyCcy = async (next) => {
@@ -43,6 +44,7 @@ export function FxPicker({ companyId, date, currency, rate, source, onChange, te
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Kur (1 {ccy} = ₺)</label>
         <input type="number" step="0.0001" min="0" disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(e) => onChange({ currency: ccy, fx_rate: e.target.value, fx_source: "manual" })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid={`${testId}-rate`} />
+        <input type="number" step="0.0001" min="0" disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(e) => onChange({ currency: ccy, fx_rate: e.target.value, fx_source: "manual" })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid={rateTestId || `${testId}-rate`} />
         {ccy !== "TRY" && <div className="text-[10px] text-slate-400 mt-0.5">{source === "manual" ? "Manuel kur" : source === "tcmb" ? "TCMB" : "Kur"} · {fmtMoney(local, "TRY")}/1 {ccy}</div>}
       </div>
     </div>

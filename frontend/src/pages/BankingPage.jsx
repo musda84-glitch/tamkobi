@@ -19,10 +19,14 @@ import {
   Pencil,
   Trash2
   Sparkles
+  Trash2,
+  Printer
 } from "lucide-react";
 import { PartnersPanel } from "../components/PartnersPanel";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
+import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
+import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
 
 const TABS = [
@@ -64,12 +68,14 @@ export default function BankingPage() {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [stmtAccount, setStmtAccount] = useState(null);
   const [stmtFile, setStmtFile] = useState(null);
+  const [printTx, setPrintTx] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Modals
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
+  const [cashTick, setCashTick] = useState(0);
 
   const emptyAccountForm = {
     type: "bank",
@@ -205,6 +211,39 @@ export default function BankingPage() {
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
+      loadBankingData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
+    }
+  };
+
+  const openEditAccount = (acc, e) => {
+    e?.stopPropagation();
+    setEditingAccount(acc);
+    setNewAccount({
+      type: acc.type || "bank",
+      bank_name: acc.bank_name || "",
+      account_name: acc.account_name || "",
+      account_number: acc.account_number || "",
+      iban: acc.iban || "",
+      currency: acc.currency || "TRY",
+      current_balance: acc.current_balance || 0,
+      pos_commission_rate: acc.pos_commission_rate || 1.5
+    });
+    setShowAddAccountModal(true);
+  };
+
+  const handleDeleteAccount = async (acc, e) => {
+    e?.stopPropagation();
+    const name = `${acc.bank_name || ""} — ${acc.account_name || ""}`.trim();
+    if (!window.confirm(`"${name}" silinsin mi? Hareketi olan hesaplar silinemez.`)) return;
+    try {
+      const r = await axios.delete(`${API_URL}/banking/accounts/${acc.id || acc._id}`);
+      toast.success(r.data.message || "Hesap silindi.");
+      if (selectedAccountId === (acc.id || acc._id)) setSelectedAccountId(null);
+      loadBankingData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Hesap silinemedi.");
     }
   };
 
@@ -229,13 +268,14 @@ export default function BankingPage() {
       toast.success(res.data.message);
       setShowVirmanModal(false);
       setVirmanForm({ ...virmanForm, amount: "" });
+      setCashTick((n) => n + 1);
       loadBankingData();
     } catch (err) {
       toast.error("Virman işlemi gerçekleştirilemedi.");
     }
   };
 
-  const totalLiquidity = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
   const grouped = ACCOUNT_GROUPS.map((g) => {
     const items = accounts.filter((a) => a.type === g.type);
@@ -294,6 +334,7 @@ export default function BankingPage() {
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={loadBankingData} />}
 
       {tab === "accounts" && (<>
+      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={() => { setCashTick((n) => n + 1); loadBankingData(); }} />
       {/* Grouped account cards — same pattern as Ortaklar Hesabı */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
         {partnerSummary && partnerSummary.partner_count > 0 && (
@@ -350,11 +391,16 @@ export default function BankingPage() {
                   {acc.iban && acc.iban !== '-' && (
                     <div className="text-[11px] font-mono text-slate-400 mt-1 truncate">{acc.iban}</div>
                   )}
+                {g.type === "credit_card" && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">Tahsilat kapalı · masraf / ekstre</div>}
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
+                  <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
                 </div>
               </div>
               <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
                 <div>
                   <div className="text-[10px] text-slate-400 uppercase font-semibold">Toplam Bakiye</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
@@ -397,12 +443,14 @@ export default function BankingPage() {
                       </div>
                     </div>
                     {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider}</div>}
+                    {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
                     {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {acc.iban && acc.iban !== "-" && <div className="text-[11px] font-mono text-slate-400 truncate">{acc.iban}</div>}
                   </div>
                   <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                     <div>
                       <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
+                      <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
                       <div className="text-lg font-bold text-slate-900 tracking-tight">{money(acc.current_balance)} ₺</div>
                     </div>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{isSelected ? "Hareketler ↓" : "Hareketleri Gör"}</span>
@@ -433,6 +481,26 @@ export default function BankingPage() {
           ) : (
             <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
           )}
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedAccount || openGroup ? (
+              <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
+                <span className="text-slate-500">{visibleTx.length} hareket</span>
+                <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+                <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+              </div>
+            ) : (
+              <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
+            )}
+            <button
+              type="button"
+              onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40"
+              disabled={!visibleTx.length}
+              data-testid="print-statements-btn"
+            >
+              <Printer className="w-3.5 h-3.5" /> Ekstreleri Yazdır
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -481,6 +549,15 @@ export default function BankingPage() {
           </table>
         </div>
       </div>
+      {printTx && (
+        <AccountStatementPrint
+          company={activeCompany}
+          account={selectedAccount || null}
+          title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}
+          transactions={visibleTx}
+          onClose={() => setPrintTx(false)}
+        />
+      )}
       </>)}
 
       {/* VIRMAN MODAL */}
@@ -502,7 +579,7 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-source-select"
                 >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
+                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
                       {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
                     </option>

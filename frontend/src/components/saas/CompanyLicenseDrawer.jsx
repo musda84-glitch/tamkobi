@@ -1,11 +1,23 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2 } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS, QuotaBar, fmtBytes } from "./saasUi";
 
 const cred = { withCredentials: true };
+
+const dateInputValue = (iso) => {
+  const m = String(iso || "").match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+};
+
+const toIsoEndOfDay = (dateStr) => {
+  if (!dateStr) return null;
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 23, 59, 59)).toISOString();
+};
 
 export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onChanged }) => {
   const [d, setD] = useState(null);
@@ -14,8 +26,16 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
-  useEffect(() => { load(); }, [load]);
+  const [providers, setProviders] = useState([]);
+  const [eiProvider, setEiProvider] = useState("");
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => {
+    setD(r.data);
+    const l = r.data.license;
+    const ov = (k) => (l.quota_overrides && l.quota_overrides[k] != null && l.quota_overrides[k] !== "") ? String(l.quota_overrides[k]) : "";
+    setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: dateInputValue(l.trial_ends_at), expires_at: dateInputValue(l.expires_at), user_limit: ov("user_limit"), company_limit: ov("company_limit"), product_limit: ov("product_limit"), contact_limit: ov("contact_limit"), storage_limit_mb: ov("storage_limit_mb"), notes: l.notes || "", billing_period: l.billing_period || "monthly" });
+    setEiProvider(r.data.einvoice?.provider || "");
+  }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
@@ -27,7 +47,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   };
   const save = async () => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: toIsoEndOfDay(f.trial_ends_at), expires_at: toIsoEndOfDay(f.expires_at), user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit), product_limit: f.product_limit === "" ? null : Number(f.product_limit), contact_limit: f.contact_limit === "" ? null : Number(f.contact_limit), storage_limit_mb: f.storage_limit_mb === "" ? null : Number(f.storage_limit_mb) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
@@ -69,7 +89,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 text-slate-900 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
         <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
           <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -108,6 +128,35 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
             )}
           </section>
 
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. Firma paneli bu sağlayıcının kullanıcı adı ve şifresini girer.</p>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
+              <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider">
+                <option value="">Seçilmedi (GİB simüle)</option>
+                {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+              </select>
+            </div>
+            {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
+            <div className="flex justify-end">
+              <button type="button" onClick={async () => {
+                setBusy("ei");
+                try {
+                  const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
+                  setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
+                  setEiProvider(r.data.provider || "");
+                  toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
+                } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
+              }} disabled={busy === "ei"} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
+            </div>
+          </section>
+
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
             <h3 className="font-bold text-slate-900 text-sm">Lisans</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -118,14 +167,27 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
               <div><label className="block font-semibold text-slate-700 mb-1">Lisans Bitiş (boş = süresiz)</label><input type="date" value={f.expires_at} onChange={(e) => setF({ ...f, expires_at: e.target.value })} className={inputCls} data-testid="lic-expires" /></div>
               <div><label className="block font-semibold text-slate-700 mb-1">Kullanıcı Limiti (boş = paket: {plan?.user_limit || "∞"})</label><input type="number" min={0} value={f.user_limit} onChange={(e) => setF({ ...f, user_limit: e.target.value })} className={inputCls} data-testid="lic-user-limit" /></div>
               <div><label className="block font-semibold text-slate-700 mb-1">Şirket Limiti (boş = paket: {plan?.company_limit || "∞"})</label><input type="number" min={0} value={f.company_limit} onChange={(e) => setF({ ...f, company_limit: e.target.value })} className={inputCls} data-testid="lic-company-limit" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Stok kartı (boş = paket: {plan?.product_limit || "∞"})</label><input type="number" min={0} value={f.product_limit} onChange={(e) => setF({ ...f, product_limit: e.target.value })} className={inputCls} data-testid="lic-product-limit" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Cari kart (boş = paket: {plan?.contact_limit || "∞"})</label><input type="number" min={0} value={f.contact_limit} onChange={(e) => setF({ ...f, contact_limit: e.target.value })} className={inputCls} data-testid="lic-contact-limit" /></div>
+              <div><label className="block font-semibold text-slate-700 mb-1">Resim depolama MB (boş = paket: {plan?.storage_limit_mb || "∞"})</label><input type="number" min={0} value={f.storage_limit_mb} onChange={(e) => setF({ ...f, storage_limit_mb: e.target.value })} className={inputCls} data-testid="lic-storage-limit" /></div>
               <div className="sm:col-span-3"><label className="block font-semibold text-slate-700 mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inputCls} data-testid="lic-notes" /></div>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <span className="text-slate-500 flex items-center gap-1"><CalendarPlus className="w-3.5 h-3.5" /> Hızlı uzat:</span>
-              {[7, 30, 365].map((n) => <button key={n} onClick={() => extend(n)} disabled={!!busy} className="px-2.5 py-1.5 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`lic-extend-${n}`}>+{n} gün</button>)}
+              {[7, 30, 365].map((n) => <button key={n} type="button" onClick={() => extend(n)} disabled={!!busy} className="px-2.5 py-1.5 border border-slate-300 rounded-lg font-semibold text-slate-800 bg-white hover:bg-slate-100 disabled:opacity-50" data-testid={`lic-extend-${n}`}>+{n} gün</button>)}
               <button onClick={save} disabled={busy === "save"} className="ml-auto px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="lic-save">{busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
             </div>
             {lic.days_left !== null && lic.days_left !== undefined && <div className={`rounded-lg px-3 py-2 ${lic.days_left <= 7 ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-600"}`}>Bitiş: {fmtDate(lic.trial_ends_at || lic.expires_at)} · <b>{lic.days_left} gün</b> kaldı</div>}
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid="drawer-quotas">
+            <h3 className="font-bold text-slate-900 text-sm mb-3">Kaynak kullanımı (lisans toplamı)</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div><div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Stok kartı</div><QuotaBar used={d.quota_usage?.product_count ?? d.usage?.products ?? 0} limit={lic.product_limit || 0} testId="drawer-q-products" /></div>
+              <div><div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Cari kart</div><QuotaBar used={d.quota_usage?.contact_count ?? d.usage?.contacts ?? 0} limit={lic.contact_limit || 0} testId="drawer-q-contacts" /></div>
+              <div><div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Şirket</div><QuotaBar used={siblings.length} limit={lic.company_limit || 0} testId="drawer-q-companies" /></div>
+              <div><div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Resim</div><QuotaBar used={Number(((d.quota_usage?.storage_bytes || 0) / (1024 * 1024)).toFixed(1))} limit={lic.storage_limit_mb || 0} testId="drawer-q-storage" /><div className="text-[10px] text-slate-400 mt-0.5">{fmtBytes(d.quota_usage?.storage_bytes || d.usage?.storage_bytes || 0)}</div></div>
+            </div>
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">

@@ -15,9 +15,9 @@ _db = None
 _mail_account: Optional[Callable[..., Awaitable[dict]]] = None
 _current_user = None
 
-MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"),
-           ("/stock", "Stoklar & Ürünler"), ("/projects", "Teklif / Proje / Keşif"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/warehouses", "Depo"),
-           ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
+MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/edoc-inbox", "Gelen e-Belgeler"), ("/dis-ticaret", "İthalat / İhracat"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/b2b-yonetim", "B2B Portal Yönetimi"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"), ("/cheques", "Çek / Senet"),
+           ("/stock", "Stoklar & Ürünler"), ("/sayim", "Stok Sayımı"), ("/quotes", "Teklifler"), ("/projects", "Projeler"), ("/surveys", "Keşifler"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/saha", "Saha Sipariş"), ("/sevk", "Depo Sevkiyatı"), ("/warehouses", "Depo"),
+           ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/mesai", "Mesaim"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
            ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
 LEVELS = ("none", "view", "edit")
 FEATURES = [("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
@@ -25,6 +25,7 @@ FEATURES = [("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm A
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
               "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider",
+              "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider", "cheque_bond_balance", "portfolio", "issued_open", "due_this_week", "overdue_received", "overdue_issued", "meal_allowance", "transport_allowance", "unpaid_payroll", "unpaid_expenses", "meal_due", "transport_due", "bonus_pending", "advances",
               "value", "incoming", "outgoing", "collections", "payments", "not_due", "overdue", "payable", "receivable", "deductible", "calculated", "vat", "week", "today", "month_total", "yearly", "cash", "bank", "pos", "kdv", "ciro", "kar", "profit_amount", "spent_amount", "limit", "avg_order", "average"}
 
 
@@ -47,11 +48,11 @@ def _all(level: str) -> Dict[str, str]:
 
 DEFAULT_ROLES = [
     {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("edit")},
-    {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/reports": "edit", "/accountant": "edit", "/settings": "none", "/production": "none", "/atolye": "none"}},
-    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/dispatches": "edit", "/contacts": "edit", "/projects": "edit", "/orders": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/ecommerce": "view", "/cargo": "edit"}},
-    {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/warehouses": "edit", "/orders": "edit", "/cargo": "edit", "/dispatches": "edit"}},
+    {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/cheques": "edit", "/reports": "edit", "/accountant": "edit", "/settings": "none", "/production": "none", "/atolye": "none"}},
+    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit", "/orders": "edit", "/saha": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/ecommerce": "view", "/cargo": "edit"}},
+    {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/sayim": "edit", "/warehouses": "edit", "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit"}},
     {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/stock": "view", "/warehouses": "view"}},
-    {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/contacts": "view", "/banking": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view"}},
+    {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/edoc-inbox": "view", "/contacts": "view", "/banking": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view", "/mesai": "view"}},
 ]
 
 # API path prefix -> module key (longest prefix wins)
@@ -61,6 +62,11 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/edocs", "/invoices"), ("/api/trade-files", "/invoices"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
+                  ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
+                  ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
+                  ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
+                  ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/trash", "/trash"), ("/api/dashboard", "/")]
 SKIP_PREFIXES = ("/api/auth", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/system", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute")
 _license_guard = None
@@ -103,8 +109,16 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p.setdefault("/trash", p.get("/settings", "none"))
         p.setdefault("/expenses", p.get("/banking", "none"))
         p.setdefault("/loans", p.get("/banking", "none"))
+        p.setdefault("/cheques", p.get("/banking", "none"))
+        p.setdefault("/quotes", p.get("/projects", "none"))
+        p.setdefault("/surveys", p.get("/projects", "none"))
         p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
+        p.setdefault("/dis-ticaret", p.get("/invoices", "none"))
         p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
+        p.setdefault("/sayim", p.get("/stock", "none"))
+        p.setdefault("/saha", p.get("/orders", "none"))
+        p.setdefault("/sevk", p.get("/orders", "none"))
+        p.setdefault("/mesai", p.get("/personnel", "none"))
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 
@@ -187,7 +201,24 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
     counts = {}
     async for u in _db.users.find({"company_ids": company_id, "is_super_admin": {"$ne": True}}, {"role": 1}):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
-    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    policies = {"cash_dual_approval": bool(company.get("cash_dual_approval"))}
+    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "policies": policies, "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
+
+
+@router.put("/roles/policies")
+async def update_company_policies(req: Dict[str, Any]):
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    company = await _db.companies.find_one({"_id": company_id})
+    if not company:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    upd: Dict[str, Any] = {}
+    if "cash_dual_approval" in req:
+        upd["cash_dual_approval"] = bool(req["cash_dual_approval"])
+    if upd:
+        await _db.companies.update_one({"_id": company_id}, {"$set": {**upd, "updated_at": _now()}})
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    return {"status": "success", "policies": {"cash_dual_approval": bool(company.get("cash_dual_approval"))}}
 
 
 @router.post("/roles")

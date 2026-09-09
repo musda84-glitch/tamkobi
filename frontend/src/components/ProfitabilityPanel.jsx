@@ -43,7 +43,7 @@ const SettlementAccount = ({ ch, accounts, onSaved }) => {
       <div className="flex items-center gap-2">
         <select value={v} onChange={(e) => save(e.target.value)} disabled={busy} className="bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs flex-1" data-testid={`settlement-select-${ch.channel}`}>
           <option value="">Hesap seçilmedi (yalnızca "ödendi" işaretle)</option>
-          {accounts.map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
+          {accounts.filter((a) => a.type !== "credit_card").map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
         </select>
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
         {ch.settlement_account_name && !busy && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded" data-testid={`settlement-active-${ch.channel}`}>Aktif</span>}

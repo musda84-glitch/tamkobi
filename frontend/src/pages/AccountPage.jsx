@@ -7,6 +7,19 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 
 const TABS = [["sirketler", "Şirketlerim", Building2], ["kontor", "GİB Kontör", Wallet], ["paket", "Paketim", CreditCard], ["ayarlar", "Firma ayarları", Settings]];
+import { useSearchParams } from "react-router-dom";
+import { Building2, CreditCard, KeyRound, Loader2, Plus, Settings, UserRound, Wallet } from "lucide-react";
+import { API_URL, useAuth } from "../context/AuthContext";
+import { MyPlanPanel } from "../components/saas/MyPlanPanel";
+import SettingsPage from "./SettingsPage";
+
+const TABS = [
+  ["profil", "Profilim", UserRound],
+  ["sirketler", "Şirketlerim", Building2],
+  ["kontor", "GİB Kontör", Wallet],
+  ["paket", "Paketim", CreditCard],
+  ["ayarlar", "Firma ayarları", Settings],
+];
 
 export default function AccountPage() {
   const { activeCompany, companies, switchCompany, reloadSession, refreshLicense, user } = useAuth();
@@ -15,6 +28,15 @@ export default function AccountPage() {
   const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id;
   useEffect(() => { if (tab === "ayarlar") navigate("/settings", { replace: true }); }, [tab, navigate]);
+  const companyId = activeCompany?.id || activeCompany?._id;
+  const setTab = (k) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("tab", k);
+      if (k !== "ayarlar") next.delete("ayar");
+      return next;
+    });
+  };
   return (
     <div className="space-y-5" data-testid="account-page">
       <div>
@@ -25,6 +47,11 @@ export default function AccountPage() {
       <div className="flex gap-1 bg-white border border-slate-200 rounded-2xl p-1 w-fit flex-wrap">
         {TABS.map(([k, l, Icon]) => (
           <button key={k} type="button" onClick={() => setParams({ tab: k })} className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`} data-testid={`account-tab-${k}`}>
+        <p className="text-sm text-slate-500">Yalnızca sizin şirketleriniz. Profilinizi yönetin, yeni yasal şirket açın, GİB kontörü satın alın ve firma ayarlarını buradan düzenleyin.</p>
+      </div>
+      <div className="flex gap-1 bg-white border border-slate-200 rounded-2xl p-1 w-fit flex-wrap">
+        {TABS.map(([k, l, Icon]) => (
+          <button key={k} type="button" onClick={() => setTab(k)} className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`} data-testid={`account-tab-${k}`}>
             <Icon className="w-3.5 h-3.5" /> {l}
           </button>
         ))}
@@ -32,9 +59,55 @@ export default function AccountPage() {
       {tab === "sirketler" && <CompaniesTab companyId={companyId} companies={companies} switchCompany={switchCompany} reloadSession={reloadSession} refreshLicense={refreshLicense} canAdd={!user?.role || user.role === "admin" || user?.is_super_admin} />}
       {tab === "kontor" && <GibCreditsPanel companyId={companyId} />}
       {tab === "paket" && companyId && <MyPlanPanel companyId={companyId} />}
+      {tab === "profil" && <ProfileTab user={user} />}
+      {tab === "sirketler" && <CompaniesTab companyId={companyId} companies={companies} switchCompany={switchCompany} reloadSession={reloadSession} refreshLicense={refreshLicense} canAdd={!user?.role || user.role === "admin" || user?.is_super_admin} />}
+      {tab === "kontor" && <GibCreditsPanel companyId={companyId} />}
+      {tab === "paket" && companyId && <MyPlanPanel companyId={companyId} />}
+      {tab === "ayarlar" && <SettingsPage embedded />}
     </div>
   );
 }
+
+const ROLE_LABELS = { admin: "Yönetici", accountant: "Mali Müşavir", sales: "Satış & B2B", warehouse: "Depo Sorumlusu" };
+
+const ProfileTab = ({ user }) => {
+  const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (f.new_password !== f.new_password2) { toast.error("Yeni şifreler eşleşmiyor."); return; }
+    setBusy(true);
+    try {
+      await axios.post(`${API_URL}/auth/change-password`, { current_password: f.current_password, new_password: f.new_password }, { withCredentials: true });
+      setF({ current_password: "", new_password: "", new_password2: "" });
+      toast.success("Şifreniz güncellendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Şifre değiştirilemedi.");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-4 text-xs max-w-2xl" data-testid="account-profile">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-lg font-bold">{user?.name?.charAt(0) || "U"}</div>
+        <div>
+          <div className="font-bold text-slate-900 text-sm" data-testid="account-profile-name">{user?.name || "Kullanıcı"}</div>
+          <div className="text-slate-500" data-testid="account-profile-email">{user?.email}</div>
+          <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">{user?.role_name || ROLE_LABELS[user?.role] || user?.role || "Üye"}</div>
+        </div>
+      </div>
+      <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-change-password">
+        <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-amber-500" /> Şifre değiştir</h3>
+        <p className="text-[11px] text-slate-500">Hesabınızın şifresini buradan güncelleyin. Mevcut şifre doğrulanır; yeni şifre en az 6 karakter olmalıdır.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div><label className="block font-semibold text-slate-700 mb-1">Mevcut şifre</label><input type="password" required value={f.current_password} onChange={(e) => setF({ ...f, current_password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-chg-current" autoComplete="current-password" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Yeni şifre</label><input type="password" required minLength={6} value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-chg-new" autoComplete="new-password" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Yeni şifre (tekrar)</label><input type="password" required value={f.new_password2} onChange={(e) => setF({ ...f, new_password2: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-chg-new2" autoComplete="new-password" /></div>
+        </div>
+        <div className="flex justify-end"><button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="account-chg-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Şifreyi değiştir</button></div>
+      </form>
+    </div>
+  );
+};
 
 const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refreshLicense, canAdd }) => {
   const [form, setForm] = useState({ name: "", tax_number: "", city: "" });
@@ -55,6 +128,7 @@ const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refr
   return (
     <div className="space-y-4 text-xs" data-testid="account-companies">
       <ul className="bg-white border border-slate-200 rounded-2xl divide-y">
+        {mine.length === 0 && <li className="px-4 py-6 text-slate-400">Bu hesapta şirket yok.</li>}
         {mine.map((c) => {
           const id = c.id || c._id;
           const on = id === companyId;
@@ -73,6 +147,10 @@ const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refr
         <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-4 gap-2 items-end" data-testid="account-add-form">
           <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
           <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
+        <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-5 gap-2 items-end" data-testid="account-add-form">
+          <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Şehir</label><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="İl" data-testid="hesap-new-co-city" /></div>
           <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="hesap-new-co-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Şirket aç</button>
         </form>
       )}

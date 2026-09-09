@@ -97,6 +97,16 @@ def test_upsert_copies_selector_id_before_random_id():
     )
     assert set_doc["_id"] == "comp_std1"
     assert set_doc["plan_id"] == "plan_standard"
+def test_upsert_keeps_filter_id():
+    from mysql_store import new_upsert_doc
+    doc = new_upsert_doc(
+        {"$set": {"plan_id": "plan_standard", "status": "trial"}, "$setOnInsert": {"created_at": "now"}},
+        {"_id": "comp_abc"},
+    )
+    assert doc["_id"] == "comp_abc"
+    assert doc["plan_id"] == "plan_standard"
+    assert doc["status"] == "trial"
+    assert doc["created_at"] == "now"
 
 
 def test_project_and_sort():

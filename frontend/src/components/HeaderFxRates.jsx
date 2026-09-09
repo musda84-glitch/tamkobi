@@ -41,6 +41,9 @@ export const HeaderFxRates = ({ companyId }) => {
     } catch {
       // Keep the chip visible even if TCMB/API is down — user can still type a rate.
       setPack((p) => p || { date: "", rates: {} });
+      setPack(r.data);
+    } catch (e) {
+      if (e.response?.status === 404) setPack(null);
     }
   }, [companyId, masked]);
 
@@ -64,6 +67,14 @@ export const HeaderFxRates = ({ companyId }) => {
     try {
       const r = await axios.post(`${API_URL}/fx/fetch`, { date: view.date }, { ...cred, params: { company_id: companyId } });
       setPack({ ...view, date: r.data.date, source: "tcmb", rates: r.data.rates || view.rates });
+  if (masked || !companyId || !pack) return null;
+
+  const src = sourceLabel(pack);
+  const fetchTcmb = async () => {
+    setBusy("fetch");
+    try {
+      const r = await axios.post(`${API_URL}/fx/fetch`, { date: pack.date }, { ...cred, params: { company_id: companyId } });
+      setPack({ ...pack, date: r.data.date, source: "tcmb", rates: r.data.rates || pack.rates });
       setDraft({});
       toast.success(r.data.message || "TCMB kurları alındı.");
     } catch (e) {
@@ -76,6 +87,11 @@ export const HeaderFxRates = ({ companyId }) => {
     setBusy(code);
     try {
       const row = await axios.put(`${API_URL}/fx/rates`, { date: view.date, currency: code, rate }, { ...cred, params: { company_id: companyId } });
+    const rate = Number(draft[code] ?? pack.rates?.[code]?.rate);
+    if (!rate) return toast.error("Kur girin.");
+    setBusy(code);
+    try {
+      const row = await axios.put(`${API_URL}/fx/rates`, { date: pack.date, currency: code, rate }, { ...cred, params: { company_id: companyId } });
       setPack((p) => ({ ...p, source: "manual", rates: { ...(p?.rates || {}), [code]: row.data } }));
       setDraft((d) => { const n = { ...d }; delete n[code]; return n; });
       toast.success(`${code} kuru kaydedildi.`);
@@ -99,6 +115,7 @@ export const HeaderFxRates = ({ companyId }) => {
             <span key={code} className="whitespace-nowrap">
               <span className="font-semibold text-slate-500">{code}</span>{" "}
               <span className="font-bold text-slate-800">{fmtRate(view.rates?.[code]?.rate)}</span>
+              <span className="font-bold text-slate-800">{fmtRate(pack.rates?.[code]?.rate)}</span>
             </span>
           ))}
         </span>
@@ -115,6 +132,7 @@ export const HeaderFxRates = ({ companyId }) => {
               <div className="font-bold text-slate-900">Döviz kurları</div>
               <div className="text-[10px] text-slate-400 mt-0.5">
                 {src.kind === "manual" ? "Ayarlı (manuel) kur" : src.kind === "empty" ? "Kur henüz yok — TCMB çekin veya yazın" : "Otomatik TCMB kuru"} · {view.date || "bugün"}
+                {src.kind === "manual" ? "Ayarlı (manuel) kur" : "Otomatik TCMB kuru"} · {pack.date || "bugün"}
               </div>
             </div>
             {canEdit && (
@@ -132,6 +150,7 @@ export const HeaderFxRates = ({ companyId }) => {
           <div className="divide-y divide-slate-100">
             {EDIT_CODES.map((code) => {
               const row = view.rates?.[code] || {};
+              const row = pack.rates?.[code] || {};
               const val = draft[code] ?? row.rate ?? "";
               return (
                 <div key={code} className="flex items-center gap-2 py-1.5" data-testid={`header-fx-row-${code}`}>

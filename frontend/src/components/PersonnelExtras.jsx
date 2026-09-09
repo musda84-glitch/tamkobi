@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { CalendarDays, Plus, Check, X, Calculator, Gift, Trash2, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -76,7 +77,7 @@ export const BonusPanel = ({ companyId, employees, accounts, onChanged }) => {
   const [form, setForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), account_id: "", note: "" });
   const load = useCallback(async () => { const r = await axios.get(`${API_URL}/personnel/bonuses?company_id=${companyId}`); setBonuses(r.data); }, [companyId]);
   useEffect(() => { load(); }, [load]);
-  const save = async (e) => { e.preventDefault(); try { await axios.post(`${API_URL}/personnel/bonuses`, { ...form, employee_id: form.employee_id || employees[0]?.id, amount: Number(form.amount), account_id: form.account_id || null }); toast.success("Ödeme kaydedildi."); setForm({ ...form, amount: "", note: "" }); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
+  const save = async (e) => { e.preventDefault(); try { const { account_id: target, ...rest } = form; await axios.post(`${API_URL}/personnel/bonuses`, { ...rest, employee_id: form.employee_id || employees[0]?.id, amount: Number(form.amount), ...splitPaymentTarget(target) }); toast.success("Ödeme kaydedildi."); setForm({ ...form, amount: "", note: "" }); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const remove = async (id) => { await axios.delete(`${API_URL}/personnel/bonuses/${id}`); load(); onChanged?.(); };
   const total = bonuses.filter((b) => b.period === form.period).reduce((s, b) => s + b.amount, 0);
   return (
@@ -86,7 +87,7 @@ export const BonusPanel = ({ companyId, employees, accounts, onChanged }) => {
         <div><label className="block font-semibold mb-1">Çalışan</label><select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} className={inputCls} data-testid="bonus-employee-select">{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
         <div className="grid grid-cols-3 gap-1">{[["bonus", "Prim"], ["second_salary", "2. Maaş"], ["advance", "Avans"]].map(([k, l]) => <button key={k} type="button" onClick={() => setForm({ ...form, type: k })} className={`p-2 rounded-lg border font-semibold ${form.type === k ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid={`bonus-type-${k}`}>{l}</button>)}</div>
         <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Dönem</label><input type="month" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={`${inputCls} font-bold`} required data-testid="bonus-amount-input" /></div></div>
-        <div><label className="block font-semibold mb-1">Ödeme Kaynağı</label><select value={form.account_id} onChange={(e) => setForm({ ...form, account_id: e.target.value })} className={inputCls} data-testid="bonus-account-select"><option value="">Sadece kaydet (ödeme yok)</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} ({fmt(a.current_balance)} ₺)</option>)}</select></div>
+        <div><label className="block font-semibold mb-1">Ödeme Kaynağı</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={form.account_id} onChange={(v) => setForm({ ...form, account_id: v })} testId="bonus-account-select" emptyLabel="Sadece kaydet (ödeme yok)" /></div>
         <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Not" className={inputCls} />
         <button type="submit" className="w-full py-2 bg-amber-500 text-white rounded-lg font-semibold" data-testid="save-bonus-btn">Kaydet</button>
       </form>

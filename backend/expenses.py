@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from bank_guard import assert_manual_allowed
+import partner_pay
 import fx
 
 router = APIRouter(prefix="/api")
@@ -44,7 +45,12 @@ async def _next_number(company_id: str) -> str:
     return f"MSR-{year}-{n:04d}"
 
 
-async def _post_payment(exp: dict, account_id: str, pay_date: str):
+async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
+    if partner_id:
+        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, fx.try_amount(exp, exp.get("total")), f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
+        return f"{name} (Ortak)"
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
     acc = await _db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
@@ -66,6 +72,7 @@ async def _reverse_payment(exp: dict):
     if bt:
         await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
         await _db.bank_transactions.delete_one({"_id": bt["_id"]})
+    await partner_pay.reverse_one(_db, {"expense_id": exp["_id"]})
 
 
 async def record_card_spend(
@@ -136,7 +143,7 @@ async def add_category(req: Dict[str, Any]):
 
 
 @router.get("/expenses")
-async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None):
+async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None, project_id: Optional[str] = None):
     query: Dict[str, Any] = {"company_id": company_id}
     if date_from or date_to:
         query["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
@@ -146,6 +153,8 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
         query["payment_status"] = status
     if employee_id:
         query["employee_id"] = employee_id
+    if project_id:
+        query["project_id"] = project_id
     if q:
         query["$or"] = [{"description": {"$regex": q, "$options": "i"}}, {"expense_number": {"$regex": q, "$options": "i"}}, {"contact_name": {"$regex": q, "$options": "i"}}, {"notes": {"$regex": q, "$options": "i"}}]
     rows = [_clean(x) for x in await _db.expenses.find(query).sort("date", -1).to_list(2000)]
@@ -179,16 +188,19 @@ async def create_expense(req: Dict[str, Any]):
     emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req.get("employee_id") else None
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
            "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None,
+           "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
-           "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
+           "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
     if req.get("is_recurring"):
         d = date.fromisoformat(doc["date"])
         doc["next_date"] = (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
     await _db.expenses.insert_one(doc)
-    if req.get("account_id"):
-        doc["account_name"] = await _post_payment(doc, req["account_id"], doc["date"])
-        doc.update({"payment_status": "paid", "account_id": req["account_id"], "paid_date": doc["date"]})
-        await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": req["account_id"], "account_name": doc["account_name"], "paid_date": doc["date"]}})
+    pay_acc = req.get("account_id") or None
+    pay_partner = req.get("partner_id") or None
+    if pay_acc or pay_partner:
+        doc["account_name"] = await _post_payment(doc, pay_acc, doc["date"], partner_id=pay_partner)
+        doc.update({"payment_status": "paid", "account_id": None if pay_partner else pay_acc, "partner_id": pay_partner, "paid_date": doc["date"]})
+        await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"]}})
     if req.get("category") and req["category"] not in DEFAULT_CATEGORIES:
         await add_category({"company_id": company_id, "name": req["category"]})
     b = await _db.expense_budgets.find_one({"company_id": company_id, "category": doc["category"]})
@@ -207,6 +219,7 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
     if not exp:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate", "fx_source") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "currency", "fx_rate", "fx_source") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:
@@ -222,12 +235,21 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
         c = await _db.contacts.find_one({"_id": req["contact_id"]}) if req["contact_id"] else None
         upd["contact_id"] = c["_id"] if c else None
         upd["contact_name"] = c["name"] if c else upd.get("contact_name")
+    if "project_id" in upd:
+        upd["project_id"] = upd["project_id"] or None
     merged = {**exp, **upd}
     if exp.get("source") != "card_statement" and exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or req.get("account_id") and req["account_id"] != exp.get("account_id")):
+    new_acc = req["account_id"] if "account_id" in req else exp.get("account_id")
+    new_partner = req["partner_id"] if "partner_id" in req else exp.get("partner_id")
+    if new_partner:
+        new_acc = None
+    if new_acc:
+        new_partner = None
+    if exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or new_acc != exp.get("account_id") or new_partner != exp.get("partner_id")):
         await _reverse_payment(exp)
-        acc_id = req.get("account_id") or exp["account_id"]
-        upd["account_name"] = await _post_payment(merged, acc_id, exp.get("paid_date") or merged["date"])
-        upd["account_id"] = acc_id
+        upd["account_name"] = await _post_payment(merged, new_acc, exp.get("paid_date") or merged["date"], partner_id=new_partner)
+        upd["account_id"] = new_acc
+        upd["partner_id"] = new_partner
     upd["updated_at"] = _now()
     await _db.expenses.update_one({"_id": expense_id}, {"$set": upd})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
@@ -240,11 +262,13 @@ async def pay_expense(expense_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     if exp.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu masraf zaten ödendi.")
-    if not req.get("account_id"):
-        raise HTTPException(status_code=400, detail="Kasa/Banka hesabı seçin.")
+    if not req.get("account_id") and not req.get("partner_id"):
+        raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
     pay_date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    name = await _post_payment(exp, req["account_id"], pay_date)
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "paid", "account_id": req["account_id"], "account_name": name, "paid_date": pay_date}})
+    partner_id = req.get("partner_id") or None
+    account_id = None if partner_id else req.get("account_id")
+    name = await _post_payment(exp, account_id, pay_date, partner_id=partner_id)
+    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "paid_date": pay_date}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 
@@ -256,7 +280,7 @@ async def unpay_expense(expense_id: str):
     if exp.get("source") == "card_statement":
         raise HTTPException(status_code=400, detail="Kart ekstresi masrafının ödemesi kart hareketinden gelir; geri alınamaz.")
     await _reverse_payment(exp)
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None}})
+    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 

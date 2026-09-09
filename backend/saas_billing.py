@@ -88,13 +88,31 @@ async def _apply_payment(tx: dict):
         return
     lic = await _db.company_licenses.find_one({"_id": tx["company_id"]}) or {}
     cur = lic.get("expires_at")
+    if tx.get("product_type") == "gib_credits" or str(tx.get("pack_id") or "").startswith("gib_"):
+        await gib_credits.apply_purchase(tx)
+        return
+    cid = tx["company_id"]
+    lid = await saas.license_id_of(cid)
+    lic = await _db.company_licenses.find_one({"_id": lid}) or await _db.company_licenses.find_one({"_id": cid}) or {}
     start = datetime.now(timezone.utc)
-    if lic.get("status") == "active" and lic.get("plan_id") == tx["plan_id"] and cur and datetime.fromisoformat(cur) > start:
-        start = datetime.fromisoformat(cur)
-    ends = (start + timedelta(days=PERIOD_DAYS[tx["period"]])).isoformat()
-    await _db.company_licenses.update_one({"_id": tx["company_id"]}, {"$set": {"plan_id": tx["plan_id"], "status": "active", "billing_period": tx["period"], "expires_at": ends, "trial_ends_at": None, "last_payment_at": _now(), "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "module_overrides": {}}}, upsert=True)
-    await _db.upgrade_requests.update_many({"company_id": tx["company_id"], "status": "pending"}, {"$set": {"status": "approved", "admin_note": "Online ödeme ile aktif edildi", "resolved_at": _now()}})
-    saas.invalidate(tx["company_id"])
+    cur = saas._as_dt(lic.get("expires_at"))
+    if lic.get("status") == "active" and lic.get("plan_id") == tx["plan_id"] and cur and cur > start:
+        start = cur
+    period = tx.get("period") if tx.get("period") in PERIOD_DAYS else "monthly"
+    ends = (start + timedelta(days=PERIOD_DAYS[period])).isoformat()
+    fields = {
+        "plan_id": tx["plan_id"], "status": "active", "billing_period": period,
+        "expires_at": ends, "trial_ends_at": None, "last_payment_at": _now(), "updated_at": _now(),
+    }
+    if lic.get("plan_id") != tx["plan_id"]:
+        fields["module_overrides"] = {}
+    await _db.company_licenses.update_one(
+        {"_id": lid},
+        {"$set": fields, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "module_overrides": {}, "company_id": lid}},
+        upsert=True,
+    )
+    await _db.upgrade_requests.update_many({"company_id": cid, "status": "pending"}, {"$set": {"status": "approved", "admin_note": "Online ödeme ile aktif edildi", "resolved_at": _now()}})
+    saas.invalidate(lid)
     try:
         import saas_extras
         await saas_extras.issue_subscription_invoice(tx)
@@ -165,6 +183,8 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
     sender = await _db.mail_accounts.find_one({"company_id": s["sender_company_id"]}, {"email": 1})
     wa = await _db.whatsapp_settings.find_one({"company_id": s["sender_company_id"]}, {"phone_number_id": 1})
     return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
+    plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
+    return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
 
 
 @router.put("/system/settings")
@@ -182,6 +202,20 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
             packs.append({"id": str(p.get("id") or f"gib_{len(packs)+1}"), "name": str(p.get("name") or "").strip() or "Kontör", "credits": max(1, int(p.get("credits") or 0)), "price": max(0, float(p.get("price") or 0)), "tagline": str(p.get("tagline") or "")[:80], "popular": bool(p.get("popular"))})
         if packs:
             upd["gib_packs"] = packs
+        cleaned = []
+        for p in req["gib_packs"]:
+            if not isinstance(p, dict) or not p.get("id"):
+                continue
+            cleaned.append({
+                "id": str(p["id"])[:40],
+                "name": (p.get("name") or p["id"])[:80],
+                "credits": max(0, int(p.get("credits") or 0)),
+                "price": max(0.0, float(p.get("price") or 0)),
+                "tagline": (p.get("tagline") or "")[:120],
+                "popular": bool(p.get("popular")),
+            })
+        if cleaned:
+            upd["gib_packs"] = cleaned
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {**upd, "updated_at": _now()}}, upsert=True)
     return await settings()
 
@@ -193,10 +227,10 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     brand = st.get("brand_name", "TamKobi")
     if kind == "expired":
         title = f"{brand} {'deneme süreniz' if lic['status'] == 'expired' and lic.get('trial_ends_at') else 'lisansınız'} sona erdi"
-        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin süresi doldu; modüller kilitlendi. Kullanmaya devam etmek için Firma Ayarları → Paketim & Modüller ekranından ödeme yapabilir ya da bizimle iletişime geçebilirsiniz."
+        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin süresi doldu; modüller kilitlendi. Kullanmaya devam etmek için Hesap → Paketim ekranından ödeme yapabilir ya da bizimle iletişime geçebilirsiniz."
     else:
         title = f"{brand}: {lic['plan_name']} paketiniz {lic['days_left']} gün içinde sona eriyor"
-        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Firma Ayarları → Paketim & Modüller ekranından yenileyebilirsiniz."
+        body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Hesap → Paketim ekranından yenileyebilirsiniz."
     if st.get("support_email") or st.get("support_phone"):
         body += f" Destek: {st.get('support_email', '')} {st.get('support_phone', '')}".rstrip()
     base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
@@ -210,7 +244,8 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:
-            acc = await _deps["mail_account"](st["sender_company_id"])
+            import platform_mail
+            acc = await platform_mail.resolve_smtp_account("transactional") or await _deps["mail_account"](st["sender_company_id"])
             btn = f"<p style='margin-top:16px'><a href='{link}' style='background:#10b981;color:#0f172a;padding:12px 20px;border-radius:12px;font-weight:bold;text-decoration:none'>Şimdi Yenile →</a></p>" if link else ""
             await _deps["smtp_send"](acc, emails, title, body, html=f"<div style='font-family:Arial,sans-serif;max-width:600px'><h2 style='color:#0f172a'>{title}</h2><p>{body.replace(' Tek tıkla yenilemek için: ' + link, '') if link else body}</p>{btn}</div>")
             res["email"] = emails
@@ -309,6 +344,9 @@ async def public_signup(req: Dict[str, Any], response: Response):
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
+    await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"])
+    import demo as demo_pack
+    await demo_pack.seed_for_new_company(cid)
     response.set_cookie(key="access_token", value=create_access_token(uid, email, "admin"), httponly=True, max_age=86400 * 7, path="/")
     response.set_cookie(key="refresh_token", value=create_refresh_token(uid), httponly=True, max_age=86400 * 30, path="/")
     return {"status": "success", "company_id": cid, "user": {"id": uid, "email": email, "name": name, "role": "admin"}, "license": await saas.effective(cid), "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı."}

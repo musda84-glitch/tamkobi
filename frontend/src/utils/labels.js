@@ -8,6 +8,7 @@ export const STATUS_TR = {
   declared: "Beyanname verildi", cleared: "Gümrük çıktı", invoiced: "Faturalandı"
 };
 export const CHANNEL_TR = { manual: "Manuel", b2b: "B2B", trendyol: "Trendyol", hepsiburada: "Hepsiburada", amazon: "Amazon", shopify: "Shopify", n11: "N11", woocommerce: "WooCommerce", ciceksepeti: "Çiçeksepeti", pazarama: "Pazarama", sms: "SMS", email: "E-posta", whatsapp: "WhatsApp", trade: "Dış Ticaret", saha: "Saha" };
+export const CHANNEL_TR = { manual: "Manuel", b2b: "B2B", saha: "Saha", trade: "Dış Ticaret", trendyol: "Trendyol", hepsiburada: "Hepsiburada", amazon: "Amazon", shopify: "Shopify", n11: "N11", woocommerce: "WooCommerce", ciceksepeti: "Çiçeksepeti", pazarama: "Pazarama", sms: "SMS", email: "E-posta", whatsapp: "WhatsApp" };
 export const CONTEXT_TR = { manual: "Manuel", invoice: "Fatura", order: "Sipariş", contact: "Cari", campaign: "Kampanya", statement: "Ekstre", installment: "Taksit", quote_approval: "Teklif Onayı", whatsapp_api: "WhatsApp", reminder: "Hatırlatma", cargo: "Kargo" };
 export const DIRECTION_TR = { inbound: "Gelen", outbound: "Giden", receivable: "Alacak", payable: "Borç" };
 export const E_TYPE_TR = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat" };

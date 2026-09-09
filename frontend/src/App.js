@@ -25,6 +25,8 @@ import ProjectsPage from "./pages/ProjectsPage";
 import InstallmentsPage from "./pages/InstallmentsPage";
 import QuoteApprovalPage from "./pages/QuoteApprovalPage";
 import ShopFloorPage from "./pages/ShopFloorPage";
+import StockCountKioskPage from "./pages/StockCountKioskPage";
+import OrderPickKioskPage from "./pages/OrderPickKioskPage";
 import ReportsPage from "./pages/ReportsPage";
 import B2BPortalPage from "./pages/B2BPortalPage";
 import AccountantPage from "./pages/AccountantPage";
@@ -32,6 +34,7 @@ import InviteAcceptPage from "./pages/InviteAcceptPage";
 import LoginPage from "./pages/LoginPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import LoansPage from "./pages/LoansPage";
+import ChequesPage from "./pages/ChequesPage";
 import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
@@ -45,6 +48,7 @@ import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
 import B2BResetPage from "./pages/B2BResetPage";
 import B2BAdminPage from "./pages/B2BAdminPage";
+import FieldSalesPage from "./pages/FieldSalesPage";
 import TradePage from "./pages/TradePage";
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
@@ -66,6 +70,7 @@ export default function App() {
             <Route path="/ecommerce" element={<EcommercePage />} />
             <Route path="/cargo" element={<CargoPage />} />
             <Route path="/orders" element={<OrdersB2BPage />} />
+            <Route path="/saha" element={<FieldSalesPage />} />
             <Route path="/warehouses" element={<WarehousePage />} />
             <Route path="/production" element={<ProductionPage />} />
             <Route path="/personnel" element={<PersonnelPage />} />
@@ -74,17 +79,22 @@ export default function App() {
             <Route path="/communication" element={<CommunicationPage />} />
             <Route path="/hesap" element={<AccountPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/quotes" element={<ProjectsPage section="quotes" />} />
+            <Route path="/projects" element={<ProjectsPage section="projects" />} />
+            <Route path="/surveys" element={<ProjectsPage section="surveys" />} />
             <Route path="/accountant" element={<AccountantPage />} />
             <Route path="/installments" element={<InstallmentsPage />} />
             <Route path="/teklif/:token" element={<QuoteApprovalPage />} />
             <Route path="/atolye" element={<ShopFloorPage />} />
+            <Route path="/sayim" element={<StockCountKioskPage />} />
+            <Route path="/sevk" element={<OrderPickKioskPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/portal/:token" element={<B2BPortalPage />} />
             <Route path="/davet/:token" element={<InviteAcceptPage />} />
             <Route path="/dispatches" element={<DispatchesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/loans" element={<LoansPage />} />
+            <Route path="/cheques" element={<ChequesPage />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/edoc-inbox" element={<EdocInboxPage />} />
             <Route path="/sistem/giris" element={<SystemLoginPage />} />
