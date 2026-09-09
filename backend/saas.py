@@ -31,37 +31,54 @@ PANEL_MODULE_FROM = {
     "/sevk": "/orders",
     "/mesai": "/personnel",
 }
-CATEGORIES = {"/invoices": "Muhasebe", "/edoc-inbox": "Muhasebe", "/dis-ticaret": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
-              "/stock": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/mesai": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
-DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv", "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım", "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre ve bakiye", "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi ve sipariş onayları", "/installments": "Taksitli satış ve ödeme planları",
-                "/banking": "Banka, kasa, POS, virman, canlı banka eşleme", "/expenses": "Masraf ve bütçe yönetimi", "/loans": "Kredi ve kredi kartı takibi", "/cheques": "Alınan/verilen çek ve senet girişi, tahsil, ciro, karşılıksız", "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları", "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu", "/warehouses": "Çoklu depo ve transfer", "/sevk": "Depo sevkiyat kiosk, sipariş toplama", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri",
-                "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme", "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı", "/surveys": "Keşif, ölçü ve teklife dönüştürme",
-                "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/saha": "Tablet saha sipariş ve müşteri ziyareti", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, vardiya, izin", "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
+CATEGORIES = {
+    "/invoices": "Muhasebe", "/edoc-inbox": "Muhasebe", "/dis-ticaret": "Muhasebe", "/dispatches": "Muhasebe",
+    "/contacts": "Muhasebe", "/installments": "Muhasebe",
+    "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans",
+    "/reports": "Raporlama", "/accountant": "Raporlama",
+    "/stock": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo",
+    "/production": "Üretim", "/atolye": "Üretim",
+    "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış",
+    "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret",
+    "/personnel": "İK", "/mesai": "İK",
+    "/communication": "İletişim",
+    "/ai-advisor": "Yapay Zeka",
+}
+DESCRIPTIONS = {
+    "/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv",
+    "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım",
+    "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura",
+    "/dispatches": "e-İrsaliye oluşturma ve takip",
+    "/contacts": "Müşteri/tedarikçi kartları, ekstre ve bakiye",
+    "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi ve sipariş onayları",
+    "/installments": "Taksitli satış ve ödeme planları",
+    "/banking": "Banka, kasa, POS, virman, canlı banka eşleme",
+    "/expenses": "Masraf ve bütçe yönetimi",
+    "/loans": "Kredi ve kredi kartı takibi",
+    "/cheques": "Alınan/verilen çek ve senet girişi, tahsil, ciro, karşılıksız",
+    "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları",
+    "/accountant": "Mali müşavir paneli ve beyanname özetleri",
+    "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı",
+    "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu",
+    "/warehouses": "Çoklu depo ve transfer",
+    "/sevk": "Depo sevkiyat kiosk, sipariş toplama",
+    "/production": "Reçete (BOM) ve üretim emirleri",
+    "/atolye": "Tablet atölye ekranı ve iş emirleri",
+    "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme",
+    "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı",
+    "/surveys": "Keşif, ölçü ve teklife dönüştürme",
+    "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi",
+    "/saha": "Tablet saha sipariş ve müşteri ziyareti",
+    "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu",
+    "/cargo": "Geliver ve kargo firmaları entegrasyonu",
+    "/personnel": "Personel, bordro, vardiya, izin",
+    "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai",
+    "/communication": "SMS, e-posta, WhatsApp Business",
+    "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım",
+}
 
 _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/sayim", "/reports"]
 _STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/saha", "/sevk", "/communication", "/accountant"]
-_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
-CATEGORIES = {"/invoices": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
-              "/stock": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
-DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv, gelen e-belge kutusu", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre, bakiye, B2B portal", "/installments": "Taksitli satış ve ödeme planları",
-                "/banking": "Banka, kasa, POS, virman, canlı banka eşleme", "/expenses": "Masraf ve bütçe yönetimi", "/loans": "Kredi ve kredi kartı takibi", "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları", "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/warehouses": "Çoklu depo, transfer, stok sayımı", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri",
-                "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme", "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı", "/surveys": "Keşif, ölçü ve teklife dönüştürme",
-                "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, puantaj, vardiya, izin", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
-
-_STARTER = ["/invoices", "/dispatches", "/contacts", "/banking", "/expenses", "/stock", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/quotes", "/projects", "/surveys", "/orders", "/communication", "/accountant"]
-_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/ai-advisor"]
-CATEGORIES = {"/invoices": "Muhasebe", "/edoc-inbox": "Muhasebe", "/dis-ticaret": "Muhasebe", "/dispatches": "Muhasebe", "/contacts": "Muhasebe", "/installments": "Muhasebe", "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/reports": "Raporlama", "/accountant": "Raporlama",
-              "/stock": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo", "/production": "Üretim", "/atolye": "Üretim", "/projects": "Satış", "/orders": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış", "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret", "/personnel": "İK", "/mesai": "İK", "/communication": "İletişim", "/ai-advisor": "Yapay Zeka"}
-DESCRIPTIONS = {"/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv", "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım", "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura", "/dispatches": "e-İrsaliye oluşturma ve takip", "/contacts": "Müşteri/tedarikçi kartları, ekstre ve bakiye", "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi ve sipariş onayları", "/installments": "Taksitli satış ve ödeme planları",
-                "/banking": "Banka, kasa, POS, virman, canlı banka eşleme", "/expenses": "Masraf ve bütçe yönetimi", "/loans": "Kredi ve kredi kartı takibi", "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları", "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-                "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı", "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu", "/warehouses": "Çoklu depo ve transfer", "/sevk": "Depo sevkiyat kiosk, sipariş toplama", "/production": "Reçete (BOM) ve üretim emirleri", "/atolye": "Tablet atölye ekranı ve iş emirleri", "/projects": "Teklif, proje ve keşif yönetimi",
-                "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi", "/saha": "Tablet saha sipariş ve müşteri ziyareti", "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu", "/cargo": "Geliver ve kargo firmaları entegrasyonu", "/personnel": "Personel, bordro, vardiya, izin", "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai", "/communication": "SMS, e-posta, WhatsApp Business", "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım"}
-
-_STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/sayim", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/projects", "/orders", "/saha", "/sevk", "/communication", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_MODULE_PRICES = {

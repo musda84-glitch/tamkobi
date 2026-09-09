@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -110,15 +111,28 @@ const WhatsAppSettings = ({ companyId }) => {
 
 const ModuleOrder = () => {
   const { menuItems, moveModule, resetModuleOrder } = useAuth();
+  const groups = groupMenuItems(menuItems);
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-2" data-testid="module-order-settings">
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-3" data-testid="module-order-settings">
       <div className="flex justify-between items-center"><h3 className="text-sm font-bold">Modül Sıralama</h3><button onClick={resetModuleOrder} className="text-slate-500 hover:underline">Varsayılana dön</button></div>
-      <p className="text-slate-500">Sol menüde modülleri sürükleyip bırakarak da sıralayabilirsiniz.</p>
-      {menuItems.map((m, i) => (
-        <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
-          <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
-          <button onClick={() => moveModule(i, i - 1)} disabled={i === 0} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
-          <button onClick={() => moveModule(i, i + 1)} disabled={i === menuItems.length - 1} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+      <p className="text-slate-500">Sol menü paket kategorileriyle (Muhasebe, Finans, Satış…) aynı klasörlerdedir. Aynı paket içinde sürükleyerek veya oklarla sıralayabilirsiniz.</p>
+      {groups.map((g) => (
+        <div key={g.id} className="space-y-1.5">
+          {g.label && <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 pt-1">{g.label}</div>}
+          {g.items.map((m) => {
+            const i = menuItems.findIndex((x) => x.path === m.path);
+            const prev = menuItems[i - 1];
+            const next = menuItems[i + 1];
+            const canUp = prev && groupIdOf(prev.path) === groupIdOf(m.path);
+            const canDown = next && groupIdOf(next.path) === groupIdOf(m.path);
+            return (
+              <div key={m.path} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`module-order-row-${m.path.replace("/", "") || "dashboard"}`}>
+                <span className="w-5 text-slate-400 font-mono">{i + 1}</span><span className="flex-1 font-semibold">{m.label}</span>
+                <button onClick={() => moveModule(i, i - 1)} disabled={!canUp} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-up-${i}`}>↑</button>
+                <button onClick={() => moveModule(i, i + 1)} disabled={!canDown} className="px-2 py-0.5 border rounded disabled:opacity-30" data-testid={`module-down-${i}`}>↓</button>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
@@ -216,11 +230,21 @@ export default function SettingsPage() {
       <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
-          {TABS.map(([k, l, Icon]) => (
-            <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
-              <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
-            </button>
-          ))}
+          {SETTINGS_TAB_GROUPS.map((g) => {
+            const tabs = TABS.filter(([k]) => g.tabs.includes(k));
+            if (!tabs.length) return null;
+            const groupActive = g.tabs.includes(tab);
+            return (
+              <div key={g.id} className={`flex lg:flex-col gap-1 shrink-0 ${groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
+                <div className={`hidden lg:block px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
+                {tabs.map(([k, l, Icon]) => (
+                  <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
+                    <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
           {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}

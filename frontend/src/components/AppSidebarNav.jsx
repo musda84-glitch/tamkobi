@@ -4,14 +4,14 @@ import { Link, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { groupIdOf, groupMenuItems } from "../navGroups";
 
-const OPEN_KEY = "nav_groups_open_v2";
+const OPEN_KEY = "nav_groups_open_v3";
 
 function loadOpen() {
   try {
     const raw = JSON.parse(localStorage.getItem(OPEN_KEY) || "null");
     if (Array.isArray(raw)) return raw;
   } catch { /* ignore */ }
-  return [];
+  return null;
 }
 
 export default function AppSidebarNav({ items, onNavigate, onReorder }) {
@@ -23,17 +23,28 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
   const [dragPath, setDragPath] = useState(null);
 
   useEffect(() => {
+    if (open == null && groups.length) {
+      setOpen(groups.map((g) => g.id));
+    }
+  }, [groups, open]);
+
+  useEffect(() => {
+    if (open == null) return;
     if (activeGroup && !open.includes(activeGroup)) {
       setOpen((prev) => [...prev, activeGroup]);
     }
   }, [activeGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (open == null) return;
     localStorage.setItem(OPEN_KEY, JSON.stringify(open));
   }, [open]);
 
   const toggle = (id) => {
-    setOpen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setOpen((prev) => {
+      const cur = prev || groups.map((g) => g.id);
+      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    });
   };
 
   const linkClass = (item, isActive) =>
@@ -104,7 +115,7 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
   return (
     <div className="space-y-1.5">
       {groups.map((g) => {
-        const isOpen = !g.label || open.includes(g.id);
+        const isOpen = !g.label || (open || []).includes(g.id);
         const groupActive = g.items.some((m) => m.path === activePath);
         if (!g.label) {
           return (
