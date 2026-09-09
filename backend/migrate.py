@@ -21,7 +21,14 @@ async def migrate() -> dict:
 
 
 def main():
-    info = asyncio.run(migrate())
+    try:
+        info = asyncio.run(migrate())
+    except Exception as exc:
+        print(
+            f"MySQL not ready ({exc}). Starting the API so the first-run setup wizard can run.",
+            file=sys.stderr,
+        )
+        return
     print(
         f"MySQL schema ready → {info['host']}:{info['port']}/{info['database']}\n"
         "Tables: docs, meta_indexes, system_logs (created if missing; docs.company_id generated column upgraded in place)."

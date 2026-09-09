@@ -19,6 +19,7 @@ export const NAV_GROUPS = [
 
 const PATH_GROUP = {
   "/": "overview",
+  "/panel": "overview",
   "/invoices": "muhasebe",
   "/edoc-inbox": "muhasebe",
   "/dispatches": "muhasebe",

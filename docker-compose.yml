@@ -62,6 +62,7 @@ services:
       PERF_MEM_PCT: "90"
     volumes:
       - backend_logs:/var/log/tamkobi
+      - ./backend/data:/app/data
     depends_on:
       mysql:
         condition: service_healthy

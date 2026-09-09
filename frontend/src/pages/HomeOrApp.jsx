@@ -1,13 +1,7 @@
-
 import React from "react";
-import { useAuth } from "../context/AuthContext";
-import Dashboard from "./Dashboard";
 import PricingPage from "./PricingPage";
 
+/** After install, `/` is always the public website (WordPress-style). ERP lives at `/panel`. */
 export default function HomeOrApp() {
-  const { authenticated, loading } = useAuth();
-  if (loading) {
-    return <div className="min-h-screen bg-[#0b0f1a] text-slate-400 flex items-center justify-center text-xs" data-testid="site-loading">Yükleniyor…</div>;
-  }
-  return authenticated ? <Dashboard /> : <PricingPage />;
+  return <PricingPage />;
 }

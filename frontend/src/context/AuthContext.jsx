@@ -20,7 +20,7 @@ export const AuthProvider = ({ children }) => {
   const [moduleOrder, setModuleOrder] = useState(() => { try { return JSON.parse(localStorage.getItem("module_order") || "[]"); } catch { return []; } });
 
   const BASE_MENU = [
-    { label: "Genel Bakış", path: "/" },
+    { label: "Genel Bakış", path: "/panel" },
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
     { label: "İthalat / İhracat", path: "/dis-ticaret", badge: "Gümrük" },
     { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices", "/sayim": "/stock", "/sevk": "/orders", "/saha": "/orders" };
+  const LICENSE_KEY = { "/panel": "/", "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices", "/sayim": "/stock", "/sevk": "/orders", "/saha": "/orders" };
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
