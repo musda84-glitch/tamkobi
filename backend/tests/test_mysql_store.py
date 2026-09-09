@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mysql_store import (
     apply_update,
+    document_from_upsert,
     match_query,
     mysql_settings_from_env,
     project_doc,
@@ -78,6 +79,23 @@ def test_set_on_insert_and_nested():
     assert out["_id"] == "n1" and out["name"] == "A" and out["hits"] == 0
     out2 = apply_update({"preferences": {}}, {"$set": {"preferences.theme": "dark"}})
     assert out2["preferences"]["theme"] == "dark"
+
+
+def test_upsert_copies_selector_id_before_random_id():
+    """start_trial uses update_one({_id: cid}, {$setOnInsert: {...}}) — _id must stay cid."""
+    doc = document_from_upsert(
+        {"$setOnInsert": {"plan_id": "plan_custom", "status": "trial", "module_overrides": {"/invoices": True}}},
+        {"_id": "comp_abc123"},
+    )
+    assert doc["_id"] == "comp_abc123"
+    assert doc["plan_id"] == "plan_custom"
+    assert doc["status"] == "trial"
+    set_doc = document_from_upsert(
+        {"$set": {"plan_id": "plan_standard", "status": "trial"}},
+        {"_id": "comp_std1"},
+    )
+    assert set_doc["_id"] == "comp_std1"
+    assert set_doc["plan_id"] == "plan_standard"
 
 
 def test_project_and_sort():

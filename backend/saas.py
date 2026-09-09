@@ -315,7 +315,9 @@ async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14
     doc = {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": module_overrides or {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}
     if extra:
         doc.update(extra)
-    await _db.company_licenses.update_one({"_id": company_id}, {"$setOnInsert": doc}, upsert=True)
+    # $set (not $setOnInsert): a new company must actually receive the trial even if
+    # seed() already inserted a stub license, and the MySQL upsert must keep _id=company_id.
+    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {**doc, "_id": company_id}}, upsert=True)
     invalidate(company_id)
 
 

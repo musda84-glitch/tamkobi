@@ -1,6 +1,7 @@
 """Customers can pick modules one-by-one on the public site and start a custom trial."""
 import uuid
 
+import pytest
 import requests
 
 from conftest import API

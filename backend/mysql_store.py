@@ -317,6 +317,24 @@ def _unset_path(doc: dict, path: str):
         cur.pop(parts[-1], None)
 
 
+def document_from_upsert(update: dict, query: Optional[dict] = None) -> dict:
+    """Build the document inserted by an upsert.
+
+    MongoDB copies simple equality fields from the selector onto the new
+    document. We must do that *before* minting a random ``_id``, otherwise
+    ``update_one({"_id": cid}, {"$setOnInsert": {...}}, upsert=True)`` would
+    store a license under a random UUID and later ``find_one({"_id": cid})``
+    would miss it.
+    """
+    new_doc = apply_update({}, update, query, is_insert=True)
+    for k, v in (query or {}).items():
+        if not str(k).startswith("$") and not isinstance(v, dict) and k not in new_doc:
+            _set_path(new_doc, k, v)
+    if not new_doc.get("_id"):
+        new_doc["_id"] = str(uuid.uuid4())
+    return new_doc
+
+
 def apply_update(doc: dict, update: dict, query: Optional[dict] = None, is_insert: bool = False) -> dict:
     out = copy.deepcopy(doc)
     if not any(k.startswith("$") for k in update):
@@ -592,14 +610,7 @@ class MySQLCollection:
         if not docs:
             if not upsert:
                 return UpdateResult(0, 0, None)
-            base = {}
-            new_doc = apply_update(base, update, query, is_insert=True)
-            if not new_doc.get("_id"):
-                new_doc["_id"] = str(uuid.uuid4())
-            # copy equality fields from query when simple
-            for k, v in (query or {}).items():
-                if not str(k).startswith("$") and not isinstance(v, dict) and k not in new_doc:
-                    _set_path(new_doc, k, v)
+            new_doc = document_from_upsert(update, query)
             await self._save(new_doc)
             return UpdateResult(0, 1, new_doc["_id"])
         old = docs[0]
@@ -881,12 +892,7 @@ class SyncMySQLCollection:
         if not docs:
             if not upsert:
                 return UpdateResult(0, 0, None)
-            new_doc = apply_update({}, update, query, is_insert=True)
-            if not new_doc.get("_id"):
-                new_doc["_id"] = str(uuid.uuid4())
-            for k, v in (query or {}).items():
-                if not str(k).startswith("$") and not isinstance(v, dict) and k not in new_doc:
-                    _set_path(new_doc, k, v)
+            new_doc = document_from_upsert(update, query)
             self._save(new_doc)
             return UpdateResult(0, 1, new_doc["_id"])
         old = docs[0]
