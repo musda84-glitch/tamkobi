@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import db_relocate
+import db_ssl
 import saas
 
 router = APIRouter(prefix="/api")
@@ -24,6 +25,8 @@ class DbTarget(BaseModel):
     db_name: str = Field(..., min_length=1, max_length=64)
     db_user: str = Field(..., min_length=1, max_length=128)
     db_password: str = ""
+    ssl_mode: Optional[str] = None
+    ssl_ca: str = ""
 
 
 class MoveRequest(DbTarget):
@@ -40,6 +43,9 @@ def _settings(req: DbTarget) -> Dict[str, Any]:
                 "user": req.db_user,
                 "password": req.db_password,
                 "db": req.db_name,
+                # Remote targets are encrypted unless the admin explicitly opts out.
+                "ssl_mode": req.ssl_mode or db_ssl.default_mode(req.db_host),
+                "ssl_ca": req.ssl_ca,
             }
         )
     except ValueError as exc:

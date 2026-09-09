@@ -5,8 +5,9 @@ import { Database, HardDriveDownload, Loader2, PlugZap, ServerCog } from "lucide
 import { API_URL } from "../../context/AuthContext";
 import { inputCls } from "./saasUi";
 
-const emptyTarget = { db_host: "", db_port: 3306, db_name: "tamkobi", db_user: "tamkobi", db_password: "" };
+const emptyTarget = { db_host: "", db_port: 3306, db_name: "tamkobi", db_user: "tamkobi", db_password: "", ssl_mode: "required", ssl_ca: "" };
 const tl = (n) => Number(n || 0).toLocaleString("tr-TR");
+const SSL_LABELS = { disabled: "Kapalı (yalnızca aynı sunucu)", required: "TLS zorunlu", verify_ca: "TLS + CA doğrulaması" };
 
 export const DatabasePanel = () => {
   const [info, setInfo] = useState(null);
@@ -81,6 +82,7 @@ export const DatabasePanel = () => {
             ["Sunucu", `${info.current.host}:${info.current.port}`],
             ["Veritabanı", info.current.db],
             ["Kullanıcı", info.current.user],
+            ["Şifreleme", SSL_LABELS[info.current.ssl_mode] || info.current.ssl_mode],
             ["Ayar kaynağı", info.settings_source === "file" ? "Kurulum dosyası (database.json)" : "Ortam değişkeni"],
           ].map(([l, v]) => (
             <div key={l} className="bg-slate-50 rounded-xl px-3 py-2">
@@ -136,6 +138,22 @@ export const DatabasePanel = () => {
             <label className="block font-semibold text-slate-700 mb-1">Şifre</label>
             <input type="password" value={form.db_password} onChange={(e) => set("db_password", e.target.value)} className={inputCls} data-testid="db-password" autoComplete="new-password" />
           </div>
+          <div className={form.ssl_mode === "verify_ca" ? "" : "sm:col-span-2"}>
+            <label className="block font-semibold text-slate-700 mb-1">Bağlantı şifrelemesi</label>
+            <select value={form.ssl_mode} onChange={(e) => set("ssl_mode", e.target.value)} className={inputCls} data-testid="db-ssl-mode">
+              {Object.entries(SSL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Şifre ve tüm veri bu bağlantıdan geçer; internet üzerinden taşımada TLS kapatmayın. Sunucunuz TLS desteklemiyorsa
+              "Kapalı" seçin ve bağlantıyı özel ağ/VPN ile koruyun.
+            </p>
+          </div>
+          {form.ssl_mode === "verify_ca" && (
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">CA sertifika dosyası</label>
+              <input value={form.ssl_ca} onChange={(e) => set("ssl_ca", e.target.value)} placeholder="/etc/ssl/certs/mysql-ca.pem" className={inputCls} data-testid="db-ssl-ca" />
+            </div>
+          )}
         </div>
         {probe && (
           <div className={`rounded-xl px-3 py-2 ${probe.empty ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-900"}`} data-testid="db-probe">

@@ -11,6 +11,7 @@ from urllib.parse import quote_plus
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import db_ssl
 from auth_utils import hash_password
 from mysql_store import MySQLDatabase
 from setup_state import (
@@ -71,6 +72,7 @@ def _connect(settings: dict, database: Optional[str]):
         charset="utf8mb4",
         autocommit=True,
         connect_timeout=8,
+        **db_ssl.connect_kwargs(settings),
     )
 
 
@@ -121,6 +123,9 @@ def probe_database(settings: dict) -> dict:
 
 
 def apply_env(settings: dict) -> None:
+    ssl_mode, ssl_ca = db_ssl.settings(settings)
+    os.environ["MYSQL_SSL_MODE"] = ssl_mode
+    os.environ["MYSQL_SSL_CA"] = ssl_ca
     os.environ["MYSQL_HOST"] = str(settings["host"])
     os.environ["MYSQL_PORT"] = str(settings["port"])
     os.environ["MYSQL_USER"] = str(settings["user"])

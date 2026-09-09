@@ -36,6 +36,8 @@ def test_store_settings_normalizes():
         "db": "tamkobi_app",
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": "disabled",
+        "ssl_ca": "",
     }
 
 
@@ -71,8 +73,21 @@ def test_settings_from_url_rejects_other_schemes():
 
 def test_public_view_hides_password():
     view = db_relocate.public_view({"host": "db", "port": 3306, "user": "app", "password": "s3cret", "db": "tamkobi"})
-    assert view == {"host": "db", "port": 3306, "db": "tamkobi", "user": "app"}
+    assert view == {"host": "db", "port": 3306, "db": "tamkobi", "user": "app", "ssl_mode": "disabled", "ssl_ca": ""}
     assert "s3cret" not in str(view)
+
+
+def test_store_settings_carries_tls_options():
+    cfg = db_relocate.store_settings(
+        {"host": "db.firma.com", "user": "app", "db": "tamkobi", "ssl_mode": "REQUIRED"}
+    )
+    assert cfg["ssl_mode"] == "required"
+    assert db_relocate.dump_settings(cfg)["ssl_mode"] == "required"
+
+
+def test_store_settings_requires_ca_for_verification():
+    with pytest.raises(ValueError, match="CA"):
+        db_relocate.store_settings({"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_ca"})
 
 
 def test_same_server_compares_host_port_and_database():

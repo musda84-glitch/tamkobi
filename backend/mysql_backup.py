@@ -43,6 +43,13 @@ def load_env(repo_root: Optional[Path] = None) -> None:
     _load_dotenv(root / ".env")
 
 
+def _ssl_from_env() -> Dict[str, Any]:
+    import db_ssl
+
+    mode, ca = db_ssl.from_env()
+    return {"ssl_mode": mode, "ssl_ca": ca}
+
+
 def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, db: Optional[str] = None) -> Dict[str, Any]:
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     if url.startswith("mysql"):
@@ -58,6 +65,7 @@ def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, d
             "password": password if password is not None else unquote(parsed.password or os.environ.get("MYSQL_PASSWORD", "tamkobi")),
             "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or database,
             "charset": "utf8mb4",
+            **_ssl_from_env(),
         }
     return {
         "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
@@ -66,11 +74,14 @@ def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, d
         "password": password if password is not None else os.environ.get("MYSQL_PASSWORD", os.environ.get("DB_PASSWORD", "tamkobi")),
         "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
+        **_ssl_from_env(),
     }
 
 
 def connect(settings: Optional[dict] = None, database: Optional[str] = None):
     import pymysql
+
+    import db_ssl
 
     cfg = dict(settings or mysql_settings())
     if database is not None:
@@ -84,6 +95,7 @@ def connect(settings: Optional[dict] = None, database: Optional[str] = None):
         charset=cfg.get("charset") or "utf8mb4",
         autocommit=True,
         cursorclass=pymysql.cursors.Cursor,
+        **db_ssl.connect_kwargs(cfg),
     )
 
 

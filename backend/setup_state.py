@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import db_ssl
+
 _DB_NAME_RE_OK = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 
 
@@ -79,6 +81,8 @@ def load_database_settings() -> Optional[Dict[str, Any]]:
         "db": db,
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": db_ssl.normalize_mode(raw.get("ssl_mode")),
+        "ssl_ca": str(raw.get("ssl_ca") or "").strip(),
     }
 
 
@@ -93,6 +97,8 @@ def save_database_settings(settings: dict) -> None:
             "db": settings["db"],
             "charset": "utf8mb4",
             "autocommit": True,
+            "ssl_mode": db_ssl.normalize_mode(settings.get("ssl_mode")),
+            "ssl_ca": str(settings.get("ssl_ca") or "").strip(),
         },
     )
 

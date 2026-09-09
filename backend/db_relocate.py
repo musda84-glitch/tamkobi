@@ -23,6 +23,7 @@ from urllib.parse import unquote, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import db_ssl
 import mysql_backup
 from setup_state import data_dir, load_database_settings, sanitize_db_name, save_database_settings
 
@@ -57,6 +58,9 @@ def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Port bir sayı olmalı.") from exc
     if not 1 <= port <= 65535:
         raise ValueError("Port 1-65535 aralığında olmalı.")
+    ssl_mode, ssl_ca = db_ssl.settings(cfg)
+    if ssl_mode == db_ssl.VERIFY_CA and not ssl_ca:
+        raise ValueError("verify_ca modu için CA sertifika dosyası gerekir.")
     return {
         "host": host,
         "port": port,
@@ -65,6 +69,8 @@ def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "db": sanitize_db_name(str(name or "")),
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": ssl_mode,
+        "ssl_ca": ssl_ca,
     }
 
 
@@ -78,6 +84,8 @@ def dump_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "password": s["password"],
         "database": s["db"],
         "charset": "utf8mb4",
+        "ssl_mode": s["ssl_mode"],
+        "ssl_ca": s["ssl_ca"],
     }
 
 
@@ -102,7 +110,14 @@ def settings_from_url(url: str) -> Dict[str, Any]:
 def public_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Connection identity without the password — safe for API responses and logs."""
     s = store_settings(cfg)
-    return {"host": s["host"], "port": s["port"], "db": s["db"], "user": s["user"]}
+    return {
+        "host": s["host"],
+        "port": s["port"],
+        "db": s["db"],
+        "user": s["user"],
+        "ssl_mode": s["ssl_mode"],
+        "ssl_ca": s["ssl_ca"],
+    }
 
 
 def current_settings() -> Dict[str, Any]:
@@ -282,7 +297,13 @@ def _target_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         target["password"] = args.password
     elif not target["password"]:
         target["password"] = os.environ.get(PASSWORD_ENV, "")
-    return target
+    return store_settings(
+        {
+            **target,
+            "ssl_mode": args.ssl_mode or db_ssl.default_mode(target["host"]),
+            "ssl_ca": args.ssl_ca or target.get("ssl_ca") or "",
+        }
+    )
 
 
 def _cmd_show(_args: argparse.Namespace) -> int:
@@ -338,6 +359,14 @@ def _add_target_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--db", default=None, help="Hedef veritabanı adı")
     p.add_argument("--user", default=None, help="Hedef MySQL kullanıcısı")
     p.add_argument("--password", default=None, help=f"Boş bırakılırsa {PASSWORD_ENV} kullanılır")
+    p.add_argument(
+        "--ssl-mode",
+        dest="ssl_mode",
+        default=None,
+        choices=list(db_ssl.SSL_MODES),
+        help="TLS modu (uzak sunucularda varsayılan: required)",
+    )
+    p.add_argument("--ssl-ca", dest="ssl_ca", default=None, help="verify_ca için CA sertifika dosyası")
 
 
 def build_parser() -> argparse.ArgumentParser:

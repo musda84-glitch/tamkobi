@@ -17,6 +17,20 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, REFERENCES ON tamkobi
 FLUSH PRIVILEGES;
 ```
 
+## Bağlantı şifrelemesi (TLS)
+
+Şifre ve tüm ERP verisi bu bağlantıdan geçtiği için, sunucu bu makinede değilse bağlantı şifrelenmelidir. Üç mod var:
+
+| Mod | Anlamı |
+|---|---|
+| `disabled` | Şifresiz. Yalnızca aynı makinedeki (veya güvenli özel ağdaki) MySQL için |
+| `required` | Şifreli; sunucu sertifikası doğrulanmaz. MySQL 8'in kendi ürettiği sertifikayla da çalışır |
+| `verify_ca` | Şifreli; sunucu sertifikası verdiğiniz CA dosyasıyla doğrulanır |
+
+Panelde ve komut satırında uzak sunucular için varsayılan `required`'dır; `localhost`/`127.0.0.1` için `disabled`. Komut satırında `--ssl-mode` ve `--ssl-ca` ile, çalışan uygulamada `MYSQL_SSL_MODE` / `MYSQL_SSL_CA` ortam değişkenleriyle ayarlanır. Taşımada kullanılan mod `database.json` dosyasına da yazılır; yani taşımadan sonra uygulamanın canlı bağlantısı da aynı şekilde şifreli kalır.
+
+Sunucunuz TLS desteklemiyorsa `disabled` seçebilirsiniz; bu durumda bağlantıyı VPN veya özel ağ ile koruyun.
+
 ## Panelden taşıma
 
 Platform Yönetimi → **Veritabanı** (`/sistem/veritabani`, yalnızca süper admin):
@@ -51,6 +65,7 @@ TARGET_MYSQL_PASSWORD='guclu-bir-sifre' \
 | `--no-repoint` | Sadece kopyalar; uygulama eski veritabanında kalır (deneme için) |
 | `--no-backup` | Kopyalama öncesi yedek dosyası yazmaz |
 | `--backup-dir DIR` | Yedek klasörünü değiştirir (varsayılan `backend/data/backups`, `MYSQL_BACKUP_DIR` ile de değişir) |
+| `--ssl-mode` / `--ssl-ca` | TLS modu ve CA dosyası (uzak sunucuda varsayılan `required`) |
 
 Panelden taşımada çalışan API kendini yeni veritabanına bağlar; bu adım başarısız olursa veriler ve ayar yerinde kalır ve panel "backend'i yeniden başlatın" uyarısı gösterir. Komut satırından taşıdıktan sonra çalışan süreç zaten eski bağlantıyı kullanmaya devam eder; backend'i yeniden başlatın:
 
