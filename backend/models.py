@@ -173,6 +173,7 @@ class InvoiceItem(BaseModel):
     discount_rate: float = 0.0
     total: float
     is_service: bool = False
+    note: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str
@@ -394,6 +395,7 @@ class OrderItem(BaseModel):
     quantity: int
     unit_price: float
     total: float
+    note: Optional[str] = None
 
 class Order(BaseDocument):
     company_id: str

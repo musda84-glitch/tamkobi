@@ -3,7 +3,7 @@ import { Search, ArrowUpDown, X } from "lucide-react";
 import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
 
-const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { key: "total_amount", label: "Tutar", num: true }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
+const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}${i.note ? ` (${i.note})` : ""}`).join(", ") }, { key: "total_amount", label: "Tutar", num: true }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = { q: "", status: "all", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "date_desc" };
 const STATUS = [["all", "Tüm Durumlar"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
@@ -12,7 +12,7 @@ const SORT = [["date_desc", "Tarih (yeni)"], ["date_asc", "Tarih (eski)"], ["amo
 export const applyOrderFilters = (orders, f) => {
   const q = f.q.trim().toLowerCase();
   const list = orders.filter((o) => {
-    if (q && !`${o.order_number} ${o.customer_name} ${o.customer_phone || ""} ${o.cargo_tracking_number || ""} ${o.marketplace_order_id || ""} ${(o.items || []).map((i) => i.product_name).join(" ")}`.toLowerCase().includes(q)) return false;
+    if (q && !`${o.order_number} ${o.customer_name} ${o.customer_phone || ""} ${o.cargo_tracking_number || ""} ${o.marketplace_order_id || ""} ${(o.items || []).map((i) => `${i.product_name} ${i.note || ""}`).join(" ")}`.toLowerCase().includes(q)) return false;
     if (f.status !== "all" && o.order_status !== f.status) return false;
     if (f.channel !== "all" && (o.channel || "b2b") !== f.channel) return false;
     if (f.invoiced === "yes" && !o.invoice_id) return false;
