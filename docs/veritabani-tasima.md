@@ -23,7 +23,7 @@ Platform Yönetimi → **Veritabanı** (`/sistem/veritabani`, yalnızca süper a
 
 1. Üstteki kart şu an kullanılan sunucuyu, veritabanını, ayarın nereden geldiğini (kurulum dosyası veya ortam değişkeni) ve tablo satır sayılarını gösterir.
 2. Hedef sunucu bilgilerini girip **Bağlantıyı test et**'e basın. Yetki varsa veritabanı yoksa oluşturulur; hedefte veri varsa uyarı çıkar.
-3. **Verileri taşı ve buraya bağlan**. Kopyalama öncesi mevcut veritabanının yedeği `backups/mysql` klasörüne yazılır, kopyalama sonrası satır sayıları karşılaştırılır ve doğrulama geçerse uygulama yeniden başlatmaya gerek kalmadan yeni veritabanına bağlanır.
+3. **Verileri taşı ve buraya bağlan**. Kopyalama öncesi mevcut veritabanının yedeği `backend/data/backups` klasörüne yazılır (Docker'da bu klasör konteynere bağlı olduğu için yedek kalıcıdır), kopyalama sonrası satır sayıları karşılaştırılır ve doğrulama geçerse uygulama yeniden başlatmaya gerek kalmadan yeni veritabanına bağlanır.
 
 Hedefte eski bir TamKobi kurulumu varsa taşımak için **üzerine yaz** kutusunu işaretlemeniz gerekir; bu, hedefteki tabloları silip yeniden oluşturur.
 
@@ -50,7 +50,7 @@ TARGET_MYSQL_PASSWORD='guclu-bir-sifre' \
 | `--overwrite` | Hedefteki mevcut TamKobi tablolarını silip yeniden yazar |
 | `--no-repoint` | Sadece kopyalar; uygulama eski veritabanında kalır (deneme için) |
 | `--no-backup` | Kopyalama öncesi yedek dosyası yazmaz |
-| `--backup-dir DIR` | Yedek klasörünü değiştirir (varsayılan `backups/mysql`) |
+| `--backup-dir DIR` | Yedek klasörünü değiştirir (varsayılan `backend/data/backups`, `MYSQL_BACKUP_DIR` ile de değişir) |
 
 Komut satırından taşıdıktan sonra çalışan süreç eski bağlantıyı kullanmaya devam eder; backend'i yeniden başlatın:
 
@@ -81,10 +81,10 @@ Panelde Veritabanı kartındaki satır sayıları taşımadan önceki değerlerl
 
 ## Geri dönüş
 
-Taşıma öncesi yedek `backups/mysql/tamkobi-YYYYMMDD-HHMMSS.json.gz` olarak durur. Eski sunucuya dönmek için `backend/data/database.json` dosyasını silin (veya eski bilgilerle panelden geri taşıyın) ve backend'i yeniden başlatın. Yedekten geri yükleme:
+Taşıma öncesi yedek `backend/data/backups/tamkobi-YYYYMMDD-HHMMSS.json.gz` olarak durur. Eski sunucuya dönmek için `backend/data/database.json` dosyasını silin (veya eski bilgilerle panelden geri taşıyın) ve backend'i yeniden başlatın. Yedekten geri yükleme:
 
 ```bash
-./scripts/mysql_restore.sh backups/mysql/tamkobi-YYYYMMDD-HHMMSS.json.gz --yes
+./scripts/mysql_restore.sh backend/data/backups/tamkobi-YYYYMMDD-HHMMSS.json.gz --yes
 ```
 
 ## Testler

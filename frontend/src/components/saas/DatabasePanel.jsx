@@ -106,7 +106,7 @@ export const DatabasePanel = () => {
           </h3>
           <p className="text-[11px] text-slate-500 mt-1">
             Tablolar ve veriler hedef sunucuya kopyalanır, satır sayıları karşılaştırılır ve ancak doğrulama geçerse TamKobi yeni
-            veritabanına bağlanır. Kopyalama öncesi mevcut veritabanının yedeği <code>backups/mysql</code> klasörüne yazılır.
+            veritabanına bağlanır. Kopyalama öncesi mevcut veritabanının yedeği <code>backend/data/backups</code> klasörüne yazılır.
             Yüklenen dosyalar MySQL dışında tutulduğu için ayrıca kopyalanmalıdır.
           </p>
         </div>

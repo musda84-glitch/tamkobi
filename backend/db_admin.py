@@ -4,14 +4,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import db_relocate
-import mysql_backup
 import saas
 
 router = APIRouter(prefix="/api")
@@ -90,7 +88,7 @@ async def system_database_move(req: MoveRequest, admin: dict = Depends(saas.requ
                     target,
                     overwrite=req.overwrite,
                     repoint=req.repoint,
-                    backup_dir=Path(mysql_backup.default_backup_dir()),
+                    backup_dir=db_relocate.backup_dir(),
                 )
             )
         except ValueError as exc:

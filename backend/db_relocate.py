@@ -24,10 +24,20 @@ from urllib.parse import unquote, urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mysql_backup
-from setup_state import load_database_settings, sanitize_db_name, save_database_settings
+from setup_state import data_dir, load_database_settings, sanitize_db_name, save_database_settings
 
 CORE_TABLES = ("docs", "meta_indexes")
 PASSWORD_ENV = "TARGET_MYSQL_PASSWORD"
+
+
+def backup_dir() -> Path:
+    """Where the pre-move snapshot goes.
+
+    Docker only mounts the data directory, so a repo-relative default would be
+    lost with the container that wrote it.
+    """
+    override = (os.environ.get("MYSQL_BACKUP_DIR") or "").strip()
+    return Path(override) if override else data_dir() / "backups"
 
 
 def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -277,12 +287,12 @@ def _cmd_move(args: argparse.Namespace) -> int:
             f"`{target['db']}` veritabanına taşımak için --yes gerekli "
             f"(hedef {target['host']}:{target['port']})."
         )
-    backup_dir = None if args.no_backup else Path(args.backup_dir or mysql_backup.default_backup_dir())
+    dest = None if args.no_backup else Path(args.backup_dir or backup_dir())
     result = copy_database(
         target,
         overwrite=args.overwrite,
         repoint=not args.no_repoint,
-        backup_dir=backup_dir,
+        backup_dir=dest,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if result["repointed"]:
@@ -316,7 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--overwrite", action="store_true", help="Hedefteki mevcut TamKobi verisini sil")
     m.add_argument("--no-repoint", action="store_true", help="Sadece kopyala; bağlantıyı değiştirme")
     m.add_argument("--no-backup", action="store_true", help="Yedek dosyası yazma")
-    m.add_argument("--backup-dir", default=None, help="Yedek klasörü (varsayılan backups/mysql)")
+    m.add_argument("--backup-dir", default=None, help="Yedek klasörü (varsayılan backend/data/backups)")
     m.set_defaults(func=_cmd_move)
     return p
 
