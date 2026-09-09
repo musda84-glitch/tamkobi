@@ -1,7 +1,7 @@
 
 import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset } from "lucide-react";
+import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { SYSTEM_NAV_GROUPS } from "../../navGroups";
 
@@ -20,6 +20,7 @@ export const SYSTEM_NAV = [
   ["/sistem/talepler", "Yükseltme Talepleri", Inbox],
   ["/sistem/odemeler", "Ödemeler", CreditCard],
   ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell],
+  ["/sistem/veritabani", "Veritabanı", Database],
   ["/sistem/ayarlar", "Platform Ayarları", Settings],
 ];
 

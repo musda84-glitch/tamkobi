@@ -13,6 +13,7 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
+import { DatabasePanel } from "../components/saas/DatabasePanel";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -60,6 +61,7 @@ export default function SystemAdminPage() {
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}
           {page === "ai" && <AiProviderPanel />}
+          {page === "veritabani" && <DatabasePanel />}
           {page === "ayarlar" && <PlatformSettingsPanel />}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}

@@ -79,7 +79,7 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/kullanicilar"] },
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar"] },
   { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/ai", "/sistem/araclar"] },
-  { id: "kurallar", label: "Kurallar", paths: ["/sistem/ayarlar"] },
+  { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
 ];
 
 /** Firma Ayarları sekmeleri — aynı paket klasörleri. */
