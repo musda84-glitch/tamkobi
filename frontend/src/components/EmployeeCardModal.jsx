@@ -120,6 +120,10 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [busyAllow, setBusyAllow] = useState(false);
   useEscape(() => {
     if (quickPay) return;
+  const [payItem, setPayItem] = useState(null);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [busyPay, setBusyPay] = useState(false);
+  useEscape(() => {
     if (payItem) { setPayItem(null); return; }
     onClose();
   });
@@ -164,6 +168,11 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
       toast.success(res.data.message);
       setPayItem(null);
       afterMoney();
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
+      toast.success(res.data.message);
+      setPayItem(null);
+      reload();
+      onChanged?.();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Maaş ödemesi gerçekleştirilemedi.");
     } finally { setBusyPay(false); }

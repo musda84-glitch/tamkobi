@@ -5,6 +5,7 @@ import { Receipt, Wallet, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -71,6 +72,8 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
         </>)}
         <div><label className="block font-semibold mb-1">Kasa / Banka</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={f.account_id} onChange={(v) => setF({ ...f, account_id: v })} testId="quick-pay-account" className="text-xs focus:ring-2 focus:ring-emerald-500 outline-none" emptyLabel={isExpense ? "Şimdi ödenmeyecek (borç olarak kaydet)" : "Hesap seçilmedi (sadece kayıt)"} /></div>
         <div className="text-slate-500">{isExpense ? "Masraflar → personel filtresinde ve personel kartında görünür; ödeme kasa/banka veya ortaklar hesabından düşer." : `${p.period} dönemi · Avans bordroda mahsup olarak görünür.`}</div>
+        <div><label className="block font-semibold mb-1">Kasa / Banka</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={f.account_id} onChange={(id) => setF({ ...f, account_id: id })} includePartners={false} emptyLabel={isExpense ? "Şimdi ödenmeyecek (borç olarak kaydet)" : "Hesap seçilmedi (sadece kayıt)"} testId="quick-pay-account" /></div>
+        <div className="text-slate-500">{isExpense ? "Masraflar → personel filtresinde ve personel kartında görünür; ödeme kasa/bankadan düşer." : `${p.period} dönemi · Avans bordroda mahsup olarak görünür.`}</div>
         <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={busy} className={`px-4 py-1.5 text-white rounded-lg font-semibold ${isExpense ? "bg-sky-600" : "bg-amber-600"}`} data-testid="quick-pay-submit">{busy ? "…" : isExpense && mode === "existing" ? "Öde" : f.account_id ? "Kaydet & Öde" : "Kaydet"}</button></div>
       </form>
     </div>
