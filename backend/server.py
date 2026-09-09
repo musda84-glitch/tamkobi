@@ -556,6 +556,8 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     await saas.check_storage_limit(company_id, len(data))
+    await saas.check_storage_limit(company_id, len(data))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
     try:
         result = put_object(path, data, content_type)
@@ -565,6 +567,7 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": content_type, "size": len(data),
                                "original_size": opt.original_size, "optimized": opt.optimized,
                                "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data),
                                "company_id": company_id, "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
     url = f"/api/files/{result['path']}"
     if entity in ("quote", "project", "survey", "company") and entity_id:
@@ -2532,6 +2535,8 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     await saas.check_storage_limit(product.get("company_id") or "comp_nexus_main_01", len(data))
+    await saas.check_storage_limit(product.get("company_id") or "comp_nexus_main_01", len(data))
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
     path = f"{APP_NAME}/products/{product.get('company_id')}/{uuid.uuid4()}.{ext}"
     try:
         result = put_object(path, data, content_type)

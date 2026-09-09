@@ -80,6 +80,9 @@ DEFAULT_PLANS = [
 # 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
 QUOTA_KEYS = ("user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb")
 DEFAULT_PLANS = [
+# 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
+QUOTA_KEYS = ("user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb")
+DEFAULT_PLANS = [
     {"_id": "plan_starter", "code": "starter", "name": "Başlangıç", "tagline": "Tek kişilik işletmeler için ön muhasebe", "price_monthly": 499, "price_yearly": 4990, "user_limit": 2, "company_limit": 1, "product_limit": 250, "contact_limit": 150, "storage_limit_mb": 512, "modules": _STARTER, "color": "slate", "sort": 1, "is_public": True},
     {"_id": "plan_standard", "code": "standard", "name": "Standart", "tagline": "Satış ekibi olan KOBİ'ler için", "price_monthly": 899, "price_yearly": 8990, "user_limit": 5, "company_limit": 2, "product_limit": 1500, "contact_limit": 800, "storage_limit_mb": 2048, "modules": _STANDARD, "color": "emerald", "sort": 2, "is_public": True, "is_popular": True},
     {"_id": "plan_pro", "code": "pro", "name": "Profesyonel", "tagline": "E-ticaret ve personel yöneten firmalar", "price_monthly": 1499, "price_yearly": 14990, "user_limit": 10, "company_limit": 5, "product_limit": 8000, "contact_limit": 3000, "storage_limit_mb": 10240, "modules": _PRO, "color": "indigo", "sort": 3, "is_public": True},
