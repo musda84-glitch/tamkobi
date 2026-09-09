@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import rbac
+import applog
 from auth_utils import hash_password, verify_password
 
 router = APIRouter(prefix="/api")
@@ -618,6 +619,16 @@ async def _detach_company_users(company_id: str) -> Dict[str, int]:
 
 
 # ---------------- System endpoints ----------------
+@router.get("/system/logs")
+async def system_logs(category: Optional[str] = None, event: Optional[str] = None, email: Optional[str] = None, limit: int = 100, _: dict = Depends(require_super_admin)):
+    return applog.query_logs(category=category, event=event, user_email=email, limit=limit)
+
+
+@router.post("/system/logs/rotate")
+async def rotate_system_logs(_: dict = Depends(require_super_admin)):
+    return applog.rotate_files()
+
+
 @router.get("/system/overview")
 async def overview(_: dict = Depends(require_super_admin)):
     rows = [await _company_row(c) for c in await _db.companies.find({}).to_list(500)]

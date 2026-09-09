@@ -72,8 +72,9 @@ import platform_mail
 import gib_credits
 import order_pick
 import platform_mail
+import applog
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+applog.setup_logging()
 logger = logging.getLogger("NexusERP")
 
 # MySQL connection (JSON document store; Motor-compatible API)
@@ -112,6 +113,7 @@ app.add_middleware(
 )
 
 api_router = APIRouter(prefix="/api")
+app.add_middleware(applog.RequestLogMiddleware)
 app.add_middleware(rbac.PermissionAndAuditMiddleware)
 
 def clean_doc(doc: dict) -> dict:
@@ -151,8 +153,11 @@ async def startup_event():
         await db.orders.create_index("order_number")
         await db.login_attempts.create_index("identifier")
         logger.info("TamKobi backend startup complete. Seed & indexes ready.")
+        logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
+        applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
         logger.error(f"Startup error: {e}")
+        applog.log_error("startup_failed", str(e), exc=e)
     try:
         init_storage()
         logger.info("Object storage initialized")
@@ -163,6 +168,7 @@ async def startup_event():
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
+    _asyncio.get_event_loop().create_task(applog.rotation_loop())
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -208,6 +214,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         if isinstance(last_attempt, str):
             last_attempt = datetime.fromisoformat(last_attempt)
         if datetime.now(timezone.utc) - last_attempt < timedelta(minutes=15):
+            applog.log_auth("login_lockout", f"{email} locked out", email=email, ip=client_ip, user_email=email)
             raise HTTPException(status_code=429, detail="Çok fazla hatalı giriş denemesi. Lütfen 15 dakika sonra tekrar deneyin.")
 
     user = await db.users.find_one({"email": email})
@@ -218,9 +225,11 @@ async def login(req: LoginRequest, request: Request, response: Response):
             {"$inc": {"count": 1}, "$set": {"last_attempt": datetime.now(timezone.utc).isoformat()}},
             upsert=True
         )
+        applog.log_auth("login_failed", f"{email} failed", email=email, ip=client_ip, user_email=email)
         raise HTTPException(status_code=401, detail="E-posta adresi veya şifre hatalı.")
 
     if user.get("is_active") is False:
+        applog.log_auth("login_inactive", f"{email} inactive", email=email, ip=client_ip, user_id=str(user.get("_id") or ""), user_email=email)
         raise HTTPException(status_code=403, detail="Hesabınız pasif durumda. Yöneticinizle iletişime geçin.")
     # Reset failed attempts on success
     await db.login_attempts.delete_one({"identifier": identifier})
@@ -235,6 +244,12 @@ async def login(req: LoginRequest, request: Request, response: Response):
     response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400*30, path="/")
 
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
+
+    applog.log_auth(
+        "login_success", f"{email} signed in",
+        email=email, user_email=email, user_id=user_id, ip=client_ip,
+        company_id=user.get("active_company_id"), role=user.get("role"),
+    )
 
     return {
         "token": token,
@@ -1080,7 +1095,20 @@ async def switch_company(req: Dict[str, str], user: dict = Depends(get_current_u
     return {"status": "success", "active_company_id": new_comp_id}
 
 @api_router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    email = None
+    uid = None
+    try:
+        token = request.cookies.get("access_token") or (
+            request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None
+        )
+        if token:
+            u = await get_user_from_token(token, db)
+            email = u.get("email")
+            uid = u.get("id") or u.get("_id")
+    except Exception:
+        pass
+    applog.log_auth("logout", f"{email or 'session'} signed out", email=email, user_email=email, user_id=str(uid) if uid else None, ip=applog.client_ip(request))
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
     return {"status": "success", "message": "Çıkış yapıldı."}
@@ -1396,17 +1424,23 @@ async def _public_base_url(request: Request, explicit: str = "") -> str:
 
 
 @api_router.post("/public/b2b/login")
-async def b2b_login(req: Dict[str, Any]):
+async def b2b_login(req: Dict[str, Any], request: Request):
     ident = (req.get("email") or "").strip().lower(); pwd = req.get("password") or ""
     if not ident or not pwd:
         raise HTTPException(status_code=400, detail="E-posta / VKN ve şifre gerekli.")
     c = await _b2b_find_contact(ident)
     if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
+        applog.log_auth("b2b_login_failed", ident, email=ident, ip=applog.client_ip(request), user_email=ident)
         raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
     if not c.get("b2b_token"):
         await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
         c = await db.contacts.find_one({"_id": c["_id"]})
     await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_last_login": datetime.now(timezone.utc).isoformat()}})
+    applog.log_auth(
+        "b2b_login_success", ident,
+        email=ident, user_email=ident, user_id=str(c.get("_id")),
+        company_id=c.get("company_id"), ip=applog.client_ip(request),
+    )
     return {"token": c["b2b_token"], "name": c.get("name"), "redirect": f"/portal/{c['b2b_token']}"}
 
 

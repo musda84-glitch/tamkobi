@@ -8,7 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/log/tamkobi \
+    && chmod 777 /var/log/tamkobi
 
 COPY requirements.txt /tmp/requirements.txt
 # Skip the PyPI namesake (malware / unpublished). Core REST+MySQL runs with the stub.
@@ -19,6 +21,7 @@ RUN grep -vE '^(#|emergentintegrations==)' /tmp/requirements.txt > /tmp/requirem
 
 COPY docker/stubs/emergentintegrations /usr/local/lib/python3.12/site-packages/emergentintegrations
 COPY . /app
+RUN chmod +x /app/scripts/rotate-logs.sh
 
 EXPOSE 8000
 
