@@ -1,4 +1,4 @@
-# Auth Testing Playbook for NexusHesap
+# Auth Testing Playbook for TamKobi
 
 Step 1: MongoDB Verification
 - Users collection has unique index on email

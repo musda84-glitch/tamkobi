@@ -305,8 +305,8 @@ async def invite_user(req: Dict[str, Any], request: Request):
     mail = {"status": "skipped", "detail": "E-posta hesabı tanımlı değil; linki kopyalayıp iletin."}
     try:
         a = await _mail_account(company_id)
-        subject = f"{company.get('name', 'NexusHesap')} sizi davet ediyor"
-        body = f"Merhaba {doc['name'] or ''},\n{company.get('name', 'Firmamız')} sizi NexusHesap sistemine '{role}' rolüyle davet etti. Hesabınızı oluşturmak için: {link}\nBu link 7 gün geçerlidir."
+        subject = f"{company.get('name', 'TamKobi')} sizi davet ediyor"
+        body = f"Merhaba {doc['name'] or ''},\n{company.get('name', 'Firmamız')} sizi TamKobi sistemine '{role}' rolüyle davet etti. Hesabınızı oluşturmak için: {link}\nBu link 7 gün geçerlidir."
         html = f"<p>{body.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Daveti Kabul Et</a></p>"
         await comm_service.smtp_send(a, [email], subject, body, html=html)
         mail = {"status": "sent", "detail": f"{email} adresine davet gönderildi."}

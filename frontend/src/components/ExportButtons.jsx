@@ -21,7 +21,7 @@ export const exportPdf = (rows, columns, filename, title, company) => {
   <body><h1>${esc(title)}</h1><h2>${esc(company || "")} · ${new Date().toLocaleString("tr-TR")} · ${rows.length} kayıt</h2>
   <table><thead><tr>${columns.map((c) => `<th class="${c.num ? "num" : ""}">${esc(c.label)}</th>`).join("")}</tr></thead>
   <tbody>${rows.map((r) => `<tr>${columns.map((c) => `<td class="${c.num ? "num" : ""}">${esc(cell(typeof c.value === "function" ? c.value(r) : r[c.key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>
-  <div class="foot"><span>NexusHesap</span><span>${esc(filename)}</span></div><script>window.onload=()=>{window.print();}</script></body></html>`;
+  <div class="foot"><span>TamKobi</span><span>${esc(filename)}</span></div><script>window.onload=()=>{window.print();}</script></body></html>`;
   w.document.write(html); w.document.close();
 };
 

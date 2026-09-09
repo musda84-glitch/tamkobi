@@ -97,7 +97,7 @@ async def geliver_create_shipment(config: dict, order: dict, opts: dict) -> Dict
                "length": str(opts.get("length") or config.get("default_length") or "10"), "width": str(opts.get("width") or config.get("default_width") or "10"), "height": str(opts.get("height") or config.get("default_height") or "10"),
                "distanceUnit": "cm", "weight": str(opts.get("weight") or config.get("default_weight") or "1"), "massUnit": "kg", "items": items, "recipientAddress": recipient,
                "productPaymentOnDelivery": False,
-               "order": {"sourceCode": "API", "sourceIdentifier": "NexusHesap", "orderNumber": order.get("order_number", ""), "totalAmount": float(order.get("total_amount") or 0), "totalAmountCurrency": "TL"}}
+               "order": {"sourceCode": "API", "sourceIdentifier": "TamKobi", "orderNumber": order.get("order_number", ""), "totalAmount": float(order.get("total_amount") or 0), "totalAmountCurrency": "TL"}}
     if opts.get("provider_service_code"):
         payload["providerServiceCode"] = opts["provider_service_code"]
     shipment = await _geliver("POST", "/shipments", token, json=payload)

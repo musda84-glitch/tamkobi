@@ -17,7 +17,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page">
-        <div className="text-2xl font-black text-slate-900">Nexus<span className="text-emerald-600">Hesap</span></div>
+        <div className="text-2xl font-black text-slate-900">Tam<span className="text-emerald-600">Kobi</span></div>
         <p className="text-xs text-slate-500">Hesabınızla giriş yapın.</p>
         <div><label className="block text-xs font-semibold mb-1">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-email" /></div>
         <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-password" /></div>

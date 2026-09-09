@@ -26,7 +26,7 @@ export default function InviteAcceptPage() {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 space-y-5" data-testid="invite-page">
-        <div className="flex items-center gap-2 text-emerald-600 font-black text-lg"><ShieldCheck className="w-6 h-6" /> NexusHesap Davet</div>
+        <div className="flex items-center gap-2 text-emerald-600 font-black text-lg"><ShieldCheck className="w-6 h-6" /> TamKobi Davet</div>
         {err ? <div className="text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm" data-testid="invite-error">{err}<button onClick={() => navigate("/login")} className="block mt-2 underline text-xs">Giriş sayfasına git</button></div> : !inv ? <Loader2 className="w-5 h-5 animate-spin text-slate-400" /> : (
           <form onSubmit={submit} className="space-y-3 text-sm">
             <p className="text-slate-600"><b>{inv.company_name}</b> sizi <b>{inv.role_name}</b> rolüyle davet etti. Hesabınız <span className="font-mono">{inv.email}</span> için oluşturulacak.</p>
