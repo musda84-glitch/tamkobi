@@ -405,8 +405,6 @@ async def einvoice_providers():
 @api_router.get("/einvoice/settings")
 async def get_einvoice_settings(company_id: Optional[str] = "comp_nexus_main_01"):
     s = await db.einvoice_settings.find_one({"company_id": company_id})
-    if not s:
-        return {"company_id": company_id, "provider": "", "mode": "test", "username": "", "has_password": False, "status": "simulated", "alias": "", "corporate_code": ""}
     return _einvoice_view(company_id, s)
 
 @api_router.put("/einvoice/settings")
@@ -481,7 +479,6 @@ def _einvoice_password(settings: dict) -> str:
 async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_01"):
     s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     if s.get("provider") != "n11faturam":
-        raise HTTPException(status_code=400, detail="Bağlantı denemesi n11 Faturam için açık. Entegratör olarak n11 Faturam seçip kaydedin.")
         raise HTTPException(status_code=400, detail="Bağlantı denemesi n11 Faturam için açık. Platform Yönetimi bu şirkete n11 Faturam atadıktan sonra deneyin.")
     pwd = _einvoice_password(s)
     info = await n11faturam.test_login(s, pwd)
