@@ -24,6 +24,7 @@ import { DemoContentCard } from "../components/DemoContentCard";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -74,6 +75,14 @@ const EInvoiceSettings = ({ companyId }) => {
     e.preventDefault();
     try {
       const r = await axios.put(`${API_URL}/einvoice/settings`, payload());
+  const [apiKey, setApiKey] = useState("");
+  useEffect(() => { axios.get(`${API_URL}/einvoice/settings?company_id=${companyId}`).then((st) => setS(st.data)); }, [companyId]);
+  if (!s) return null;
+  const fields = s.fields || [];
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await axios.put(`${API_URL}/einvoice/settings`, { company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias, corporate_code: s.corporate_code, password, api_key: apiKey });
       setS(r.data); setPassword(""); setApiKey("");
       toast.success(r.data.status === "configured" ? "Bağlantı bilgileri kaydedildi." : "Kaydedildi — kimlik bilgisi girilmediği için SİMÜLE mod.");
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
@@ -103,12 +112,15 @@ const EInvoiceSettings = ({ companyId }) => {
         {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
         <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
       </div>
+  return (
+    <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs max-w-xl" data-testid="einvoice-settings">
       <div className="flex items-center justify-between"><h3 className="text-sm font-bold">E-Fatura bağlantısı</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${s.status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="einvoice-status">{s.status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}</span></div>
       {!s.assigned ? (
         <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="einvoice-unassigned">Bu şirket için entegratör henüz seçilmedi. Entegratör ataması yalnızca Platform Yönetimi → Şirketler ekranından yapılır. Atandıktan sonra bağlantı bilgilerini buradan girin.</p>
       ) : (
         <>
           <p className="text-slate-500">{isN11 ? "n11 Faturam kurum kodu, kullanıcı adı ve şifre. Kaydettikten sonra Bağlantıyı dene ile oturumu doğrulayın; fatura kesimi ve GİB mükellef sorgusu canlıya geçer." : "Platformun atadığı entegratör için bağlantı bilgilerini girin. Anahtar yoksa GİB gönderimleri simüle edilir."}</p>
+          <p className="text-slate-500">Platformun atadığı entegratör için kullanıcı adı ve şifreyi girin. Anahtar yoksa GİB gönderimleri simüle edilir.</p>
           <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" data-testid="einvoice-assigned-provider">
             <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
             <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || s.provider}</div>
@@ -126,6 +138,14 @@ const EInvoiceSettings = ({ companyId }) => {
             {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
             <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
           </div>
+          <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setS({ ...s, mode: "test" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "test" ? "bg-amber-500 text-white border-amber-500" : ""}`} data-testid="einvoice-mode-test">Test Ortamı</button><button type="button" onClick={() => setS({ ...s, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="einvoice-mode-live">Canlı</button></div>
+          {fields.includes("corporate_code") && <div><label className="block font-semibold mb-1">Kurum kodu</label><input value={s.corporate_code || ""} onChange={(e) => setS({ ...s, corporate_code: e.target.value })} className={inputCls} data-testid="einvoice-corporate-code" /></div>}
+          {fields.includes("api_url") && <div><label className="block font-semibold mb-1">API URL</label><input value={s.api_url || ""} onChange={(e) => setS({ ...s, api_url: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-api-url" /></div>}
+          {fields.includes("username") && <div><label className="block font-semibold mb-1">Kullanıcı Adı</label><input value={s.username || ""} onChange={(e) => setS({ ...s, username: e.target.value })} className={inputCls} data-testid="einvoice-username-input" /></div>}
+          {fields.includes("password") && <div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div>}
+          {fields.includes("api_key") && <div><label className="block font-semibold mb-1">API anahtarı {s.has_api_key && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputCls} data-testid="einvoice-api-key" /></div>}
+          <div><label className="block font-semibold mb-1">GİB Etiket / Alias</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} data-testid="einvoice-alias" /></div>
+          <div className="flex justify-end"><button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button></div>
         </>
       )}
     </form>

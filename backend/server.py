@@ -363,6 +363,54 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         has_creds = has_creds and bool(update.get("corporate_code") or (existing or {}).get("corporate_code"))
     update["status"] = "configured" if provider and has_creds else "simulated"
     await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    provider = existing.get("provider") or ""
+    if not provider:
+        raise HTTPException(status_code=400, detail="Bu şirket için e-fatura entegratörü henüz atanmadı. Seçim Platform Yönetimi → Şirketler ekranından yapılır.")
+    if "provider" in req and (req.get("provider") or "") != provider:
+        raise HTTPException(status_code=403, detail="Entegratör yalnızca Platform Yönetimi → Şirketler ekranından değiştirilir.")
+    update = {
+        "mode": req.get("mode", existing.get("mode") or "test"),
+        "username": (req.get("username") if "username" in req else existing.get("username") or "").strip(),
+        "api_url": req.get("api_url") if "api_url" in req else existing.get("api_url", ""),
+        "alias": req.get("alias") if "alias" in req else existing.get("alias", ""),
+        "corporate_code": (req.get("corporate_code") if "corporate_code" in req else existing.get("corporate_code") or "").strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if req.get("password"):
+        update["password_enc"] = comm_service.encrypt(req["password"])
+    if req.get("api_key"):
+        update["api_key_enc"] = comm_service.encrypt(req["api_key"])
+    has_creds = bool(update["username"] and (update.get("password_enc") or existing.get("password_enc")))
+    update["status"] = "configured" if has_creds else "simulated"
+    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "provider": provider}}, upsert=True)
+    return await get_einvoice_settings(company_id)
+
+
+@api_router.put("/system/companies/{company_id}/einvoice")
+async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+    if not await db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    provider = (req.get("provider") or "").strip()
+    if provider and provider not in EINVOICE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
+    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    now = datetime.now(timezone.utc).isoformat()
+    update = {"provider": provider, "updated_at": now, "assigned_at": now}
+    unset = {}
+    if provider != (existing.get("provider") or ""):
+        update["username"] = ""
+        update["api_url"] = ""
+        update["corporate_code"] = ""
+        update["status"] = "simulated"
+        unset["password_enc"] = ""
+        unset["api_key_enc"] = ""
+    if not provider:
+        update["status"] = "simulated"
+    ops = {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "mode": existing.get("mode") or "test", "alias": existing.get("alias") or ""}}
+    if unset:
+        ops["$unset"] = unset
+    await db.einvoice_settings.update_one({"company_id": company_id}, ops, upsert=True)
     return await get_einvoice_settings(company_id)
 
 
