@@ -103,6 +103,15 @@ export default function OrdersB2BPage() {
     } catch (err) {
       toast.error(err.response?.data?.detail || "Onaylanamadı.");
     }
+  const approve = (ord) => setApproveOrder(ord);
+  const resolveCancel = async (ord, action) => {
+    const ok = window.confirm(action === "accept" ? `${ord.order_number} iptal edilsin mi?` : `${ord.order_number} iptal talebi reddedilsin mi?`);
+    if (!ok) return;
+    try {
+      const r = await axios.post(`${API_URL}/orders/${ord.id}/resolve-cancel-request`, { action });
+      toast.success(r.data.message);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "İşlem yapılamadı."); }
   };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
   const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
