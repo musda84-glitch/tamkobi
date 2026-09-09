@@ -13,7 +13,11 @@ if not BASE_URL:
 API = BASE_URL.rstrip("/") + "/api"
 
 TEST_COMPANY_ID = os.environ.get("TEST_COMPANY_ID") or _backend_env.get("TEST_COMPANY_ID") or "comp_nexus_main_01"
-TEST_B2B_CONTACT_ID = os.environ.get("TEST_B2B_CONTACT_ID") or "cnt_01"
+LEGAL_ACCEPT = {"accept_mss": True, "accept_obf": True, "accept_kvkk": True}
+
+
+def with_legal(payload: dict) -> dict:
+    return {**payload, **LEGAL_ACCEPT}
 
 
 def resolve_b2b_token() -> str:

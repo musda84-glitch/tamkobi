@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { ShoppingCart, Copy, ExternalLink, FileSpreadsheet, KeyRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { B2BSettings } from "./SettingsPage";
+import { LegalTextsPanel } from "../components/LegalTextsPanel";
 
 export default function B2BAdminPage() {
   const { activeCompany } = useAuth();
@@ -18,6 +19,7 @@ export default function B2BAdminPage() {
         {[[KeyRound, "1. Erişim ver", "Aşağıdaki listede müşteriyi Aç yapın, 'Şifre Tanımla' ile giriş e-postası + şifre verin (cari kartındaki B2B Portal sekmesinden de yapılabilir)."], [ExternalLink, "2. Müşteri girer", "Müşteri giriş adresinden e-posta/VKN + şifre ile girer; size özel iskontolu fiyatları, stokları ve ekstresini görür."], [FileSpreadsheet, "3. AI ile sipariş", "Excel/PDF sipariş listesini yükler, AI ürünlerle eşler, sepet otomatik oluşur; sipariş Siparişler ekranına B2B kanalıyla düşer."]].map(([I, t, d]) => <div key={t} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3"><span className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"><I className="w-4 h-4" /></span><div><div className="font-bold text-slate-900">{t}</div><div className="text-slate-500 mt-0.5">{d}</div></div></div>)}
       </div>
       <B2BSettings companyId={companyId} />
+      <LegalTextsPanel companyId={companyId} />
     </div>
   );
 }

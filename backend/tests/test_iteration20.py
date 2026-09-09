@@ -4,7 +4,7 @@ import re
 import pytest
 import requests
 
-from conftest import API, TEST_COMPANY_ID, resolve_b2b_token
+from conftest import API, TEST_COMPANY_ID, resolve_b2b_token, LEGAL_ACCEPT
 
 EMP = "emp_03"          # Emre Çetin (annual 14, used 0)
 ADMIN_USER = "usr_admin_01"
@@ -233,7 +233,7 @@ class TestB2BOrderNumber:
         assert prods, cat.text[:300]
         p = prods[0]
         payload = {"items": [{"product_id": p.get("id"), "quantity": 1, "unit_price": p.get("price") or p.get("sale_price") or 100}],
-                   "note": "TEST_it20", "shipping_address": "TEST adres", "city": "İstanbul"}
+                   "note": "TEST_it20", "shipping_address": "TEST adres", "city": "İstanbul", **LEGAL_ACCEPT}
         nums = []
         for _ in range(2):
             r = client.post(f"{API}/public/b2b/{token}/orders", json=payload)

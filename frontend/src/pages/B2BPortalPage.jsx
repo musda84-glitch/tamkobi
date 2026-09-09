@@ -8,6 +8,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, b2bOrderGross, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
+import { LegalFooterLinks, allLegalAccepted, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
 
 const TABS = [["catalog", "Ürünler", Package], ["orders", "Siparişlerim", Truck], ["statement", "Hesap Ekstresi", FileText], ["installments", "Taksitlerim", CalendarClock]];
 
@@ -49,6 +50,7 @@ export default function B2BPortalPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [sheet, setSheet] = useState(false);
+  const [consent, setConsent] = useState(emptyLegalConsent());
   const load = useCallback(() => axios.get(`${API_URL}/public/b2b/${token}`).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.detail || "Portal yüklenemedi.")), [token]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -70,8 +72,10 @@ export default function B2BPortalPage() {
     setCart((c) => addCartLine(c, p.id, qty, draftNotes[p.id] || ""));
   };
   const submit = async () => {
+    if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan sipariş gönderilemez."); return; }
     setBusy(true);
     try { const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, { items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })), note, customer_order_number: customerOrderNo.trim() }); setDone(r.data.order); setCart({}); setNote(""); setCustomerOrderNo(""); setSheet(false); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, { items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty })), note, ...legalPayload(consent) }); setDone(r.data.order); setCart({}); setNote(""); setSheet(false); setConsent(emptyLegalConsent()); toast.success(r.data.message); load(); setTab("orders"); window.scrollTo({ top: 0, behavior: "smooth" }); }
     catch (e) { toast.error(e.response?.data?.detail || "Sipariş gönderilemedi."); } finally { setBusy(false); }
   const lines = Object.entries(cart).map(([id, qty]) => ({ p: d.products.find((x) => x.id === id), qty, note: lineNotes[id] || "" })).filter((l) => l.p && l.qty > 0);
   const sub = lines.reduce((s, l) => s + b2bNet(l.p) * l.qty, 0);
@@ -106,6 +110,8 @@ export default function B2BPortalPage() {
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş gönderilemedi."); } finally { setBusy(false); }
   };
   const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy, customerOrderNo, setCustomerOrderNo };
+  const hrefExtra = `?b2b=${encodeURIComponent(token)}`;
+  const cartProps = { lines, sub, vat, note, setNote, setQty, submit, busy, consent, setConsent, hrefExtra, legalOk: allLegalAccepted(consent) };
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
       <B2BHeader company={d.company} contact={d.contact} token={token} onPasswordChanged={load} />
@@ -367,6 +373,7 @@ export default function B2BPortalPage() {
         {tab === "installments" && <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">{d.installments.length === 0 && <div className="p-8 text-center text-slate-400">Bekleyen taksit yok.</div>}{d.installments.map((i) => <div key={i.id} className={`p-3 flex items-center gap-3 ${i.is_overdue ? "bg-rose-50/60" : ""}`}><CalendarClock className={`w-4 h-4 shrink-0 ${i.is_overdue ? "text-rose-600" : "text-slate-400"}`} /><div className="flex-1 min-w-0"><div className="font-semibold truncate">{i.invoice_number} • {i.label}</div><div className="text-slate-500">Vade {i.due_date}{i.is_overdue ? ` — ${-i.days_left} gün gecikti` : ` — ${i.days_left} gün kaldı`}</div></div><b className="text-sm whitespace-nowrap">{fmt(i.amount - (i.paid_amount || 0))} ₺</b></div>)}</div>}
       </div>
       {tab === "catalog" && <MobileCartBar lines={lines} total={sub + vat} open={sheet} setOpen={setSheet}><CartBody {...cartProps} suffix="-mobile" /></MobileCartBar>}
+      <LegalFooterLinks hrefExtra={hrefExtra} className="text-slate-500 py-4" prefix="b2b-footer" />
     </div>
   );
 }

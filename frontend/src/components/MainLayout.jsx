@@ -92,6 +92,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const publicSite = location.pathname === "/" && !authenticated;
   if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/web", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   if (publicSite || ["/teklif/", "/proje/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/yasal", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[location.pathname] === "none";
   if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
   const routeKey = location.pathname === "/sayim" ? "/stock" : location.pathname;

@@ -87,6 +87,7 @@ applog.setup_logging()
 import addons
 import support_tickets
 import data_export
+import legal_docs
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -1584,6 +1585,8 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
 async def create_contact(contact: Contact):
     await saas.check_contact_limit(contact.company_id)
     doc = contact.to_mongo()
+    if doc.get("kvkk_accepted") and not doc.get("kvkk_accepted_at"):
+        doc["kvkk_accepted_at"] = datetime.now(timezone.utc).isoformat()
     await db.contacts.insert_one(doc)
     return clean_doc(doc)
 
@@ -2065,6 +2068,8 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
             "products": products if bs.get("show_prices", True) else [{**p, "price": None, "list_price": None} for p in products], "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
             "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart}}
+            "settings": {k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")},
+            "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -2094,6 +2099,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
+    legal_docs.require_acceptance(req)
     total = round(sum(i.total for i in items), 2)
     grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
@@ -2114,6 +2120,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         (i.total / (1 + float(i.vat_rate or 0) / 100) if i.price_includes_vat and i.vat_rate else i.total)
         for i in items
     ), 2)
+    doc["legal_accept"] = legal_docs.acceptance_record(req)
     await db.orders.insert_one(doc)
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", doc["_id"])
     return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
@@ -7752,6 +7759,7 @@ gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
 data_export.init(db, get_current_user)
+legal_docs.init(db, get_current_user)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
@@ -7828,6 +7836,7 @@ app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(demo.router)
 app.include_router(data_export.router)
+app.include_router(legal_docs.router)
 
 @app.get("/")
 async def root():

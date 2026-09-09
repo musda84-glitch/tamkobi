@@ -93,6 +93,7 @@ class TestPublicSignup:
             "password": "abc123",
             "phone": "+905551112233",
             "plan_id": "plan_standard",
+            "accept_mss": True, "accept_obf": True, "accept_kvkk": True,
         }
         s = requests.Session()
         r = s.post(f"{API}/public/signup", json=payload, timeout=30)

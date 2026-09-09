@@ -320,6 +320,7 @@ async def public_plans():
     st = await settings()
     plans = [_clean(p) for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     return {"plans": plans, "catalog": await saas.catalog_with_prices(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "allow_custom_pack": True}
+    return {"plans": plans, "catalog": saas.catalog(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "legal": [{"slug": "mesafeli-satis", "title": "Mesafeli Satış Sözleşmesi", "path": "/yasal/mesafeli-satis"}, {"slug": "on-bilgilendirme", "title": "Ön Bilgilendirme Formu", "path": "/yasal/on-bilgilendirme"}, {"slug": "kvkk", "title": "KVKK Aydınlatma Metni", "path": "/yasal/kvkk"}]}
 
 
 @router.post("/public/signup")
@@ -331,6 +332,8 @@ async def public_signup(req: Dict[str, Any], response: Response):
         raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
     if await _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı bir hesap zaten var. Giriş yapın.")
+    import legal_docs
+    legal_docs.require_acceptance(req)
     st = await settings()
     wanted = saas.normalize_module_keys(req.get("modules"))
     extra = None
@@ -349,7 +352,7 @@ async def public_signup(req: Dict[str, Any], response: Response):
         plan = await _db.saas_plans.find_one({"_id": st["trial_plan_id"]})
     cid = f"comp_{uuid.uuid4().hex[:8]}"; uid = f"usr_{uuid.uuid4().hex[:8]}"
     await _db.companies.insert_one({"_id": cid, "name": cname, "tax_number": (req.get("tax_number") or "").strip(), "tax_office": "", "address": "", "city": (req.get("city") or "").strip(), "phone": (req.get("phone") or "").strip(), "email": email, "currency": "TRY", "source": "public_signup", "license_id": cid, "created_at": _now()})
-    await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
+    await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "legal_accept": legal_docs.acceptance_record(req), "created_at": _now()})
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"])

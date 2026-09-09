@@ -45,6 +45,7 @@ import WebsiteAdminPage from "./pages/WebsiteAdminPage";
 import PricingPage from "./pages/PricingPage";
 import HomeOrApp from "./pages/HomeOrApp";
 import SignupPage from "./pages/SignupPage";
+import LegalPage from "./pages/LegalPage";
 import PaymentResultPage from "./pages/PaymentResultPage";
 import RenewPage from "./pages/RenewPage";
 import B2BLoginPage from "./pages/B2BLoginPage";
@@ -117,6 +118,7 @@ export default function App() {
             <Route path="/web" element={<PricingPage />} />
             <Route path="/fiyatlar" element={<Navigate to="/web" replace />} />
             <Route path="/kayit" element={<SignupPage />} />
+            <Route path="/yasal/:slug" element={<LegalPage />} />
             <Route path="/odeme/basarili" element={<PaymentResultPage />} />
             <Route path="/odeme/iptal" element={<PaymentResultPage />} />
             <Route path="/yenile/:token" element={<RenewPage />} />

@@ -7,6 +7,7 @@ import { PLAN_COLORS } from "../components/saas/saasUi";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { serializeModuleKeys } from "../utils/modulePack";
+import { LegalFooterLinks } from "../components/LegalConsent";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 
@@ -79,7 +80,10 @@ export default function PricingPage() {
           <div className="mt-10 text-[11px] text-slate-500 flex flex-wrap items-center gap-3"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Fiyatlar KDV hariçtir. Hazır paketler Platform Yönetimi’nden yayınlanır; modül fiyatları Modül Kataloğu’ndan değişir.{d?.support_email && <span>Destek: {d.support_email} {d.support_phone}</span>}</div>
         </section>
       )}
-      <footer className="border-t border-white/10 py-6 text-center text-[11px] text-slate-500">{brand}.com · {brand} ERP</footer>
+      <footer className="border-t border-white/10 py-6 text-center text-[11px] text-slate-500 space-y-2">
+        <LegalFooterLinks className="text-slate-500" prefix="pricing-footer" />
+        <div>{brand}.com · {brand} ERP</div>
+      </footer>
     </div>
   );
 }
