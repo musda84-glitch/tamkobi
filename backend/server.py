@@ -26,6 +26,15 @@ from models import (
     Partner, PartnerTransaction, BankConnection,
     SmsSettings, SmsLog, MailAccount, MailLog
 )
+from line_totals import (
+    enrich_line,
+    enrich_items,
+    invoice_document_totals,
+    order_document_totals,
+    INVOICE_ITEM_FIELDS,
+    ORDER_ITEM_FIELDS,
+    pick_fields,
+)
 from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
@@ -600,16 +609,88 @@ async def _next_order_number(company_id: str, prefix: str) -> str:
         await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
     return await _next_number(prefix, None, company_id)
 
+def _as_item_dict(obj: Any) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        return dict(obj)
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj.dict()
+
+
+def _invoice_item_models(rows: List[Dict[str, Any]]) -> List[InvoiceItem]:
+    out = []
+    for row in rows:
+        payload = pick_fields(row, INVOICE_ITEM_FIELDS)
+        if "name" not in payload:
+            payload["name"] = row.get("product_name") or "Kalem"
+        if "total" not in payload:
+            payload["total"] = 0
+        if "vat_rate" in payload:
+            payload["vat_rate"] = int(round(float(payload["vat_rate"] or 0)))
+        out.append(InvoiceItem(**payload))
+    return out
+
+
+def _order_item_models(rows: List[Dict[str, Any]]) -> List[OrderItem]:
+    out = []
+    for row in rows:
+        payload = pick_fields(row, ORDER_ITEM_FIELDS)
+        if "product_name" not in payload:
+            payload["product_name"] = row.get("name") or "Kalem"
+        out.append(OrderItem(**payload))
+    return out
+
+
+def _recompute_invoice_items(raw_items, price_mode: str = "excl", force_vat=None, default_vat: float = 20.0):
+    rows = []
+    for it in raw_items or []:
+        d = _as_item_dict(it)
+        if force_vat is not None:
+            d["vat_rate"] = force_vat
+        enrich_line(d, price_mode=price_mode or "excl", default_vat=default_vat)
+        rows.append(d)
+    return rows
+
+
+def _apply_invoice_totals(invoice: Invoice):
+    force = 0 if invoice.invoice_type == "dispatch" else None
+    rows = _recompute_invoice_items(invoice.items, invoice.price_mode or "excl", force_vat=force)
+    totals = invoice_document_totals(rows, invoice.general_discount_rate, invoice.general_discount_amount, invoice.withholding_rate)
+    invoice.items = _invoice_item_models(rows)
+    invoice.discount_total = totals["discount_total"]
+    invoice.general_discount_amount = totals["general_discount_amount"]
+    invoice.subtotal = totals["subtotal"]
+    invoice.vat_total = totals["vat_total"]
+    invoice.withholding_amount = totals["withholding_amount"]
+    invoice.grand_total = totals["grand_total"]
+    return totals
+
+
+def _apply_order_totals(order: Order):
+    rows = []
+    for it in order.items or []:
+        d = _as_item_dict(it)
+        if not d.get("product_name"):
+            d["product_name"] = d.get("name") or "Kalem"
+        enrich_line(d, price_mode="excl", default_vat=0.0)
+        rows.append(d)
+    subtotal, vat_total, discount_total, grand_total = order_document_totals(rows)
+    order.items = _order_item_models(rows)
+    order.subtotal = subtotal
+    order.vat_total = vat_total
+    order.discount_total = discount_total
+    order.grand_total = grand_total
+    if vat_total:
+        order.total_amount = grand_total
+    else:
+        order.total_amount = round(subtotal or float(order.total_amount or 0), 2)
+    return subtotal, vat_total, grand_total
+
+
 def _calc_items(items: List[Dict[str, Any]]):
-    subtotal = vat_total = 0.0
-    for it in items:
-        qty, price, vat = float(it.get("quantity", 0)), float(it.get("unit_price", 0)), float(it.get("vat_rate", 20))
-        disc = float(it.get("discount_rate", 0))
-        line = qty * price * (1 - disc / 100)
-        it["total"] = round(line, 2)
-        it["vat_amount"] = round(line * vat / 100, 2)
-        subtotal += line
-        vat_total += line * vat / 100
+    enrich_items(items, default_vat=20.0)
+    subtotal = sum(float(it.get("total") or 0) for it in items)
+    vat_total = sum(float(it.get("vat_amount") or 0) for it in items)
     return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
 
 @api_router.get("/quotes")
@@ -1803,8 +1884,12 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
             vat_rate=vat_rate, note=line_note or None, price_includes_vat=includes,
         ))
     items = await _b2b_build_items(c, req.get("items", []))
+        line = {"product_id": p["_id"], "product_name": p.get("name"), "sku": p.get("sku") or "", "quantity": q, "unit": p.get("unit") or "Adet", "unit_price": price, "vat_rate": float(p.get("vat_rate") or 0), "discount_rate": 0}
+        enrich_line(line, default_vat=0.0)
+        items.append(OrderItem(**pick_fields(line, ORDER_ITEM_FIELDS)))
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
+    subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
     total = round(sum(i.total for i in items), 2)
     grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
@@ -1815,6 +1900,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), customer_order_number=cust_no, channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, order_status="pending")
+    order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, subtotal=subtotal, vat_total=vat_total, discount_total=discount_total, grand_total=grand_total, order_status="pending")
     doc = order.to_mongo()
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
@@ -2807,8 +2893,6 @@ async def create_invoice(invoice: Invoice):
         invoice.status = "draft"
         invoice.gib_status = "Taslak (e-İrsaliye)"
         invoice.payment_status = "n/a"
-        for it in invoice.items:
-            it.vat_rate = 0
 
     if invoice.trade_kind == "export" or invoice.e_type == "e_export":
         if invoice.e_type not in ("e_export", "paper"):
@@ -2837,6 +2921,7 @@ async def create_invoice(invoice: Invoice):
     invoice.fx_date = fx_stamp["fx_date"]
     invoice.fx_source = fx_stamp["fx_source"]
     invoice.local_total = fx.local_of(invoice.grand_total, invoice.fx_rate)
+    _apply_invoice_totals(invoice)
 
     doc = invoice.to_mongo()
     if invoice.invoice_type == "purchase" and (invoice.e_type == "e_invoice" or invoice.direction == "incoming" or invoice.source == "edoc_inbox" or invoice.edoc_id):
@@ -2979,7 +3064,11 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         await _fill_stock_codes(inv.get("company_id"), allowed["items"])
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:
         items = allowed.get("items", inv.get("items", []))
-        items_sum = sum(float(i.get("total", 0)) for i in items)
+        price_mode = allowed.get("price_mode", inv.get("price_mode") or "excl")
+        invoice_type = allowed.get("invoice_type", inv.get("invoice_type"))
+        force = 0 if invoice_type == "dispatch" else None
+        rows = _recompute_invoice_items(items, price_mode, force_vat=force)
+        allowed["items"] = [pick_fields(r, INVOICE_ITEM_FIELDS) for r in rows]
         gd_rate = float(allowed.get("general_discount_rate", inv.get("general_discount_rate", 0)) or 0)
         gd_amt = float(allowed.get("general_discount_amount", inv.get("general_discount_amount", 0)) or 0) if "general_discount_rate" not in allowed else 0
         gd = round(min(max(gd_amt or items_sum * gd_rate / 100, 0), items_sum), 2)
@@ -2991,6 +3080,8 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(allowed["grand_total"], stamp["fx_rate"])
+        totals = invoice_document_totals(rows, gd_rate, gd_amt, allowed.get("withholding_rate", inv.get("withholding_rate", 0)))
+        allowed.update({k: totals[k] for k in ("discount_total", "general_discount_amount", "subtotal", "vat_total", "withholding_amount", "grand_total")})
         if inv.get("effects_applied") and inv.get("contact_id") and inv.get("invoice_type") == "sales":
             await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["local_total"] - fx.try_amount(inv)}})
     elif any(k in allowed for k in ("currency", "fx_rate", "issue_date")):
@@ -6367,6 +6458,7 @@ async def create_order(order: Order):
     await _fill_stock_codes(order.company_id, order.items)
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
+    _apply_order_totals(order)
 
     doc = order.to_mongo()
     await db.orders.insert_one(doc)
@@ -6413,6 +6505,17 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
 
     subtotal = sum(i["total"] for i in inv_items) / 1.20
     vat_total = sum(i["total"] for i in inv_items) - subtotal
+        line = dict(itm)
+        line["name"] = itm.get("product_name") or itm.get("name") or "Kalem"
+        if "vat_rate" not in itm or itm.get("vat_rate") is None:
+            line["vat_rate"] = 20
+        enrich_line(line, default_vat=20.0)
+        payload = pick_fields(line, INVOICE_ITEM_FIELDS)
+        payload["name"] = line.get("name") or line.get("product_name") or "Kalem"
+        payload.setdefault("unit", line.get("unit") or "Adet")
+        inv_items.append(payload)
+
+    inv_totals = invoice_document_totals(inv_items)
 
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"
     invoice_number = f"NX{datetime.now().strftime('%Y')}{str(uuid.uuid4().int)[:8]}"
@@ -6429,16 +6532,16 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%d"),
         "items": inv_items,
-        "subtotal": subtotal,
-        "vat_total": vat_total,
-        "discount_total": 0.0,
-        "grand_total": order.get("total_amount"),
+        "subtotal": inv_totals["subtotal"],
+        "vat_total": inv_totals["vat_total"],
+        "discount_total": inv_totals["discount_total"],
+        "grand_total": inv_totals["grand_total"],
         "currency": "TRY",
         "status": "approved",
         "gib_status": "GİB'e Gönderildi",
         "gib_tracking_id": f"EAR-{uuid.uuid4().hex[:8].upper()}",
         "payment_status": "paid",
-        "paid_amount": order.get("total_amount"),
+        "paid_amount": inv_totals["grand_total"],
         "notes": f"Sipariş No: {order.get('order_number')} üzerinden otomatik faturaya dönüştürüldü.",
         "source_channel": order.get("channel", "b2b"),
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -7135,15 +7238,23 @@ async def ai_order_confirm(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     created = []
     for o in req.get("orders") or []:
-        items = [OrderItem(product_id=it.get("product_id") or "", product_name=it.get("product_name") or "Kalem", sku=it.get("sku") or "", quantity=int(it.get("quantity") or 1), unit_price=float(it.get("unit_price") or 0), total=round(float(it.get("total") or float(it.get("unit_price") or 0) * int(it.get("quantity") or 1)), 2)) for it in o.get("items") or []]
+        rows = []
+        for it in o.get("items") or []:
+            d = dict(it)
+            d["product_name"] = it.get("product_name") or it.get("name") or "Kalem"
+            d["sku"] = it.get("sku") or ""
+            enrich_line(d, default_vat=0.0)
+            rows.append(d)
+        items = _order_item_models(rows)
         if not items or not o.get("customer_name"):
             continue
         channel = (o.get("channel") or "manual").lower()
         num = (o.get("order_number") or "").strip()
         if not num or await db.orders.find_one({"company_id": company_id, "order_number": num}):
             num = await _next_order_number(company_id, "ORD")
+        subtotal, vat_total, discount_total, grand_total = order_document_totals(rows)
         order = Order(company_id=company_id, order_number=num, channel=channel, customer_name=o["customer_name"], customer_email=o.get("customer_email"), customer_phone=o.get("customer_phone"),
-                      shipping_address=o.get("shipping_address") or "-", city=o.get("city") or "-", items=items, total_amount=round(sum(i.total for i in items), 2), order_status="pending")
+                      shipping_address=o.get("shipping_address") or "-", city=o.get("city") or "-", items=items, total_amount=grand_total if vat_total else subtotal, subtotal=subtotal, vat_total=vat_total, discount_total=discount_total, grand_total=grand_total, order_status="pending")
         doc = order.to_mongo()
         doc.update({"notes": o.get("notes") or "", "source": "ai_import", "order_date": (o.get("order_date") + "T00:00:00+00:00") if o.get("order_date") else doc.get("order_date"), "contact_id": o.get("contact_id")})
         await db.orders.insert_one(doc)

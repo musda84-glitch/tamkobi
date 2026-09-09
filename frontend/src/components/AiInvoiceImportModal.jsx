@@ -5,9 +5,10 @@ import { X, Sparkles, Upload, Loader2, FileText, Plus, Trash2, CheckCircle2 } fr
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { SearchSelect } from "./SearchSelect";
+import { computeLine, emptyLine, fmtMoney, VAT_OPTIONS } from "../utils/documentLines";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const lineTotal = (it) => Math.round(Number(it.quantity || 0) * Number(it.unit_price || 0) * (1 - Number(it.discount_rate || 0) / 100) * 100) / 100;
+const fmt = (n) => fmtMoney(n);
+const lineOf = (it) => computeLine(it);
 
 export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone }) => {
   useEscape(onClose);
@@ -28,11 +29,11 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone }) =
       toast.success(`AI faturayı okudu (güven: %${Math.round((r.data.draft.confidence || 0) * 100)}). Kontrol edip onaylayın.`);
     } catch (err) { toast.error(err.response?.data?.detail || "PDF işlenemedi."); } finally { setBusy(false); }
   };
-  const setItem = (i, k, v) => setDraft((d) => { const items = d.items.map((it, j) => (j === i ? { ...it, [k]: v } : it)); items[i].total = lineTotal(items[i]); return { ...d, items }; });
-  const addItem = () => setDraft((d) => ({ ...d, items: [...d.items, { name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20, discount_rate: 0, total: 0 }] }));
+  const setItem = (i, k, v) => setDraft((d) => { const items = d.items.map((it, j) => (j === i ? computeLine({ ...it, [k]: v }, k) : it)); return { ...d, items }; });
+  const addItem = () => setDraft((d) => ({ ...d, items: [...d.items, emptyLine()] }));
   const rmItem = (i) => setDraft((d) => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
-  const sub = draft ? draft.items.reduce((s, it) => s + lineTotal(it), 0) : 0;
-  const vat = draft ? draft.items.reduce((s, it) => s + lineTotal(it) * Number(it.vat_rate || 0) / 100, 0) : 0;
+  const sub = draft ? draft.items.reduce((s, it) => s + lineOf(it).total, 0) : 0;
+  const vat = draft ? draft.items.reduce((s, it) => s + lineOf(it).vat_amount, 0) : 0;
   const confirm = async () => {
     setSaving(true);
     try {
@@ -76,26 +77,31 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone }) =
                 <div className="text-[11px] text-slate-500">Güven: <b>%{Math.round((draft.confidence || 0) * 100)}</b> · PDF toplamı: <b>{fmt(draft.grand_total)} {draft.currency || "TRY"}</b></div>
               </div>
             </div>
-            <table className="w-full" data-testid="ai-items-table">
-              <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Kalem</th><th className="w-20">Miktar</th><th className="w-20">Birim</th><th className="w-28">Birim Fiyat</th><th className="w-16">KDV %</th><th className="w-16">İsk %</th><th className="text-right w-28">Tutar</th><th className="w-8"></th></tr></thead>
+            <table className="w-full min-w-[900px]" data-testid="ai-items-table">
+              <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Stok adı</th><th className="w-16">Miktar</th><th className="w-16">Birim</th><th className="w-24">KDV'siz</th><th className="w-24">KDV'li</th><th className="w-16">KDV %</th><th className="w-16">İsk %</th><th className="text-right w-24">Hariç</th><th className="text-right w-24">Dahil</th><th className="w-8"></th></tr></thead>
               <tbody className="divide-y">
-                {draft.items.map((it, i) => (
+                {draft.items.map((it, i) => {
+                  const line = lineOf(it);
+                  return (
                   <tr key={i} data-testid={`ai-item-${i}`}>
                     <td className="py-1"><input value={it.name} onChange={(e) => setItem(i, "name", e.target.value)} className="w-full border rounded p-1.5" />{it.matched_product && <div className="text-[10px] text-emerald-700">↳ Stok kartı: {it.matched_product}</div>}</td>
                     <td><input type="number" step="any" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
                     <td><input value={it.unit} onChange={(e) => setItem(i, "unit", e.target.value)} className="w-full border rounded p-1.5" /></td>
                     <td><input type="number" step="any" value={it.unit_price} onChange={(e) => setItem(i, "unit_price", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
-                    <td><input type="number" value={it.vat_rate} onChange={(e) => setItem(i, "vat_rate", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><input type="number" step="any" value={Math.round((line.unit_price_incl || 0) * 10000) / 10000} onChange={(e) => setItem(i, "unit_price_incl", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><select value={it.vat_rate} onChange={(e) => setItem(i, "vat_rate", e.target.value)} className="w-full border rounded p-1.5">{VAT_OPTIONS.map((v) => <option key={v} value={v}>%{v}</option>)}</select></td>
                     <td><input type="number" step="any" value={it.discount_rate || 0} onChange={(e) => setItem(i, "discount_rate", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
-                    <td className="text-right font-semibold">{fmt(lineTotal(it))}</td>
+                    <td className="text-right font-semibold">{fmt(line.total)}</td>
+                    <td className="text-right font-bold">{fmt(line.total_incl)}</td>
                     <td><button onClick={() => rmItem(i)} className="p-1 text-rose-600" data-testid={`ai-item-rm-${i}`}><Trash2 className="w-3.5 h-3.5" /></button></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             <div className="flex items-start justify-between">
               <button onClick={addItem} className="flex items-center gap-1 px-2.5 py-1.5 border rounded-lg" data-testid="ai-item-add"><Plus className="w-3.5 h-3.5" /> Kalem ekle</button>
-              <div className="text-right space-y-0.5"><div>Ara Toplam: <b>{fmt(sub)} ₺</b></div><div>KDV: <b>{fmt(vat)} ₺</b></div><div className="text-sm">Genel Toplam: <b data-testid="ai-grand-total">{fmt(sub + vat)} ₺</b>{Math.abs(sub + vat - Number(draft.grand_total || 0)) > 1 && <span className="ml-2 text-[10px] text-amber-700 font-semibold">PDF toplamından farklı ({fmt(draft.grand_total)})</span>}</div></div>
+              <div className="text-right space-y-0.5"><div>Ara Toplam (KDV Hariç): <b>{fmt(sub)} ₺</b></div><div>KDV: <b>{fmt(vat)} ₺</b></div><div className="text-sm">Genel Toplam (KDV Dahil): <b data-testid="ai-grand-total">{fmt(sub + vat)} ₺</b>{Math.abs(sub + vat - Number(draft.grand_total || 0)) > 1 && <span className="ml-2 text-[10px] text-amber-700 font-semibold">PDF toplamından farklı ({fmt(draft.grand_total)})</span>}</div></div>
             </div>
             <div className="flex justify-between items-center border-t pt-3">
               <button onClick={() => { setDraft(null); setRes(null); }} className="px-3 py-1.5 border rounded-lg" data-testid="ai-restart">Başka PDF</button>

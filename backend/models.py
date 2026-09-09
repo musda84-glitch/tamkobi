@@ -170,10 +170,13 @@ class InvoiceItem(BaseModel):
     quantity: float
     unit: str = "Adet"
     unit_price: float
+    unit_price_incl: float = 0.0
     vat_rate: int = 20
     discount_percent: float = 0.0
     discount_rate: float = 0.0
     total: float
+    total_incl: float = 0.0
+    vat_amount: float = 0.0
     is_service: bool = False
     sku: Optional[str] = ""
     barcode: Optional[str] = ""
@@ -423,7 +426,7 @@ class CargoShipment(BaseDocument):
 
 # Sipariş Modülü & B2B Portalı
 class OrderItem(BaseModel):
-    product_id: str
+    product_id: Optional[str] = ""
     product_name: str
     sku: str
     barcode: Optional[str] = ""
@@ -434,6 +437,17 @@ class OrderItem(BaseModel):
     vat_rate: float = 20
     note: Optional[str] = None
     price_includes_vat: bool = False
+    sku: str = ""
+    quantity: float = 1
+    unit: str = "Adet"
+    unit_price: float = 0.0
+    unit_price_incl: float = 0.0
+    vat_rate: float = 0.0
+    discount_rate: float = 0.0
+    total: float = 0.0
+    total_incl: float = 0.0
+    vat_amount: float = 0.0
+    is_service: bool = False
 
 class Order(BaseDocument):
     company_id: str
@@ -448,6 +462,10 @@ class Order(BaseDocument):
     city: str
     items: List[OrderItem] = []
     total_amount: float
+    subtotal: float = 0.0
+    vat_total: float = 0.0
+    discount_total: float = 0.0
+    grand_total: float = 0.0
     currency: str = "TRY"
     order_status: str = "pending"  # pending, approved, preparing, shipped, completed, cancelled
     contact_id: Optional[str] = None
