@@ -2810,6 +2810,18 @@ async def _reverse_invoice_effects(inv: dict):
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
+                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+
+
+async def _reverse_invoice_effects(inv: dict):
+    """Gelen e-fatura reddi: cariyi geri al; satış stok düşümünü veya gelen alış stok girişini tersine çevir."""
+    if inv.get("contact_id"):
+        change = -float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else float(inv.get("grand_total", 0))
+        await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
+    if inv.get("invoice_type") == "sales":
+        for item in inv.get("items", []):
+            pid, qty = _invoice_item_pid_qty(item)
+            if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
     elif inv.get("invoice_type") == "purchase" and (inv.get("source") == "edoc_inbox" or inv.get("edoc_id")):
         for item in inv.get("items", []):
@@ -3002,6 +3014,73 @@ async def accept_incoming_invoice(invoice_id: str):
         "message": f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}",
         "tracking_id": tracking_id,
         "gib_credits_left": remaining,
+    }
+    if inv.get("status") == "draft":
+        if not inv.get("effects_applied"):
+            await _apply_invoice_effects(inv)
+            updates["effects_applied"] = True
+        updates["status"] = "approved"
+        updates["approved_at"] = now
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
+    if inv.get("edoc_id"):
+        await db.incoming_edocs.update_one({"_id": inv["edoc_id"]}, {"$set": {"status": "approved", "approved_at": now, "invoice_id": invoice_id}})
+    return {"status": "success", "message": "Gelen e-fatura onaylandı. Ticari kabul yanıtı GİB'e iletilir (entegratör bağlıysa)."}
+
+
+@api_router.post("/invoices/{invoice_id}/reject-incoming")
+async def reject_incoming_invoice(invoice_id: str, req: Dict[str, Any] = None):
+    req = req or {}
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if not _is_incoming_purchase_invoice(inv):
+        raise HTTPException(status_code=400, detail="Bu işlem yalnızca GİB'den gelen alış e-faturaları içindir.")
+    resp = _incoming_purchase_response(inv)
+    if inv.get("status") == "cancelled" or resp == "rejected":
+        return {"status": "success", "message": "Gelen e-fatura zaten reddedildi."}
+    if resp == "accepted":
+        raise HTTPException(status_code=400, detail="Onaylanmış gelen fatura reddedilemez.")
+    if float(inv.get("paid_amount") or 0) > 0.01:
+        raise HTTPException(status_code=400, detail="Ödemesi yapılmış gelen fatura reddedilemez. Önce ödemeyi geri alın.")
+    applied = bool(inv.get("effects_applied")) or inv.get("status") in ("approved", "sent_to_gib", "paid")
+    if applied:
+        await _reverse_invoice_effects(inv)
+    now = datetime.now(timezone.utc).isoformat()
+    reason = (req.get("reason") or "").strip()[:300]
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": {
+        "status": "cancelled",
+        "gib_response": "rejected",
+        "gib_status": "Gelen E-Fatura Reddedildi",
+        "direction": "incoming",
+        "effects_applied": False,
+        "rejected_at": now,
+        "reject_reason": reason,
+    }})
+    if inv.get("edoc_id"):
+        await db.incoming_edocs.update_one({"_id": inv["edoc_id"]}, {"$set": {"status": "rejected", "rejected_at": now, "reject_reason": reason}})
+    return {"status": "success", "message": "Gelen e-fatura reddedildi. Ticari ret yanıtı GİB'e iletilir (entegratör bağlıysa; süre 8 gündür)."}
+
+
+@api_router.post("/invoices/{invoice_id}/accept-incoming")
+async def accept_incoming_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if not _is_incoming_purchase_invoice(inv):
+        raise HTTPException(status_code=400, detail="Bu işlem yalnızca GİB'den gelen alış e-faturaları içindir.")
+    if inv.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="İptal edilmiş fatura onaylanamaz.")
+    resp = _incoming_purchase_response(inv)
+    if resp == "accepted":
+        return {"status": "success", "message": "Gelen e-fatura zaten onaylandı."}
+    if resp == "rejected":
+        raise HTTPException(status_code=400, detail="Reddedilmiş gelen fatura onaylanamaz.")
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "gib_response": "accepted",
+        "gib_status": "Gelen E-Fatura Onaylandı",
+        "direction": "incoming",
+        "accepted_at": now,
     }
     if inv.get("status") == "draft":
         if not inv.get("effects_applied"):

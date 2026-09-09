@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, Globe } from "lucide-react";
 import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, Globe, CheckCircle2, XCircle } from "lucide-react";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, CheckCircle2, XCircle } from "lucide-react";
 
 export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat" };
 

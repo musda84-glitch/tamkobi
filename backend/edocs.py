@@ -211,6 +211,8 @@ async def approve_edoc(doc_id: str, req: Dict[str, Any]):
            "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "gib_status": "received" if ubl_like else None, "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
            "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
            "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)" if ubl_like and d.get("kind") != "dispatch" else ("received" if ubl_like else None),
+           "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
+           "gib_status": "Gelen E-Fatura (Yanıt Bekleniyor)" if d.get("source") == "ubl_xml" and d.get("kind") != "dispatch" else ("received" if d.get("source") == "ubl_xml" else None),
            "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
     await _db.invoices.insert_one(inv)
     if d["kind"] == "invoice":
