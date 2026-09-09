@@ -134,7 +134,8 @@ def apply_env(settings: dict) -> None:
     )
 
 
-async def _rebind_runtime(settings: dict) -> None:
+async def rebind_runtime(settings: dict) -> None:
+    """Point the running API at `settings` without a restart."""
     import server as srv
 
     apply_env(settings)
@@ -261,7 +262,7 @@ async def perform_install(req: InstallRequest) -> dict:
         }
     )
     apply_saved_secrets()
-    await _rebind_runtime(settings)
+    await rebind_runtime(settings)
 
     import rbac
     import saas

@@ -95,6 +95,7 @@ import ubl_export
 import edoc_backup
 import data_sync
 import setup_install
+import db_admin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -7467,6 +7468,7 @@ for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", 
 
 app.include_router(api_router)
 app.include_router(setup_install.router)
+app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
 app.include_router(fx.router)
