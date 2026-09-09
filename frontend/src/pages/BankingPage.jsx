@@ -15,7 +15,9 @@ import {
   History,
   CheckCircle2,
   Users,
-  Link2
+  Link2,
+  Pencil,
+  Trash2
 } from "lucide-react";
 import { PartnersPanel } from "../components/PartnersPanel";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -28,6 +30,26 @@ const TABS = [
   { key: "connections", label: "Banka Entegrasyonu (Canlı Veri)", icon: Link2 }
 ];
 
+const money = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+
+const ACCOUNT_GROUPS = [
+  { type: "bank", badge: "Banka Hesapları", unit: "Hesap", icon: Landmark, card: "bg-blue-50/60 border-blue-200", iconBox: "bg-blue-100 text-blue-700", badgeCls: "text-blue-700 bg-blue-100", border: "border-blue-200/60" },
+  { type: "cash_box", badge: "Kasalar", unit: "Kasa", icon: Wallet, card: "bg-emerald-50/60 border-emerald-200", iconBox: "bg-emerald-100 text-emerald-700", badgeCls: "text-emerald-700 bg-emerald-100", border: "border-emerald-200/60" },
+  { type: "pos", badge: "POS Hesapları", unit: "POS", icon: CreditCard, card: "bg-purple-50/60 border-purple-200", iconBox: "bg-purple-100 text-purple-700", badgeCls: "text-purple-700 bg-purple-100", border: "border-purple-200/60" },
+  { type: "credit_card", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" }
+];
+
+const emptyAccountForm = {
+  type: "bank",
+  bank_name: "",
+  account_name: "",
+  account_number: "",
+  iban: "",
+  currency: "TRY",
+  current_balance: 0.0,
+  pos_commission_rate: 1.5
+};
+
 export default function BankingPage() {
   const { activeCompany } = useAuth();
   const [searchParams] = useSearchParams();
@@ -38,24 +60,17 @@ export default function BankingPage() {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
   const [stmtAccount, setStmtAccount] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Modals
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(null);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
 
   // New Account Form
-  const [newAccount, setNewAccount] = useState({
-    type: "bank",
-    bank_name: "Garanti BBVA",
-    account_name: "Vadesiz TL Hesabı",
-    account_number: "",
-    iban: "",
-    currency: "TRY",
-    current_balance: 0.0,
-    pos_commission_rate: 1.5
-  });
+  const [newAccount, setNewAccount] = useState(emptyAccountForm);
 
   // Virman Form
   const [virmanForm, setVirmanForm] = useState({
@@ -97,16 +112,52 @@ export default function BankingPage() {
   const handleSaveAccount = async (e) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/banking/accounts`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
-        ...newAccount,
-        current_balance: Number(newAccount.current_balance || 0)
-      });
-      toast.success("Banka/Kasa hesabı başarıyla eklendi.");
+      const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const payload = { ...newAccount, current_balance: Number(newAccount.current_balance || 0) };
+      if (editingAccount) {
+        const { current_balance: _bal, ...meta } = payload;
+        await axios.put(`${API_URL}/banking/accounts/${editingAccount.id || editingAccount._id}`, meta);
+        toast.success("Hesap güncellendi.");
+      } else {
+        await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload });
+        toast.success("Banka/Kasa hesabı başarıyla eklendi.");
+      }
       setShowAddAccountModal(false);
+      setEditingAccount(null);
+      setNewAccount(emptyAccountForm);
       loadBankingData();
     } catch (err) {
-      toast.error("Hesap kaydedilemedi.");
+      toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
+    }
+  };
+
+  const openEditAccount = (acc, e) => {
+    e?.stopPropagation();
+    setEditingAccount(acc);
+    setNewAccount({
+      type: acc.type || "bank",
+      bank_name: acc.bank_name || "",
+      account_name: acc.account_name || "",
+      account_number: acc.account_number || "",
+      iban: acc.iban || "",
+      currency: acc.currency || "TRY",
+      current_balance: acc.current_balance || 0,
+      pos_commission_rate: acc.pos_commission_rate || 1.5
+    });
+    setShowAddAccountModal(true);
+  };
+
+  const handleDeleteAccount = async (acc, e) => {
+    e?.stopPropagation();
+    const name = `${acc.bank_name || ""} — ${acc.account_name || ""}`.trim();
+    if (!window.confirm(`"${name}" silinsin mi? Hareketi olan hesaplar silinemez.`)) return;
+    try {
+      const r = await axios.delete(`${API_URL}/banking/accounts/${acc.id || acc._id}`);
+      toast.success(r.data.message || "Hesap silindi.");
+      if (selectedAccountId === (acc.id || acc._id)) setSelectedAccountId(null);
+      loadBankingData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Hesap silinemedi.");
     }
   };
 
@@ -139,7 +190,17 @@ export default function BankingPage() {
 
   const totalLiquidity = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
-  const visibleTx = selectedAccountId ? transactions.filter(tx => tx.account_id === selectedAccountId || tx.target_account_id === selectedAccountId) : transactions;
+  const grouped = ACCOUNT_GROUPS.map((g) => {
+    const items = accounts.filter((a) => a.type === g.type);
+    return { ...g, items, total: items.reduce((s, a) => s + (a.current_balance || 0), 0) };
+  }).filter((g) => g.items.length > 0);
+  const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
+  const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
+  const visibleTx = selectedAccountId
+    ? transactions.filter(tx => tx.account_id === selectedAccountId || tx.target_account_id === selectedAccountId)
+    : groupIds
+      ? transactions.filter(tx => groupIds.includes(tx.account_id) || groupIds.includes(tx.target_account_id))
+      : transactions;
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
 
@@ -163,7 +224,7 @@ export default function BankingPage() {
             <span>Virman Yap</span>
           </button>
           <button
-            onClick={() => setShowAddAccountModal(true)}
+            onClick={() => { setEditingAccount(null); setNewAccount(emptyAccountForm); setShowAddAccountModal(true); }}
             className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition"
             data-testid="add-bank-account-btn"
           >
@@ -186,8 +247,8 @@ export default function BankingPage() {
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={loadBankingData} />}
 
       {tab === "accounts" && (<>
-      {/* Account Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Grouped account cards — same pattern as Ortaklar Hesabı */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
         {partnerSummary && partnerSummary.partner_count > 0 && (
           <button onClick={() => setTab("partners")} className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left" data-testid="partners-account-card">
             <div className="space-y-2">
@@ -206,79 +267,107 @@ export default function BankingPage() {
             </div>
           </button>
         )}
-        {accounts.map((acc) => {
-          const isBank = acc.type === 'bank';
-          const isCash = acc.type === 'cash_box';
-          const isPos = acc.type === 'pos';
-          const isCard = acc.type === 'credit_card';
-          const accId = acc.id || acc._id;
-          const isSelected = selectedAccountId === accId;
-
+        {grouped.map((g) => {
+          const Icon = g.icon;
+          const isOpen = selectedGroup === g.type;
           return (
-            <div
-              role="button"
-              tabIndex={0}
-              key={accId}
-              onClick={() => setSelectedAccountId(isSelected ? null : accId)}
-              className={`bg-white p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30 shadow-md' : 'border-slate-200/90'}`}
-              title="Hesap hareketlerini görmek için tıklayın"
-              data-testid={`bank-card-${accId}`}
+            <button
+              key={g.type}
+              type="button"
+              onClick={() => { setSelectedGroup(isOpen ? null : g.type); setSelectedAccountId(null); }}
+              className={`${g.card} p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isOpen ? "ring-2 ring-emerald-500/30 shadow-md" : ""}`}
+              data-testid={`account-group-${g.type}`}
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className={`p-2 rounded-xl ${
-                    isBank ? 'bg-blue-50 text-blue-600' : isCash ? 'bg-emerald-50 text-emerald-600' : 'bg-purple-50 text-purple-600'
-                  }`}>
-                    {isBank ? <Landmark className="w-5 h-5" /> : isCash ? <Wallet className="w-5 h-5" /> : <CreditCard className="w-5 h-5" />}
-                  </div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded flex items-center gap-1">
-                    {isBank ? 'Banka Hesabı' : isCash ? 'Kasa' : isCard ? 'Kredi Kartı' : 'Sanal/Fiziki POS'}
-                  </span>
+                  <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
+                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
                 </div>
-                {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" title="Bu hesap banka API'sine bağlı; manuel işlem yapılamaz, hareketler bankadan çekilir" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider} · manuel işlem kapalı</div>}
-
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
-                  <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
-                  {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString('tr-TR')} ₺` : 'Limit —'}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ''}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
-                  {acc.iban && acc.iban !== '-' && (
-                    <div className="text-[11px] font-mono text-slate-400 mt-1 truncate">{acc.iban}</div>
-                  )}
+                  <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
+                  <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
                 </div>
               </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
+              <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
                 <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
-                  <div className="text-xl font-bold text-slate-900 tracking-tight">
-                    {acc.current_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-                  </div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Toplam Bakiye</div>
+                  <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
                 </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{isSelected ? 'Hareketler ↓' : 'Hareketleri Gör'}</span>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {openGroup && (
+        <div className="space-y-3" data-testid={`account-group-members-${openGroup.type}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-900">{openGroup.badge}</h2>
+            <button type="button" onClick={() => { setSelectedGroup(null); setSelectedAccountId(null); }} className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full" data-testid="clear-group-btn"><X className="w-3 h-3 inline" /> Kapat</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {openGroup.items.map((acc) => {
+              const accId = acc.id || acc._id;
+              const isSelected = selectedAccountId === accId;
+              const isCard = acc.type === "credit_card";
+              return (
+                <div
+                  key={accId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedAccountId(isSelected ? null : accId)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAccountId(isSelected ? null : accId); } }}
+                  className={`bg-white p-4 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-md" : "border-slate-200/90"}`}
+                  data-testid={`bank-card-${accId}`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
+                        <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={(e) => openEditAccount(acc, e)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100" title="Düzelt" data-testid={`edit-account-${accId}`}><Pencil className="w-3.5 h-3.5" /></button>
+                        <button type="button" onClick={(e) => handleDeleteAccount(acc, e)} disabled={acc.is_integrated} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30" title={acc.is_integrated ? "Entegre hesap silinemez" : "Sil"} data-testid={`delete-account-${accId}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                    {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider}</div>}
+                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
+                    {acc.iban && acc.iban !== "-" && <div className="text-[11px] font-mono text-slate-400 truncate">{acc.iban}</div>}
+                  </div>
+                  <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
+                      <div className="text-lg font-bold text-slate-900 tracking-tight">{money(acc.current_balance)} ₺</div>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{isSelected ? "Hareketler ↓" : "Hareketleri Gör"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Transactions History */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5" data-testid="transactions-panel">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-slate-500" />
-            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name} Hareketleri` : 'Son Finansal Hareketler'}</h2>
-            {selectedAccount && (
-              <button onClick={() => setSelectedAccountId(null)} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> Tüm Hesaplar</button>
+            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name} Hareketleri` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}</h2>
+            {(selectedAccount || openGroup) && (
+              <button onClick={() => { setSelectedAccountId(null); if (selectedAccount) return; setSelectedGroup(null); }} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> {selectedAccount ? "Grup Hareketleri" : "Tüm Hesaplar"}</button>
             )}
           </div>
-          {selectedAccount ? (
+          {selectedAccount || openGroup ? (
             <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
               <span className="text-slate-500">{visibleTx.length} hareket</span>
               <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
               <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
             </div>
           ) : (
-            <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Hesaba tıklayınca filtrelenir</span>
+            <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
           )}
         </div>
 
@@ -421,8 +510,8 @@ export default function BankingPage() {
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="add-account-modal">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-base font-bold text-slate-900">Yeni Banka / Kasa / POS Hesabı</h3>
-              <button onClick={() => setShowAddAccountModal(false)} className="text-slate-400">
+              <h3 className="text-base font-bold text-slate-900">{editingAccount ? "Hesabı Düzelt" : "Yeni Banka / Kasa / POS Hesabı"}</h3>
+              <button onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); }} className="text-slate-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -479,13 +568,15 @@ export default function BankingPage() {
                   type="number"
                   value={newAccount.current_balance}
                   onChange={(e) => setNewAccount({ ...newAccount, current_balance: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                  disabled={!!editingAccount}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 disabled:text-slate-400"
                 />
+                {editingAccount && <p className="text-[10px] text-slate-400 mt-1">Bakiye hareketlerle değişir; düzeltmede değiştirilmez.</p>}
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
                   type="button"
-                  onClick={() => setShowAddAccountModal(false)}
+                  onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); }}
                   className="px-3 py-1.5 border rounded-lg text-xs"
                 >
                   İptal
@@ -495,7 +586,7 @@ export default function BankingPage() {
                   className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
                   data-testid="save-account-btn"
                 >
-                  Hesabı Kaydet
+                  {editingAccount ? "Değişiklikleri Kaydet" : "Hesabı Kaydet"}
                 </button>
               </div>
             </form>
