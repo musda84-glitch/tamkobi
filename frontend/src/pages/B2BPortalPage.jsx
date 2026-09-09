@@ -87,6 +87,13 @@ export default function B2BPortalPage() {
   const addWithQty = (id) => setQty(id, Math.max(1, Number(draftQty[id]) || 1));
   const submit = async () => {
     setBusy(true);
+  const lines = Object.entries(cart).map(([id, qty]) => ({ p: d.products.find((x) => x.id === id), qty, note: lineNotes[id] || "" })).filter((l) => l.p && l.qty > 0);
+  const sub = lines.reduce((s, l) => s + b2bNet(l.p) * l.qty, 0);
+  const vat = lines.reduce((s, l) => s + (b2bGross(l.p) - b2bNet(l.p)) * l.qty, 0);
+  const setQty = (id, qty) => setCart((c) => { const n = { ...c }; if (qty <= 0) delete n[id]; else n[id] = qty; return n; });
+  const addWithQty = (id) => setQty(id, Math.max(1, Number(draftQty[id]) || 1));
+  const submit = async () => {
+    setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, {
         items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: (l.note || "").trim() })),
@@ -178,6 +185,24 @@ export default function B2BPortalPage() {
               <div className="flex-1 min-w-0 space-y-3">
                 <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">{prods.map((p) => {
+      <B2BHeader company={d.company} contact={d.contact} />
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
+        <div className="grid grid-cols-4 sm:flex gap-1 bg-white rounded-xl p-1 border" data-testid="b2b-tabs">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => setTab(k)} className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`b2b-tab-${k}`}><Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" /><span className="text-center">{l}{k === "orders" && d.orders.length > 0 && ` (${d.orders.length})`}</span></button>)}</div>
+        {done && <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs sm:text-sm text-emerald-800 flex items-start gap-2" data-testid="b2b-order-success"><CheckCircle2 className="w-5 h-5 shrink-0" /><span>Siparişiniz alındı: <b>{done.order_number}</b> — {fmt(b2bOrderGross(done))} ₺. Onaylandığında kargo takip numarası burada görünecek.</span></div>}
+        {tab === "catalog" && (
+          <div className="space-y-3">
+            {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => { const n = { ...c }; sel.forEach((i) => { n[i.product_id] = (n[i.product_id] || 0) + i.quantity; }); return n; }); }} />}
+            <div className="flex gap-3 sm:gap-4 items-start">
+              <aside className="w-32 sm:w-44 shrink-0" data-testid="b2b-categories">
+                <div className="bg-white rounded-2xl border p-2 sticky top-4 flex flex-col gap-1">
+                  {cats.map((c) => (
+                    <button key={c} onClick={() => setCat(c)} className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold border ${cat === c ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{c === "all" ? "Tümü" : c}</button>
+                  ))}
+                </div>
+              </aside>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
+              <div className="grid grid-cols-1 gap-3">{prods.map((p) => {
                 const gross = b2bGross(p);
                 const listGross = b2bGross(p, "list_price");
                 const vatLabel = Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz";
@@ -264,6 +289,63 @@ export default function B2BPortalPage() {
                         <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 min-w-0 flex items-center justify-center gap-0.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5 shrink-0" /> Ekle</button>
                       </div>
                     )}
+                  <div key={p.id} className="bg-white rounded-2xl border p-2.5 flex flex-col sm:flex-row gap-2.5 w-full sm:w-[600px] sm:max-w-[600px] sm:h-[400px] sm:max-h-[400px]" data-testid={`b2b-product-${p.sku}`}>
+                    <div
+                      className="relative w-full sm:w-[55%] sm:max-w-[330px] shrink-0 overflow-hidden rounded-xl bg-slate-50 aspect-[3/2] sm:aspect-auto sm:h-full"
+                      data-testid={`b2b-image-${p.sku}`}
+                    >
+                      {p.image_url
+                        ? <img src={resolveImageUrl(p.image_url)} alt="" width={600} height={400} className="absolute inset-0 h-full w-full object-contain" />
+                        : <div className="absolute inset-0 flex items-center justify-center"><Package className="w-10 h-10 text-slate-300" /></div>}
+                    </div>
+                    <div className="min-w-0 flex-1 flex flex-col gap-1.5 sm:h-full sm:min-h-0">
+                      <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
+                      <div className="flex items-end justify-between gap-1">
+                        <div className="min-w-0">
+                          <div className="text-sm sm:text-base font-black text-slate-900 whitespace-nowrap">{fmt(gross)} ₺</div>
+                          {gross < listGross && <div className="text-[10px] text-slate-400 line-through">{fmt(listGross)} ₺</div>}
+                          <div className="text-[10px] text-slate-400">{vatLabel} • {p.unit}</div>
+                        </div>
+                        <span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span>
+                      </div>
+                      <label className="block flex-1 min-h-0 flex flex-col">
+                        <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
+                        <textarea
+                          rows={2}
+                          value={lineNotes[p.id] || ""}
+                          onChange={(e) => setLineNotes((n) => ({ ...n, [p.id]: e.target.value }))}
+                          placeholder="Fişte stok açıklamasının altında basılır"
+                          className="w-full flex-1 min-h-[3.5rem] border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none"
+                          data-testid={`b2b-item-note-${p.sku}`}
+                        />
+                      </label>
+                      {cart[p.id] ? (
+                        <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl p-0.5 mt-auto">
+                          <button onClick={() => setQty(p.id, cart[p.id] - 1)} className="p-2.5" aria-label="Azalt" data-testid={`b2b-dec-${p.sku}`}><Minus className="w-4 h-4" /></button>
+                          <input type="number" min={1} value={cart[p.id]} onChange={(e) => setQty(p.id, Math.max(0, parseInt(e.target.value || "0", 10) || 0))} className="w-12 bg-transparent text-center font-bold text-sm text-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" data-testid={`b2b-qty-${p.sku}`} />
+                          <button onClick={() => setQty(p.id, cart[p.id] + 1)} className="p-2.5" aria-label="Artır" data-testid={`b2b-inc-${p.sku}`}><Plus className="w-4 h-4" /></button>
+                        </div>
+                      ) : (
+                        <div className="flex items-stretch gap-1.5 mt-auto">
+                          <label className="flex flex-col items-stretch justify-center w-[3.35rem] sm:w-16 shrink-0 rounded-xl border-2 border-slate-300 bg-slate-50 px-0.5">
+                            <span className="text-[9px] font-semibold text-slate-400 text-center leading-none pt-1">Adet</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={draftQty[p.id] ?? "1"}
+                              onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: e.target.value.replace(/\D/g, "") }))}
+                              onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: String(Math.max(1, parseInt(dq[p.id], 10) || 1)) }))}
+                              onKeyDown={(e) => { if (e.key === "Enter") addWithQty(p.id); }}
+                              className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-1 outline-none"
+                              data-testid={`b2b-add-qty-${p.sku}`}
+                              aria-label="Adet"
+                            />
+                          </label>
+                          <button onClick={() => addWithQty(p.id)} disabled={!p.in_stock} className="flex-1 min-w-0 flex items-center justify-center gap-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold disabled:opacity-40" data-testid={`b2b-add-${p.sku}`}><ShoppingCart className="w-3.5 h-3.5" /> Sepete Ekle</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
