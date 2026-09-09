@@ -6,6 +6,9 @@ import { API_URL } from "../api/client";
 const AuthContext = createContext(null);
 
 export { API_URL, BACKEND_URL } from "../api/client";
+export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
+export const API_URL = `${BACKEND_URL}/api`;
+axios.defaults.withCredentials = true;
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -42,7 +45,6 @@ export const AuthProvider = ({ children }) => {
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
     { label: "Nexus AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
-    { label: "Firma Ayarları", path: "/settings" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
   const LICENSE_KEY = { "/edoc-inbox": "/invoices", "/mesai": "/personnel", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices" };

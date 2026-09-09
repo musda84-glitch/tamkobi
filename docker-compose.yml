@@ -41,8 +41,8 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
       MYSQL_DATABASE: ${DB_NAME:-tamkobi}
       DATABASE_URL: mysql://${MYSQL_USER:-tamkobi}:${MYSQL_PASSWORD:-tamkobi}@mysql:3306/${DB_NAME:-tamkobi}
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://tamkobi.com,https://tamkobi.com,http://www.tamkobi.com,https://www.tamkobi.com
-      PUBLIC_APP_URL: http://localhost:3000
+      CORS_ORIGINS: http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80,http://localhost:3000,http://127.0.0.1:3000,http://tamkobi.com,https://tamkobi.com,http://www.tamkobi.com,https://www.tamkobi.com
+      PUBLIC_APP_URL: http://localhost
       REACT_APP_BACKEND_URL: http://localhost:8000
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-nuqesh1AON2WgDOQc_6wU9uPk5nh4tu6f_x6H8ZAmN8=}
     depends_on:

@@ -19,7 +19,7 @@ export const SystemLayout = ({ children, pendingCount = 0 }) => {
           <div><div className="font-bold text-sm leading-tight" data-testid="sys-brand">Tam<span className="text-amber-400">Kobi</span></div><div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div></div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          {SYSTEM_NAV.map(([path, label, Icon]) => { const active = location.pathname.replace(/\/+$/, "") === path; return (
+          {SYSTEM_NAV.map(([path, label, Icon]) => { const here = location.pathname.replace(/\/+$/, "") || "/sistem"; const active = path === "/sistem" ? here === "/sistem" : here === path; return (
             <Link key={path} to={path} className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-colors ${active ? "bg-amber-400 text-slate-900" : "text-slate-400 hover:bg-white/5 hover:text-white"}`} data-testid={`sys-nav-${path.replace("/sistem", "").replace("/", "") || "overview"}`}>
               <span className="flex items-center gap-2.5"><Icon className="w-4 h-4" />{label}</span>
               {path === "/sistem/talepler" && pendingCount > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{pendingCount}</span>}

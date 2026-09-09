@@ -18,10 +18,7 @@ import {
   Factory,
   UserCheck,
   Bot,
-  ChevronDown,
   LogOut,
-  Bell,
-  Search,
   PlusCircle,
   QrCode,
   ArrowRightLeft,
@@ -45,11 +42,11 @@ import { HeaderQuickActions } from "./HeaderQuickActions";
 import { HeaderFxRates } from "./HeaderFxRates";
 import { isPublicPath } from "../utils/publicPath";
 import TamKobiMark from "./TamKobiMark";
+import { AccountMenu } from "./AccountMenu";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
-  const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
+  const { user, activeCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
   const location = useLocation();
-  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const ICONS = { "/": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt, "/loans": Landmark, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/projects": Briefcase, "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock, "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3, "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart };
@@ -79,6 +76,9 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         <div className="h-16 px-5 border-b border-slate-800/80 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 font-bold text-lg text-white tracking-tight" data-testid="brand-logo-btn">
             <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+              <Sparkles className="w-4 h-4" />
+            </div>
             <span>Tam<span className="text-emerald-400">Kobi</span></span>
             <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
           </Link>
@@ -87,42 +87,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </button>
         </div>
 
-        {/* Company Switcher */}
-        <div className="px-3.5 py-3 border-b border-slate-800/60 relative">
-          <button
-            onClick={() => setCompanyMenuOpen(!companyMenuOpen)}
-            className="w-full bg-slate-800/80 hover:bg-slate-800 px-3 py-2 rounded-lg text-left flex items-center justify-between border border-slate-700/50 transition text-xs"
-            data-testid="company-switcher-dropdown"
-          >
-            <div className="truncate pr-2">
-              <div className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">Aktif Şirket</div>
-              <div className="font-medium text-white truncate">{activeCompany?.name || "Nexus Teknoloji A.Ş."}</div>
-            </div>
-            <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
-          </button>
-
-          {companyMenuOpen && (
-            <div className="absolute top-16 left-3 right-3 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 z-50 text-xs">
-              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Hesabınızdaki şirketler</div>
-              {companies.map((c) => (
-                <button
-                  key={c.id || c._id}
-                  onClick={() => {
-                    switchCompany(c.id || c._id);
-                    setCompanyMenuOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 hover:bg-slate-700 transition flex items-center justify-between ${
-                    (activeCompany?.id === c.id || activeCompany?._id === c._id) ? "text-emerald-400 font-medium bg-slate-700/50" : "text-slate-300"
-                  }`}
-                  data-testid={`company-opt-${c.id || c._id}`}
-                >
-                  <span className="truncate">{c.name}</span>
-                  {(activeCompany?.id === c.id || activeCompany?._id === c._id) && <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <AccountMenu />
 
         {/* Navigation Menu */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">

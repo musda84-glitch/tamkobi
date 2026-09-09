@@ -103,11 +103,30 @@ export const PlatformSettingsPanel = () => {
         </div>
       </div>
       <PaytrSettings />
+      <GibPacksEditor packs={s.gib_packs || []} onChange={(gib_packs) => setS({ ...s, gib_packs })} />
       <div className="flex justify-end"><button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="set-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
     </div>
   );
 };
+
+const GibPacksEditor = ({ packs, onChange }) => (
+  <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="gib-packs-editor">
+    <h3 className="font-bold text-slate-900 text-sm">GİB kontör paketleri (müşteri satışı)</h3>
+    <p className="text-[11px] text-slate-500">Hesap → GİB Kontör ekranında görünür. Ödeme PayTR/Stripe ile alınır, kontör lisans cüzdanına yüklenir.</p>
+    <div className="space-y-2">
+      {(packs || []).map((p, i) => (
+        <div key={p.id || i} className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid={`gib-pack-edit-${p.id}`}>
+          <input value={p.name || ""} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} className={inputCls} placeholder="Ad" />
+          <input type="number" min={1} value={p.credits || 0} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, credits: Number(e.target.value) } : x))} className={inputCls} placeholder="Kontör" />
+          <input type="number" min={0} value={p.price || 0} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x))} className={inputCls} placeholder="Fiyat ₺" />
+          <input value={p.tagline || ""} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, tagline: e.target.value } : x))} className={inputCls} placeholder="Kısa not" />
+          <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={!!p.popular} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, popular: e.target.checked } : x))} /> Popüler</label>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 const PaytrSettings = () => {
   const [p, setP] = useState(null);

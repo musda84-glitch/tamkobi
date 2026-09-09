@@ -14,11 +14,17 @@ import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
 
-export default function SystemAdminPage() {
+const navTitle = (pathname, page) => {
+  const hit = SYSTEM_NAV.find(([p]) => p === pathname.replace(/\/+$/, "") || p === `/sistem/${page}` || (p === "/sistem" && !page));
+  return (hit || SYSTEM_NAV[0])[1];
+};
+
+export default function SystemAdminPage({ section: sectionFromRoute }) {
   const { user, authenticated, refreshLicense } = useAuth();
   const { pathname } = useLocation();
-  const { section } = useParams();
-  const page = (section || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
+  const { section: sectionParam } = useParams();
+  const fromPath = pathname.replace(/\/+$/, "").split("/")[2] || "";
+  const page = String(sectionFromRoute !== undefined ? sectionFromRoute : (sectionParam || fromPath || "")).toLowerCase();
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -41,7 +47,19 @@ export default function SystemAdminPage() {
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
+  const title = navTitle(pathname, page);
+  const panels = {
+    "": <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />,
+    web: <WebsiteAdminPanel plans={plans} onChanged={changed} />,
+    sirketler: <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />,
+    kullanicilar: <PlatformUsersPanel />,
+    paketler: <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />,
+    moduller: <ModuleCatalog catalog={catalog} plans={plans} />,
+    talepler: <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />,
+    odemeler: <PaymentsPanel />,
+    hatirlatmalar: <RemindersPanel />,
+    ayarlar: <PlatformSettingsPanel />,
+  };
   return (
     <SystemLayout pendingCount={overview?.pending_requests || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
@@ -61,6 +79,7 @@ export default function SystemAdminPage() {
           {page === "hatirlatmalar" && <RemindersPanel />}
           {page === "ai" && <AiProviderPanel />}
           {page === "ayarlar" && <PlatformSettingsPanel />}
+          {panels[page] || <div className="text-sm text-slate-600">Bu bölüm bulunamadı.</div>}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>

@@ -20,6 +20,7 @@ import MyAttendancePage from "./pages/MyAttendancePage";
 import AIAssistantPage from "./pages/AIAssistantPage";
 import CommunicationPage from "./pages/CommunicationPage";
 import SettingsPage from "./pages/SettingsPage";
+import AccountPage from "./pages/AccountPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import InstallmentsPage from "./pages/InstallmentsPage";
 import QuoteApprovalPage from "./pages/QuoteApprovalPage";
@@ -35,6 +36,7 @@ import TrashPage from "./pages/TrashPage";
 import EdocInboxPage from "./pages/EdocInboxPage";
 import SystemAdminPage from "./pages/SystemAdminPage";
 import SystemLoginPage from "./pages/SystemLoginPage";
+import WebsiteAdminPage from "./pages/WebsiteAdminPage";
 import PricingPage from "./pages/PricingPage";
 import HomeOrApp from "./pages/HomeOrApp";
 import SignupPage from "./pages/SignupPage";
@@ -70,6 +72,7 @@ export default function App() {
             <Route path="/mesai" element={<MyAttendancePage />} />
             <Route path="/ai-advisor" element={<AIAssistantPage />} />
             <Route path="/communication" element={<CommunicationPage />} />
+            <Route path="/hesap" element={<AccountPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/accountant" element={<AccountantPage />} />
@@ -85,8 +88,16 @@ export default function App() {
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/edoc-inbox" element={<EdocInboxPage />} />
             <Route path="/sistem/giris" element={<SystemLoginPage />} />
-            <Route path="/sistem/web" element={<SystemAdminPage />} />
-            <Route path="/sistem" element={<SystemAdminPage />} />
+            <Route path="/sistem/web" element={<WebsiteAdminPage />} />
+            <Route path="/sistem" element={<SystemAdminPage section="" />} />
+            <Route path="/sistem/sirketler" element={<SystemAdminPage section="sirketler" />} />
+            <Route path="/sistem/kullanicilar" element={<SystemAdminPage section="kullanicilar" />} />
+            <Route path="/sistem/paketler" element={<SystemAdminPage section="paketler" />} />
+            <Route path="/sistem/moduller" element={<SystemAdminPage section="moduller" />} />
+            <Route path="/sistem/talepler" element={<SystemAdminPage section="talepler" />} />
+            <Route path="/sistem/odemeler" element={<SystemAdminPage section="odemeler" />} />
+            <Route path="/sistem/hatirlatmalar" element={<SystemAdminPage section="hatirlatmalar" />} />
+            <Route path="/sistem/ayarlar" element={<SystemAdminPage section="ayarlar" />} />
             <Route path="/sistem/:section" element={<SystemAdminPage />} />
             <Route path="/web" element={<PricingPage />} />
             <Route path="/fiyatlar" element={<Navigate to="/web" replace />} />

@@ -57,6 +57,7 @@ import saas_billing
 import saas_extras
 import saas_docs
 import trade
+import gib_credits
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("NexusERP")
@@ -70,11 +71,28 @@ db = client[DB_NAME]
 
 app = FastAPI(title="TamKobi Cloud ERP & CRM & Muhasebe API")
 
-# Setup CORS
+# Setup CORS — localhost and 127.0.0.1 are different origins (cookies do not follow).
+def _cors_origins():
+    listed = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+    for extra in (
+        "http://localhost",
+        "http://127.0.0.1",
+        "http://localhost:80",
+        "http://127.0.0.1:80",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ):
+        if extra not in listed:
+            listed.append(extra)
+    return listed
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=[o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()],
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -195,8 +213,8 @@ async def login(req: LoginRequest, request: Request, response: Response):
     token = create_access_token(user_id, email, user.get("role", "admin"))
     refresh_tok = create_refresh_token(user_id)
 
-    response.set_cookie(key="access_token", value=token, httponly=True, max_age=86400*7, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, max_age=86400*30, path="/")
+    response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400*7, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400*30, path="/")
 
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
 
@@ -2146,6 +2164,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
             "provider": "n11faturam",
         }
 
+    remaining = await gib_credits.consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
     tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     export = inv.get("e_type") == "e_export" or inv.get("trade_kind") == "export"
     gib_status = "e-İhracat GİB'e iletildi" if export else "Başarıyla İletildi (GİB Onaylı)"
@@ -2161,6 +2180,9 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
         "status": "success",
         "message": (f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking_id}" if export else f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}"),
         "tracking_id": tracking_id
+        "message": f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}",
+        "tracking_id": tracking_id,
+        "gib_credits_left": remaining,
     }
 
 @api_router.post("/invoices/{invoice_id}/record-payment")
@@ -6060,6 +6082,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
+gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 saas_docs.init(db)
 rbac.set_license_guard(saas.guard)
@@ -6115,6 +6138,7 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(saas_billing.router)
+app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
 app.include_router(trade.router)
