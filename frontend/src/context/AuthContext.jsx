@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { API_URL } from "../api/client";
 
 const AuthContext = createContext(null);
 
-export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
-export const API_URL = `${BACKEND_URL}/api`;
+export { API_URL, BACKEND_URL } from "../api/client";
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -82,8 +82,16 @@ export const AuthProvider = ({ children }) => {
   const checkAuth = async () => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
+      if (!res.data?.authenticated || !res.data.user) {
+        setUser(null);
+        setAuthenticated(false);
+        setLicense(null);
+        setCompanies([]);
+        setActiveCompany(null);
+        return;
+      }
       setUser({ ...res.data.user, impersonation: res.data.impersonation || null });
-      setAuthenticated(!!res.data.authenticated);
+      setAuthenticated(true);
       setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
       setCompanies(res.data.companies || []);
@@ -92,21 +100,11 @@ export const AuthProvider = ({ children }) => {
         setActiveCompany(found || res.data.companies[0]);
       }
     } catch (err) {
-      console.log("No active session, default demo admin available");
-      // Load fallback demo state
-      setUser({
-        id: "usr_admin_01",
-        name: "Sarp Yılmaz (Genel Müdür)",
-        email: "admin@nexus.com",
-        role: "admin",
-        active_company_id: "comp_nexus_main_01"
-      });
-      setActiveCompany({
-        id: "comp_nexus_main_01",
-        name: "Nexus Teknoloji ve E-Ticaret A.Ş.",
-        tax_number: "6320984412",
-        city: "İstanbul"
-      });
+      setUser(null);
+      setAuthenticated(false);
+      setLicense(null);
+      setCompanies([]);
+      setActiveCompany(null);
     } finally {
       setLoading(false);
     }
@@ -151,6 +149,10 @@ export const AuthProvider = ({ children }) => {
       await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
     } catch (e) {}
     setUser(null);
+    setAuthenticated(false);
+    setLicense(null);
+    setCompanies([]);
+    setActiveCompany(null);
     toast.info("Oturum kapatıldı.");
     window.location.href = typeof to === "string" ? to : "/login";
   };

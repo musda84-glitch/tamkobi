@@ -7,8 +7,18 @@ from typing import Optional, Any
 
 JWT_ALGORITHM = "HS256"
 
+_JWT_FALLBACK = "nexus_default_secret_key_99482910"
+_INSECURE_JWT = frozenset({"", "change-me", _JWT_FALLBACK, "secret", "jwt-secret"})
+
+
 def get_jwt_secret() -> str:
-    return os.environ.get("JWT_SECRET", "nexus_default_secret_key_99482910")
+    secret = (os.environ.get("JWT_SECRET") or "").strip() or _JWT_FALLBACK
+    return secret
+
+
+def jwt_secret_is_insecure(secret: Optional[str] = None) -> bool:
+    value = get_jwt_secret() if secret is None else (secret or "").strip()
+    return value in _INSECURE_JWT
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()

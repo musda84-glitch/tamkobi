@@ -4,6 +4,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { Toaster } from "sonner";
 
 import MainLayout from "./components/MainLayout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Dashboard from "./pages/Dashboard";
 import InvoicesPage from "./pages/InvoicesPage";
 import ContactsPage from "./pages/ContactsPage";
@@ -51,6 +52,7 @@ export default function App() {
       <BrowserRouter>
         <Toaster position="top-right" richColors closeButton />
         <MainLayout>
+          <ProtectedRoute>
           <Routes>
             <Route path="/" element={<HomeOrApp />} />
             <Route path="/panel" element={<Dashboard />} />
@@ -97,6 +99,7 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </ProtectedRoute>
         </MainLayout>
       </BrowserRouter>
     </AuthProvider>

@@ -43,6 +43,7 @@ import {
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { HeaderFxRates } from "./HeaderFxRates";
+import { isPublicPath } from "./ProtectedRoute";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, companies, activeCompany, switchCompany, logout, feature, license, moduleOn, loading, authenticated } = useAuth();
@@ -56,8 +57,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const [dragIdx, setDragIdx] = useState(null);
   const exitImpersonation = async () => { try { const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {}); window.location.href = r.data.redirect || "/sistem/sirketler"; } catch (e) { toast.error(e.response?.data?.detail || "Çıkılamadı."); window.location.href = "/sistem/giris"; } };
 
-  const publicSite = location.pathname === "/" && !authenticated;
-  if (publicSite || ["/teklif/", "/portal/", "/davet/", "/login", "/sistem", "/fiyatlar", "/kayit", "/odeme/", "/yenile/", "/b2b/"].some((p) => location.pathname.startsWith(p))) return <>{children}</>;
+  const publicSite = isPublicPath(location.pathname) && (location.pathname === "/" ? !authenticated : true);
+  if (publicSite) return <>{children}</>;
   const routeKey = { "/dis-ticaret": "/invoices" }[location.pathname] || location.pathname;
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);

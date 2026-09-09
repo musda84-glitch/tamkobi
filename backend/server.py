@@ -27,7 +27,7 @@ from models import (
 )
 from auth_utils import (
     hash_password, verify_password, create_access_token,
-    create_refresh_token, get_user_from_token
+    create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
 )
 from seed_data import seed_all_data, seed_partners
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
@@ -99,6 +99,8 @@ async def startup_event():
     try:
         await db._ensure()
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
+        if jwt_secret_is_insecure():
+            logger.warning("JWT_SECRET is missing or a known default — set a long random JWT_SECRET in backend/.env")
         await seed_all_data(db)
         await seed_partners(db)
         await saas.seed()
@@ -689,9 +691,15 @@ async def register(req: RegisterRequest, response: Response):
     }
 
 @api_router.get("/auth/me")
-async def get_me(request: Request, user: dict = Depends(get_current_user)):
+async def get_me(request: Request):
+    """Session probe: 200 + authenticated=false when there is no token (public site).
+    Never fall back to the demo admin — that leaked the seed company into the ERP header."""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
+    if not token:
+        return {"user": None, "authenticated": False, "companies": [], "license": None, "impersonation": None}
+    user = await get_user_from_token(token, db)
     user_id = str(user.get("_id", user.get("id")))
-    authenticated = bool(request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer "))
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
     role_doc = await rbac.role_for(user)
     return {
@@ -705,7 +713,7 @@ async def get_me(request: Request, user: dict = Depends(get_current_user)):
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
         },
-        "authenticated": authenticated,
+        "authenticated": True,
         "impersonation": saas_extras.impersonation_info(request),
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
