@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout } from "../components/saas/SystemLayout";
 import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { findSystemSection } from "../components/saas/systemSections";
+import { PanelBoundary } from "../components/saas/PanelBoundary";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -44,9 +45,11 @@ export default function SystemAdminPage() {
           {overview && <div className="flex gap-2 text-xs">{[["Şirket", overview.companies], ["Müşteri kullanıcı", overview.users], ["Panel", overview.platform_admins ?? "—"], ["MRR", `${(overview.mrr || 0).toLocaleString("tr-TR")} ₺`]].map(([l, v]) => <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-200"><div className="text-[10px] text-slate-400">{l}</div><div className="font-bold">{v}</div></div>)}</div>}
         </div>
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
-          {section
-            ? section.render({ overview, companies, plans, catalog, requests, changed, openCompany: setOpenId, goRequests: () => navigate("/sistem/talepler") })
-            : <MissingSection page={page} />}
+          <PanelBoundary key={page} label={section?.label}>
+            {section
+              ? section.render({ overview, companies, plans, catalog, requests, changed, openCompany: setOpenId, goRequests: () => navigate("/sistem/talepler") })
+              : <MissingSection page={page} />}
+          </PanelBoundary>
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
