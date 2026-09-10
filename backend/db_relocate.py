@@ -58,12 +58,11 @@ def store_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Port bir sayı olmalı.") from exc
     if not 1 <= port <= 65535:
         raise ValueError("Port 1-65535 aralığında olmalı.")
-    # Only the settings themselves are checked here. Whether the CA file is
-    # still on disk is a connection-time question, so reading a stored setting
-    # never fails and the panel can show what is wrong.
+    # Whether the TLS settings can actually open a connection — a CA path for
+    # verify_ca, a file still at that path — is asked when connecting. Reading
+    # settings never fails on it, so the panel can show what is wrong and the
+    # forms can validate what the admin just typed (see db_ssl.context).
     ssl_mode, ssl_ca = db_ssl.settings(cfg)
-    if ssl_mode == db_ssl.VERIFY_CA and not ssl_ca:
-        raise ValueError("verify_ca modu için CA sertifika dosyası gerekir.")
     return {
         "host": host,
         "port": port,
@@ -301,13 +300,16 @@ def _target_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     elif not target["password"]:
         target["password"] = os.environ.get(PASSWORD_ENV, "")
     env_mode, env_ca = db_ssl.for_target(target["host"])
-    return store_settings(
+    settings = store_settings(
         {
             **target,
             "ssl_mode": args.ssl_mode or env_mode,
             "ssl_ca": args.ssl_ca or target.get("ssl_ca") or env_ca,
         }
     )
+    # Say now, not mid-copy, when these TLS options cannot open a connection.
+    db_ssl.context(settings["ssl_mode"], settings["ssl_ca"])
+    return settings
 
 
 def _cmd_show(_args: argparse.Namespace) -> int:

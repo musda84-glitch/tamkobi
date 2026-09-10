@@ -118,9 +118,37 @@ def test_store_settings_carries_tls_options():
     assert db_relocate.dump_settings(cfg)["ssl_mode"] == "required"
 
 
-def test_store_settings_requires_ca_for_verification():
+def test_verify_ca_without_a_ca_is_refused_when_it_is_used(monkeypatch):
+    """Reading such a setting still works; connecting to it does not."""
+    cfg = db_relocate.store_settings({"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_ca"})
+    assert db_relocate.public_view(cfg)["ssl_ca"] == ""
     with pytest.raises(ValueError, match="CA"):
-        db_relocate.store_settings({"host": "db", "user": "app", "db": "tamkobi", "ssl_mode": "verify_ca"})
+        db_relocate.table_counts(cfg)
+
+    import argparse
+
+    args = argparse.Namespace(
+        url=None, host="db.firma.com", port=3306, user="app", db="tamkobi",
+        password="p", ssl_mode="verify_ca", ssl_ca=None,
+    )
+    with pytest.raises(ValueError, match="CA"):
+        db_relocate._target_from_args(args)
+
+
+def test_a_deployment_asking_for_verify_ca_still_reads_its_settings(monkeypatch, tmp_path):
+    """`MYSQL_SSL_MODE=verify_ca` with no CA path must not break the panel."""
+    import json
+
+    monkeypatch.setenv("TAMKOBI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MYSQL_SSL_MODE", "verify_ca")
+    monkeypatch.setenv("MYSQL_SSL_CA", "")
+    (tmp_path / "database.json").write_text(
+        json.dumps({"host": "db.firma.com", "port": 3306, "user": "app", "password": "p", "db": "shop"}),
+        encoding="utf-8",
+    )
+    view = db_relocate.public_view(db_relocate.current_settings())
+    assert view["ssl_mode"] == "verify_ca"
+    assert view["ssl_ca"] == ""
 
 
 def test_reading_settings_survives_a_missing_ca_file():
