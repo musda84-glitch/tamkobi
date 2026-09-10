@@ -276,6 +276,16 @@ class TestParseUbl:
             edocs.parse_ubl(b"<Invoice><ID>1</ID>")
 
 
+def _no_number(line_name: str) -> bytes:
+    """Numarası ve ETTN'si olmayan, yalnızca tedarikçi VKN'si ve tarihi olan bir UBL."""
+    return (
+        '<Invoice><IssueDate>2026-09-05</IssueDate>'
+        '<AccountingSupplierParty><Party><PartyName><Name>Ayni Tedarik Ltd.</Name></PartyName>'
+        '<PartyIdentification><ID schemeID="VKN">1234567801</ID></PartyIdentification></Party></AccountingSupplierParty>'
+        f'<InvoiceLine><Item><Name>{line_name}</Name></Item></InvoiceLine></Invoice>'
+    ).encode("utf-8")
+
+
 class TestIngest:
     def test_stores_details_and_raw_xml(self, db):
         doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, source="n11faturam"))
@@ -310,6 +320,17 @@ class TestIngest:
         doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, meta={"party_name": "Yanlış", "payable": "1"}))
         assert doc["supplier"]["name"] == "Anadolu Tedarik A.Ş." and doc["grand_total"] == 1080.0
 
+    def test_numarasiz_belgeler_birbirinin_kopyasi_sayilmaz(self, db):
+        # Numara ve ETTN yoksa geriye VKN ile tarih kalıyor; ikisi de aynı olan iki
+        # ayrı fatura eskiden tek anahtara düşüyor, ikincisi hiç kaydedilmiyordu.
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is not None
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Toplantı Masası"))) is not None
+        assert len(db.incoming_edocs.docs) == 2
+
+    def test_ayni_numarasiz_belge_yine_tekrarlanmaz(self, db):
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is not None
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is None
+
 
 class TestRepair:
     def _blank(self, db, n=3):
@@ -335,3 +356,26 @@ class TestRepair:
         assert r["fixed"] == 1
         assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Anadolu Tedarik A.Ş."
         assert db.incoming_edocs.docs[0]["grand_total"] == 1080.0
+
+    def test_reparse_okunmus_belgeye_dokunmaz(self, db):
+        # Yeniden okuma taze çözümlemeyi olduğu gibi yazıyordu; elle eşlenen satır
+        # ve elle bağlanan cari, kullanıcı düğmeye bastığı anda siliniyordu.
+        asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
+        doc = db.incoming_edocs.docs[0]
+        doc["lines"][0].update({"product_id": "prd1", "product_name": "Sandalye", "auto_matched": False})
+        doc.update({"contact_id": "cnt1", "contact_name": "Elle Bağlanan Cari", "matched_lines": 1})
+        r = asyncio.run(edocs.reparse_inbox("comp1"))
+        assert r["fixed"] == 0
+        assert db.incoming_edocs.docs[0]["lines"][0]["product_id"] == "prd1"
+        assert db.incoming_edocs.docs[0]["contact_id"] == "cnt1"
+
+    def test_reparse_n11_listesinden_gelen_bilgiyi_silmez(self, db):
+        # UBL'de tedarikçi ve tutar hiç yok; bunlar liste yanıtından gelmişti.
+        bare = b'<Invoice><ID>NO-PARTY-2</ID><InvoiceLine><Item><Name>Hizmet</Name></Item></InvoiceLine></Invoice>'
+        asyncio.run(edocs.ingest_ubl_bytes("comp1", bare, source="n11faturam", meta={
+            "party_name": "Liste Tedarik Ltd.", "sender_tax_id": "5555555555", "payable": "1250,00"}))
+        doc = db.incoming_edocs.docs[0]
+        doc.update({"supplier": {"name": "", "tax_id": ""}, "lines": [], "grand_total": 0})
+        assert asyncio.run(edocs.reparse_inbox("comp1"))["fixed"] == 1
+        assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Liste Tedarik Ltd."
+        assert db.incoming_edocs.docs[0]["grand_total"] == 1250.0

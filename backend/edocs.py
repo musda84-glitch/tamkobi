@@ -178,10 +178,15 @@ def dedupe_key(parsed: dict, data: Optional[bytes]) -> str:
     """
     if parsed.get("uuid"):
         return "uuid:" + parsed["uuid"].strip().lower()
-    ident = "|".join([(parsed.get("number") or "").strip().lower(), ((parsed.get("supplier") or {}).get("tax_id") or "").strip(), (parsed.get("issue_date") or "")[:10]])
-    if ident.strip("|"):
-        return "id:" + ident
-    return "sha:" + hashlib.sha256(data).hexdigest() if data else "one:" + str(uuid.uuid4())
+    number = (parsed.get("number") or "").strip().lower()
+    if number:
+        return "id:" + "|".join([number, ((parsed.get("supplier") or {}).get("tax_id") or "").strip(), (parsed.get("issue_date") or "")[:10]])
+    # Numara yoksa geriye kalan alanlar tek başına kimlik değil: aynı tedarikçiden
+    # ya da aynı günden gelen iki ayrı belge birbirinin kopyası sayılır ve ikincisi
+    # sessizce yutulurdu. Kimlik yoksa belgenin kendi içeriği anahtar olur.
+    if data:
+        return "sha:" + hashlib.sha256(data).hexdigest()
+    return "one:" + str(uuid.uuid4())
 
 
 async def _existing(company_id: str, parsed: dict, key: str):
@@ -192,9 +197,11 @@ async def _existing(company_id: str, parsed: dict, key: str):
     return await _db.incoming_edocs.find_one({"company_id": company_id, "uuid": parsed["uuid"]})
 
 
-async def _store(company_id: str, parsed: dict, key: str, source: str, filename: str, raw: Optional[bytes]):
+async def _store(company_id: str, parsed: dict, key: str, source: str, filename: str, raw: Optional[bytes], meta: Optional[dict] = None):
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "source": source, "filename": filename, "status": "pending",
-           "received_at": _now(), "dedupe_key": key, **parsed}
+           # Liste yanıtı saklanıyor: ham XML'den yeniden okuma, UBL'de hiç
+           # olmayan tedarikçi / tutar / tarih bilgisini aksi halde silerdi.
+           "received_at": _now(), "dedupe_key": key, "source_meta": meta or None, **parsed}
     await _enrich(doc, company_id)
     await _db.incoming_edocs.insert_one(doc)
     if raw and len(raw) <= MAX_XML_BYTES:
@@ -209,7 +216,7 @@ async def ingest_ubl_bytes(company_id: str, data: bytes, filename: str = "incomi
     key = dedupe_key(parsed, data)
     if await _existing(company_id, parsed, key):
         return None
-    return _clean(await _store(company_id, parsed, key, source, filename, data))
+    return _clean(await _store(company_id, parsed, key, source, filename, data, meta))
 
 
 def _clean(d: dict) -> dict:
@@ -242,19 +249,29 @@ async def get_edoc_xml(doc_id: str):
 
 @router.post("/edocs/inbox/reparse")
 async def reparse_inbox(company_id: str = "comp_nexus_main_01"):
-    """Saklanan ham XML'den bekleyen belgeleri yeniden okur (okuyucu düzeldiğinde eski kayıtları kurtarır)."""
+    """Saklanan ham XML'den okunamamış belgeleri yeniden okur (okuyucu düzeldiğinde eski kayıtları kurtarır).
+
+    Yalnızca boş kalmış kayıtlara dokunur. Okunmuş bir belgeyi yeniden okumak,
+    elle eşlenen satırların ve elle bağlanan carinin üzerine taze çözümlemenin
+    boş değerlerini yazar; kullanıcının yaptığı iş kaybolur.
+    """
     fixed, failed = 0, 0
     for d in await _db.incoming_edocs.find({"company_id": company_id, "status": "pending"}).to_list(500):
+        if not is_blank(d):
+            continue
         x = await _db.incoming_edoc_xml.find_one({"_id": d["_id"]})
         if not x or not x.get("xml"):
             continue
         try:
-            parsed = parse_ubl(x["xml"].encode("utf-8"))
+            parsed = apply_meta(parse_ubl(x["xml"].encode("utf-8")), d.get("source_meta"))
         except HTTPException:
             failed += 1
             continue
         doc = {**d, **parsed, "dedupe_key": dedupe_key(parsed, x["xml"].encode("utf-8"))}
         await _enrich(doc, company_id)
+        # Elle bağlanmış cari, otomatik eşleşme bulunamadığında korunur.
+        doc["contact_id"] = doc["contact_id"] or d.get("contact_id")
+        doc["contact_name"] = doc["contact_name"] or d.get("contact_name")
         await _db.incoming_edocs.update_one({"_id": d["_id"]}, {"$set": {k: doc[k] for k in ("kind", "number", "uuid", "issue_date", "profile", "type_code", "supplier", "lines", "subtotal", "vat_total", "grand_total", "notes", "dedupe_key", "contact_id", "contact_name", "matched_lines")}})
         fixed += 1
     return {"status": "success", "fixed": fixed, "failed": failed,
