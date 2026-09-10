@@ -5500,6 +5500,23 @@ def _shopphp_rest_client(cfg: dict) -> Optional["marketplace_providers.ShopPHPCl
     r = marketplace_providers.shopphp_resolve(cfg)
     return marketplace_providers.ShopPHPClient({"store_url": r["store_url"] or cfg.get("store_url"), "api_key": cfg["rest_email"], "api_secret": comm_service.decrypt(cfg["rest_password_enc"])})
 
+async def _shopphp_write_status(client: "marketplace_providers.ShopPHPClient", order_no: Any, status: int) -> tuple:
+    """
+    Sipariş durumunu mağazaya yazar.
+
+    Mağaza dokümanı durum için `setOrderStatus` ucunu tarif ediyor (gövdede
+    `no` + `status`). Bu uç bulunmayan eski kurulumlarda durum `updateOrder`
+    içindeki `sdurum` alanından geçtiği için oraya düşülür; ikisi de olmazsa
+    ilk (dokümandaki) hata bildirilir.
+    """
+    try:
+        return "setOrderStatus", await client.set_order_status(order_no, status)
+    except HTTPException as documented_failed:
+        try:
+            return "updateOrder", await client.update_order(order_no, status=status)
+        except HTTPException:
+            raise documented_failed
+
 async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_errors: bool = False) -> Optional[dict]:
     """Onay durumu + kargo firması/takip no + fatura no bilgisini ShopPHP mağazasına REST ile yazar."""
     if (order.get("channel") or "") != "shopphp":
@@ -5518,14 +5535,29 @@ async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_erro
         inv_no = (inv or {}).get("invoice_number")
     carrier = order.get("cargo_carrier_name") or CARGO_NAME_TR.get(str(order.get("cargo_carrier") or "").lower(), order.get("cargo_carrier"))
     status = SHOPPHP_STATUS_CODES.get(order.get("order_status") or "")
-    log = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_number": order.get("order_number"), "reason": reason, "sent": {"sdurum": status, "kargoFirma": carrier, "kargoSeriNo": order.get("cargo_tracking_number"), "faturaNo": inv_no}, "created_at": datetime.now(timezone.utc).isoformat()}
+    order_no = order.get("external_id") or order.get("order_number")
+    tracking = order.get("cargo_tracking_number")
+    log = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_number": order.get("order_number"), "reason": reason, "sent": {"sdurum": status, "kargoFirma": carrier, "kargoSeriNo": tracking, "faturaNo": inv_no}, "created_at": datetime.now(timezone.utc).isoformat()}
+    responses: Dict[str, Any] = {}
+    errors: List[str] = []
     try:
-        res = await client.update_order(order.get("external_id") or order.get("order_number"), status=status, cargo_firm=carrier, tracking=order.get("cargo_tracking_number"), invoice_no=inv_no)
-        log.update({"ok": True, "response": res if isinstance(res, (dict, list, str)) else str(res)})
-    except HTTPException as e:
-        log.update({"ok": False, "error": e.detail})
+        if status is not None:
+            try:
+                via, responses["status"] = await _shopphp_write_status(client, order_no, status)
+                log["status_via"] = via
+            except HTTPException as e:
+                errors.append(f"durum: {e.detail}")
+        # Kargo firması, takip no ve fatura no yalnızca updateOrder üzerinden yazılabiliyor.
+        if any(v not in (None, "") for v in (carrier, tracking, inv_no)):
+            try:
+                responses["cargo_invoice"] = await client.update_order(order_no, cargo_firm=carrier, tracking=tracking, invoice_no=inv_no)
+            except HTTPException as e:
+                errors.append(f"kargo/fatura: {e.detail}")
     finally:
         await client.close()
+    log.update({"ok": not errors, "response": responses})
+    if errors:
+        log["error"] = "; ".join(errors)
     await db.shopphp_push_logs.insert_one(log)
     await db.orders.update_one({"_id": order["_id"]}, {"$set": {"shopphp_push": {"at": log["created_at"], "ok": log["ok"], "error": log.get("error"), "sent": log["sent"]}}})
     if not log["ok"] and raise_errors:
@@ -5541,7 +5573,7 @@ async def push_order_to_shopphp(order_id: str):
         raise HTTPException(status_code=400, detail="Yalnızca ShopPHP siparişleri mağazaya bildirilebilir.")
     log = await _push_order_to_shopphp(o, reason="manual", raise_errors=True)
     s = log["sent"]
-    return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s}
+    return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s, "status_via": log.get("status_via")}
 
 @api_router.post("/integrations/ecommerce/{channel_id}/rest-test")
 async def test_shopphp_rest(channel_id: str):

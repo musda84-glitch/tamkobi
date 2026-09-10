@@ -447,7 +447,7 @@ COLLECTIONS = {
     },
     "shopphp_push_logs": {
         "scope": SCOPE_TENANT,
-        "description": "ShopPHP senkron logu.",
+        "description": "ShopPHP senkron logu; status_via alanı durumun setOrderStatus mı updateOrder mı ile yazıldığını tutar.",
         "keys": ("_id", "company_id"),
         "refs": ("companies._id",),
     },
