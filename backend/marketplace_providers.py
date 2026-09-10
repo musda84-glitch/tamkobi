@@ -278,7 +278,14 @@ class ShopPHPClient:
             d["fiyat"] = price
         if stock is not None:
             d["stok"] = stock
-        return await self._call("POST", "setProduct/priceAndStock", d)
+        return await self._call("POST", "setProduct/priceAndStock", d, expect_json=False)
+
+    async def set_product_active(self, product_id: Any, active: bool) -> Any:
+        """
+        Ürünü mağazada satışa açar/kapatır. Dokümandaki uç `setProduct/active`
+        ve gövdede mağazanın ürün ID'si (`ID`) ile `active` 1/0 bekliyor.
+        """
+        return await self._call("POST", "setProduct/active", {"ID": product_id, "active": 1 if active else 0}, expect_json=False)
 
     async def set_order_status(self, order_no: Any, status: int) -> Any:
         """

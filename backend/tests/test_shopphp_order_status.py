@@ -191,6 +191,214 @@ class TestUpdateOrder:
         assert calls[0]["url"].endswith("/rest/updateOrder/no/158238365")
 
 
+class TestSetProductActive:
+    """Ürünü satışa açma/kapatma ucu: gövdede mağaza ürün ID'si + active 1/0."""
+
+    def test_hits_the_documented_endpoint(self, monkeypatch):
+        calls = _patch(monkeypatch, [FakeResponse(payload={})])
+        run(mp.ShopPHPClient(CFG).set_product_active(132, False))
+        assert calls[0]["method"] == "POST"
+        assert calls[0]["url"] == "https://api.siteniz.com/rest/setProduct/active"
+
+    @pytest.mark.parametrize("active,expected", [(False, 0), (True, 1), (0, 0), (1, 1)])
+    def test_active_flag_is_sent_as_one_or_zero(self, monkeypatch, active, expected):
+        calls = _patch(monkeypatch, [FakeResponse(payload={})])
+        run(mp.ShopPHPClient(CFG).set_product_active(132, active))
+        assert calls[0]["data"]["ID"] == 132
+        assert calls[0]["data"]["active"] == expected
+
+    def test_auth_travels_with_the_product_call(self, monkeypatch):
+        calls = _patch(monkeypatch, [FakeResponse(payload={})])
+        run(mp.ShopPHPClient(CFG).set_product_active(132, True))
+        assert calls[0]["data"]["auth_key"] == expected_auth_key(CFG["api_key"], CFG["api_secret"])
+
+    def test_xml_answer_is_accepted(self, monkeypatch):
+        _patch(monkeypatch, [FakeResponse(text="<r><success>1</success></r>")])
+        assert run(mp.ShopPHPClient(CFG).set_product_active(132, False))["success"] == "1"
+
+    def test_price_and_stock_also_tolerates_xml(self, monkeypatch):
+        _patch(monkeypatch, [FakeResponse(text="<r><success>1</success></r>")])
+        out = run(mp.ShopPHPClient(CFG).set_price_stock(132, price=19.9, stock=4))
+        assert out["success"] == "1"
+
+    def test_price_and_stock_body(self, monkeypatch):
+        calls = _patch(monkeypatch, [FakeResponse(payload={})])
+        run(mp.ShopPHPClient(CFG).set_price_stock(132, price=19.9, stock=4))
+        assert calls[0]["url"].endswith("/rest/setProduct/priceAndStock")
+        assert calls[0]["data"]["ID"] == 132 and calls[0]["data"]["fiyat"] == 19.9 and calls[0]["data"]["stok"] == 4
+
+
+class FakeCollection:
+    def __init__(self, doc=None, by_barcode=None):
+        self.doc = doc
+        self.by_barcode = by_barcode or {}
+        self.inserted = []
+        self.updates = []
+
+    async def find_one(self, query, projection=None):
+        if self.by_barcode:
+            wanted = [c.get("barcode") for c in query.get("$or", []) if c.get("barcode")]
+            return self.by_barcode.get(wanted[0]) if wanted else None
+        return self.doc
+
+    async def insert_one(self, doc):
+        self.inserted.append(doc)
+
+    async def update_one(self, query, update, upsert=False):
+        self.updates.append((query, update))
+        if self.doc is not None:
+            self.doc.update(update.get("$set") or {})
+
+
+class FakeDB:
+    def __init__(self, cache_items=(), products=None):
+        self.marketplace_product_cache = FakeCollection(doc={"_id": "cache_1", "items": [dict(i) for i in cache_items]})
+        self.products = FakeCollection(by_barcode=products or {})
+        self.marketplace_push_logs = FakeCollection()
+
+
+# Üç düz ürün (biri barkodsuz, biri mağaza ID'siz) ve bir varyasyon satırı.
+CACHE = [
+    {"barcode": "8690000000017", "stock_code": "KOD-1", "product_main_id": "132", "sale_price": 10.0, "quantity": 1},
+    {"barcode": "", "stock_code": "KOD-2", "product_main_id": "133"},
+    {"barcode": "8690000000031", "stock_code": "KOD-3", "product_main_id": ""},
+    {"barcode": "8690000000048", "stock_code": "KOD-4", "product_main_id": "140", "variant": "Kırmızı / L"},
+]
+
+
+def rest_cfg():
+    import comm_service
+    return {"store_url": "api.siteniz.com", "api_key": "https://api.siteniz.com/xml.php?c=siparisler&xmlc=abc",
+            "rest_email": CFG["api_key"], "rest_password_enc": comm_service.encrypt(CFG["api_secret"])}
+
+
+class TestProductIndex:
+    def test_barcode_and_stock_code_both_resolve_to_the_store_id(self, monkeypatch):
+        import server
+        monkeypatch.setattr(server, "db", FakeDB(CACHE))
+        ids = run(server._shopphp_product_ids("comp_1"))
+        assert ids["8690000000017"]["id"] == "132"
+        assert ids["kod-1"]["id"] == "132"
+        assert ids["kod-2"]["id"] == "133"
+
+    def test_rows_without_a_store_id_are_skipped(self, monkeypatch):
+        import server
+        monkeypatch.setattr(server, "db", FakeDB(CACHE))
+        ids = run(server._shopphp_product_ids("comp_1"))
+        assert "8690000000031" not in ids
+
+    def test_variant_rows_are_marked_as_variants(self, monkeypatch):
+        import server
+        monkeypatch.setattr(server, "db", FakeDB(CACHE))
+        ids = run(server._shopphp_product_ids("comp_1"))
+        assert ids["8690000000048"]["variant"] == "Kırmızı / L"
+        assert ids["8690000000017"]["variant"] is None
+
+
+class TestPushProducts:
+    def _push(self, monkeypatch, items, from_stock=False, products=None, responses=None):
+        import server
+        calls = _patch(monkeypatch, responses or [FakeResponse(payload={})] * 6)
+        monkeypatch.setattr(server.marketplace_providers.httpx, "AsyncClient", mp.httpx.AsyncClient)
+        db = FakeDB(CACHE, products)
+        monkeypatch.setattr(server, "db", db)
+        out = run(server._push_products_to_shopphp(rest_cfg(), "comp_1", {"items": items, "from_stock": from_stock}))
+        return out, calls, db
+
+    def test_price_and_stock_go_to_the_price_endpoint(self, monkeypatch):
+        out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "sale_price": 19.9, "quantity": 4}])
+        assert out["sent"] == 1
+        assert len(calls) == 1
+        assert calls[0]["url"].endswith("/setProduct/priceAndStock")
+        assert calls[0]["data"]["ID"] == "132"
+
+    def test_active_flag_goes_to_the_active_endpoint(self, monkeypatch):
+        out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "active": 0}])
+        assert out["sent"] == 1
+        assert len(calls) == 1
+        assert calls[0]["url"].endswith("/setProduct/active")
+        assert calls[0]["data"] == {**calls[0]["data"], "ID": "132", "active": 0}
+
+    def test_price_and_active_together_use_both_endpoints(self, monkeypatch):
+        _out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "sale_price": 5, "active": 1}])
+        assert [c["url"].rsplit("/rest/", 1)[1] for c in calls] == ["setProduct/priceAndStock", "setProduct/active"]
+
+    def test_from_stock_reads_the_local_card(self, monkeypatch):
+        products = {"8690000000017": {"_id": "p1", "sale_price": 42.5, "stock_quantity": 7}}
+        _out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017"}], from_stock=True, products=products)
+        assert calls[0]["data"]["fiyat"] == 42.5
+        assert calls[0]["data"]["stok"] == 7
+
+    def test_negative_local_stock_is_sent_as_zero(self, monkeypatch):
+        products = {"8690000000017": {"_id": "p1", "sale_price": 1, "stock_quantity": -3}}
+        _out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017"}], from_stock=True, products=products)
+        assert calls[0]["data"]["stok"] == 0
+
+    def test_a_product_missing_from_the_store_is_reported_not_sent(self, monkeypatch):
+        out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "active": 1}, {"barcode": "yok-boyle-barkod", "active": 1}])
+        assert out["sent"] == 1
+        assert out["unmatched"] == ["yok-boyle-barkod"]
+        assert len(calls) == 1
+        assert "eşleşmedi" in out["message"]
+
+    def test_nothing_to_send_is_refused_with_a_hint(self, monkeypatch):
+        import server
+        _patch(monkeypatch, [])
+        monkeypatch.setattr(server, "db", FakeDB(CACHE))
+        with pytest.raises(HTTPException) as e:
+            run(server._push_products_to_shopphp(rest_cfg(), "comp_1", {"items": [{"barcode": "8690000000017"}]}))
+        assert e.value.status_code == 400
+
+    def test_missing_rest_user_points_at_the_settings_screen(self, monkeypatch):
+        import server
+        monkeypatch.setattr(server, "db", FakeDB(CACHE))
+        with pytest.raises(HTTPException) as e:
+            run(server._push_products_to_shopphp({"store_url": "api.siteniz.com"}, "comp_1", {"items": [{"barcode": "x", "active": 1}]}))
+        assert e.value.status_code == 400
+        assert "Mağazaya Geri Bildirim" in e.value.detail
+
+    def test_a_store_error_on_one_product_does_not_lose_the_others(self, monkeypatch):
+        out, _calls, db = self._push(
+            monkeypatch,
+            [{"barcode": "8690000000017", "active": 1}, {"barcode": "KOD-2", "active": 0}],
+            responses=[FakeResponse(status_code=500, payload={}), FakeResponse(payload={})],
+        )
+        assert out["sent"] == 1
+        assert len(out["errors"]) == 1
+        assert "yazılamadı" in out["message"]
+        assert db.marketplace_push_logs.inserted[0]["errors"]
+
+    def test_every_product_failing_raises(self, monkeypatch):
+        with pytest.raises(HTTPException) as e:
+            self._push(monkeypatch, [{"barcode": "8690000000017", "active": 1}], responses=[FakeResponse(status_code=500, payload={})])
+        assert e.value.status_code == 502
+
+    def test_variants_are_skipped_so_siblings_are_not_overwritten(self, monkeypatch):
+        out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "sale_price": 5}, {"barcode": "8690000000048", "sale_price": 5}])
+        assert out["sent"] == 1
+        assert out["variants"] == ["8690000000048"]
+        assert [c["data"]["ID"] for c in calls] == ["132"]
+        assert "varyasyonlu" in out["message"]
+
+    def test_a_variant_only_push_explains_why_nothing_was_sent(self, monkeypatch):
+        with pytest.raises(HTTPException) as e:
+            self._push(monkeypatch, [{"barcode": "8690000000048", "sale_price": 5}])
+        assert e.value.status_code == 400
+        assert "Varyasyonlu" in e.value.detail
+
+    def test_a_local_card_miss_is_named_separately_from_a_store_miss(self, monkeypatch):
+        with pytest.raises(HTTPException) as e:
+            self._push(monkeypatch, [{"barcode": "8690000000017"}], from_stock=True, products={})
+        assert "stok kartı yok" in e.value.detail
+
+    def test_sent_values_are_written_back_to_the_cache(self, monkeypatch):
+        _out, _calls, db = self._push(monkeypatch, [{"barcode": "8690000000017", "sale_price": 19.9, "quantity": 4, "active": 0}])
+        row = next(i for i in db.marketplace_product_cache.doc["items"] if i["barcode"] == "8690000000017")
+        assert row["sale_price"] == 19.9
+        assert row["quantity"] == 4
+        assert row["on_sale"] is False
+
+
 class TestStatusFallback:
     """Dokümandaki uç yoksa durum eski `updateOrder` biçiminden yazılmalı."""
 
