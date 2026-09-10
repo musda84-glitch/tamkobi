@@ -39,7 +39,7 @@ export const AiProviderPanel = () => {
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/system/ai/test`, {});
-      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason } }));
+      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason, model: r.data.model } }));
       (r.data.ok ? toast.success : toast.error)(r.data.message);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Test yapılamadı.");

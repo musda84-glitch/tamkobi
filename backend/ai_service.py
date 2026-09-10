@@ -165,7 +165,9 @@ def _provider_error(provider: str, resp: "httpx.Response") -> str:
     detail = (detail or (resp.text or ""))[:220].strip()
     label = provider_label(provider)
     code = resp.status_code
-    if code in (401, 403):
+    # Google geçersiz anahtara 401 değil 400/INVALID_ARGUMENT döndürür.
+    bad_key = code in (401, 403) or (code == 400 and "api key" in detail.lower())
+    if bad_key:
         return f"{label} API anahtarını kabul etmedi ({code}). Anahtarı kontrol edin. {detail}".strip()
     if code == 404:
         return f"{label} bu modeli bulamadı ({code}). Farklı bir model seçip tekrar deneyin. {detail}".strip()

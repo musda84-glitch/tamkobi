@@ -122,7 +122,7 @@ class TestRequestShape:
 
 
 class TestErrors:
-    @pytest.mark.parametrize("code,needle", [(401, "kabul etmedi"), (403, "kabul etmedi"), (404, "model"), (429, "sınır")])
+    @pytest.mark.parametrize("code,needle", [(400, "kabul etmedi"), (401, "kabul etmedi"), (403, "kabul etmedi"), (404, "model"), (429, "sınır")])
     def test_http_errors_are_turkish_and_keep_provider_detail(self, monkeypatch, code, needle):
         _patch(monkeypatch, FakeResponse(code, {"error": {"message": "API key not valid"}}))
         chat = ai_service.DirectChat("google", "gemini-2.5-flash", "bozuk", "")
@@ -133,6 +133,13 @@ class TestErrors:
         assert str(code) in msg
         assert needle in msg
         assert "API key not valid" in msg
+
+    def test_other_400s_are_not_reported_as_a_key_problem(self, monkeypatch):
+        _patch(monkeypatch, FakeResponse(400, {"error": {"message": "contents alanı zorunlu"}}))
+        with pytest.raises(RuntimeError) as ei:
+            run(ai_service.DirectChat("google", "gemini-2.5-flash", "k", "").send_message(UserMessage(text="x")))
+        assert "kabul etmedi" not in str(ei.value)
+        assert "başarısız (400)" in str(ei.value)
 
     def test_non_json_error_body_falls_back_to_text(self, monkeypatch):
         _patch(monkeypatch, FakeResponse(500, None, text="<html>gateway</html>"))
