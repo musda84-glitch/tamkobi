@@ -202,6 +202,19 @@ def test_sql_pushdown_skips_unsafe_and_numeric():
     assert "stock_quantity" not in sql
     assert "track_stock" not in sql
     assert params == ["products", "x"]
+
+
+def test_sql_pushdown_leaves_none_to_python():
+    """
+    SQL'e inen eşitlik metin karşılaştırması. `str(None)` == "None" olduğu için
+    null bir alan hiçbir satırla eşleşmez ve ön eleme eşleşen satırları düşürür;
+    None ile sayılar Python tarafındaki match_query'ye bırakılmalı.
+    """
+    sql, params = sql_pushdown("bank_match_rules", {"company_id": "c1", "category": None, "quantity": 0, "archived": False})
+    assert "category" not in sql
+    assert "quantity" not in sql
+    assert "archived" not in sql
+    assert params == ["bank_match_rules", "c1"]
 def test_mysql_settings_no_hardcoded_password(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("MYSQL_URL", raising=False)

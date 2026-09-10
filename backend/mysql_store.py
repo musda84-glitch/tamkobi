@@ -168,7 +168,9 @@ def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
             continue
         expr = _json_unquote(k)
         if not isinstance(v, dict):
-            if isinstance(v, bool) or isinstance(v, (int, float)):
+            # None ve sayılar SQL'de metne çevrilince eşleşmez (str(None) == "None"),
+            # JSON null ile karşılaştırma da yanlış sonuç verir; bunları Python tarafına bırak.
+            if v is None or isinstance(v, (bool, int, float)):
                 continue
             clauses.append(f"{expr} = %s")
             params.append(str(v))
@@ -749,10 +751,12 @@ class MySQLCollection:
 
     async def _load_sql(self, sql: str, params: list) -> List[dict]:
         await self._db._ensure()
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
@@ -761,28 +765,6 @@ class MySQLCollection:
             docs = await self._load_sql(sql, params)
         except Exception:
             docs = await self._load_all()
-    async def _load_by_company(self, company_id) -> List[dict]:
-        await self._db._ensure()
-        t0 = time.perf_counter()
-        async with self._db._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
-                    (self.name, str(company_id)),
-                )
-                rows = await cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
-
-    async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
-        cid = _simple_eq(query, "company_id")
-        if cid is not None:
-            docs = await self._load_by_company(cid)
-            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
-            if not rest:
-                return docs
-            return [d for d in docs if match_query(d, rest)]
-        docs = await self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]
@@ -1192,35 +1174,17 @@ class SyncMySQLCollection:
         _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
-    def _load_by_company(self, company_id):
-        self._db._ensure()
-        t0 = time.perf_counter()
-        with self._db._conn.cursor() as cur:
-            cur.execute(
-                "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
-                (self.name, str(company_id)),
-            )
-            rows = cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
-
     def _load_filtered(self, query):
         sql, params = sql_pushdown(self.name, query)
         self._db._ensure()
+        t0 = time.perf_counter()
         try:
             with self._db._conn.cursor() as cur:
                 cur.execute(sql, params)
                 docs = [loads(r[0]) for r in cur.fetchall()]
+            _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         except Exception:
             docs = self._load_all()
-        cid = _simple_eq(query, "company_id")
-        if cid is not None:
-            docs = self._load_by_company(cid)
-            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
-            if not rest:
-                return docs
-            return [d for d in docs if match_query(d, rest)]
-        docs = self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]
