@@ -24,6 +24,7 @@ const ALLOWED_DUPLICATE_TESTIDS = {
   "components/ContactForm.jsx": ["{`cf-${k}`}"], // input / select / checkbox yardımcıları
   "components/LabelDesigner.jsx": ['"label-print-tpl"', '"label-print-close"', '"label-page-mode"', '"label-page-cols"', '"label-print-btn"'], // toplu ve hızlı yazdırma panelleri
   "components/PrintDocument.jsx": ["{`tpl-${k}`}"], // iki ayrı ayar grubu, anahtar bazlı
+  "components/saas/AiProviderPanel.jsx": ['"ai-advisor-model"', '"ai-extract-model"'], // özel sağlayıcıda serbest metin, aksi halde liste
   "components/SupportContactBar.jsx": ['"support-contact-link"'], // Link / <a> dalları
   "pages/PaymentResultPage.jsx": ['"payment-success-title"'], // kontör ve abonelik başarı dalları
   "pages/SupportPage.jsx": ["{`support-att-${i}`}"], // görsel ve dosya eki dalları
