@@ -177,6 +177,12 @@ class TestCustomEndpoint:
         ("openrouter.ai/api/v1", "https://openrouter.ai/api/v1/chat/completions"),
         ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions"),
         ("", ""),
+        # Azure OpenAI ve bazı ağ geçitleri sorgu dizesi istiyor; ekleme yolun
+        # sonuna yapılmazsa adres sorgunun arkasında bitiyor ve geçersiz oluyor.
+        ("https://x.openai.azure.com/openai/deployments/gpt4?api-version=2024-02-01",
+         "https://x.openai.azure.com/openai/deployments/gpt4/chat/completions?api-version=2024-02-01"),
+        ("https://x.openai.azure.com/openai/deployments/gpt4/chat/completions?api-version=2024-02-01",
+         "https://x.openai.azure.com/openai/deployments/gpt4/chat/completions?api-version=2024-02-01"),
     ])
     def test_base_url_is_normalized(self, typed, expected):
         assert ai_service.normalize_base_url(typed) == expected
