@@ -4647,13 +4647,6 @@ async def test_mail_account(company_id: Optional[str] = "comp_nexus_main_01"):
         await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
         return {"ok": False, "message": err}
 
-def _err_text(e: Exception) -> str:
-    args = getattr(e, "args", None)
-    raw = args[0] if args else str(e)
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", "replace")
-    return str(raw)[:160]
-
 def _mail_error(e: Exception) -> HTTPException:
     return HTTPException(status_code=424, detail=f"Posta sunucusu hatası: {_err_text(e)}")
 
