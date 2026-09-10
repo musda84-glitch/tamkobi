@@ -10,6 +10,7 @@ import base64
 import io
 import os
 import sys
+import tracemalloc
 import zipfile
 
 import pytest
@@ -191,6 +192,42 @@ class TestDecodePayload:
             z.writestr("fatura.xml", UBL)
         out = n11faturam._decode_xml(_b64(buf.getvalue()))
         assert out is not None and b"Anadolu Tedarik" in out
+
+    def test_yuksek_oranli_arsiv_bellegi_tuketmiyor(self):
+        # Sıkıştırma bombası: 64 MB sıfır tek bir XML girdisine sığıyor. Sınır
+        # yoksa açılmış hali paylaşılan API işçisinin belleğine yazılırdı, o
+        # yüzden sonucun doğruluğu değil tepe bellek kullanımı ölçülüyor.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("bomba.xml", b"\0" * (64 * 1024 * 1024))
+            z.writestr("fatura.xml", UBL)
+        blob = buf.getvalue()
+        tracemalloc.start()
+        try:
+            out = n11faturam._as_xml(blob)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert out is not None and b"Anadolu Tedarik" in out
+        assert peak < 3 * n11faturam.MAX_ZIP_MEMBER_BYTES
+
+    def test_cok_sayida_girdi_sinirda_kesiliyor(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i in range(n11faturam.MAX_ZIP_ENTRIES + 20):
+                z.writestr(f"dolgu{i}.xml", b"<Signature/>")
+            z.writestr("fatura.xml", UBL)
+        assert n11faturam._decode_xml(_b64(buf.getvalue())) is None
+
+    def test_toplam_acilan_bayt_sinirli(self):
+        # Tek tek sınırın altında kalan girdiler toplamda sınırı aşıyor.
+        member = b"<Signature>" + b"x" * (3 * 1024 * 1024) + b"</Signature>"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i in range(8):
+                z.writestr(f"ek{i}.xml", member)
+            z.writestr("fatura.xml", UBL)
+        assert n11faturam._decode_xml(_b64(buf.getvalue())) is None
 
     def test_plain_xml_passthrough(self):
         assert n11faturam._decode_xml(UBL.decode()) is not None
