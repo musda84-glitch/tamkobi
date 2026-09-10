@@ -1,30 +1,10 @@
 
 import React, { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, LogOut, ExternalLink, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset } from "lucide-react";
+import { ShieldCheck, LogOut, ExternalLink, Globe } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { SYSTEM_NAV_GROUPS } from "../../navGroups";
-
-export const SYSTEM_NAV = [
-  ["/sistem", "Genel Bakış", LayoutGrid],
-  ["/sistem/web", "Web Sitesi", Globe],
-  ["/sistem/posta", "Posta Sunucusu", Mail],
-  ["/sistem/ai", "AI Entegrasyonu", Sparkles],
-  ["/sistem/sirketler", "Şirketler & Lisanslar", Building2],
-  ["/sistem/kotalar", "Kotalar", Gauge],
-  ["/sistem/kullanicilar", "Panel Yöneticileri", Users],
-  ["/sistem/paketler", "Paketler", Package],
-  ["/sistem/moduller", "Modül Kataloğu", Boxes],
-  ["/sistem/araclar", "AI & Destek", Bot],
-  ["/sistem/destek", "Destek Talepleri", Headset],
-  ["/sistem/talepler", "Yükseltme Talepleri", Inbox],
-  ["/sistem/odemeler", "Ödemeler", CreditCard],
-  ["/sistem/hatirlatmalar", "Hatırlatmalar", Bell],
-  ["/sistem/ayarlar", "Platform Ayarları", Settings],
-];
-
-const ICONS = Object.fromEntries(SYSTEM_NAV.map(([path, , Icon]) => [path, Icon]));
-const LABELS = Object.fromEntries(SYSTEM_NAV.map(([path, label]) => [path, label]));
+import { groupSystemSections } from "../../navGroups";
+import { SYSTEM_SECTIONS } from "./systemSections";
 
 export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
@@ -48,18 +28,15 @@ export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) =>
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto" data-testid="sys-sidebar-nav">
-          {SYSTEM_NAV_GROUPS.map((g) => {
-            const paths = g.paths.filter((p) => LABELS[p]);
-            if (!paths.length) return null;
-            const groupActive = paths.some((p) => here === p);
-            const links = paths.map((path) => {
-              const Icon = ICONS[path];
+          {groupSystemSections(SYSTEM_SECTIONS).map((g) => {
+            const groupActive = g.items.some((s) => here === s.path);
+            const links = g.items.map(({ key, path, label, icon: Icon, badge }) => {
               const active = here === path;
+              const count = badge === "pending_requests" ? pendingCount : badge === "open_tickets" ? openTickets : 0;
               return (
-                <Link key={path} to={path} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${active ? "bg-amber-400 text-slate-900" : "text-slate-400 hover:bg-white/5 hover:text-white"}`} data-testid={`sys-nav-${path.replace("/sistem", "").replace("/", "") || "overview"}`}>
-                  <span className="flex items-center gap-2.5">{Icon && <Icon className="w-4 h-4" />}{LABELS[path]}</span>
-                  {path === "/sistem/talepler" && pendingCount > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{pendingCount}</span>}
-                  {path === "/sistem/destek" && openTickets > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{openTickets}</span>}
+                <Link key={path} to={path} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${active ? "bg-amber-400 text-slate-900" : "text-slate-400 hover:bg-white/5 hover:text-white"}`} data-testid={`sys-nav-${key || "overview"}`}>
+                  <span className="flex items-center gap-2.5">{Icon && <Icon className="w-4 h-4" />}{label}</span>
+                  {count > 0 && <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] font-bold">{count}</span>}
                 </Link>
               );
             });
