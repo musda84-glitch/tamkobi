@@ -25,14 +25,12 @@ export default function SignupPage() {
   useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => { setD(r.data); if (!f.plan_id && !picked.length) setF((x) => ({ ...x, plan_id: (r.data.plans.find((p) => p.is_popular) || r.data.plans[0])?.id || "" })); }).catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true);
-    const payload = { ...f };
-    if (picked.length) { payload.modules = picked; delete payload.plan_id; }
-    try { const r = await axios.post(`${API_URL}/public/signup`, payload, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
     e.preventDefault();
     if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan kayıt olamazsınız."); return; }
     setBusy(true);
-    try { const r = await axios.post(`${API_URL}/public/signup`, { ...f, ...legalPayload(consent) }, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
+    const payload = { ...f, ...legalPayload(consent) };
+    if (picked.length) { payload.modules = picked; delete payload.plan_id; }
+    try { const r = await axios.post(`${API_URL}/public/signup`, payload, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
   };
   const plan = d?.plans?.find((p) => p.id === f.plan_id);
   const customTotal = packQuote(d?.catalog || [], picked, false);

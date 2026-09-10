@@ -5,10 +5,13 @@
  * kartındaki sekmeler, hesap menüsündeki "Firma ayarları" ve kayıt sayfasındaki
  * paket seçimi ekranda çift göründü. Kod derlendiği için hiçbir test bunu yakalamadı.
  *
- * Buradaki iki kural o izi arar:
+ * Buradaki üç kural o izi arar:
  *   1. Bir dosyada aynı data-testid iki kez üretilmemeli — testid'ler zaten tekil
  *      olmalı, çift olması genelde bloğun iki kez çizildiği anlamına gelir.
  *   2. Yan yana (en fazla 4 satır arayla) birebir aynı JSX satırı bulunmamalı.
+ *   3. Bir olay işleyicisi e.preventDefault()'u iki kez çağırmamalı. Çizim değil
+ *      mantık tarafındaki aynı hata bu izi bırakıyor: birleştirme iki gönderim
+ *      gövdesini art arda eklediğinde form iki kez POST edilir.
  *
  * Meşru istisnalar ALLOWED_DUPLICATE_TESTIDS'te tek tek listelenir; dosya değil
  * (dosya, testid) çifti muaf tutulur ki aynı dosyadaki yeni bir hata gizlenmesin.
@@ -75,6 +78,23 @@ describe("arayüzde çift çizilen bloklar", () => {
         if (!line.startsWith("{") && !line.includes("data-testid")) continue;
         for (let j = i + 1; j < Math.min(i + 5, lines.length); j += 1) {
           if (lines[j] === line) offenders.push(`${rel}:${i + 1} ile ${j + 1} aynı`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("bir olay işleyicisi formu iki kez göndermiyor", () => {
+    // İki preventDefault arasında yeni bir fonksiyon ya da else dalı varsa
+    // ayrı işleyicilerdir; aksi halde aynı gövde iki kez yazılmış demektir.
+    const boundary = /=>|\bfunction\b|\belse\b/;
+    const offenders = [];
+    for (const { rel, text } of FILES) {
+      const lines = text.split("\n");
+      const marks = lines.map((l, i) => (/\.preventDefault\s*\(\s*\)/.test(l) ? i : -1)).filter((i) => i >= 0);
+      for (let k = 0; k < marks.length - 1; k += 1) {
+        if (!boundary.test(lines.slice(marks[k], marks[k + 1]).join("\n"))) {
+          offenders.push(`${rel}: ${marks[k] + 1} ve ${marks[k + 1] + 1}`);
         }
       }
     }
