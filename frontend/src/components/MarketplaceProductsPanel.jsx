@@ -43,7 +43,9 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
   const push = async (fromStock) => {
     const list = rows.filter((r) => sel.includes(r.barcode));
     if (!list.length) { toast.error("Ürün seçin."); return; }
-    const items = fromStock ? list.filter((r) => r.product_id).map((r) => ({ barcode: r.barcode })) : list.map((r) => ({ barcode: r.barcode, sale_price: edits[r.barcode]?.price ?? r.sale_price, quantity: edits[r.barcode]?.qty ?? r.quantity }));
+    const items = fromStock
+      ? list.filter((r) => r.product_id).map((r) => ({ barcode: r.barcode, stock_code: r.stock_code, product_id: r.product_id }))
+      : list.map((r) => ({ barcode: r.barcode, stock_code: r.stock_code, sale_price: edits[r.barcode]?.price ?? r.sale_price, quantity: edits[r.barcode]?.qty ?? r.quantity }));
     if (!items.length) { toast.error("Seçili ürünlerin stok kartı eşleşmesi yok."); return; }
     if (!window.confirm(`${items.length} ürünün fiyat/stok bilgisi ${ch.to} gönderilsin mi?`)) return;
     setBusy(true);

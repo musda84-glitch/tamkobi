@@ -5988,17 +5988,28 @@ async def _shopphp_product_ids(company_id: str) -> Dict[str, Dict[str, Any]]:
     ShopPHP ürün önbelleğinden barkod / stok kodu → mağazanın ürün kaydı.
 
     `product_main_id` mağazanın `urun_ID` alanı. Varyasyonlu ürünlerde her
-    varyasyon satırı aynı `urun_ID`'yi taşıdığı için varyasyon adını da
-    saklıyoruz: REST uçları ürünü yalnızca `ID` ile adresliyor, yani bir
-    varyasyona yazmak istemek aslında ana ürüne yazmak olur.
+    varyasyon satırı aynı `urun_ID`'yi taşıdığı için satırın varyasyon olup
+    olmadığını da saklıyoruz: REST uçları ürünü yalnızca `ID` ile adresliyor,
+    yani bir varyasyona yazmak istemek aslında ana ürüne yazmak olur.
+
+    Varyasyon tespiti ada bakmıyor; ad ayrıştırılamadığında boş kalabiliyor ve
+    satır ana ürün sanılıp kardeşlerinin fiyat/stoku eziliyordu. Aynı `urun_ID`
+    önbellekte birden çok satırda geçiyorsa da varyasyon sayılır; bu, alan
+    eklenmeden önce yazılmış önbellekleri de kapsıyor.
     """
     cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": "shopphp"}) or {}
+    items = cache.get("items") or []
+    shared: Dict[str, int] = {}
+    for it in items:
+        pid = str(it.get("product_main_id") or "").strip()
+        if pid:
+            shared[pid] = shared.get(pid, 0) + 1
     idx: Dict[str, Dict[str, Any]] = {}
-    for it in cache.get("items") or []:
+    for it in items:
         pid = str(it.get("product_main_id") or "").strip()
         if not pid:
             continue
-        row = {"id": pid, "variant": it.get("variant") or None}
+        row = {"id": pid, "variant": it.get("variant") or "", "is_variant": bool(it.get("is_variant") or it.get("variant") or shared.get(pid, 0) > 1)}
         for k in (it.get("barcode"), it.get("stock_code")):
             if k:
                 idx.setdefault(str(k).strip().lower(), row)
@@ -6028,7 +6039,13 @@ async def _push_products_to_shopphp(cfg: dict, company_id: str, req: Dict[str, A
                 continue
             price = quantity = None
             if req.get("from_stock"):
-                p = await db.products.find_one({"company_id": company_id, "$or": [{"barcode": barcode}, {"marketplace_aliases": barcode}, {"variants.barcode": barcode}]})
+                # Liste ekranı stok kartını barkodun yanı sıra stok koduyla da
+                # eşleştiriyor; burada yalnızca barkoda bakmak, listede eşleşmiş
+                # görünen satırı "stok kartı yok" diye geri çevirirdi.
+                local_id = str(it.get("product_id") or "").strip()
+                codes = [c for c in (barcode, str(it.get("stock_code") or "").strip()) if c]
+                p = await db.products.find_one({"_id": local_id, "company_id": company_id}) if local_id else await db.products.find_one(
+                    {"company_id": company_id, "$or": [{"barcode": {"$in": codes}}, {"sku": {"$in": codes}}, {"marketplace_aliases": {"$in": codes}}, {"variants.barcode": {"$in": codes}}]})
                 if not p:
                     no_local.append(barcode)
                     continue
@@ -6047,7 +6064,7 @@ async def _push_products_to_shopphp(cfg: dict, company_id: str, req: Dict[str, A
                 # Mağaza ürün ID'si yalnızca ürün XML'inde geliyor; önbellek yoksa eşleşmez.
                 unmatched.append(barcode)
                 continue
-            if match["variant"]:
+            if match["is_variant"]:
                 # REST yalnızca ana ürüne yazıyor; varyasyona yazmak diğer
                 # varyasyonların fiyat/stokunu da ezerdi.
                 variants.append(barcode)

@@ -175,6 +175,26 @@ class TestParseRestAck:
     def test_an_unclear_body_is_not_treated_as_a_failure(self, body):
         mp.parse_rest_ack(body)
 
+    @pytest.mark.parametrize("body", [
+        "<r><success>1</success><message>Başarılı</message></r>",
+        "<r><success>1</success><mesaj>İşlem tamamlandı</mesaj></r>",
+        "<r><basarili>1</basarili><aciklama>Kayıt güncellendi</aciklama></r>",
+    ])
+    def test_bir_bilgilendirme_metni_basariyi_bozmaz(self, body):
+        # "message" bilgilendirme alanı: başarı metni de taşıyabildiği için tek
+        # başına ret sayılırsa çalışan her gönderim hata görünürdü.
+        mp.parse_rest_ack(body)
+
+    def test_acik_basari_bildirimi_diger_alanlari_gecersiz_kilar(self):
+        # setOrderStatus yanıtı kendi alanlarını geri döndürüyor; status=0
+        # burada bir ret değil, yazılan sipariş durumunun yankısı.
+        assert mp.parse_rest_ack("<r><success>1</success><status>0</status></r>")["success"] == "1"
+
+    def test_bilgilendirme_metni_ret_gerekcesine_tasinir(self):
+        with pytest.raises(HTTPException) as e:
+            mp.parse_rest_ack("<r><success>0</success><message>Ürün bulunamadı</message></r>")
+        assert "Ürün bulunamadı" in e.value.detail
+
 
 class TestUpdateOrder:
     def test_cargo_only_call_omits_the_status_field(self, monkeypatch):
@@ -228,6 +248,38 @@ class TestSetProductActive:
         assert calls[0]["data"]["ID"] == 132 and calls[0]["data"]["fiyat"] == 19.9 and calls[0]["data"]["stok"] == 4
 
 
+class TestJsonWriteAcks:
+    """İstek `format=json` gönderiyor; ret bildirimi genelde XML'de değil JSON'da geliyor."""
+
+    @pytest.mark.parametrize("payload", [
+        {"success": 0, "message": "Ürün bulunamadı"},
+        {"error": "Yetkisiz istek"},
+        {"basarili": "false"},
+        {"data": {"success": 0, "mesaj": "Stok güncellenemedi"}},
+    ])
+    def test_a_json_body_that_rejects_the_write_raises(self, monkeypatch, payload):
+        _patch(monkeypatch, [FakeResponse(payload=payload)])
+        with pytest.raises(HTTPException) as e:
+            run(mp.ShopPHPClient(CFG).set_product_active(132, False))
+        assert e.value.status_code == 502 and "reddetti" in e.value.detail
+
+    def test_the_json_message_is_carried_into_the_error(self, monkeypatch):
+        _patch(monkeypatch, [FakeResponse(payload={"success": 0, "message": "Ürün bulunamadı"})])
+        with pytest.raises(HTTPException) as e:
+            run(mp.ShopPHPClient(CFG).set_price_stock(132, price=1.0, stock=1))
+        assert "Ürün bulunamadı" in e.value.detail
+
+    @pytest.mark.parametrize("payload", [{"success": 1}, {"success": 1, "message": "Başarılı"}, {}, {"ID": 132}])
+    def test_a_json_body_that_accepts_the_write_passes(self, monkeypatch, payload):
+        _patch(monkeypatch, [FakeResponse(payload=payload)])
+        run(mp.ShopPHPClient(CFG).set_product_active(132, True))
+
+    def test_read_endpoints_are_not_ack_checked(self, monkeypatch):
+        # Listelerde "status" ürünün kendi alanı; ack kuralı okuma yollarına girmemeli.
+        _patch(monkeypatch, [FakeResponse(payload={"orders": [{"no": 1, "status": "0"}]})])
+        assert run(mp.ShopPHPClient(CFG).orders(days=1)) == [{"no": 1, "status": "0"}]
+
+
 class FakeCollection:
     def __init__(self, doc=None, by_barcode=None):
         self.doc = doc
@@ -237,8 +289,13 @@ class FakeCollection:
 
     async def find_one(self, query, projection=None):
         if self.by_barcode:
-            wanted = [c.get("barcode") for c in query.get("$or", []) if c.get("barcode")]
-            return self.by_barcode.get(wanted[0]) if wanted else None
+            if query.get("_id"):
+                return next((p for p in self.by_barcode.values() if p.get("_id") == query["_id"]), None)
+            wanted = []
+            for cond in query.get("$or", []):
+                for value in cond.values():
+                    wanted.extend(value["$in"] if isinstance(value, dict) and "$in" in value else [value])
+            return next((self.by_barcode[c] for c in wanted if c in self.by_barcode), None)
         return self.doc
 
     async def insert_one(self, doc):
@@ -291,8 +348,25 @@ class TestProductIndex:
         import server
         monkeypatch.setattr(server, "db", FakeDB(CACHE))
         ids = run(server._shopphp_product_ids("comp_1"))
-        assert ids["8690000000048"]["variant"] == "Kırmızı / L"
-        assert ids["8690000000017"]["variant"] is None
+        assert ids["8690000000048"]["variant"] == "Kırmızı / L" and ids["8690000000048"]["is_variant"]
+        assert ids["8690000000017"]["is_variant"] is False
+
+    def test_adsiz_varyasyon_da_varyasyon_sayilir(self, monkeypatch):
+        # Varyasyon adı ayrıştırılamayıp boş kaldığında satır ana ürün sanılıyor
+        # ve mağazanın ortak urun_ID'sine yazılıp kardeşlerinin fiyatını eziyordu.
+        import server
+        cache = CACHE + [{"barcode": "8690000000055", "stock_code": "KOD-5", "product_main_id": "141", "variant": "", "is_variant": True}]
+        monkeypatch.setattr(server, "db", FakeDB(cache))
+        assert run(server._shopphp_product_ids("comp_1"))["8690000000055"]["is_variant"] is True
+
+    def test_ayni_magaza_idsini_paylasan_satirlar_varyasyon_sayilir(self, monkeypatch):
+        # is_variant alanı eklenmeden önce yazılmış önbelleklerde bayrak yok;
+        # aynı urun_ID'nin birden çok satırda geçmesi tek başına yeterli kanıt.
+        import server
+        cache = [{"barcode": "AAA", "product_main_id": "150"}, {"barcode": "BBB", "product_main_id": "150"}]
+        monkeypatch.setattr(server, "db", FakeDB(cache))
+        ids = run(server._shopphp_product_ids("comp_1"))
+        assert ids["aaa"]["is_variant"] is True and ids["bbb"]["is_variant"] is True
 
 
 class TestPushProducts:
@@ -333,6 +407,18 @@ class TestPushProducts:
         products = {"8690000000017": {"_id": "p1", "sale_price": 1, "stock_quantity": -3}}
         _out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017"}], from_stock=True, products=products)
         assert calls[0]["data"]["stok"] == 0
+
+    def test_stok_kodundan_eslesen_kart_da_okunur(self, monkeypatch):
+        # Liste ekranı kartı stok koduyla da eşleştiriyor. Burada yalnızca barkoda
+        # bakılınca listede eşleşmiş görünen satır "stok kartı yok" diye dönüyordu.
+        products = {"KOD-1": {"_id": "p9", "sku": "KOD-1", "sale_price": 33.0, "stock_quantity": 2}}
+        out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "stock_code": "KOD-1"}], from_stock=True, products=products)
+        assert out["sent"] == 1 and calls[0]["data"]["fiyat"] == 33.0
+
+    def test_panelin_verdigi_stok_karti_dogrudan_kullanilir(self, monkeypatch):
+        products = {"herhangi": {"_id": "p7", "sale_price": 12.5, "stock_quantity": 4}}
+        _out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "product_id": "p7"}], from_stock=True, products=products)
+        assert calls[0]["data"]["fiyat"] == 12.5 and calls[0]["data"]["stok"] == 4
 
     def test_a_product_missing_from_the_store_is_reported_not_sent(self, monkeypatch):
         out, calls, _ = self._push(monkeypatch, [{"barcode": "8690000000017", "active": 1}, {"barcode": "yok-boyle-barkod", "active": 1}])
