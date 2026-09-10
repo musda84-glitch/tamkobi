@@ -306,12 +306,28 @@ class FakeCollection:
         if self.doc is not None:
             self.doc.update(update.get("$set") or {})
 
+    def find(self, query, projection=None):
+        return FakeCursor(list(self.by_barcode.values()))
+
+
+class FakeCursor:
+    def __init__(self, docs):
+        self.docs = docs
+
+    async def to_list(self, limit):
+        return self.docs[:limit]
+
+
+# REST kullanıcısı var ama XML anahtarı yok: gönderim destekli, canlı çekim kapalı.
+REST_ONLY_CFG = {"rest_email": "a@b.c", "rest_password_enc": "x"}
+
 
 class FakeDB:
-    def __init__(self, cache_items=(), products=None):
+    def __init__(self, cache_items=(), products=None, cfg=None):
         self.marketplace_product_cache = FakeCollection(doc={"_id": "cache_1", "items": [dict(i) for i in cache_items]})
         self.products = FakeCollection(by_barcode=products or {})
         self.marketplace_push_logs = FakeCollection()
+        self.integration_configs = FakeCollection(doc=cfg)
 
 
 # Üç düz ürün (biri barkodsuz, biri mağaza ID'siz) ve bir varyasyon satırı.
@@ -367,6 +383,46 @@ class TestProductIndex:
         monkeypatch.setattr(server, "db", FakeDB(cache))
         ids = run(server._shopphp_product_ids("comp_1"))
         assert ids["aaa"]["is_variant"] is True and ids["bbb"]["is_variant"] is True
+
+
+class TestProductListFlags:
+    """Liste satırları, gönderim yolunun uyguladığı varyasyon kuralını taşımalı.
+
+    Panel satış durumu düğmesini bu bayrağa göre gizliyor. Panel ada, gönderim
+    yolu yapısal bayrağa bakarsa adsız bir varyasyonda düğme çıkıyor, kullanıcı
+    onaylıyor ve gönderim "varyasyon" diyip geri çeviriyordu.
+    """
+
+    def _rows(self, monkeypatch, cache):
+        import server
+        monkeypatch.setattr(server, "db", FakeDB(cache, cfg=REST_ONLY_CFG))
+        out = run(server.marketplace_products(company_id="comp_1", channel="shopphp"))
+        assert out["push_supported"] is True
+        return {r["barcode"]: r for r in out["rows"]}
+
+    def test_adsiz_varyasyon_listede_de_varyasyon(self, monkeypatch):
+        rows = self._rows(monkeypatch, [{"barcode": "AAA", "product_main_id": "141", "variant": "", "is_variant": True, "sale_price": 1.0, "quantity": 1}])
+        assert rows["AAA"]["is_variant"] is True
+
+    def test_paylasilan_magaza_idsi_listede_de_varyasyon(self, monkeypatch):
+        rows = self._rows(monkeypatch, [{"barcode": "AAA", "product_main_id": "150", "sale_price": 1.0, "quantity": 1},
+                                        {"barcode": "BBB", "product_main_id": "150", "sale_price": 1.0, "quantity": 1}])
+        assert rows["AAA"]["is_variant"] is True and rows["BBB"]["is_variant"] is True
+
+    def test_duz_urun_varyasyon_sayilmiyor(self, monkeypatch):
+        rows = self._rows(monkeypatch, [{"barcode": "AAA", "product_main_id": "132", "sale_price": 1.0, "quantity": 1}])
+        assert rows["AAA"]["is_variant"] is False
+
+    def test_liste_ve_gonderim_ayni_karari_veriyor(self, monkeypatch):
+        import server
+        cache = [{"barcode": "AAA", "product_main_id": "141", "variant": "", "is_variant": True, "sale_price": 1.0, "quantity": 1},
+                 {"barcode": "BBB", "product_main_id": "150", "sale_price": 1.0, "quantity": 1},
+                 {"barcode": "CCC", "product_main_id": "150", "sale_price": 1.0, "quantity": 1},
+                 {"barcode": "DDD", "product_main_id": "132", "sale_price": 1.0, "quantity": 1}]
+        rows = self._rows(monkeypatch, cache)
+        monkeypatch.setattr(server, "db", FakeDB(cache, cfg=REST_ONLY_CFG))
+        ids = run(server._shopphp_product_ids("comp_1"))
+        assert {b: r["is_variant"] for b, r in rows.items()} == {b.upper(): v["is_variant"] for b, v in ids.items()}
 
 
 class TestPushProducts:
