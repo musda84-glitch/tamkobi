@@ -167,6 +167,88 @@ class TestErrors:
             run(ai_service.DirectChat("openai", "gpt-4o", "k", "").send_message(UserMessage(text="x")))
 
 
+class TestCustomEndpoint:
+    """Cursor'ın herkese açık bir sohbet API'si yok; onun yerine OpenAI uyumlu her uca bağlanabiliriz."""
+
+    @pytest.mark.parametrize("typed,expected", [
+        ("https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/chat/completions"),
+        ("https://openrouter.ai/api/v1/", "https://openrouter.ai/api/v1/chat/completions"),
+        ("https://openrouter.ai/api/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"),
+        ("openrouter.ai/api/v1", "https://openrouter.ai/api/v1/chat/completions"),
+        ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions"),
+        ("", ""),
+    ])
+    def test_base_url_is_normalized(self, typed, expected):
+        assert ai_service.normalize_base_url(typed) == expected
+
+    def test_request_goes_to_the_given_endpoint_with_openai_shape(self, monkeypatch):
+        calls = _patch(monkeypatch, FakeResponse(200, {"choices": [{"message": {"content": "OK"}}]}))
+        chat = ai_service.DirectChat("custom", "openai/gpt-4o-mini", "sk-or-1", "sistem", "https://openrouter.ai/api/v1/chat/completions")
+        assert run(chat.send_message(UserMessage(text="soru"))) == "OK"
+        call = calls[0]
+        assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
+        assert call["headers"]["Authorization"] == "Bearer sk-or-1"
+        assert call["body"]["model"] == "openai/gpt-4o-mini"
+        assert [m["role"] for m in call["body"]["messages"]] == ["system", "user"]
+
+    def test_keyless_endpoint_sends_no_auth_header(self, monkeypatch):
+        calls = _patch(monkeypatch, FakeResponse(200, {"choices": [{"message": {"content": "OK"}}]}))
+        chat = ai_service.DirectChat("custom", "llama3", "", "", "http://127.0.0.1:11434/v1/chat/completions")
+        assert run(chat.send_message(UserMessage(text="x"))) == "OK"
+        assert "Authorization" not in calls[0]["headers"]
+
+    def test_model_name_is_free_text(self):
+        norm = ai_service.normalize_ai({"provider": "custom", "advisor_model": "meta-llama/llama-3.3-70b", "base_url": "https://openrouter.ai/api/v1"})
+        assert norm["advisor_model"] == "meta-llama/llama-3.3-70b"
+        assert norm["base_url"] == "https://openrouter.ai/api/v1/chat/completions"
+
+    def test_extract_model_defaults_to_advisor_model(self):
+        norm = ai_service.normalize_ai({"provider": "custom", "advisor_model": "gpt-4o-mini", "extract_model": "", "base_url": "https://x.test/v1"})
+        assert norm["extract_model"] == "gpt-4o-mini"
+
+    def test_known_providers_still_clamp_models(self):
+        norm = ai_service.normalize_ai({"provider": "google", "advisor_model": "meta-llama/llama-3.3-70b"})
+        assert norm["advisor_model"].startswith("gemini")
+        assert norm["base_url"] == ""
+
+    def test_make_chat_requires_endpoint_and_model(self, monkeypatch):
+        async def no_url():
+            return {"enabled": True, "provider": "custom", "advisor_model": "m", "extract_model": "m", "api_key": "", "base_url": ""}
+
+        monkeypatch.setattr(ai_service, "load_ai_settings", no_url)
+        with pytest.raises(RuntimeError, match="adresi girilmemiş"):
+            run(ai_service.make_chat("s", "sys"))
+
+        async def no_model():
+            return {"enabled": True, "provider": "custom", "advisor_model": "", "extract_model": "", "api_key": "", "base_url": "https://x.test/v1/chat/completions"}
+
+        monkeypatch.setattr(ai_service, "load_ai_settings", no_model)
+        with pytest.raises(RuntimeError, match="model adı girilmemiş"):
+            run(ai_service.make_chat("s", "sys"))
+
+    def test_make_chat_builds_a_direct_chat_with_the_endpoint(self, monkeypatch):
+        async def cfg():
+            return {"enabled": True, "provider": "custom", "advisor_model": "gpt-4o-mini", "extract_model": "gpt-4o-mini", "api_key": "", "base_url": "http://127.0.0.1:11434/v1/chat/completions"}
+
+        monkeypatch.setattr(ai_service, "load_ai_settings", cfg)
+        chat = run(ai_service.make_chat("s", "sys"))
+        assert isinstance(chat, ai_service.DirectChat)
+        assert chat.base_url == "http://127.0.0.1:11434/v1/chat/completions"
+
+    def test_endpoint_is_not_exposed_on_the_tenant_status(self):
+        pub = ai_service.public_ai_status({"provider": "custom", "advisor_model": "m", "base_url": "https://secret.internal/v1/chat/completions", "api_key": "k"})
+        assert "secret.internal" not in json.dumps(pub)
+        assert pub["provider_label"] == "Özel (OpenAI uyumlu)"
+
+    def test_errors_are_labelled_with_the_custom_provider(self, monkeypatch):
+        _patch(monkeypatch, FakeResponse(404, {"error": {"message": "model not found"}}))
+        chat = ai_service.DirectChat("custom", "yok", "k", "", "https://x.test/v1/chat/completions")
+        with pytest.raises(RuntimeError) as ei:
+            run(chat.send_message(UserMessage(text="x")))
+        assert "Özel (OpenAI uyumlu)" in str(ei.value)
+        assert "model not found" in str(ei.value)
+
+
 class TestEnvKeys:
     def test_each_provider_reads_its_own_variable(self, monkeypatch):
         for name in ("EMERGENT_LLM_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
