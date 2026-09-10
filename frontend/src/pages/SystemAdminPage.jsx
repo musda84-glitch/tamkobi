@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
 import { SaasOverview } from "../components/saas/SaasOverview";
@@ -13,6 +13,19 @@ import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../compone
 import { AiProviderPanel } from "../components/saas/AiProviderPanel";
 import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
 import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
+import { PlatformMailPanel } from "../components/saas/PlatformMailPanel";
+import { QuotasPanel } from "../components/saas/QuotasPanel";
+import { AddonsPanel } from "../components/saas/AddonsPanel";
+import { SupportTicketsPanel } from "../components/saas/SupportTicketsPanel";
+
+const KNOWN_PAGES = ["web", "posta", "sirketler", "kotalar", "kullanicilar", "paketler", "moduller", "araclar", "destek", "talepler", "odemeler", "hatirlatmalar", "ai", "ayarlar"];
+
+const UnknownSection = ({ page }) => (
+  <div className="text-xs text-slate-500 space-y-2" data-testid="system-unknown-section">
+    <p><b className="text-slate-800">/sistem/{page}</b> diye bir platform bölümü yok.</p>
+    <Link to="/sistem" className="inline-block px-3 py-2 bg-slate-900 text-white rounded-xl font-bold" data-testid="system-unknown-back">Genel Bakış'a dön</Link>
+  </div>
+);
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -43,7 +56,7 @@ export default function SystemAdminPage() {
   const changed = () => { load(); refreshLicense(); };
   const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
   return (
-    <SystemLayout pendingCount={overview?.pending_requests || 0}>
+    <SystemLayout pendingCount={overview?.pending_requests || 0} openTickets={overview?.open_tickets || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
@@ -52,15 +65,20 @@ export default function SystemAdminPage() {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
           {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
+          {page === "posta" && <PlatformMailPanel />}
           {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
+          {page === "kotalar" && <QuotasPanel onOpenCompany={setOpenId} />}
           {page === "kullanicilar" && <PlatformUsersPanel />}
           {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
           {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} onChanged={changed} />}
+          {page === "araclar" && <AddonsPanel />}
+          {page === "destek" && <SupportTicketsPanel onOpenCompany={setOpenId} />}
           {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
           {page === "odemeler" && <PaymentsPanel />}
           {page === "hatirlatmalar" && <RemindersPanel />}
           {page === "ai" && <AiProviderPanel />}
           {page === "ayarlar" && <PlatformSettingsPanel />}
+          {!KNOWN_PAGES.includes(page) && page !== "" && <UnknownSection page={page} />}
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>

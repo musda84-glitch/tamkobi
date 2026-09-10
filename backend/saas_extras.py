@@ -271,6 +271,7 @@ def _ai_public(cfg: dict, include_secrets_meta: bool = True) -> dict:
         body.update({
             "has_key": bool(cfg.get("has_key")),
             "has_env_key": bool(cfg.get("has_env_key")),
+            "env_var": cfg.get("env_var") or "",
             "last_test": cfg.get("last_test"),
             "catalog": [{"id": k, **v} for k, v in AI_PROVIDERS.items()],
         })
@@ -317,13 +318,16 @@ async def test_system_ai(_: dict = Depends(saas.require_super_admin)):
     from emergentintegrations.llm.chat import UserMessage
     cfg = await ai_service.load_ai_settings()
     if not cfg.get("api_key"):
-        raise HTTPException(status_code=400, detail="Önce bir API anahtarı kaydedin veya EMERGENT_LLM_KEY tanımlayın.")
+        raise HTTPException(status_code=400, detail=f"Önce bir API anahtarı kaydedin veya sunucuda {cfg.get('env_var') or 'EMERGENT_LLM_KEY'} tanımlayın.")
+    model = cfg.get("advisor_model") or ""
+    used = f"{ai_service.provider_label(cfg.get('provider') or 'emergent')} · {model}"
     try:
         chat = await ai_service.make_chat("ai-platform-test", "Kısa yanıt ver: yalnızca OK yaz.", purpose="advisor")
         raw = str(await chat.send_message(UserMessage(text="OK yaz")))[:80]
         ok, reason = True, (raw or "OK").strip()
     except Exception as e:  # noqa: BLE001
         ok, reason = False, str(e)[:200]
-    last = {"ok": ok, "reason": reason, "at": _now()}
+    last = {"ok": ok, "reason": reason, "at": _now(), "provider": cfg.get("provider"), "model": model}
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"ai.last_test": last, "updated_at": _now()}}, upsert=True)
-    return {"ok": ok, "reason": reason, "message": "AI bağlantısı doğrulandı." if ok else f"AI bağlantısı başarısız: {reason}"}
+    return {"ok": ok, "reason": reason, "provider": cfg.get("provider"), "model": model,
+            "message": f"AI bağlantısı doğrulandı ({used})." if ok else f"AI bağlantısı başarısız ({used}): {reason}"}

@@ -73,7 +73,7 @@ export const AiProviderPanel = () => {
           ))}
         </div>
         {current?.hint && <p className="text-[11px] text-slate-500 bg-slate-50 rounded-xl px-3 py-2">{current.hint}</p>}
-        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
+        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test{d.last_test.model ? ` (${d.last_test.model})` : ""}: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Danışman modeli</label>
@@ -88,8 +88,8 @@ export const AiProviderPanel = () => {
             </select>
           </div>
           <div className="sm:col-span-2">
-            <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : "(ortam değişkeni)"}</span>}</label>
-            <input type="password" value={f.api_key} onChange={(e) => setF({ api_key: e.target.value })} placeholder={d.has_key ? "••••••••" : d.has_env_key ? "Boş bırakırsanız EMERGENT_LLM_KEY kullanılır" : "sk-… veya Emergent anahtarı"} className={inputCls} data-testid="ai-api-key" autoComplete="off" />
+            <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : `(${d.env_var || "ortam değişkeni"})`}</span>}</label>
+            <input type="password" value={f.api_key} onChange={(e) => setF({ api_key: e.target.value })} placeholder={d.has_key ? "••••••••" : d.has_env_key ? `Boş bırakırsanız ${d.env_var} kullanılır` : `${current?.label || "Sağlayıcı"} API anahtarı`} className={inputCls} data-testid="ai-api-key" autoComplete="off" />
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
