@@ -249,6 +249,9 @@ class ShopPHPClient:
             raise HTTPException(status_code=502, detail=f"ShopPHP bağlantı hatası: {type(e).__name__}")
         if r.status_code in (401, 403):
             raise HTTPException(status_code=400, detail="ShopPHP kimlik doğrulama başarısız: REST API kullanıcı e-postası/parolası, bayi grubunda 'Rest API kullanabilir' izni ve IP listesi kontrol edin.")
+        if r.status_code == 404:
+            # 404 kimlik doğrulamaya hiç gelinmediği anlamına gelir: /rest tabanı yok.
+            raise HTTPException(status_code=502, detail=f"ShopPHP REST ucu bulunamadı ({self.base}/{path.lstrip('/')} → 404). Mağaza yönetiminden REST API'yi etkinleştirin ve mağaza adresini doğrulayın; XML besleme çalışsa bile REST ayrı açılır.")
         if r.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"ShopPHP {path}: HTTP {r.status_code}")
         try:

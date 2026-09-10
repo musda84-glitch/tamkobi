@@ -103,6 +103,20 @@ class TestSetOrderStatus:
         assert e.value.status_code == 400
         assert "Rest API kullanabilir" in e.value.detail
 
+    def test_missing_rest_base_says_to_enable_the_module(self, monkeypatch):
+        """404, kimliğe hiç bakılmadığı anlamına gelir; mağazada REST kapalıdır."""
+        _patch(monkeypatch, [FakeResponse(status_code=404, text="<html>404 Not Found</html>")])
+        with pytest.raises(HTTPException) as e:
+            run(mp.ShopPHPClient(CFG).set_order_status(1, 51))
+        assert "REST API'yi etkinleştirin" in e.value.detail
+        assert "setOrderStatus" in e.value.detail
+
+    def test_the_404_message_does_not_leak_the_auth_key(self, monkeypatch):
+        _patch(monkeypatch, [FakeResponse(status_code=404, text="")])
+        with pytest.raises(HTTPException) as e:
+            run(mp.ShopPHPClient(CFG).set_order_status(1, 51))
+        assert expected_auth_key(CFG["api_key"], CFG["api_secret"]) not in e.value.detail
+
 
 class TestXmlAnswers:
     """Doküman örneği yanıtı `simplexml_load_string` ile okuyor: XML gelebilir."""
