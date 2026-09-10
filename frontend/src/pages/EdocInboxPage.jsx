@@ -29,7 +29,7 @@ export default function EdocInboxPage() {
   const pullN11 = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, { params: { company_id: companyId, days: 14 } }).then((r) => { setStatus("pending"); setPullNote(r.data); return r; }), "n11 Faturam gelen kutusu çekildi.");
   const cleanup = () => { if (!window.confirm("Tedarikçisi, kalemi ve tutarı okunamamış bekleyen kayıtlar silinecek. Faturaları entegratörden yeniden çekebilirsiniz. Devam edilsin mi?")) return; act(() => axios.post(`${API_URL}/edocs/inbox/cleanup`, null, { params: { company_id: companyId } }).then((r) => { setSel(null); return r; })); };
   const reparse = () => act(() => axios.post(`${API_URL}/edocs/inbox/reparse`, null, { params: { company_id: companyId } }));
-  const showXml = async () => { try { const r = await axios.get(`${API_URL}/edocs/inbox/${sel.id}/xml`); setXml(r.data.xml); } catch (e) { toast.error(e.response?.data?.detail || "Ham XML alınamadı."); } };
+  const showXml = async () => { try { const r = await axios.get(`${API_URL}/edocs/inbox/${sel.id}/xml`, { params: { company_id: companyId } }); setXml(r.data.xml); } catch (e) { toast.error(e.response?.data?.detail || "Ham XML alınamadı."); } };
   const setLine = (idx, product_id) => act(() => axios.put(`${API_URL}/edocs/inbox/${sel.id}/lines`, { lines: [{ idx, product_id }] }).then((r) => { setSel(r.data); return { data: { message: "Satır eşleştirildi." } }; }));
   return (
     <div className="space-y-4" data-testid="edoc-inbox-page">

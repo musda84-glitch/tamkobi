@@ -357,6 +357,15 @@ class TestRepair:
         assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Anadolu Tedarik A.Ş."
         assert db.incoming_edocs.docs[0]["grand_total"] == 1080.0
 
+    def test_ham_xml_baska_sirkete_verilmez(self, db):
+        # Ham UBL tedarikçi VKN'si, adresi ve kalem fiyatlarını taşıyor; belge
+        # kimliği tahmin edilerek başka şirketin faturası okunabilmemeli.
+        doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
+        assert asyncio.run(edocs.get_edoc_xml(doc["id"], company_id="comp1"))["xml"].startswith("<?xml")
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.get_edoc_xml(doc["id"], company_id="comp2"))
+        assert e.value.status_code == 404
+
     def test_reparse_okunmus_belgeye_dokunmaz(self, db):
         # Yeniden okuma taze çözümlemeyi olduğu gibi yazıyordu; elle eşlenen satır
         # ve elle bağlanan cari, kullanıcı düğmeye bastığı anda siliniyordu.
@@ -368,6 +377,16 @@ class TestRepair:
         assert r["fixed"] == 0
         assert db.incoming_edocs.docs[0]["lines"][0]["product_id"] == "prd1"
         assert db.incoming_edocs.docs[0]["contact_id"] == "cnt1"
+
+    def test_saklanan_liste_bilgisi_ham_xml_tasimaz(self, db):
+        # Liste satırı faturanın ham XML'ini de taşıyor. Satır olduğu gibi
+        # saklanırsa gelen kutusu yanıtı bu yükü geri gönderir; ham belgeyi ayrı
+        # koleksiyonda tutmanın anlamı kalmaz.
+        doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, source="n11faturam", meta={
+            "party_name": "Liste Tedarik Ltd.", "payable": "1250,00", "xml": UBL, "return_value": "b64…"}))
+        saved = db.incoming_edocs.docs[0]["source_meta"]
+        assert set(saved) == {"party_name", "payable"}
+        assert "source_meta" not in doc
 
     def test_reparse_n11_listesinden_gelen_bilgiyi_silmez(self, db):
         # UBL'de tedarikçi ve tutar hiç yok; bunlar liste yanıtından gelmişti.

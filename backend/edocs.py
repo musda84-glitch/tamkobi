@@ -102,6 +102,22 @@ def _iso_date(value: str) -> str:
     return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else v[:10]
 
 
+META_FIELDS = ("party_name", "sender_tax_id", "invoice_id", "uuid", "issue_date", "profile", "payable")
+
+
+def meta_summary(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    """Belgeyle birlikte saklanacak liste bilgisi: yalnızca apply_meta'nın okuduğu alanlar.
+
+    Entegratörün liste satırı ham XML'i de taşıyor; satırı olduğu gibi saklamak hem
+    gelen kutusu listesini şişirir hem de ham belgeyi ayrı koleksiyonda tutma
+    kararını boşa çıkarırdı.
+    """
+    if not meta:
+        return None
+    kept = {k: str(meta[k]) for k in META_FIELDS if meta.get(k) not in (None, "")}
+    return kept or None
+
+
 def apply_meta(parsed: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Entegratörün liste yanıtındaki bilgileri UBL'de eksik kalan alanlara doldurur.
 
@@ -199,9 +215,9 @@ async def _existing(company_id: str, parsed: dict, key: str):
 
 async def _store(company_id: str, parsed: dict, key: str, source: str, filename: str, raw: Optional[bytes], meta: Optional[dict] = None):
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "source": source, "filename": filename, "status": "pending",
-           # Liste yanıtı saklanıyor: ham XML'den yeniden okuma, UBL'de hiç
+           # Liste bilgisi saklanıyor: ham XML'den yeniden okuma, UBL'de hiç
            # olmayan tedarikçi / tutar / tarih bilgisini aksi halde silerdi.
-           "received_at": _now(), "dedupe_key": key, "source_meta": meta or None, **parsed}
+           "received_at": _now(), "dedupe_key": key, "source_meta": meta_summary(meta), **parsed}
     await _enrich(doc, company_id)
     await _db.incoming_edocs.insert_one(doc)
     if raw and len(raw) <= MAX_XML_BYTES:
@@ -220,7 +236,8 @@ async def ingest_ubl_bytes(company_id: str, data: bytes, filename: str = "incomi
 
 
 def _clean(d: dict) -> dict:
-    d = dict(d); d["id"] = d.pop("_id"); return d
+    # source_meta yalnızca yeniden okuma için tutulan iç alan; API yanıtına girmez.
+    d = dict(d); d["id"] = d.pop("_id"); d.pop("source_meta", None); return d
 
 
 @router.get("/edocs/inbox")
@@ -240,8 +257,10 @@ def is_blank(d: dict) -> bool:
 
 
 @router.get("/edocs/inbox/{doc_id}/xml")
-async def get_edoc_xml(doc_id: str):
-    x = await _db.incoming_edoc_xml.find_one({"_id": doc_id})
+async def get_edoc_xml(doc_id: str, company_id: str = "comp_nexus_main_01"):
+    # Şirkete göre süzülüyor: ham UBL tedarikçi VKN'si, adresi ve kalem fiyatlarını
+    # taşıyor, belge kimliği tahmin edilerek başka şirketin faturası okunmamalı.
+    x = await _db.incoming_edoc_xml.find_one({"_id": doc_id, "company_id": company_id})
     if not x:
         raise HTTPException(status_code=404, detail="Bu belgenin ham XML'i saklanmamış (entegratörden yeniden çekin).")
     return {"id": doc_id, "xml": x.get("xml") or ""}
