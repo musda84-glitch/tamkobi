@@ -590,9 +590,23 @@ def normalize_sort(sort, direction=1):
     return sort
 
 
+def newest_first(docs: List[dict]) -> List[dict]:
+    """
+    Sıralama istenmediğinde uygulanan varsayılan düzen.
+
+    MySQL `docs` tablosunun birincil anahtarı (collection, id) ve id bir uuid4.
+    Sıralamasız bir SELECT bu yüzden satırları rastgele uuid sırasında döndürür,
+    kayıt sırasında değil. `.to_list(100)` gibi bir sınır o rastgele sıranın ilk
+    100'ünü aldığı için yeni eklenen bir kayıt, uuid'si sona düşmüşse listede
+    hiç görünmez. En yeniyi başa alarak sınır, kaybedilmesi en pahalı kayıtları
+    değil en eskilerini kırpar.
+    """
+    return sorted(docs, key=lambda d: (str(d.get("created_at") or ""), str(d.get("_id") or "")), reverse=True)
+
+
 def sort_docs(docs: List[dict], key) -> List[dict]:
     if not key:
-        return docs
+        return newest_first(docs)
     if isinstance(key, str):
         pairs = [(key, 1)]
     elif isinstance(key, tuple) and len(key) == 2 and isinstance(key[0], str):

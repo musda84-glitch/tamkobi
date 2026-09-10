@@ -204,6 +204,38 @@ def test_sql_pushdown_skips_unsafe_and_numeric():
     assert params == ["products", "x"]
 
 
+def test_unsorted_reads_put_the_newest_record_first():
+    """
+    `docs` birincil anahtarı (collection, id) ve id bir uuid4; sıralamasız bir
+    SELECT satırları kayıt sırasında değil rastgele uuid sırasında döndürür.
+    Bir sınırla birleşince yeni eklenen kayıt listeden düşebilir.
+    """
+    docs = [
+        {"_id": "ffff", "created_at": "2026-01-01"},
+        {"_id": "0000", "created_at": "2026-09-10"},
+        {"_id": "5555", "created_at": "2026-05-05"},
+    ]
+    assert [d["_id"] for d in sort_docs(docs, None)] == ["0000", "5555", "ffff"]
+
+
+def test_a_limit_keeps_the_newest_not_a_random_slice():
+    docs = [{"_id": f"{i:04x}", "created_at": f"2026-01-{i + 1:02d}"} for i in range(20)]
+    kept = sort_docs(docs, None)[:5]
+    assert [d["created_at"] for d in kept] == ["2026-01-20", "2026-01-19", "2026-01-18", "2026-01-17", "2026-01-16"]
+
+
+def test_records_without_a_created_at_still_sort_deterministically():
+    docs = [{"_id": "b"}, {"_id": "a"}, {"_id": "c", "created_at": "2026-01-01"}]
+    once = [d["_id"] for d in sort_docs(docs, None)]
+    assert once[0] == "c"
+    assert once == [d["_id"] for d in sort_docs(list(reversed(docs)), None)]
+
+
+def test_an_explicit_sort_still_wins():
+    docs = [{"_id": "1", "n": 2, "created_at": "2026-09-01"}, {"_id": "2", "n": 1, "created_at": "2026-01-01"}]
+    assert [d["_id"] for d in sort_docs(docs, [("n", 1)])] == ["2", "1"]
+
+
 def test_sql_pushdown_leaves_none_to_python():
     """
     SQL'e inen eşitlik metin karşılaştırması. `str(None)` == "None" olduğu için
