@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+from urllib.parse import urlsplit, urlunsplit
+
 import httpx
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
@@ -123,15 +125,22 @@ def is_custom(provider: str) -> bool:
 
 
 def normalize_base_url(raw: str) -> str:
-    """Kullanıcının yazdığı uç nokta adresini sohbet URL'sine çevir."""
-    url = (raw or "").strip().rstrip("/")
+    """Kullanıcının yazdığı uç nokta adresini sohbet URL'sine çevir.
+
+    Adres bir sorgu dizesi taşıyabiliyor (Azure OpenAI `?api-version=…` istiyor).
+    Yol ayrıştırılmadan sona ekleme yapılırsa `/chat/completions` sorgunun arkasına
+    düşer ve adres geçersiz olur; o yüzden yalnızca yol kısmı tamamlanıyor.
+    """
+    url = (raw or "").strip()
     if not url:
         return ""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    if url.endswith("/chat/completions"):
-        return url
-    return url + "/chat/completions"
+    split = urlsplit(url)
+    path = split.path.rstrip("/")
+    if not path.endswith("/chat/completions"):
+        path += "/chat/completions"
+    return urlunsplit((split.scheme, split.netloc, path, split.query, split.fragment))
 
 
 def protocol_of(provider: str) -> str:
