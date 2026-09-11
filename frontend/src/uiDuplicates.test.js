@@ -8,6 +8,8 @@
  * Buradaki dört kural o izi arar:
  *   1. Bir dosyada aynı data-testid iki kez üretilmemeli — testid'ler zaten tekil
  *      olmalı, çift olması genelde bloğun iki kez çizildiği anlamına gelir.
+ *      `data-testid=` ve bileşene geçen `testId=` aynı sayılır: PaymentTargetSelect
+ *      testId'i içeri alıp data-testid yaptığı için kaynakta data-testid görünmez.
  *   2. Yan yana (en fazla 4 satır arayla) birebir aynı JSX satırı bulunmamalı.
  *   3. Bir olay işleyicisi e.preventDefault()'u iki kez çağırmamalı. Çizim değil
  *      mantık tarafındaki aynı hata bu izi bırakıyor: birleştirme iki gönderim
@@ -55,7 +57,7 @@ const FILES = sourceFiles().map((full) => ({
   text: fs.readFileSync(full, "utf8"),
 }));
 
-const TESTID = /data-testid=(\{`[^`]*`\}|"[^"]*")/g;
+const TESTID = /(?:data-testid|testId)=(\{`[^`]*`\}|"[^"]*")/g;
 
 /**
  * Satırın JSX iskeleti: dizeler ve süslü parantez içindeki ifadeler silinir,
