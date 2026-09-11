@@ -256,6 +256,24 @@ class TestFieldNameVariants:
             "GetIncomingInvoicesByIssueDateResult")
         assert [i["uuid"] for i in parsed["invoices"]] == ["u-2"]
 
+    def _wrapped(self, inner_tag: str):
+        # Liste kabı (InvoiceListResult) iki fatura satırını sarıyor.
+        rows = f"<{inner_tag}><UUID>u-1</UUID></{inner_tag}><{inner_tag}><UUID>u-2</UUID></{inner_tag}>"
+        parsed = n11faturam.parse_service_result(
+            n11faturam.parse_soap_xml(_inbox_xml([rows], wrapper="InvoiceListResult")),
+            "GetIncomingInvoicesByIssueDateResult")
+        return [i["uuid"] for i in parsed["invoices"]]
+
+    def test_liste_kabi_fazladan_fatura_uretmiyor(self):
+        # Kap da bilinen etiket kümesindeydi; satır sayılınca `_text` alt
+        # düğümleri taradığı için ilk faturanın kopyası ikinci kez ekleniyordu.
+        assert self._wrapped("InvoiceInfoResult") == ["u-1", "u-2"]
+
+    def test_liste_kabi_faturalari_yutmuyor(self):
+        # Kabın çocukları bilinen ad taşımadığında yalnızca kap dönüyordu ve
+        # ilkinden sonraki bütün faturalar sessizce kayboluyordu.
+        assert self._wrapped("Fatura") == ["u-1", "u-2"]
+
 
 class TestListIncoming:
     def _run(self, inbox_bytes, xml_response=None):

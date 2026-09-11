@@ -271,20 +271,8 @@ _ROW_TAGS = {
 _ROW_MARKERS = {"uuid", "ettn", "invoiceuuid", "documentuuid", "invoiceid", "returnvalue"}
 
 
-def invoice_rows(node: Optional[ET.Element]) -> List[ET.Element]:
-    """Yanıttaki fatura düğümlerini bulur.
-
-    Bilinen etiketleri arar; hiçbiri tutmazsa doğrudan altında UUID/ETTN/
-    InvoiceId/ReturnValue taşıyan en içteki düğümleri fatura sayar. Gelen
-    kutusu yanıtı InvoiceStateResult yerine başka bir adla sarıldığında liste
-    sessizce boş dönüyordu, o yüzden ada güvenmeyen bir yedek gerekli.
-    """
-    if node is None:
-        return []
-    named = [el for el in node.iter() if _key(el.tag) in _ROW_TAGS]
-    if named:
-        return named
-    cand = [el for el in node.iter() if any(_key(c.tag) in _ROW_MARKERS for c in el)]
+def _innermost(cand: List[ET.Element]) -> List[ET.Element]:
+    """Başka bir adayı içeren adayları atar; yalnızca en içtekiler kalır."""
     inner = []
     for el in cand:
         descendants = {id(x) for x in el.iter()} - {id(el)}
@@ -292,6 +280,25 @@ def invoice_rows(node: Optional[ET.Element]) -> List[ET.Element]:
             continue
         inner.append(el)
     return inner
+
+
+def invoice_rows(node: Optional[ET.Element]) -> List[ET.Element]:
+    """Yanıttaki fatura düğümlerini bulur.
+
+    Bir düğümün fatura satırı olması için doğrudan altında UUID/ETTN/
+    InvoiceId/ReturnValue taşıması gerekiyor; `_ROW_TAGS` yalnızca birden çok
+    aday olduğunda hangisinin satır olduğunu ayırmaya yarıyor. Eskiden ada
+    bakmak tek başına yeterliydi ve liste kabı da (`InvoiceListResult`) bu
+    kümede olduğu için iki ayrı hata çıkıyordu: kap satır sayılıp `_text` alt
+    düğümleri taradığından ilk faturanın kopyası ikinci kez ekleniyor, kabın
+    çocukları bilinen bir ad taşımadığında ise yalnızca kap dönüp listedeki
+    diğer faturalar sessizce kayboluyordu.
+    """
+    if node is None:
+        return []
+    marked = [el for el in node.iter() if any(_key(c.tag) in _ROW_MARKERS for c in el)]
+    named = [el for el in marked if _key(el.tag) in _ROW_TAGS]
+    return _innermost(named or marked)
 
 
 def parse_service_result(root: ET.Element, result_tag: str) -> Dict[str, Any]:
