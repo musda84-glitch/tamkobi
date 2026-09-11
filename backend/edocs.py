@@ -269,17 +269,18 @@ def _session_token(request: Request) -> Optional[str]:
 async def require_inbox_company(request: Request, company_id: Optional[str] = None) -> str:
     """Ham XML / yeniden okuma / temizlik oturumsuz açılamaz.
 
-    `get_current_user` token yoksa demo yöneticiye düşer; bu uçlar o yola
-    girmeden önce çerezin veya Bearer'ın dolu olmasını ister. Şirket de
-    sorgudan olduğu gibi kabul edilmez: üye olunmayan (ve süper admin
-    olunmayan) bir `company_id` 403 olur, varsayılan hardcoded şirket yoktur.
+    Kullanıcı, `_session_token`'ın kabul ettiği aynı tokendan çözülür —
+    `get_current_user` çağrılmaz. Aksi halde boş `Authorization: Bearer `
+    çereze düşülüp kap geçer, sonra `get_current_user` boş Bearer'ı görünce
+    demo yöneticiye iner. Şirket sorgudan olduğu gibi kabul edilmez.
     """
-    if not _session_token(request):
+    token = _session_token(request)
+    if not token:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
-    get_user = _deps.get("current_user")
-    if not get_user:
+    from_token = _deps.get("user_from_token")
+    if not from_token:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
-    user = await get_user(request)
+    user = await from_token(token)
     allowed = [c for c in (user.get("company_ids") or []) if c]
     cid = (company_id or "").strip() or (user.get("active_company_id") or "")
     if user.get("is_super_admin"):

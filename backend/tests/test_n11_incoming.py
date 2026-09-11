@@ -462,12 +462,14 @@ class _Req:
 
 
 class TestInboxAuth:
-    def _user(self, **kw):
-        async def current_user(request):
+    def _from_token(self, **kw):
+        async def user_from_token(token):
+            if token != "tok":
+                raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
             base = {"company_ids": ["comp1"], "active_company_id": "comp1", "is_super_admin": False}
             base.update(kw)
             return base
-        return current_user
+        return user_from_token
 
     def test_oturumsuz_401(self, db):
         with pytest.raises(HTTPException) as e:
@@ -475,31 +477,39 @@ class TestInboxAuth:
         assert e.value.status_code == 401
 
     def test_bos_bearer_401(self, db):
-        edocs._deps["current_user"] = self._user()
+        edocs._deps["user_from_token"] = self._from_token()
         with pytest.raises(HTTPException) as e:
             asyncio.run(edocs.require_inbox_company(_Req(bearer="   "), "comp1"))
         assert e.value.status_code == 401
 
+    def test_bos_bearer_ve_sahte_cerez_401(self, db):
+        # Kap çerezi kabul edip get_current_user'a bırakırsa boş Bearer demo
+        # yöneticiye düşer. Kullanıcı kapın seçtiği tokendan çözülmeli.
+        edocs._deps["user_from_token"] = self._from_token()
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.require_inbox_company(_Req(bearer=" ", cookie="dummy"), "comp1"))
+        assert e.value.status_code == 401
+
     def test_uye_olunmayan_sirket_403(self, db):
-        edocs._deps["current_user"] = self._user()
+        edocs._deps["user_from_token"] = self._from_token()
         with pytest.raises(HTTPException) as e:
             asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp2"))
         assert e.value.status_code == 403
 
     def test_uye_oldugu_sirket(self, db):
-        edocs._deps["current_user"] = self._user()
+        edocs._deps["user_from_token"] = self._from_token()
         assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp1")) == "comp1"
 
     def test_sirket_yoksa_aktif_sirket(self, db):
-        edocs._deps["current_user"] = self._user()
+        edocs._deps["user_from_token"] = self._from_token()
         assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"))) == "comp1"
 
     def test_super_admin_baska_sirket(self, db):
-        edocs._deps["current_user"] = self._user(is_super_admin=True, company_ids=[])
+        edocs._deps["user_from_token"] = self._from_token(is_super_admin=True, company_ids=[])
         assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp9")) == "comp9"
 
     def test_super_admin_sirketsiz_400(self, db):
-        edocs._deps["current_user"] = self._user(is_super_admin=True, company_ids=[], active_company_id="")
+        edocs._deps["user_from_token"] = self._from_token(is_super_admin=True, company_ids=[], active_company_id="")
         with pytest.raises(HTTPException) as e:
             asyncio.run(edocs.require_inbox_company(_Req(cookie="tok")))
         assert e.value.status_code == 400
