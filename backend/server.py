@@ -5525,6 +5525,23 @@ def _shopphp_rest_client(cfg: dict) -> Optional["marketplace_providers.ShopPHPCl
     r = marketplace_providers.shopphp_resolve(cfg)
     return marketplace_providers.ShopPHPClient({"store_url": r["store_url"] or cfg.get("store_url"), "api_key": cfg["rest_email"], "api_secret": comm_service.decrypt(cfg["rest_password_enc"])})
 
+async def _shopphp_write_status(client: "marketplace_providers.ShopPHPClient", order_no: Any, status: int) -> tuple:
+    """
+    Sipariş durumunu mağazaya yazar.
+
+    Mağaza dokümanı durum için `setOrderStatus` ucunu tarif ediyor (gövdede
+    `no` + `status`). Bu uç bulunmayan eski kurulumlarda durum `updateOrder`
+    içindeki `sdurum` alanından geçtiği için oraya düşülür; ikisi de olmazsa
+    ilk (dokümandaki) hata bildirilir.
+    """
+    try:
+        return "setOrderStatus", await client.set_order_status(order_no, status)
+    except HTTPException as documented_failed:
+        try:
+            return "updateOrder", await client.update_order(order_no, status=status)
+        except HTTPException:
+            raise documented_failed
+
 async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_errors: bool = False) -> Optional[dict]:
     """Onay durumu + kargo firması/takip no + fatura no bilgisini ShopPHP mağazasına REST ile yazar."""
     if (order.get("channel") or "") != "shopphp":
@@ -5543,14 +5560,29 @@ async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_erro
         inv_no = (inv or {}).get("invoice_number")
     carrier = order.get("cargo_carrier_name") or CARGO_NAME_TR.get(str(order.get("cargo_carrier") or "").lower(), order.get("cargo_carrier"))
     status = SHOPPHP_STATUS_CODES.get(order.get("order_status") or "")
-    log = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_number": order.get("order_number"), "reason": reason, "sent": {"sdurum": status, "kargoFirma": carrier, "kargoSeriNo": order.get("cargo_tracking_number"), "faturaNo": inv_no}, "created_at": datetime.now(timezone.utc).isoformat()}
+    order_no = order.get("external_id") or order.get("order_number")
+    tracking = order.get("cargo_tracking_number")
+    log = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_number": order.get("order_number"), "reason": reason, "sent": {"sdurum": status, "kargoFirma": carrier, "kargoSeriNo": tracking, "faturaNo": inv_no}, "created_at": datetime.now(timezone.utc).isoformat()}
+    responses: Dict[str, Any] = {}
+    errors: List[str] = []
     try:
-        res = await client.update_order(order.get("external_id") or order.get("order_number"), status=status, cargo_firm=carrier, tracking=order.get("cargo_tracking_number"), invoice_no=inv_no)
-        log.update({"ok": True, "response": res if isinstance(res, (dict, list, str)) else str(res)})
-    except HTTPException as e:
-        log.update({"ok": False, "error": e.detail})
+        if status is not None:
+            try:
+                via, responses["status"] = await _shopphp_write_status(client, order_no, status)
+                log["status_via"] = via
+            except HTTPException as e:
+                errors.append(f"durum: {e.detail}")
+        # Kargo firması, takip no ve fatura no yalnızca updateOrder üzerinden yazılabiliyor.
+        if any(v not in (None, "") for v in (carrier, tracking, inv_no)):
+            try:
+                responses["cargo_invoice"] = await client.update_order(order_no, cargo_firm=carrier, tracking=tracking, invoice_no=inv_no)
+            except HTTPException as e:
+                errors.append(f"kargo/fatura: {e.detail}")
     finally:
         await client.close()
+    log.update({"ok": not errors, "response": responses})
+    if errors:
+        log["error"] = "; ".join(errors)
     await db.shopphp_push_logs.insert_one(log)
     await db.orders.update_one({"_id": order["_id"]}, {"$set": {"shopphp_push": {"at": log["created_at"], "ok": log["ok"], "error": log.get("error"), "sent": log["sent"]}}})
     if not log["ok"] and raise_errors:
@@ -5566,7 +5598,7 @@ async def push_order_to_shopphp(order_id: str):
         raise HTTPException(status_code=400, detail="Yalnızca ShopPHP siparişleri mağazaya bildirilebilir.")
     log = await _push_order_to_shopphp(o, reason="manual", raise_errors=True)
     s = log["sent"]
-    return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s}
+    return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s, "status_via": log.get("status_via")}
 
 @api_router.post("/integrations/ecommerce/{channel_id}/rest-test")
 async def test_shopphp_rest(channel_id: str):
@@ -5971,14 +6003,142 @@ async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01",
         local_stock = float(p.get("stock_quantity") or 0) if p else None
         rows.append({**it, "product_id": p["_id"] if p else None, "product_name": p.get("name") if p else None, "product_sku": p.get("sku") if p else None, "local_price": local_price, "local_stock": local_stock, "purchase_price": float(p.get("purchase_price") or 0) if p else None,
                      "price_diff": round(it["sale_price"] - local_price, 2) if p and local_price else None, "stock_diff": round(it["quantity"] - local_stock, 2) if p else None})
-    return {"channel": channel, "live": live, "push_supported": channel == "trendyol", "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
+    # ShopPHP'de okuma XML, yazma REST üzerinden; REST kullanıcısı girilmemişse gönderim yok.
+    push_supported = channel == "trendyol" or (channel == "shopphp" and bool(cfg and cfg.get("rest_email") and cfg.get("rest_password_enc")))
+    return {"channel": channel, "live": live, "push_supported": push_supported, "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
             "products": [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "sale_price": p.get("sale_price"), "stock_quantity": p.get("stock_quantity")} for p in products]}
+
+async def _shopphp_product_ids(company_id: str) -> Dict[str, Dict[str, Any]]:
+    """
+    ShopPHP ürün önbelleğinden barkod / stok kodu → mağazanın ürün kaydı.
+
+    `product_main_id` mağazanın `urun_ID` alanı. Varyasyonlu ürünlerde her
+    varyasyon satırı aynı `urun_ID`'yi taşıdığı için varyasyon adını da
+    saklıyoruz: REST uçları ürünü yalnızca `ID` ile adresliyor, yani bir
+    varyasyona yazmak istemek aslında ana ürüne yazmak olur.
+    """
+    cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": "shopphp"}) or {}
+    idx: Dict[str, Dict[str, Any]] = {}
+    for it in cache.get("items") or []:
+        pid = str(it.get("product_main_id") or "").strip()
+        if not pid:
+            continue
+        row = {"id": pid, "variant": it.get("variant") or None}
+        for k in (it.get("barcode"), it.get("stock_code")):
+            if k:
+                idx.setdefault(str(k).strip().lower(), row)
+    return idx
+
+async def _push_products_to_shopphp(cfg: dict, company_id: str, req: Dict[str, Any]) -> dict:
+    """
+    Fiyat/stok ve satışa açık-kapalı bilgisini ShopPHP mağazasına REST ile yazar.
+
+    Mağaza bu iki bilgiyi ayrı uçlarda alıyor: `setProduct/priceAndStock` ve
+    `setProduct/active`. İkisi de ürünü barkoda değil mağazanın kendi ürün
+    ID'sine göre tanıdığı için önbellekteki `urun_ID` üzerinden eşleştiriyoruz.
+    """
+    client = _shopphp_rest_client(cfg)
+    if not client:
+        raise HTTPException(status_code=400, detail="ShopPHP REST API kullanıcı bilgileri girilmemiş (E-Ticaret → ShopPHP → Ayarlar → Mağazaya Geri Bildirim).")
+    ids = await _shopphp_product_ids(company_id)
+    sent: List[dict] = []
+    unmatched: List[str] = []
+    no_local: List[str] = []
+    variants: List[str] = []
+    errors: List[str] = []
+    try:
+        for it in req.get("items") or []:
+            barcode = str(it.get("barcode") or "").strip()
+            if not barcode:
+                continue
+            price = quantity = None
+            if req.get("from_stock"):
+                p = await db.products.find_one({"company_id": company_id, "$or": [{"barcode": barcode}, {"marketplace_aliases": barcode}, {"variants.barcode": barcode}]})
+                if not p:
+                    no_local.append(barcode)
+                    continue
+                price = float(p.get("sale_price") or 0)
+                quantity = int(max(0, float(p.get("stock_quantity") or 0)))
+            else:
+                if it.get("sale_price") not in (None, ""):
+                    price = float(it["sale_price"])
+                if it.get("quantity") not in (None, ""):
+                    quantity = int(it["quantity"])
+            active = it.get("active")
+            if price is None and quantity is None and active is None:
+                continue
+            match = ids.get(barcode.lower()) or ids.get(str(it.get("stock_code") or "").strip().lower())
+            if not match:
+                # Mağaza ürün ID'si yalnızca ürün XML'inde geliyor; önbellek yoksa eşleşmez.
+                unmatched.append(barcode)
+                continue
+            if match["variant"]:
+                # REST yalnızca ana ürüne yazıyor; varyasyona yazmak diğer
+                # varyasyonların fiyat/stokunu da ezerdi.
+                variants.append(barcode)
+                continue
+            pid = match["id"]
+            row = {"barcode": barcode, "ID": pid, "fiyat": price, "stok": quantity, "active": active}
+            try:
+                if price is not None or quantity is not None:
+                    await client.set_price_stock(pid, price=price, stock=quantity)
+                if active is not None:
+                    await client.set_product_active(pid, bool(int(active)))
+                sent.append(row)
+            except HTTPException as e:
+                errors.append(f"{barcode}: {e.detail}")
+    finally:
+        await client.close()
+    skipped = unmatched + no_local + variants
+    if not sent and not errors:
+        why = ""
+        if unmatched:
+            why = f" Mağaza ürün ID'si bulunamadı: {', '.join(unmatched[:5])}. Ürün listesini yenileyin."
+        elif no_local:
+            why = f" Eşleşen stok kartı yok: {', '.join(no_local[:5])}."
+        elif variants:
+            why = f" Varyasyonlu ürünlere REST ile yazılamıyor: {', '.join(variants[:5])}. Fiyat/stoku mağaza panelinden güncelleyin."
+        raise HTTPException(status_code=400, detail="Gönderilecek fiyat/stok/aktiflik verisi yok." + why)
+    if not sent and errors:
+        raise HTTPException(status_code=502, detail="; ".join(errors[:3]))
+    await _shopphp_refresh_cached_prices(company_id, sent)
+    await db.marketplace_push_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "channel": "shopphp", "items": sent, "errors": errors, "unmatched": skipped, "created_at": datetime.now(timezone.utc).isoformat()})
+    parts = [f"{len(sent)} ürün ShopPHP mağazasına gönderildi"]
+    if unmatched or no_local:
+        parts.append(f"{len(unmatched) + len(no_local)} ürün eşleşmedi")
+    if variants:
+        parts.append(f"{len(variants)} varyasyonlu ürün atlandı (mağaza panelinden güncellenmeli)")
+    if errors:
+        parts.append(f"{len(errors)} ürün yazılamadı ({errors[0][:120]})")
+    return {"status": "success", "sent": len(sent), "unmatched": skipped, "variants": variants, "errors": errors, "message": ", ".join(parts) + "."}
+
+async def _shopphp_refresh_cached_prices(company_id: str, sent: List[dict]) -> None:
+    """Gönderilen değerleri önbelleğe de yaz; aksi halde liste bir sonraki yenilemeye kadar eski fiyatı gösterir."""
+    cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": "shopphp"})
+    if not cache:
+        return
+    by_bc = {r["barcode"]: r for r in sent}
+    for c in cache.get("items") or []:
+        u = by_bc.get(str(c.get("barcode") or ""))
+        if not u:
+            continue
+        if u.get("fiyat") is not None:
+            c["sale_price"] = u["fiyat"]
+        if u.get("stok") is not None:
+            c["quantity"] = u["stok"]
+        if u.get("active") is not None:
+            c["on_sale"] = c["approved"] = bool(int(u["active"]))
+    await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
 
 @api_router.post("/marketplace/products/push")
 async def marketplace_push_price_stock(req: Dict[str, Any]):
-    """Seçili ürünlerin fiyat / stok bilgisini pazaryerine gönder. items: [{barcode, sale_price?, list_price?, quantity?}] veya from_stock=true → eşleşen stok kartından."""
+    """Seçili ürünlerin fiyat / stok / aktiflik bilgisini pazaryerine gönder. items: [{barcode, sale_price?, list_price?, quantity?, active?}] veya from_stock=true → eşleşen stok kartından."""
     company_id = req.get("company_id", "comp_nexus_main_01"); channel = req.get("channel", "trendyol")
     cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+    if channel == "shopphp":
+        if not cfg or not marketplace_providers.has_shopphp_credentials(cfg):
+            raise HTTPException(status_code=400, detail="Bu kanal için canlı API bağlantısı yok; E-Ticaret Entegrasyon ekranından API bilgilerini girin.")
+        return await _push_products_to_shopphp(cfg, company_id, req)
     if not cfg or channel != "trendyol" or not marketplace_providers.has_live_credentials(cfg):
         raise HTTPException(status_code=400, detail="Bu kanal için canlı API bağlantısı yok; E-Ticaret Entegrasyon ekranından API bilgilerini girin.")
     items = []
@@ -6038,7 +6198,7 @@ async def marketplace_push_logs(company_id: Optional[str] = "comp_nexus_main_01"
                         await db.marketplace_push_logs.update_one({"_id": lg["_id"]}, {"$set": upd}); lg.update(upd)
             finally:
                 await client.close()
-    return [{"id": l["_id"], "created_at": l["created_at"], "batch_request_id": l.get("batch_request_id"), "sent": len(l.get("items") or []), "items": l.get("items"), "status": l.get("status") or "SENT", "failed_items": l.get("failed_items") or [], "checked_at": l.get("checked_at")} for l in logs]
+    return [{"id": l["_id"], "created_at": l["created_at"], "batch_request_id": l.get("batch_request_id"), "sent": len(l.get("items") or []), "items": l.get("items"), "status": l.get("status") or "SENT", "failed_items": l.get("failed_items") or [], "errors": l.get("errors") or [], "unmatched": l.get("unmatched") or [], "checked_at": l.get("checked_at")} for l in logs]
 
 @api_router.post("/marketplace/product-create")
 async def create_product_from_marketplace(req: Dict[str, Any]):
