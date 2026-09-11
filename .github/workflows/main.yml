@@ -56,17 +56,21 @@ jobs:
               echo "Sunucuda yerel değişiklikleri inceleyin (git status) ve temizleyin." >&2
               exit 1
             fi
-            export GIT_SHA="$(git rev-parse HEAD)"
-            export GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-            export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            GIT_SHA="$(git rev-parse HEAD)"
+            GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+            BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Dağıtılan sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) — $(git log -1 --pretty=%s)"
+
+            # sudo docker compose ortamı düşürür; SHA'yı dosyadan oku (.env.* gitignore).
+            umask 077
+            printf 'GIT_SHA=%s\nGIT_BRANCH=%s\nBUILD_TIME=%s\n' "$GIT_SHA" "$GIT_BRANCH" "$BUILD_TIME" > .env.build-stamp
 
             # Frontend üretim derlemesi ve backend bağımlılıkları imajın İÇİNE gömülüdür.
             # Bu yüzden salt "git pull" çalışan siteyi değiştirmez; imajlar yeniden
             # derlenip konteynerler değiştirilmeli. GIT_SHA compose build-arg olarak
             # her iki imaja da gömülür; /api/version ve arayüz damgası bunu gösterir.
             echo "--- İmajlar derleniyor ve servisler değiştiriliyor"
-            $DC up -d --build --remove-orphans
+            $DC --env-file .env.build-stamp up -d --build --remove-orphans
 
             echo "--- Sağlık kontrolü"
             ok=""
