@@ -14,6 +14,7 @@ from calendar import monthrange
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Query, Form
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,7 @@ from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
 )
+from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
@@ -7710,7 +7712,14 @@ app.include_router(data_sync.router)
 
 @app.get("/")
 async def root():
-    return {"status": "healthy", "service": "TamKobi API", "version": "2.0.0"}
+    stamp = read_stamp()
+    return {"status": "healthy", "service": "TamKobi API", "version": "2.0.0", "git_sha": stamp.get("git_sha_short")}
+
+
+@app.get("/api/version")
+async def api_version():
+    """Public. Names the commit this API process was built from so a stale image is visible."""
+    return JSONResponse(read_stamp(), headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
