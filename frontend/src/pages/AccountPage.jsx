@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import { Building2, CreditCard, KeyRound, Loader2, Plus, Settings, UserRound, Wallet } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
+import { EMBEDDED_SETTINGS_PARAM } from "../utils/settingsTabs";
 import SettingsPage from "./SettingsPage";
 
 const TABS = [
@@ -24,7 +25,7 @@ export default function AccountPage() {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set("tab", k);
-      if (k !== "ayarlar") next.delete("ayar");
+      if (k !== "ayarlar") next.delete(EMBEDDED_SETTINGS_PARAM);
       return next;
     });
   };
