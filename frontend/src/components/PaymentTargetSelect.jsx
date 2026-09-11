@@ -13,9 +13,12 @@ export const isCreditCard = (a) => a?.type === "credit_card";
 
 export const splitPaymentTarget = (value) => (value?.startsWith("partner:") ? { partner_id: value.slice(8) } : { account_id: value });
 
-export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", collectableOnly = false }) => {
+export const PaymentTargetSelect = ({ companyId, accounts, value, onChange, testId = "payment-target-select", className = "", collectableOnly = false, includePartners = true }) => {
   const [partners, setPartners] = useState([]);
-  useEffect(() => { axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => setPartners(r.data.filter((p) => p.is_active !== false))).catch(() => setPartners([])); }, [companyId]);
+  useEffect(() => {
+    if (!includePartners) { setPartners([]); return; }
+    axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => setPartners(r.data.filter((p) => p.is_active !== false))).catch(() => setPartners([]));
+  }, [companyId, includePartners]);
   const pool = collectableOnly ? collectableAccounts(accounts) : (accounts || []);
   const groups = (collectableOnly ? COLLECT_TYPES : SPEND_TYPES).map((t) => [t, pool.filter((a) => a.type === t)]).filter(([, l]) => l.length);
   return (

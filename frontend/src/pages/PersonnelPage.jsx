@@ -307,8 +307,6 @@ export default function PersonnelPage() {
                   includePartners={false}
                   testId="salary-pay-account"
                 />
-                <label className="block font-semibold text-slate-700 mb-1">Ödemenin Yapılacağı Hesap</label>
-                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={selectedBankId} onChange={setSelectedBankId} testId="salary-pay-account" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
