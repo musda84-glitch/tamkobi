@@ -3,9 +3,10 @@
 # MySQL is not touched. After this, GET /api/version and the sidebar stamp
 # must show the same SHA as `git rev-parse --short HEAD`.
 #
-# Compose interpolates ${GIT_SHA} from a file, not from the process
-# environment: `sudo docker compose` drops exported vars, which is how an
-# image can come up with an empty stamp even though this script set one.
+# Pass GIT_SHA as a --build-arg on the command line. Do NOT feed a replacement
+# --env-file to compose: that shadows the project .env (MySQL passwords) and
+# can recreate the database container. `sudo docker compose` drops exported
+# variables, but it does not strip arguments.
 #
 #   ./scripts/rebuild-preview.sh
 set -euo pipefail
@@ -16,11 +17,6 @@ GIT_SHA="$(git rev-parse HEAD)"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Derlenen sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) @ $BUILD_TIME"
-
-# .env.* is gitignored. Compose reads this even under sudo.
-stamp_env="$ROOT/.env.build-stamp"
-umask 077
-printf 'GIT_SHA=%s\nGIT_BRANCH=%s\nBUILD_TIME=%s\n' "$GIT_SHA" "$GIT_BRANCH" "$BUILD_TIME" > "$stamp_env"
 
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose)
@@ -34,13 +30,17 @@ if ! docker info >/dev/null 2>&1; then
   DC=(sudo "${DC[@]}")
 fi
 
-"${DC[@]}" --env-file "$stamp_env" build backend frontend
-"${DC[@]}" --env-file "$stamp_env" up -d backend frontend
+"${DC[@]}" build \
+  --build-arg GIT_SHA="$GIT_SHA" \
+  --build-arg GIT_BRANCH="$GIT_BRANCH" \
+  --build-arg BUILD_TIME="$BUILD_TIME" \
+  backend frontend
+"${DC[@]}" up -d --no-build backend frontend
 
 echo "--- Sunulan API"
 ok=""
 body=""
-for _ in $(seq 1 30); do
+for _ in $(seq 1 40); do
   if body="$(curl -fsS --max-time 5 http://127.0.0.1:8000/api/version 2>/dev/null)"; then
     echo "$body"
     ok=1

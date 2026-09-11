@@ -61,16 +61,14 @@ jobs:
             BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Dağıtılan sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) — $(git log -1 --pretty=%s)"
 
-            # sudo docker compose ortamı düşürür; SHA'yı dosyadan oku (.env.* gitignore).
-            umask 077
-            printf 'GIT_SHA=%s\nGIT_BRANCH=%s\nBUILD_TIME=%s\n' "$GIT_SHA" "$GIT_BRANCH" "$BUILD_TIME" > .env.build-stamp
-
             # Frontend üretim derlemesi ve backend bağımlılıkları imajın İÇİNE gömülüdür.
             # Bu yüzden salt "git pull" çalışan siteyi değiştirmez; imajlar yeniden
-            # derlenip konteynerler değiştirilmeli. GIT_SHA compose build-arg olarak
-            # her iki imaja da gömülür; /api/version ve arayüz damgası bunu gösterir.
+            # derlenip konteynerler değiştirilmeli. GIT_SHA komut satırı --build-arg
+            # olarak gider (sudo ortamı düşürür; --env-file ise proje .env'ini
+            # gölgeler ve MySQL parolasını bozar).
             echo "--- İmajlar derleniyor ve servisler değiştiriliyor"
-            $DC --env-file .env.build-stamp up -d --build --remove-orphans
+            $DC build --build-arg GIT_SHA="$GIT_SHA" --build-arg GIT_BRANCH="$GIT_BRANCH" --build-arg BUILD_TIME="$BUILD_TIME"
+            $DC up -d --no-build --remove-orphans
 
             echo "--- Sağlık kontrolü"
             ok=""
