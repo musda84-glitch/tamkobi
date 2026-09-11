@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 import rbac
 import applog
 import perfmon
-from auth_utils import hash_password, verify_password
+from auth_utils import get_user_from_token, hash_password, session_token, verify_password
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -582,9 +582,15 @@ async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14
 
 # ---------------- Super admin dependency ----------------
 async def require_super_admin(request: Request) -> dict:
-    if not (request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer ")):
+    """Sistem paneli: dolu tokendan kullanıcı, demo yöneticiye düşülmez.
+
+    Boş `Authorization: Bearer ` eskiden oturum sayılıp `get_current_user`'a
+    gidiyordu; o da boş Bearer'ı yok sayıp tohum `admin@nexus.com`'a düşüyordu.
+    """
+    token = session_token(request)
+    if not token:
         raise HTTPException(status_code=401, detail="Sistem paneli için giriş yapmanız gerekiyor.")
-    user = await _current_user(request)
+    user = await get_user_from_token(token, _db)
     if not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Bu alan yalnızca platform (sistem) yöneticisine açıktır.")
     return user

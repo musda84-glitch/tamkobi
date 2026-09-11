@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 import saas
+from auth_utils import session_token
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -256,25 +257,15 @@ def is_blank(d: dict) -> bool:
             and not (d.get("supplier") or {}).get("tax_id") and not float(d.get("grand_total") or 0))
 
 
-def _session_token(request: Request) -> Optional[str]:
-    auth = request.headers.get("Authorization") or ""
-    if auth.startswith("Bearer "):
-        tok = auth[7:].strip()
-        if tok:
-            return tok
-    cookie = (request.cookies.get("access_token") or "").strip()
-    return cookie or None
-
-
 async def require_inbox_company(request: Request, company_id: Optional[str] = None) -> str:
     """Ham XML / yeniden okuma / temizlik oturumsuz açılamaz.
 
-    Kullanıcı, `_session_token`'ın kabul ettiği aynı tokendan çözülür —
+    Kullanıcı, `session_token`'ın kabul ettiği aynı tokendan çözülür —
     `get_current_user` çağrılmaz. Aksi halde boş `Authorization: Bearer `
     çereze düşülüp kap geçer, sonra `get_current_user` boş Bearer'ı görünce
     demo yöneticiye iner. Şirket sorgudan olduğu gibi kabul edilmez.
     """
-    token = _session_token(request)
+    token = session_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     from_token = _deps.get("user_from_token")
