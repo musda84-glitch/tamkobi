@@ -173,16 +173,17 @@ async def list_payments(_: dict = Depends(saas.require_super_admin)):
 
 
 # ---------------- Platform settings ----------------
-@router.get("/system/settings")
-async def get_settings(_: dict = Depends(saas.require_super_admin)):
+async def _settings_body() -> Dict[str, Any]:
     s = await settings()
     sender = await _db.mail_accounts.find_one({"company_id": s["sender_company_id"]}, {"email": 1})
     wa = await _db.whatsapp_settings.find_one({"company_id": s["sender_company_id"]}, {"phone_number_id": 1})
-    return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
     plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
     return {**s, "id": "platform", "gib_packs": await gib_credits.packs(), "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
-    plat = await _db.platform_mailboxes.find_one({"is_default": True, "is_active": {"$ne": False}}, {"email": 1}) or await _db.platform_mailboxes.find_one({"is_active": {"$ne": False}}, {"email": 1})
-    return {**s, "id": "platform", "sender_mail": (sender or {}).get("email"), "platform_mail_from": (plat or {}).get("email"), "sender_whatsapp_ready": bool((wa or {}).get("phone_number_id")), "companies": [{"id": c["_id"], "name": c.get("name")} for c in await _db.companies.find({}, {"name": 1}).to_list(200)]}
+
+
+@router.get("/system/settings")
+async def get_settings(_: dict = Depends(saas.require_super_admin)):
+    return await _settings_body()
 
 
 @router.put("/system/settings")
@@ -197,29 +198,22 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
     if "gib_packs" in req and isinstance(req["gib_packs"], list):
         packs = []
         for p in req["gib_packs"]:
-            if not p or not (p.get("id") or p.get("name")):
+            if not isinstance(p, dict) or not (p.get("id") or p.get("name")):
                 continue
-            packs.append({"id": str(p.get("id") or f"gib_{len(packs)+1}"), "name": str(p.get("name") or "").strip() or "Kontör", "credits": max(1, int(p.get("credits") or 0)), "price": max(0, float(p.get("price") or 0)), "tagline": str(p.get("tagline") or "")[:80], "popular": bool(p.get("popular"))})
-        if packs:
-            upd["gib_packs"] = packs
-        cleaned = []
-        for p in req["gib_packs"]:
-            if not isinstance(p, dict) or not p.get("id"):
-                continue
-            cleaned.append({
-                "id": str(p["id"])[:40],
-                "name": (p.get("name") or p["id"])[:80],
-                "credits": max(0, int(p.get("credits") or 0)),
+            packs.append({
+                "id": str(p.get("id") or f"gib_{len(packs) + 1}")[:40],
+                "name": str(p.get("name") or p.get("id") or "").strip()[:80] or "Kontör",
+                "credits": max(1, int(p.get("credits") or 0)),
                 "price": max(0.0, float(p.get("price") or 0)),
-                "tagline": (p.get("tagline") or "")[:120],
+                "tagline": str(p.get("tagline") or "")[:120],
                 "popular": bool(p.get("popular")),
             })
-        if cleaned:
-            upd["gib_packs"] = cleaned
+        if packs:
+            upd["gib_packs"] = packs
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {**upd, "updated_at": _now()}}, upsert=True)
     if "gib_credits_sales" in upd:
         saas.invalidate()
-    return await settings()
+    return await _settings_body()
 
 
 # ---------------- Reminders ----------------
@@ -313,8 +307,8 @@ async def reminders_log(_: dict = Depends(saas.require_super_admin)):
 async def public_plans():
     st = await settings()
     plans = [_clean(p) for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
-    return {"plans": plans, "catalog": await saas.catalog_with_prices(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "allow_custom_pack": True}
-    return {"plans": plans, "catalog": saas.catalog(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "legal": [{"slug": "mesafeli-satis", "title": "Mesafeli Satış Sözleşmesi", "path": "/yasal/mesafeli-satis"}, {"slug": "on-bilgilendirme", "title": "Ön Bilgilendirme Formu", "path": "/yasal/on-bilgilendirme"}, {"slug": "kvkk", "title": "KVKK Aydınlatma Metni", "path": "/yasal/kvkk"}]}
+    return {"plans": plans, "catalog": await saas.catalog_with_prices(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "allow_custom_pack": True,
+            "legal": [{"slug": "mesafeli-satis", "title": "Mesafeli Satış Sözleşmesi", "path": "/yasal/mesafeli-satis"}, {"slug": "on-bilgilendirme", "title": "Ön Bilgilendirme Formu", "path": "/yasal/on-bilgilendirme"}, {"slug": "kvkk", "title": "KVKK Aydınlatma Metni", "path": "/yasal/kvkk"}]}
 
 
 @router.post("/public/signup")
@@ -349,7 +343,6 @@ async def public_signup(req: Dict[str, Any], response: Response):
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "legal_accept": legal_docs.acceptance_record(req), "created_at": _now()})
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
-    await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"])
     import demo as demo_pack
     await demo_pack.seed_for_new_company(cid)
     response.set_cookie(key="access_token", value=create_access_token(uid, email, "admin"), httponly=True, max_age=86400 * 7, path="/")

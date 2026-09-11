@@ -15,6 +15,7 @@ export const AiProviderPanel = () => {
   const catalog = d?.catalog || [];
   const current = useMemo(() => catalog.find((c) => c.id === d?.provider) || catalog[0], [catalog, d]);
   const models = current?.models || [];
+  const custom = !!current?.custom;
   if (!d) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
 
   const save = async () => {
@@ -25,6 +26,7 @@ export const AiProviderPanel = () => {
         provider: d.provider,
         advisor_model: d.advisor_model,
         extract_model: d.extract_model,
+        base_url: custom ? (d.base_url || "") : "",
         api_key: f.api_key || undefined,
       });
       setD(r.data);
@@ -39,7 +41,7 @@ export const AiProviderPanel = () => {
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/system/ai/test`, {});
-      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason } }));
+      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason, model: r.data.model } }));
       (r.data.ok ? toast.success : toast.error)(r.data.message);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Test yapılamadı.");
@@ -48,6 +50,10 @@ export const AiProviderPanel = () => {
 
   const pickProvider = (id) => {
     const meta = catalog.find((c) => c.id === id);
+    if (meta?.custom) {
+      setD({ ...d, provider: id, advisor_model: "", extract_model: "" });
+      return;
+    }
     const ids = (meta?.models || []).map((m) => m.id);
     setD({
       ...d,
@@ -73,30 +79,45 @@ export const AiProviderPanel = () => {
           ))}
         </div>
         {current?.hint && <p className="text-[11px] text-slate-500 bg-slate-50 rounded-xl px-3 py-2">{current.hint}</p>}
-        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
+        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test{d.last_test.model ? ` (${d.last_test.model})` : ""}: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {custom && (
+            <div className="sm:col-span-2">
+              <label className="block font-semibold text-slate-700 mb-1">Uç nokta adresi</label>
+              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value })} placeholder="https://openrouter.ai/api/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
+              <p className="text-[10px] text-slate-500 mt-1">OpenAI uyumlu sohbet ucu. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
+            </div>
+          )}
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Danışman modeli</label>
-            <select value={d.advisor_model} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} className={inputCls} data-testid="ai-advisor-model">
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+            {custom ? (
+              <input value={d.advisor_model || ""} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} placeholder="openai/gpt-4o-mini" className={inputCls} data-testid="ai-advisor-model" autoComplete="off" />
+            ) : (
+              <select value={d.advisor_model} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} className={inputCls} data-testid="ai-advisor-model">
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Belge / ayrıştırma modeli</label>
-            <select value={d.extract_model} onChange={(e) => setD({ ...d, extract_model: e.target.value })} className={inputCls} data-testid="ai-extract-model">
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+            {custom ? (
+              <input value={d.extract_model || ""} onChange={(e) => setD({ ...d, extract_model: e.target.value })} placeholder="Boş bırakılırsa danışman modeli kullanılır" className={inputCls} data-testid="ai-extract-model" autoComplete="off" />
+            ) : (
+              <select value={d.extract_model} onChange={(e) => setD({ ...d, extract_model: e.target.value })} className={inputCls} data-testid="ai-extract-model">
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            )}
           </div>
           <div className="sm:col-span-2">
-            <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : "(ortam değişkeni)"}</span>}</label>
-            <input type="password" value={f.api_key} onChange={(e) => setF({ api_key: e.target.value })} placeholder={d.has_key ? "••••••••" : d.has_env_key ? "Boş bırakırsanız EMERGENT_LLM_KEY kullanılır" : "sk-… veya Emergent anahtarı"} className={inputCls} data-testid="ai-api-key" autoComplete="off" />
+            <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : `(${d.env_var || "ortam değişkeni"})`}</span>}</label>
+            <input type="password" value={f.api_key} onChange={(e) => setF({ api_key: e.target.value })} placeholder={d.has_key ? "••••••••" : d.has_env_key ? `Boş bırakırsanız ${d.env_var} kullanılır` : `${current?.label || "Sağlayıcı"} API anahtarı`} className={inputCls} data-testid="ai-api-key" autoComplete="off" />
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
           Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
         </div>
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={test} disabled={busy || !(d.has_key || d.has_env_key)} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
+          <button type="button" onClick={test} disabled={busy || !(d.has_key || d.has_env_key || (custom && d.base_url))} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
           <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="ai-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
         </div>
       </div>

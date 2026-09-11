@@ -1468,7 +1468,7 @@ async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
     months = list(reversed(months))
     start = months[0] + "-01"
     bank_accs, contacts, invs, orders, products, recent_invs = await asyncio.gather(
-        db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(200),
+        db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(2000),
         db.contacts.find({"company_id": company_id}, {"balance": 1}).to_list(10000),
         db.invoices.find(_issue_q(company_id, start, None, {"invoice_type": {"$in": ["sales", "purchase"]}}),
                          {"invoice_type": 1, "status": 1, "grand_total": 1, "issue_date": 1, "contact_name": 1, "invoice_number": 1, "gib_status": 1}).to_list(20000),
@@ -3529,7 +3529,7 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
             for x in (m, c):
                 x["inflow" if t.get("type") == "inflow" else "outflow"] += float(t.get("amount", 0)); x["net"] = x["inflow"] - x["outflow"]
         accounts, upcoming = await asyncio.gather(
-            db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(200),
+            db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(2000),
             db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"invoice_type": 1, "grand_total": 1, "paid_amount": 1}).to_list(20000),
         )
         rec = R(sum(float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0)) for i in upcoming if i.get("invoice_type") == "sales"))
@@ -3585,8 +3585,10 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
 @api_router.get("/banking/accounts")
 async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
-    accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(100)
-    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(100)}
+    # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
+    # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
+    accounts = await db.bank_accounts.find({"company_id": company_id}).sort("account_name", 1).to_list(2000)
+    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):
         conn = conns.get(a["id"])
@@ -4671,13 +4673,6 @@ async def test_mail_account(company_id: Optional[str] = "comp_nexus_main_01"):
         err = f"IMAP bağlantı hatası: {_err_text(e)}"
         await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
         return {"ok": False, "message": err}
-
-def _err_text(e: Exception) -> str:
-    args = getattr(e, "args", None)
-    raw = args[0] if args else str(e)
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", "replace")
-    return str(raw)[:160]
 
 def _mail_error(e: Exception) -> HTTPException:
     return HTTPException(status_code=424, detail=f"Posta sunucusu hatası: {_err_text(e)}")
@@ -7519,7 +7514,7 @@ async def ai_invoice_confirm(req: Dict[str, Any]):
 @api_router.post("/ai/financial-advisor")
 async def ask_financial_ai(req: AIChatRequest):
     company = await db.companies.find_one({"_id": req.company_id})
-    bank_accs = await db.bank_accounts.find({"company_id": req.company_id}).to_list(100)
+    bank_accs = await db.bank_accounts.find({"company_id": req.company_id}).to_list(2000)
     total_bank = sum(a.get("current_balance", 0) for a in bank_accs)
     contacts = await db.contacts.find({"company_id": req.company_id}).to_list(500)
     total_rec = sum(c.get("balance", 0) for c in contacts if c.get("balance", 0) > 0)
@@ -7554,7 +7549,7 @@ async def get_ai_status():
 
 @api_router.get("/ai/cashflow-forecast")
 async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_01"):
-    bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(100)
+    bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(2000)
     current_cash = sum(a.get("current_balance", 0) for a in bank_accs) or 500000.0
 
     forecast = []
@@ -7671,10 +7666,6 @@ app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)
 app.include_router(saas_docs.router)
 app.include_router(trade.router)
-app.include_router(order_pick.router)
-app.include_router(trade.router)
-app.include_router(platform_mail.router)
-app.include_router(demo.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(demo.router)

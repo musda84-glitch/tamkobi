@@ -75,8 +75,6 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
         <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
           <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-2.5 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn"><Power className="w-3.5 h-3.5" /> Aktif</button>
-            <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-2.5 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn">Pasif</button>
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
           </div>
         </div>
@@ -88,8 +86,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
                 <p className="text-[10px] text-slate-500 mt-0.5">Pasif (askıda) şirkette tüm modüller kilitlenir. Silme geri alınamaz.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn-body"><Power className="w-3.5 h-3.5" /> Aktif</button>
-                <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-3 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn-body">Pasif</button>
+                <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn"><Power className="w-3.5 h-3.5" /> Aktif</button>
+                <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-3 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn">Pasif</button>
                 {d.protected ? (
                   <span className="text-[10px] text-slate-400 font-semibold" data-testid="company-delete-protected">Demo şirket silinemez</span>
                 ) : (

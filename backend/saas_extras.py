@@ -271,6 +271,8 @@ def _ai_public(cfg: dict, include_secrets_meta: bool = True) -> dict:
         body.update({
             "has_key": bool(cfg.get("has_key")),
             "has_env_key": bool(cfg.get("has_env_key")),
+            "env_var": cfg.get("env_var") or "",
+            "base_url": cfg.get("base_url") or "",
             "last_test": cfg.get("last_test"),
             "catalog": [{"id": k, **v} for k, v in AI_PROVIDERS.items()],
         })
@@ -292,17 +294,28 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     if "enabled" in req:
         cur["enabled"] = bool(req["enabled"])
     if req.get("provider"):
-        cur["provider"] = str(req["provider"]).strip()
-    if req.get("advisor_model"):
-        cur["advisor_model"] = str(req["advisor_model"]).strip()
-    if req.get("extract_model"):
-        cur["extract_model"] = str(req["extract_model"]).strip()
+        provider = str(req["provider"]).strip()
+        # Sağlayıcı değişince eski anahtar ve test sonucu taşınmaz: bir sağlayıcının
+        # anahtarı diğerinin ucuna gönderilmemeli.
+        if provider != (cur.get("provider") or ""):
+            cur.pop("api_key_enc", None)
+            cur.pop("last_test", None)
+            cur.pop("base_url", None)
+        cur["provider"] = provider
+    for field in ("advisor_model", "extract_model", "base_url"):
+        if field in req:
+            cur[field] = str(req.get(field) or "").strip()
     if req.get("api_key"):
         cur["api_key_enc"] = comm_service.encrypt(str(req["api_key"]).strip())
     if req.get("clear_key"):
         cur.pop("api_key_enc", None)
     norm = ai_service.normalize_ai(cur)
-    stored = {k: norm[k] for k in ("enabled", "provider", "advisor_model", "extract_model") if k in norm}
+    if ai_service.is_custom(norm["provider"]):
+        if not norm["base_url"]:
+            raise HTTPException(status_code=400, detail="Özel sağlayıcı için OpenAI uyumlu uç nokta adresi gerekli (ör. https://openrouter.ai/api/v1).")
+        if not norm["advisor_model"]:
+            raise HTTPException(status_code=400, detail="Özel sağlayıcı için model adı gerekli (ör. openai/gpt-4o-mini).")
+    stored = {k: norm[k] for k in ("enabled", "provider", "advisor_model", "extract_model", "base_url") if norm.get(k) or k == "enabled"}
     if norm.get("api_key_enc"):
         stored["api_key_enc"] = norm["api_key_enc"]
     if cur.get("last_test"):
@@ -316,14 +329,17 @@ async def test_system_ai(_: dict = Depends(saas.require_super_admin)):
     import ai_service
     from emergentintegrations.llm.chat import UserMessage
     cfg = await ai_service.load_ai_settings()
-    if not cfg.get("api_key"):
-        raise HTTPException(status_code=400, detail="Önce bir API anahtarı kaydedin veya EMERGENT_LLM_KEY tanımlayın.")
+    if not cfg.get("api_key") and not ai_service.is_custom(cfg.get("provider") or ""):
+        raise HTTPException(status_code=400, detail=f"Önce bir API anahtarı kaydedin veya sunucuda {cfg.get('env_var') or 'EMERGENT_LLM_KEY'} tanımlayın.")
+    model = cfg.get("advisor_model") or ""
+    used = f"{ai_service.provider_label(cfg.get('provider') or 'emergent')} · {model}"
     try:
         chat = await ai_service.make_chat("ai-platform-test", "Kısa yanıt ver: yalnızca OK yaz.", purpose="advisor")
         raw = str(await chat.send_message(UserMessage(text="OK yaz")))[:80]
         ok, reason = True, (raw or "OK").strip()
     except Exception as e:  # noqa: BLE001
         ok, reason = False, str(e)[:200]
-    last = {"ok": ok, "reason": reason, "at": _now()}
+    last = {"ok": ok, "reason": reason, "at": _now(), "provider": cfg.get("provider"), "model": model}
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"ai.last_test": last, "updated_at": _now()}}, upsert=True)
-    return {"ok": ok, "reason": reason, "message": "AI bağlantısı doğrulandı." if ok else f"AI bağlantısı başarısız: {reason}"}
+    return {"ok": ok, "reason": reason, "provider": cfg.get("provider"), "model": model,
+            "message": f"AI bağlantısı doğrulandı ({used})." if ok else f"AI bağlantısı başarısız ({used}): {reason}"}
