@@ -5,6 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ShieldCheck, LogIn } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { BuildStamp } from "../components/BuildStamp";
 
 export default function SystemLoginPage() {
   const { user, authenticated, loading } = useAuth();
@@ -32,6 +33,7 @@ export default function SystemLoginPage() {
         <div><label className="block text-xs font-semibold mb-1 text-slate-300">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-password" /></div>
         {err && <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2" data-testid="sys-login-error">{err}</div>}
         <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Panele Giriş"}</button>
+        <BuildStamp tone="system" />
       </form>
     </div>
   );

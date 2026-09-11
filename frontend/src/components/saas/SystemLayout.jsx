@@ -5,6 +5,7 @@ import { ShieldCheck, LogOut, ExternalLink, Globe } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { groupSystemSections } from "../../navGroups";
 import { SYSTEM_SECTIONS } from "./systemSections";
+import { BuildStamp } from "../BuildStamp";
 
 export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
@@ -56,6 +57,7 @@ export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) =>
             <div className="min-w-0"><div className="text-xs font-semibold truncate">{user.name}</div><div className="text-[10px] text-amber-400">Süper Admin</div></div>
             <button onClick={() => logout("/sistem/giris")} className="p-1.5 text-slate-400 hover:text-rose-400" title="Çıkış" data-testid="sys-logout"><LogOut className="w-4 h-4" /></button>
           </div>
+          <BuildStamp tone="system" />
         </div>
       </aside>
       <main className="flex-1 min-w-0 p-6 lg:p-8 overflow-y-auto">{children}</main>

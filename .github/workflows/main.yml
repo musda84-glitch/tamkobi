@@ -56,13 +56,19 @@ jobs:
               echo "Sunucuda yerel değişiklikleri inceleyin (git status) ve temizleyin." >&2
               exit 1
             fi
-            echo "Dağıtılan sürüm: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+            GIT_SHA="$(git rev-parse HEAD)"
+            GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+            BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Dağıtılan sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) — $(git log -1 --pretty=%s)"
 
             # Frontend üretim derlemesi ve backend bağımlılıkları imajın İÇİNE gömülüdür.
             # Bu yüzden salt "git pull" çalışan siteyi değiştirmez; imajlar yeniden
-            # derlenip konteynerler değiştirilmeli.
+            # derlenip konteynerler değiştirilmeli. GIT_SHA komut satırı --build-arg
+            # olarak gider (sudo ortamı düşürür; --env-file ise proje .env'ini
+            # gölgeler ve MySQL parolasını bozar).
             echo "--- İmajlar derleniyor ve servisler değiştiriliyor"
-            $DC up -d --build --remove-orphans
+            $DC build --build-arg GIT_SHA="$GIT_SHA" --build-arg GIT_BRANCH="$GIT_BRANCH" --build-arg BUILD_TIME="$BUILD_TIME"
+            $DC up -d --no-build --remove-orphans
 
             echo "--- Sağlık kontrolü"
             ok=""
@@ -82,6 +88,16 @@ jobs:
             fi
 
             $DC ps
+
+            echo "--- Sunulan sürüm"
+            served="$(curl -fsS --max-time 5 http://127.0.0.1:8000/api/version)"
+            echo "$served"
+            served_sha="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('git_sha') or '')" "$served")"
+            if [ "$served_sha" != "$GIT_SHA" ]; then
+              echo "HATA: API ${GIT_SHA:0:7} yerine '${served_sha:-boş}' sunuyor — imaj eski kaldı." >&2
+              exit 1
+            fi
+
             # Derleme artığı imajlar birikmesin; daemon sudo istiyorsa prune da istiyor.
             $SUDO docker image prune -f >/dev/null 2>&1 || true
             echo "Dağıtım tamam."

@@ -31,7 +31,12 @@ services:
       start_period: 25s
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        GIT_BRANCH: ${GIT_BRANCH:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     container_name: tamkobi-backend
     restart: always
     # Host network: compose bridge (172.18) cannot reach the public internet in
@@ -84,6 +89,9 @@ services:
       context: ./frontend
       args:
         REACT_APP_BACKEND_URL: ""
+        GIT_SHA: ${GIT_SHA:-}
+        GIT_BRANCH: ${GIT_BRANCH:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     container_name: tamkobi-frontend
     restart: always
     extra_hosts:
