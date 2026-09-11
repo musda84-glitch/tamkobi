@@ -682,6 +682,39 @@ async def bh_import(req: Dict[str, Any]):
             "message": f"BizimHesap: {len(products)} ürün okundu → {len(batch['inserted_ids'])} yeni stok kartı, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı (pasif/mevcut)" + (f", depodan {len(stock)} stok kaydı eşlendi." if stock else ".")}
 
 
+_BH_TYPE_FIELDS = ("type", "customertype", "caritype", "kind", "accounttype", "carituru")
+_BH_SUPPLIER_WORDS = ("tedarik", "satıcı", "satici", "supplier", "vendor", "alıcı_değil")
+
+
+def bh_contact_type(row: dict, balance: float, forced: str = "auto") -> str:
+    """BizimHesap cari kaydının müşteri mi tedarikçi mi olduğunu belirler.
+
+    Eskiden herkes "customer" olarak kaydediliyordu (koşul `and False` ile kapatılmıştı),
+    bu yüzden Cariler ekranındaki "Tedarikçiler" sekmesi boş kalıyordu. Sırasıyla:
+    BizimHesap açıkça tür gönderiyorsa o, yoksa tek düzen hesap planındaki cari kodu
+    (320… satıcılar, 120… alıcılar), o da yoksa bakiye işareti (borçlu olduğumuz cari
+    tedarikçidir). Kullanıcı `contact_type` ile bu tahmini tamamen devre dışı bırakabilir.
+    """
+    if forced in ("customer", "supplier", "both"):
+        return forced
+    for key, value in (row or {}).items():
+        if str(key).strip().lower().replace("_", "") not in _BH_TYPE_FIELDS:
+            continue
+        text = str(value or "").strip().lower()
+        if any(w in text for w in _BH_SUPPLIER_WORDS):
+            return "supplier"
+        if "her iki" in text or "both" in text:
+            return "both"
+        if "müşteri" in text or "musteri" in text or "customer" in text or "alıcı" in text:
+            return "customer"
+    code = re.sub(r"\D", "", str((row or {}).get("code") or ""))
+    if code.startswith("320") or code.startswith("329"):
+        return "supplier"
+    if code.startswith("120") or code.startswith("121"):
+        return "customer"
+    return "supplier" if balance < 0 else "customer"
+
+
 @router.post("/migration/bizimhesap/import-customers")
 async def bh_import_customers(req: Dict[str, Any]):
     """BizimHesap /customers → cariler (ünvan, VKN, vergi dairesi, telefon, e-posta, adres, yetkili, bakiye, çek/senet)."""
@@ -690,9 +723,11 @@ async def bh_import_customers(req: Dict[str, Any]):
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
     invert = bool(req.get("invert_sign", False))
     only_bal = bool(req.get("only_with_balance", False))
+    forced_type = req.get("contact_type") if req.get("contact_type") in ("customer", "supplier", "both") else "auto"
     customers = _unwrap(await _bh_get("/customers", token, firm_id, timeout=90.0))
     batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "contacts", "entity_label": ENTITIES["contacts"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /customers", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now()}
     total_bal = 0.0
+    types: Dict[str, int] = {}
     for c in customers:
         title = str(c.get("title") or "").strip()
         if not title:
@@ -708,20 +743,25 @@ async def bh_import_customers(req: Dict[str, Any]):
         data = {k: v for k, v in {"name": title[:200], "tax_number_or_id": taxno or None, "tax_office": str(c.get("taxoffice") or "").strip() or None, "phone": str(c.get("phone") or "").strip() or None, "email": str(c.get("email") or "").strip().lower() or None,
                                   "address": str(c.get("address") or "").strip() or None, "contact_person": str(c.get("authorized") or "").strip() or None, "category": str(c.get("code") or "").strip() or None, "cheque_bond_balance": cheque or None,
                                   "currency": "TRY" if str(c.get("currency") or "TL").upper() in ("TL", "TRY") else str(c.get("currency")).upper()}.items() if v is not None}
+        ctype = bh_contact_type(c, bal, forced_type)
+        types[ctype] = types.get(ctype, 0) + 1
         ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"tax_number_or_id": taxno}] if taxno and taxno not in ("11111111111", "1111111111") else []) + [{"name": {"$regex": f"^{re.escape(title)}$", "$options": "i"}}]
         existing = await _db.contacts.find_one({"company_id": company_id, "$or": ors})
         total_bal += bal
         if existing:
             if on_dup == "skip":
                 batch["skipped"] += 1; continue
-            upd = {**data, "bizimhesap_id": ext_id, "balance": bal, "opening_balance_source": "bizimhesap"}
+            # Elle "Müşteri & Tedarikçi" yapılmış cariyi tek türe düşürmeyelim.
+            upd = {**data, "bizimhesap_id": ext_id, "balance": bal, "opening_balance_source": "bizimhesap",
+                   "type": "both" if existing.get("type") == "both" else ctype}
             await _db.contacts.update_one({"_id": existing["_id"]}, {"$set": upd})
             batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
         else:
-            doc = _build_doc("contacts", company_id, {**data, "balance": bal, "type": "supplier" if bal < 0 and not invert and False else "customer"}, batch["_id"])
+            doc = _build_doc("contacts", company_id, {**data, "balance": bal, "type": ctype}, batch["_id"])
             doc.update({"bizimhesap_id": ext_id, "source": "bizimhesap", "tax_number_or_id": data.get("tax_number_or_id") or "", "opening_balance_source": "bizimhesap"})
             await _db.contacts.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
     await _db.migration_batches.insert_one(batch)
-    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_customer_import": {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "total_balance": round(total_bal, 2)}}})
-    return {"status": "success", "batch_id": batch["_id"], "read": len(customers), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "total_balance": round(total_bal, 2),
-            "message": f"BizimHesap: {len(customers)} cari okundu → {len(batch['inserted_ids'])} yeni, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı. Toplam bakiye {total_bal:,.2f} ₺. (Aktarım Günlüğü'nden geri alınabilir.)"}
+    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_customer_import": {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "total_balance": round(total_bal, 2), "types": types}}})
+    breakdown = f"{types.get('customer', 0)} müşteri, {types.get('supplier', 0)} tedarikçi" + (f", {types['both']} müşteri & tedarikçi" if types.get("both") else "")
+    return {"status": "success", "batch_id": batch["_id"], "read": len(customers), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "total_balance": round(total_bal, 2), "types": types,
+            "message": f"BizimHesap: {len(customers)} cari okundu → {len(batch['inserted_ids'])} yeni, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı ({breakdown}). Toplam bakiye {total_bal:,.2f} ₺. (Aktarım Günlüğü'nden geri alınabilir.)"}

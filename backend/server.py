@@ -497,22 +497,46 @@ async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_
 @api_router.post("/einvoice/incoming/sync")
 async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14):
     s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
-    if s.get("provider") != "n11faturam" or s.get("status") != "configured":
-        raise HTTPException(status_code=400, detail="Gelen kutu n11 Faturam bağlantısı kaydedildikten sonra açılır.")
+    if s.get("provider") != "n11faturam":
+        raise HTTPException(status_code=400, detail="Gelen kutu yalnızca n11 Faturam ile çekilir. Bu şirkete n11 Faturam atanmamış.")
+    if s.get("status") != "configured":
+        raise HTTPException(status_code=400, detail="Önce Ayarlar → e-Fatura ekranından n11 Faturam kurum kodu, kullanıcı adı ve şifresini kaydedin.")
     pwd = _einvoice_password(s)
+    if not pwd:
+        raise HTTPException(status_code=400, detail="Kayıtlı n11 Faturam şifresi çözülemedi; şifreyi Ayarlar → e-Fatura ekranından yeniden kaydedin.")
     rows = await n11faturam.list_incoming(s, pwd, days=days)
-    pulled, skipped = [], 0
+    pulled, already, failed = [], 0, []
     for row in rows:
+        label = row.get("invoice_id") or row.get("uuid") or "numarasız belge"
         xml_bytes = row.get("xml")
         if not xml_bytes:
-            skipped += 1
+            failed.append({"invoice": label, "reason": row.get("xml_error") or "n11 bu fatura için XML döndürmedi."})
             continue
-        doc = await edocs.ingest_ubl_bytes(company_id, xml_bytes, filename=f"n11-{(row.get('invoice_id') or row.get('uuid') or 'gelen')}.xml", source="n11faturam")
+        # Okunamayan tek bir fatura tüm çekme işlemini düşürmesin.
+        try:
+            doc = await edocs.ingest_ubl_bytes(company_id, xml_bytes, filename=f"n11-{label}.xml", source="n11faturam", meta=row)
+        except HTTPException as e:
+            failed.append({"invoice": label, "reason": str(e.detail)})
+            continue
+        except Exception as e:
+            logger.exception("n11 gelen e-fatura işlenemedi: %s", label)
+            failed.append({"invoice": label, "reason": f"Belge işlenemedi: {e}"})
+            continue
         if doc:
             pulled.append(doc)
         else:
-            skipped += 1
-    return {"status": "success", "pulled": len(pulled), "skipped": skipped, "items": pulled, "message": f"{len(pulled)} yeni gelen e-fatura alındı, {skipped} atlandı."}
+            already += 1
+    if not rows:
+        message = f"n11 Faturam son {days} günde gelen fatura döndürmedi."
+    else:
+        parts = [f"{len(pulled)} yeni gelen e-fatura alındı"]
+        if already:
+            parts.append(f"{already} zaten kayıtlı")
+        if failed:
+            parts.append(f"{len(failed)} alınamadı ({failed[0]['reason'][:120]})")
+        message = ", ".join(parts) + "."
+    return {"status": "success", "found": len(rows), "pulled": len(pulled), "already": already,
+            "skipped": already + len(failed), "failed": failed, "items": pulled, "message": message}
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
                           "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True}
