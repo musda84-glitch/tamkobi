@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 import saas
 
@@ -256,8 +256,42 @@ def is_blank(d: dict) -> bool:
             and not (d.get("supplier") or {}).get("tax_id") and not float(d.get("grand_total") or 0))
 
 
-@router.get("/edocs/inbox/{doc_id}/xml")
-async def get_edoc_xml(doc_id: str, company_id: str = "comp_nexus_main_01"):
+def _session_token(request: Request) -> Optional[str]:
+    auth = request.headers.get("Authorization") or ""
+    if auth.startswith("Bearer "):
+        tok = auth[7:].strip()
+        if tok:
+            return tok
+    cookie = (request.cookies.get("access_token") or "").strip()
+    return cookie or None
+
+
+async def require_inbox_company(request: Request, company_id: Optional[str] = None) -> str:
+    """Ham XML / yeniden okuma / temizlik oturumsuz açılamaz.
+
+    `get_current_user` token yoksa demo yöneticiye düşer; bu uçlar o yola
+    girmeden önce çerezin veya Bearer'ın dolu olmasını ister. Şirket de
+    sorgudan olduğu gibi kabul edilmez: üye olunmayan (ve süper admin
+    olunmayan) bir `company_id` 403 olur, varsayılan hardcoded şirket yoktur.
+    """
+    if not _session_token(request):
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    get_user = _deps.get("current_user")
+    if not get_user:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    user = await get_user(request)
+    allowed = [c for c in (user.get("company_ids") or []) if c]
+    cid = (company_id or "").strip() or (user.get("active_company_id") or "")
+    if user.get("is_super_admin"):
+        if not cid:
+            raise HTTPException(status_code=400, detail="Şirket belirtilmedi.")
+        return cid
+    if not cid or cid not in allowed:
+        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+    return cid
+
+
+async def get_edoc_xml(doc_id: str, company_id: str):
     # Şirkete göre süzülüyor: ham UBL tedarikçi VKN'si, adresi ve kalem fiyatlarını
     # taşıyor, belge kimliği tahmin edilerek başka şirketin faturası okunmamalı.
     x = await _db.incoming_edoc_xml.find_one({"_id": doc_id, "company_id": company_id})
@@ -266,8 +300,12 @@ async def get_edoc_xml(doc_id: str, company_id: str = "comp_nexus_main_01"):
     return {"id": doc_id, "xml": x.get("xml") or ""}
 
 
-@router.post("/edocs/inbox/reparse")
-async def reparse_inbox(company_id: str = "comp_nexus_main_01"):
+@router.get("/edocs/inbox/{doc_id}/xml")
+async def get_edoc_xml_route(doc_id: str, request: Request, company_id: Optional[str] = None):
+    return await get_edoc_xml(doc_id, await require_inbox_company(request, company_id))
+
+
+async def reparse_inbox(company_id: str):
     """Saklanan ham XML'den okunamamış belgeleri yeniden okur (okuyucu düzeldiğinde eski kayıtları kurtarır).
 
     Yalnızca boş kalmış kayıtlara dokunur. Okunmuş bir belgeyi yeniden okumak,
@@ -297,8 +335,12 @@ async def reparse_inbox(company_id: str = "comp_nexus_main_01"):
             "message": f"{fixed} belge ham XML'den yeniden okundu." + (f" {failed} belge yine okunamadı." if failed else "")}
 
 
-@router.post("/edocs/inbox/cleanup")
-async def cleanup_inbox(company_id: str = "comp_nexus_main_01"):
+@router.post("/edocs/inbox/reparse")
+async def reparse_inbox_route(request: Request, company_id: Optional[str] = None):
+    return await reparse_inbox(await require_inbox_company(request, company_id))
+
+
+async def cleanup_inbox(company_id: str):
     """Tedarikçisi, kalemi ve tutarı olmayan bekleyen kayıtları siler; entegratörden yeniden çekilebilirler."""
     ids = [d["_id"] for d in await _db.incoming_edocs.find({"company_id": company_id, "status": "pending"}).to_list(2000) if is_blank(d)]
     for i in ids:
@@ -306,6 +348,11 @@ async def cleanup_inbox(company_id: str = "comp_nexus_main_01"):
         await _db.incoming_edoc_xml.delete_one({"_id": i})
     return {"status": "success", "deleted": len(ids),
             "message": f"{len(ids)} boş kayıt silindi. Faturaları entegratörden yeniden çekebilirsiniz." if ids else "Silinecek boş kayıt yok."}
+
+
+@router.post("/edocs/inbox/cleanup")
+async def cleanup_inbox_route(request: Request, company_id: Optional[str] = None):
+    return await cleanup_inbox(await require_inbox_company(request, company_id))
 
 
 @router.put("/edocs/inbox/{doc_id}/lines")

@@ -453,3 +453,53 @@ class TestRepair:
         assert asyncio.run(edocs.reparse_inbox("comp1"))["fixed"] == 1
         assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Liste Tedarik Ltd."
         assert db.incoming_edocs.docs[0]["grand_total"] == 1250.0
+
+
+class _Req:
+    def __init__(self, bearer=None, cookie=None):
+        self.headers = {"Authorization": f"Bearer {bearer}"} if bearer is not None else {}
+        self.cookies = {"access_token": cookie} if cookie is not None else {}
+
+
+class TestInboxAuth:
+    def _user(self, **kw):
+        async def current_user(request):
+            base = {"company_ids": ["comp1"], "active_company_id": "comp1", "is_super_admin": False}
+            base.update(kw)
+            return base
+        return current_user
+
+    def test_oturumsuz_401(self, db):
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.require_inbox_company(_Req(), "comp1"))
+        assert e.value.status_code == 401
+
+    def test_bos_bearer_401(self, db):
+        edocs._deps["current_user"] = self._user()
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.require_inbox_company(_Req(bearer="   "), "comp1"))
+        assert e.value.status_code == 401
+
+    def test_uye_olunmayan_sirket_403(self, db):
+        edocs._deps["current_user"] = self._user()
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp2"))
+        assert e.value.status_code == 403
+
+    def test_uye_oldugu_sirket(self, db):
+        edocs._deps["current_user"] = self._user()
+        assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp1")) == "comp1"
+
+    def test_sirket_yoksa_aktif_sirket(self, db):
+        edocs._deps["current_user"] = self._user()
+        assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"))) == "comp1"
+
+    def test_super_admin_baska_sirket(self, db):
+        edocs._deps["current_user"] = self._user(is_super_admin=True, company_ids=[])
+        assert asyncio.run(edocs.require_inbox_company(_Req(cookie="tok"), "comp9")) == "comp9"
+
+    def test_super_admin_sirketsiz_400(self, db):
+        edocs._deps["current_user"] = self._user(is_super_admin=True, company_ids=[], active_company_id="")
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.require_inbox_company(_Req(cookie="tok")))
+        assert e.value.status_code == 400
