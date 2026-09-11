@@ -130,10 +130,12 @@ def mysql_admin_settings() -> dict:
 
 
 def connect(user: str, password: str, database: Optional[str] = None, **overrides):
+    import db_ssl
     import pymysql
 
     cfg = mysql_admin_settings()
     cfg.update(overrides)
+    mode, ca = db_ssl.resolve(cfg["host"])
     return pymysql.connect(
         host=cfg["host"],
         port=int(cfg["port"]),
@@ -142,6 +144,7 @@ def connect(user: str, password: str, database: Optional[str] = None, **override
         database=database,
         charset="utf8mb4",
         autocommit=True,
+        **db_ssl.connect_kwargs({"ssl_mode": mode, "ssl_ca": ca}),
     )
 
 

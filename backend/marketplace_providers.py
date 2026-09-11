@@ -1,5 +1,6 @@
 """Pazaryeri entegrasyonları — Trendyol Seller API (gerçek) + diğer kanallar için simülasyon."""
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -188,6 +189,99 @@ def has_shopphp_credentials(cfg: dict) -> bool:
     return bool(cfg.get("store_url") and cfg.get("api_key") and cfg.get("api_secret"))
 
 
+# Gövdede açıkça "başarısız" diyen değerler. Kararsız bir yanıtı hata saymıyoruz;
+# aksi halde tanımadığımız bir gövde şekli yüzünden çalışan gönderim hata görünür.
+_ACK_FAIL_VALUES = {"0", "false", "error", "hata", "fail", "failed", "basarisiz", "başarısız", "hayir", "hayır", "no"}
+# "error: 0" gibi değerler hatanın yokluğunu bildirir, hatayı değil.
+_ACK_EMPTY_ERROR_VALUES = {"0", "false", "ok", "success", "yok", "none", "null", "-"}
+_ACK_SUCCESS_TAGS = ("success", "basarili", "başarılı")
+_ACK_RESULT_TAGS = ("result", "sonuc", "sonuç", "status", "durum")
+_ACK_ERROR_TAGS = ("error", "errors", "hata", "hatamesaji", "hata_mesaji")
+# Bilgilendirme alanları: "Başarılı" gibi bir metin de taşıyabildikleri için tek
+# başlarına reddetme sebebi değiller, yalnızca hata metnini zenginleştirirler.
+_ACK_MESSAGE_TAGS = ("message", "mesaj", "aciklama", "açıklama", "description")
+
+
+def _first_value(flat: Dict[str, str], tags) -> tuple:
+    for tag in tags:
+        value = (flat.get(tag) or "").strip()
+        if value:
+            return tag, value
+    return "", ""
+
+
+def check_rest_ack(flat: Dict[str, str]) -> Dict[str, str]:
+    """
+    Yazma yanıtının gövdesi işlemi reddediyorsa hata fırlatır.
+
+    Mağaza HTTP 200 dönüp gövdede başarısızlık bildirebiliyor; bu yüzden gövde
+    ayrıca okunuyor. Yalnızca açık bir ret hata sayılır: tanımadığımız bir gövde
+    şekli, çalışan bir gönderimi hata gibi göstermemeli.
+    """
+    _, note = _first_value(flat, _ACK_MESSAGE_TAGS)
+
+    tag, flag = _first_value(flat, _ACK_SUCCESS_TAGS)
+    if tag:
+        if flag.lower() in _ACK_FAIL_VALUES:
+            raise HTTPException(status_code=502, detail=f"ShopPHP isteği reddetti: {(note or f'{tag}={flag}')[:200]}")
+        # Açık başarı bildirimi diğer alanları geçersiz kılar: sipariş durumu
+        # yazarken yanıt `status=51` gibi kendi alanlarını da geri döndürüyor.
+        return flat
+
+    tag, err = _first_value(flat, _ACK_ERROR_TAGS)
+    if tag and err.lower() not in _ACK_EMPTY_ERROR_VALUES:
+        raise HTTPException(status_code=502, detail=f"ShopPHP isteği reddetti: {err[:200]}")
+
+    tag, res = _first_value(flat, _ACK_RESULT_TAGS)
+    if tag and res.lower() in _ACK_FAIL_VALUES:
+        raise HTTPException(status_code=502, detail=f"ShopPHP isteği reddetti: {(note or f'{tag}={res}')[:200]}")
+    return flat
+
+
+def flatten_ack(payload: Any) -> Dict[str, str]:
+    """İç içe olabilen JSON yanıtını `alan adı → metin` sözlüğüne indirger."""
+    flat: Dict[str, str] = {}
+
+    def walk(node: Any):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+                elif value is not None and str(value).strip():
+                    flat.setdefault(str(key).strip().lower(), str(value).strip())
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    return flat
+
+
+def parse_rest_ack(body: str) -> Any:
+    """
+    Yazma uçlarının JSON olmayan (XML/metin) yanıtını okur.
+
+    Mağaza dokümanındaki örnek yanıtı `simplexml_load_string` ile ayrıştırıyor,
+    yani bu uçlar XML de dönebiliyor. Gövde XML ise etiketleri sözlüğe çevirip
+    günlüğe okunur biçimde yazarız.
+    """
+    text = (body or "").strip()
+    if not text:
+        return {"raw": ""}
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return {"raw": text[:500]}
+    flat: Dict[str, str] = {}
+    for el in root.iter():
+        if el is root and len(root):
+            continue
+        value = (el.text or "").strip()
+        if value:
+            flat.setdefault(el.tag.split("}")[-1].strip().lower(), value)
+    return check_rest_ack(flat) or {"raw": text[:500]}
+
+
 class ShopPHPClient:
     def __init__(self, cfg: dict):
         url = str(cfg["store_url"]).strip().rstrip("/")
@@ -202,19 +296,31 @@ class ShopPHPClient:
     def _auth(self) -> Dict[str, str]:
         return {"auth_email": self.email, "auth_key": self.key, "format": "json"}
 
-    async def _call(self, method: str, path: str, data: Optional[dict] = None) -> Any:
+    async def _call(self, method: str, path: str, data: Optional[dict] = None, expect_json: bool = True) -> Any:
         try:
             r = await self.client.request(method, f"{self.base}/{path.lstrip('/')}", params=self._auth() if method == "GET" else None, data={**self._auth(), **(data or {})} if method != "GET" else None)
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502, detail=f"ShopPHP bağlantı hatası: {type(e).__name__}")
         if r.status_code in (401, 403):
             raise HTTPException(status_code=400, detail="ShopPHP kimlik doğrulama başarısız: REST API kullanıcı e-postası/parolası, bayi grubunda 'Rest API kullanabilir' izni ve IP listesi kontrol edin.")
+        if r.status_code == 404:
+            # 404 kimlik doğrulamaya hiç gelinmediği anlamına gelir: /rest tabanı yok.
+            raise HTTPException(status_code=502, detail=f"ShopPHP REST ucu bulunamadı ({self.base}/{path.lstrip('/')} → 404). Mağaza yönetiminden REST API'yi etkinleştirin ve mağaza adresini doğrulayın; XML besleme çalışsa bile REST ayrı açılır.")
         if r.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"ShopPHP {path}: HTTP {r.status_code}")
         try:
-            return r.json()
+            payload = r.json()
         except ValueError:
-            raise HTTPException(status_code=502, detail="ShopPHP JSON yerine XML/metin döndürdü; mağazada REST API JSON formatını etkinleştirin.")
+            # Listeleri ayrıştırmak için JSON şart; yazma uçları XML de döndürebilir.
+            if expect_json:
+                raise HTTPException(status_code=502, detail="ShopPHP JSON yerine XML/metin döndürdü; mağazada REST API JSON formatını etkinleştirin.")
+            return parse_rest_ack(r.text)
+        if expect_json:
+            return payload
+        # Yazma uçları HTTP 200 dönüp gövdede reddedebiliyor. İstek `format=json`
+        # gönderdiği için yanıt genelde JSON; gövde kontrolü yalnızca XML yoluna
+        # bırakılırsa `success: 0` sessizce başarı sayılır.
+        return check_rest_ack(flatten_ack(payload)) or payload
 
     async def orders(self, days: int = 14) -> List[dict]:
         end = datetime.now(timezone.utc); start = end - timedelta(days=days)
@@ -232,11 +338,26 @@ class ShopPHPClient:
             d["fiyat"] = price
         if stock is not None:
             d["stok"] = stock
-        return await self._call("POST", "setProduct/priceAndStock", d)
+        return await self._call("POST", "setProduct/priceAndStock", d, expect_json=False)
+
+    async def set_product_active(self, product_id: Any, active: bool) -> Any:
+        """
+        Ürünü mağazada satışa açar/kapatır. Dokümandaki uç `setProduct/active`
+        ve gövdede mağazanın ürün ID'si (`ID`) ile `active` 1/0 bekliyor.
+        """
+        return await self._call("POST", "setProduct/active", {"ID": product_id, "active": 1 if active else 0}, expect_json=False)
+
+    async def set_order_status(self, order_no: Any, status: int) -> Any:
+        """
+        Mağaza dokümanındaki durum güncelleme ucu: sipariş no ve durum gövdede
+        `no` + `status` olarak gider (`updateOrder`'ın yoldaki no + `sdurum`
+        biçiminden farklı). Örn. status=51 → "Kargoya teslim edildi".
+        """
+        return await self._call("POST", "setOrderStatus", {"no": order_no, "status": status}, expect_json=False)
 
     async def update_order(self, order_no: Any, status: Optional[int] = None, cargo_firm: Optional[str] = None, tracking: Optional[str] = None, invoice_no: Optional[str] = None) -> Any:
         d = {k: v for k, v in {"sdurum": status, "kargoFirma": cargo_firm, "kargoSeriNo": tracking, "faturaNo": invoice_no}.items() if v not in (None, "")}
-        return await self._call("POST", f"updateOrder/no/{order_no}", d)
+        return await self._call("POST", f"updateOrder/no/{order_no}", d, expect_json=False)
 
     async def close(self):
         await self.client.aclose()
@@ -278,7 +399,6 @@ def map_shopphp_order(o: dict, company_id: str, channel: str) -> dict:
 
 
 # ---------------- ShopPHP XML servisleri (xml.php?c=siparisler|shopphp|alter&xmlc=KOD) ----------------
-import xml.etree.ElementTree as ET
 import re as _re
 
 
@@ -389,5 +509,7 @@ async def shopphp_products_xml(cfg: dict) -> List[dict]:
             rows.append({**base, "barcode": _xt(u, "urun_gtin") or code or pid, "sale_price": price, "quantity": int(_xf(u, "urun_stok"))})
         for v in vars_:
             var_name = " / ".join(f"{x.attrib.get('varyasyon', '')}" for x in v if x.tag.startswith("var") and x.attrib.get("varyasyon"))
-            rows.append({**base, "title": f"{name} — {var_name}" if var_name else name, "barcode": _xt(v, "gtin") or _xt(v, "stok_kod") or f"{code}-{var_name}", "stock_code": _xt(v, "stok_kod") or code, "sale_price": round(price + _xf(v, "fiyat_fark"), 2), "quantity": int(_xf(v, "stok")), "image": _xt(v, "resim1") or base["image"], "variant": var_name})
+            # is_variant ayrı tutuluyor: varyasyon adı ayrıştırılamadığında boş
+            # kalabiliyor ve yalnızca ada bakan bir kontrol satırı ana ürün sanır.
+            rows.append({**base, "title": f"{name} — {var_name}" if var_name else name, "barcode": _xt(v, "gtin") or _xt(v, "stok_kod") or f"{code}-{var_name}", "stock_code": _xt(v, "stok_kod") or code, "sale_price": round(price + _xf(v, "fiyat_fark"), 2), "quantity": int(_xf(v, "stok")), "image": _xt(v, "resim1") or base["image"], "variant": var_name, "is_variant": True})
     return rows

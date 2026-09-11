@@ -1,6 +1,9 @@
 import os
 import json
 import logging
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 import comm_service
@@ -39,13 +42,40 @@ AI_PROVIDERS = {
     },
     "google": {
         "label": "Google Gemini",
-        "hint": "Doğrudan Google AI Studio / Gemini API anahtarı.",
+        "hint": "Doğrudan Google AI Studio / Gemini API anahtarı (AIza...). Anahtar boş bırakılırsa sunucudaki GEMINI_API_KEY kullanılır.",
         "models": [
             {"id": "gemini-2.5-pro", "vendor": "gemini", "label": "Gemini 2.5 Pro"},
             {"id": "gemini-2.5-flash", "vendor": "gemini", "label": "Gemini 2.5 Flash"},
         ],
     },
+    "custom": {
+        "label": "Özel (OpenAI uyumlu)",
+        "hint": "OpenAI uyumlu bir uç nokta: OpenRouter, Azure OpenAI, kendi ağ geçidiniz veya sunucunuzdaki vLLM/Ollama. Adresi ve model adlarını kendiniz yazarsınız. Anahtar boş bırakılırsa sunucudaki CUSTOM_AI_API_KEY kullanılır.",
+        "custom": True,
+        "models": [],
+    },
 }
+
+# Doğrudan sağlayıcı anahtarı girildiğinde emergentintegrations SDK'sına gerek yoktur;
+# bu sağlayıcılar için isteği kendimiz atarız (SDK kurulu olmayan imajlarda da çalışsın).
+DIRECT_PROVIDERS = ("openai", "anthropic", "google", "custom")
+
+# Özel uç noktalar OpenAI sohbet protokolünü konuşur.
+DIRECT_PROTOCOLS = {"google": "google", "anthropic": "anthropic", "openai": "openai", "custom": "openai"}
+
+PROVIDER_ENV_KEYS = {
+    "emergent": ("EMERGENT_LLM_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "custom": ("CUSTOM_AI_API_KEY",),
+}
+
+GEMINI_BASE = (os.environ.get("GEMINI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+OPENAI_BASE = (os.environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1").rstrip("/")
+ANTHROPIC_BASE = (os.environ.get("ANTHROPIC_API_BASE") or "https://api.anthropic.com/v1").rstrip("/")
+ANTHROPIC_VERSION = "2023-06-01"
+DIRECT_MAX_TOKENS = 4096
 
 AI_DEFAULTS = {
     "enabled": True,
@@ -74,11 +104,163 @@ def sdk_vendor(provider: str, model: str) -> str:
     return vendor_for_model(model)
 
 
+def provider_label(provider: str) -> str:
+    return (AI_PROVIDERS.get(provider) or {}).get("label") or provider or "AI sağlayıcısı"
+
+
+def env_var_name(provider: str) -> str:
+    return (PROVIDER_ENV_KEYS.get(provider) or PROVIDER_ENV_KEYS["emergent"])[0]
+
+
+def env_key(provider: str) -> str:
+    for name in PROVIDER_ENV_KEYS.get(provider) or PROVIDER_ENV_KEYS["emergent"]:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def is_custom(provider: str) -> bool:
+    return bool((AI_PROVIDERS.get(provider) or {}).get("custom"))
+
+
+def normalize_base_url(raw: str) -> str:
+    """Kullanıcının yazdığı uç nokta adresini sohbet URL'sine çevir.
+
+    Adres bir sorgu dizesi taşıyabiliyor (Azure OpenAI `?api-version=…` istiyor).
+    Yol ayrıştırılmadan sona ekleme yapılırsa `/chat/completions` sorgunun arkasına
+    düşer ve adres geçersiz olur; o yüzden yalnızca yol kısmı tamamlanıyor.
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    split = urlsplit(url)
+    path = split.path.rstrip("/")
+    if not path.endswith("/chat/completions"):
+        path += "/chat/completions"
+    return urlunsplit((split.scheme, split.netloc, path, split.query, split.fragment))
+
+
+def protocol_of(provider: str) -> str:
+    return DIRECT_PROTOCOLS.get(provider) or "openai"
+
+
+def _direct_request(provider: str, model: str, api_key: str, system_message: str, text: str, base_url: str = "") -> tuple:
+    proto = protocol_of(provider)
+    if proto == "google":
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": text}]}],
+            "generationConfig": {"maxOutputTokens": DIRECT_MAX_TOKENS, "temperature": 0.2},
+        }
+        if system_message:
+            payload["systemInstruction"] = {"parts": [{"text": system_message}]}
+        return f"{GEMINI_BASE}/models/{model}:generateContent", {"x-goog-api-key": api_key}, payload
+    if proto == "anthropic":
+        payload = {"model": model, "max_tokens": DIRECT_MAX_TOKENS, "messages": [{"role": "user", "content": text}]}
+        if system_message:
+            payload["system"] = system_message
+        return f"{ANTHROPIC_BASE}/messages", {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}, payload
+    messages = ([{"role": "system", "content": system_message}] if system_message else []) + [{"role": "user", "content": text}]
+    url = base_url or f"{OPENAI_BASE}/chat/completions"
+    # Kendi sunucusundaki uç noktalar (Ollama, vLLM) anahtar istemeyebilir.
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    return url, headers, {"model": model, "messages": messages}
+
+
+def _direct_answer(provider: str, data: dict) -> str:
+    if protocol_of(provider) == "google":
+        cand = ((data.get("candidates") or [{}])[0]) or {}
+        parts = ((cand.get("content") or {}).get("parts")) or []
+        return "".join(str(p.get("text") or "") for p in parts).strip()
+    if protocol_of(provider) == "anthropic":
+        blocks = data.get("content") or []
+        return "".join(str(b.get("text") or "") for b in blocks if b.get("type") in (None, "text")).strip()
+    choice = ((data.get("choices") or [{}])[0]) or {}
+    return str((choice.get("message") or {}).get("content") or "").strip()
+
+
+def _blank_reason(provider: str, data: dict) -> str:
+    """Sağlayıcı 200 döndürüp içerik vermediğinde nedenini Türkçe açıkla."""
+    if protocol_of(provider) == "google":
+        blocked = ((data.get("promptFeedback") or {}).get("blockReason")) or ""
+        finish = (((data.get("candidates") or [{}])[0]) or {}).get("finishReason") or ""
+        if blocked:
+            return f"Google isteği güvenlik filtresiyle engelledi ({blocked})."
+        if finish and finish != "STOP":
+            return f"Google yanıtı tamamlanmadı ({finish})."
+    return f"{provider_label(provider)} boş yanıt döndürdü."
+
+
+def _provider_error(provider: str, resp: "httpx.Response") -> str:
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        detail = str(err.get("message") or err.get("status") or "")
+    elif isinstance(err, str):
+        detail = err
+    else:
+        detail = ""
+    detail = (detail or (resp.text or ""))[:220].strip()
+    label = provider_label(provider)
+    code = resp.status_code
+    # Google geçersiz anahtara 401 değil 400/INVALID_ARGUMENT döndürür.
+    bad_key = code in (401, 403) or (code == 400 and "api key" in detail.lower())
+    if bad_key:
+        return f"{label} API anahtarını kabul etmedi ({code}). Anahtarı kontrol edin. {detail}".strip()
+    if code == 404:
+        return f"{label} bu modeli bulamadı ({code}). Farklı bir model seçip tekrar deneyin. {detail}".strip()
+    if code == 429:
+        return f"{label} istek/kota sınırını aştı ({code}). {detail}".strip()
+    return f"{label} isteği başarısız ({code}). {detail}".strip()
+
+
+class DirectChat:
+    """emergentintegrations LlmChat ile aynı arayüz; sağlayıcının HTTP API'sini doğrudan çağırır."""
+
+    def __init__(self, provider: str, model: str, api_key: str, system_message: str = "", base_url: str = ""):
+        self.provider = provider
+        self.model = model
+        self.api_key = api_key
+        self.system_message = system_message or ""
+        self.base_url = base_url or ""
+
+    def with_model(self, _vendor: str, model: str) -> "DirectChat":
+        self.model = model
+        return self
+
+    async def send_message(self, message) -> str:
+        text = str(getattr(message, "text", message) or "")
+        url, headers, payload = _direct_request(self.provider, self.model, self.api_key, self.system_message, text, self.base_url)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
+                resp = await client.post(url, headers={**headers, "Content-Type": "application/json"}, json=payload)
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"{provider_label(self.provider)} sunucusuna ulaşılamadı: {e}") from e
+        if resp.status_code >= 400:
+            raise RuntimeError(_provider_error(self.provider, resp))
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise RuntimeError(f"{provider_label(self.provider)} beklenmeyen bir yanıt döndürdü.") from e
+        answer = _direct_answer(self.provider, data)
+        if not answer:
+            raise RuntimeError(_blank_reason(self.provider, data))
+        return answer
+
+
 def _model_ids(provider: str) -> list:
     return [m["id"] for m in (AI_PROVIDERS.get(provider) or AI_PROVIDERS["emergent"])["models"]]
 
 
 def _clamp_model(provider: str, model: str, fallback: str) -> str:
+    # Özel uç noktalarda model listesi bize kapalı; kullanıcının yazdığını kabul ederiz.
+    if is_custom(provider):
+        return (model or "").strip()[:120]
     ids = _model_ids(provider)
     if model in ids:
         return model
@@ -89,12 +271,13 @@ def normalize_ai(raw: dict | None) -> dict:
     p = {**AI_DEFAULTS, **(raw or {})}
     provider = p.get("provider") if p.get("provider") in AI_PROVIDERS else "emergent"
     advisor = _clamp_model(provider, p.get("advisor_model") or "", AI_DEFAULTS["advisor_model"])
-    extract = _clamp_model(provider, p.get("extract_model") or "", AI_DEFAULTS["extract_model"])
+    extract = _clamp_model(provider, p.get("extract_model") or "", AI_DEFAULTS["extract_model"]) or advisor
     return {
         "enabled": bool(p.get("enabled", True)),
         "provider": provider,
         "advisor_model": advisor,
         "extract_model": extract,
+        "base_url": normalize_base_url(p.get("base_url") or "") if is_custom(provider) else "",
         "api_key_enc": p.get("api_key_enc") or "",
         "last_test": p.get("last_test"),
     }
@@ -132,11 +315,13 @@ async def load_ai_settings() -> dict:
             key = comm_service.decrypt(cfg["api_key_enc"])
         except Exception:
             key = ""
-    if not key:
-        key = (os.environ.get("EMERGENT_LLM_KEY") or "").strip()
-    cfg["api_key"] = key
-    cfg["has_key"] = bool(cfg.get("api_key_enc"))
-    cfg["has_env_key"] = bool((os.environ.get("EMERGENT_LLM_KEY") or "").strip())
+    provider = cfg.get("provider") or "emergent"
+    # Ortam değişkeni sağlayıcıya özeldir: Gemini'ye Emergent anahtarı göndermeyelim.
+    fallback = env_key(provider)
+    cfg["api_key"] = key or fallback
+    cfg["has_key"] = bool(key)
+    cfg["has_env_key"] = bool(fallback)
+    cfg["env_var"] = env_var_name(provider)
     return cfg
 
 
@@ -145,10 +330,18 @@ async def make_chat(session_id: str, system_message: str, purpose: str = "extrac
     if not cfg.get("enabled", True):
         raise RuntimeError("AI entegrasyonu platform panelinden kapatılmış.")
     key = cfg.get("api_key") or ""
-    if not key:
-        raise RuntimeError("Yapay zeka API anahtarı yapılandırılmamış. Platform Yönetimi → AI Entegrasyonu ekranından anahtar girin.")
     model = cfg["advisor_model"] if purpose == "advisor" else cfg["extract_model"]
-    vendor = sdk_vendor(cfg.get("provider") or "emergent", model)
+    provider = cfg.get("provider") or "emergent"
+    if is_custom(provider):
+        if not cfg.get("base_url"):
+            raise RuntimeError("Özel AI uç noktasının adresi girilmemiş. Platform Yönetimi → AI Entegrasyonu ekranından adresi yazın.")
+        if not model:
+            raise RuntimeError("Özel AI uç noktası için model adı girilmemiş. Platform Yönetimi → AI Entegrasyonu ekranından model adını yazın.")
+    elif not key:
+        raise RuntimeError("Yapay zeka API anahtarı yapılandırılmamış. Platform Yönetimi → AI Entegrasyonu ekranından anahtar girin.")
+    if provider in DIRECT_PROVIDERS:
+        return DirectChat(provider, model, key, system_message, cfg.get("base_url") or "")
+    vendor = sdk_vendor(provider, model)
     return LlmChat(api_key=key, session_id=session_id, system_message=system_message).with_model(vendor, model)
 
 

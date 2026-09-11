@@ -211,8 +211,14 @@ COLLECTIONS = {
     "incoming_edocs": {
         "scope": SCOPE_TENANT,
         "description": "Gelen e-fatura / e-arşiv kuyruğu.",
-        "keys": ("_id", "company_id", "uuid", "status", "contact_id", "invoice_id", "lines"),
+        "keys": ("_id", "company_id", "uuid", "dedupe_key", "status", "contact_id", "invoice_id", "lines"),
         "refs": ("contacts._id", "invoices._id"),
+    },
+    "incoming_edoc_xml": {
+        "scope": SCOPE_TENANT,
+        "description": "Gelen e-belgelerin ham UBL XML'i (yeniden okuma ve indirme için).",
+        "keys": ("_id", "company_id", "xml", "created_at"),
+        "refs": ("incoming_edocs._id",),
     },
     "einvoice_settings": {
         "scope": SCOPE_TENANT,
@@ -441,13 +447,13 @@ COLLECTIONS = {
     },
     "marketplace_push_logs": {
         "scope": SCOPE_TENANT,
-        "description": "Pazaryeri stok/fiyat push logu.",
+        "description": "Pazaryeri stok/fiyat/aktiflik push logu; ShopPHP satırlarında errors ve unmatched alanları da tutulur.",
         "keys": ("_id", "company_id"),
         "refs": ("companies._id",),
     },
     "shopphp_push_logs": {
         "scope": SCOPE_TENANT,
-        "description": "ShopPHP senkron logu.",
+        "description": "ShopPHP senkron logu; status_via alanı durumun setOrderStatus mı updateOrder mı ile yazıldığını tutar.",
         "keys": ("_id", "company_id"),
         "refs": ("companies._id",),
     },

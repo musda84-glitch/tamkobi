@@ -5,6 +5,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
+import { readSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -235,19 +236,24 @@ export const B2BSettings = ({ companyId }) => {
   );
 };
 
-export default function SettingsPage() {
+/**
+ * Hesabım → "Firma ayarları" sekmesi bu sayfayı `embedded` olarak gömer; o
+ * durumda bölüm adı `?ayar=` içinde durur (bkz. utils/settingsTabs).
+ */
+export default function SettingsPage({ embedded = false }) {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-  const tab = searchParams.get("tab") || "company";
+  const tab = readSettingsTab(searchParams, embedded);
   const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const selectTab = (k) => setSearchParams((prev) => writeSettingsTab(prev, embedded, k), { replace: true });
   useEffect(() => { if (tab === "b2b") navigate("/b2b-yonetim", { replace: true }); }, [tab, navigate]);
   useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [companyId]);
   return (
     <div className="space-y-6" data-testid="settings-page">
-      <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>
+      {!embedded && <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>}
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
           {SETTINGS_TAB_GROUPS.map((g) => {
@@ -258,7 +264,7 @@ export default function SettingsPage() {
               <div key={g.id} className={`flex lg:flex-col gap-1 shrink-0 ${groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
                 <div className={`hidden lg:block px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
                 {tabs.map(([k, l, Icon]) => (
-                  <button key={k} onClick={() => setSearchParams({ tab: k })} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
+                  <button key={k} onClick={() => selectTab(k)} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
                     <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
                   </button>
                 ))}

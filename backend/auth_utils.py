@@ -20,6 +20,19 @@ def jwt_secret_is_insecure(secret: Optional[str] = None) -> bool:
     value = get_jwt_secret() if secret is None else (secret or "").strip()
     return value in _INSECURE_JWT
 
+
+def session_token(request: Any) -> Optional[str]:
+    """Dolu Bearer, yoksa dolu access_token çerezi. Boş `Bearer ` yok sayılır."""
+    headers = getattr(request, "headers", None) or {}
+    cookies = getattr(request, "cookies", None) or {}
+    auth = headers.get("Authorization") or ""
+    if auth.startswith("Bearer "):
+        tok = auth[7:].strip()
+        if tok:
+            return tok
+    cookie = (cookies.get("access_token") or "").strip()
+    return cookie or None
+
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")

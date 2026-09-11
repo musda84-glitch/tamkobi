@@ -1,24 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { SystemLayout, SYSTEM_NAV } from "../components/saas/SystemLayout";
-import { SaasOverview } from "../components/saas/SaasOverview";
-import { CompaniesTable } from "../components/saas/CompaniesTable";
+import { SystemLayout } from "../components/saas/SystemLayout";
 import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
-import { PlansPanel } from "../components/saas/PlansPanel";
-import { RequestsPanel } from "../components/saas/RequestsPanel";
-import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "../components/saas/PlatformPanels";
-import { AiProviderPanel } from "../components/saas/AiProviderPanel";
-import { PlatformUsersPanel } from "../components/saas/PlatformUsersPanel";
-import { WebsiteAdminPanel } from "../components/saas/WebsiteAdminPanel";
+import { findSystemSection } from "../components/saas/systemSections";
+import { PanelBoundary } from "../components/saas/PanelBoundary";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
   const { pathname } = useLocation();
-  const { section } = useParams();
-  const page = (section || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
+  const { section: routeSection } = useParams();
+  const page = (routeSection || pathname.replace(/\/+$/, "").split("/")[2] || "").toLowerCase();
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -41,26 +35,21 @@ export default function SystemAdminPage() {
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
   const changed = () => { load(); refreshLicense(); };
-  const title = (SYSTEM_NAV.find(([p]) => p === pathname || p === `/sistem/${page}`) || SYSTEM_NAV[0])[1];
+  const section = findSystemSection(page);
+  const title = section ? section.label : "Bölüm bulunamadı";
   return (
-    <SystemLayout pendingCount={overview?.pending_requests || 0}>
+    <SystemLayout pendingCount={overview?.pending_requests || 0} openTickets={overview?.open_tickets || 0}>
       <div className="max-w-[1500px] mx-auto space-y-5" data-testid="system-admin-page">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div><h1 className="text-2xl font-bold text-white" data-testid="system-section-title">{title}</h1></div>
           {overview && <div className="flex gap-2 text-xs">{[["Şirket", overview.companies], ["Müşteri kullanıcı", overview.users], ["Panel", overview.platform_admins ?? "—"], ["MRR", `${(overview.mrr || 0).toLocaleString("tr-TR")} ₺`]].map(([l, v]) => <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-slate-200"><div className="text-[10px] text-slate-400">{l}</div><div className="font-bold">{v}</div></div>)}</div>}
         </div>
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
-          {!page && <SaasOverview data={overview} catalog={catalog} onOpenCompany={setOpenId} onGoRequests={() => navigate("/sistem/talepler")} />}
-          {page === "web" && <WebsiteAdminPanel plans={plans} onChanged={changed} />}
-          {page === "sirketler" && <CompaniesTable rows={companies} plans={plans} onOpen={setOpenId} onCreated={(r) => { changed(); setOpenId(r.id); }} />}
-          {page === "kullanicilar" && <PlatformUsersPanel />}
-          {page === "paketler" && <PlansPanel plans={plans} catalog={catalog} onChanged={changed} />}
-          {page === "moduller" && <ModuleCatalog catalog={catalog} plans={plans} onChanged={changed} />}
-          {page === "talepler" && <RequestsPanel requests={requests} onChanged={changed} onOpenCompany={setOpenId} />}
-          {page === "odemeler" && <PaymentsPanel />}
-          {page === "hatirlatmalar" && <RemindersPanel />}
-          {page === "ai" && <AiProviderPanel />}
-          {page === "ayarlar" && <PlatformSettingsPanel />}
+          <PanelBoundary key={page} label={section?.label}>
+            {section
+              ? section.render({ overview, companies, plans, catalog, requests, changed, openCompany: setOpenId, goRequests: () => navigate("/sistem/talepler") })
+              : <MissingSection page={page} />}
+          </PanelBoundary>
         </div>
         {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
@@ -68,28 +57,11 @@ export default function SystemAdminPage() {
   );
 }
 
-const ModuleCatalog = ({ catalog, plans, onChanged }) => {
-  const [prices, setPrices] = useState(() => Object.fromEntries((catalog || []).filter((m) => !m.is_core).map((m) => [m.key, m.price_monthly || 0])));
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { setPrices(Object.fromEntries((catalog || []).filter((m) => !m.is_core).map((m) => [m.key, m.price_monthly || 0]))); }, [catalog]);
-  const save = async () => {
-    setBusy(true);
-    try {
-      await axios.put(`${API_URL}/system/modules/prices`, { prices }, { withCredentials: true });
-      toast.success("Modül fiyatları kaydedildi. Sitedeki özel paket hesabı buna göre güncellenir.");
-      onChanged?.();
-    } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
-  };
-  return (
-    <div className="space-y-3 text-xs" data-testid="saas-module-catalog">
-      <p className="text-slate-500">Çekirdek modüller her pakette vardır. Aylık fiyat, müşterinin sitede kendi paketini oluştururken kullanılır (yıllık = 10 ay).</p>
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-        <table className="w-full min-w-[840px]">
-          <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Modül</th><th className="px-3 py-2.5 text-left">Kategori</th><th className="px-3 py-2.5 text-right">Aylık ₺</th>{plans.filter((p) => p.id !== "plan_custom").map((p) => <th key={p.id} className="px-3 py-2.5 text-center">{p.name}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-100">{catalog.map((m) => <tr key={m.key} data-testid={`catalog-row-${m.key.replace("/", "") || "dashboard"}`}><td className="px-3 py-2 font-semibold text-slate-800">{m.label}{m.is_core && <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-500 px-1 rounded">çekirdek</span>}</td><td className="px-3 py-2 text-slate-500">{m.category}</td><td className="px-3 py-2 text-right">{m.is_core ? "—" : <input type="number" min={0} value={prices[m.key] ?? 0} onChange={(e) => setPrices({ ...prices, [m.key]: Number(e.target.value) })} className="w-20 bg-slate-50 border rounded-lg px-2 py-1 text-right" data-testid={`mod-price-${m.key.replace("/", "")}`} />}</td>{plans.filter((p) => p.id !== "plan_custom").map((p) => <td key={p.id} className="px-3 py-2 text-center">{m.is_core || p.modules.includes(m.key) ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-300">—</span>}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
-      <button onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-60" data-testid="mod-prices-save">{busy ? "Kaydediliyor…" : "Fiyatları kaydet"}</button>
-    </div>
-  );
-};
+/** Adresten gelen bölüm listede yoksa boş beyaz alan yerine bunu göster. */
+const MissingSection = ({ page }) => (
+  <div className="text-xs text-slate-500 space-y-2" data-testid="system-section-missing">
+    <p className="font-semibold text-slate-800">“{page}” diye bir platform bölümü yok.</p>
+    <p>Adresi kontrol edin ya da sol menüden bir bölüm seçin.</p>
+    <Link to="/sistem" className="inline-block px-3 py-1.5 bg-slate-900 text-white rounded-lg font-bold" data-testid="system-section-missing-home">Genel Bakış’a dön</Link>
+  </div>
+);

@@ -25,14 +25,12 @@ export default function SignupPage() {
   useEffect(() => { axios.get(`${API_URL}/public/plans`).then((r) => { setD(r.data); if (!f.plan_id && !picked.length) setF((x) => ({ ...x, plan_id: (r.data.plans.find((p) => p.is_popular) || r.data.plans[0])?.id || "" })); }).catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true);
-    const payload = { ...f };
-    if (picked.length) { payload.modules = picked; delete payload.plan_id; }
-    try { const r = await axios.post(`${API_URL}/public/signup`, payload, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
     e.preventDefault();
     if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan kayıt olamazsınız."); return; }
     setBusy(true);
-    try { const r = await axios.post(`${API_URL}/public/signup`, { ...f, ...legalPayload(consent) }, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
+    const payload = { ...f, ...legalPayload(consent) };
+    if (picked.length) { payload.modules = picked; delete payload.plan_id; }
+    try { const r = await axios.post(`${API_URL}/public/signup`, payload, { withCredentials: true }); setDone(r.data); toast.success(r.data.message); } catch (err) { toast.error(err.response?.data?.detail || "Kayıt yapılamadı."); } finally { setBusy(false); }
   };
   const plan = d?.plans?.find((p) => p.id === f.plan_id);
   const customTotal = packQuote(d?.catalog || [], picked, false);
@@ -65,11 +63,8 @@ export default function SignupPage() {
           ) : (
             <div><label className="block font-semibold text-slate-300 mb-2 text-xs">Denemek istediğiniz paket</label><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(d?.plans || []).map((p) => <button type="button" key={p.id} onClick={() => setF({ ...f, plan_id: p.id })} className={`rounded-xl p-3 text-left border transition ${f.plan_id === p.id ? "bg-white text-slate-900 border-white" : "bg-white/5 border-white/10 hover:bg-white/10"}`} data-testid={`signup-plan-${p.id}`}><div className="text-xs font-bold">{p.name}</div><div className={`text-[10px] ${f.plan_id === p.id ? "text-slate-500" : "text-slate-400"}`}>{p.modules.length} modül</div></button>)}</div></div>
           )}
-          <button disabled={busy || (customMode && !picked.length)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
-          <p className="text-[11px] text-slate-500">Kayıt olarak kullanım koşullarını kabul edersiniz. Verileriniz yalnızca şirketinize aittir.</p>
-          <div><label className="block font-semibold text-slate-300 mb-2 text-xs">Denemek istediğiniz paket</label><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(d?.plans || []).map((p) => <button type="button" key={p.id} onClick={() => setF({ ...f, plan_id: p.id })} className={`rounded-xl p-3 text-left border transition ${f.plan_id === p.id ? "bg-white text-slate-900 border-white" : "bg-white/5 border-white/10 hover:bg-white/10"}`} data-testid={`signup-plan-${p.id}`}><div className="text-xs font-bold">{p.name}</div><div className={`text-[10px] ${f.plan_id === p.id ? "text-slate-500" : "text-slate-400"}`}>{p.modules.length} modül</div></button>)}</div></div>
           <LegalConsent value={consent} onChange={setConsent} prefix="signup-" className="bg-white/5 border border-white/10 rounded-xl p-3 text-slate-300 [&_a]:text-emerald-300" />
-          <button disabled={busy || !allLegalAccepted(consent)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
+          <button disabled={busy || (customMode && !picked.length) || !allLegalAccepted(consent)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
           <LegalFooterLinks className="text-slate-500 justify-start" prefix="signup-footer" />
         </form>
         {customMode ? (

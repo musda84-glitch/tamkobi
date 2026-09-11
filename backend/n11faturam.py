@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import base64
+import io
+import logging
 import re
 import uuid
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from xml.sax.saxutils import escape
 
 import httpx
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 LIVE_URL = "https://www.n11faturam.com/integrationservicewithoutmtom/IntegrationService.asmx"
 TEST_URL = "https://n11integrationtest.digitalplanet.com.tr/IntegrationService.asmx"
@@ -41,24 +46,45 @@ def _esc(value: Any) -> str:
 
 
 def _local(tag: str) -> str:
-    return tag.split("}")[-1] if "}" in tag else tag
+    return (tag.split("}")[-1] if "}" in tag else tag).strip()
+
+
+def _key(tag: str) -> str:
+    """Etiket adını karşılaştırma anahtarına indirger.
+
+    n11/Digital Planet aynı alanı yanıttan yanıta farklı yazıyor: SenderTaxId /
+    Sendertaxid / SENDERTAXID, UUID / Uuid. Büyük-küçük harfe ve alt tireye
+    duyarlı karşılaştırma yüzünden alanlar boş dönüyordu.
+    """
+    return _local(tag).replace("_", "").lower()
 
 
 def _text(root: Optional[ET.Element], name: str, default: str = "") -> str:
     if root is None:
         return default
-    if _local(root.tag) == name and (root.text or "").strip():
+    want = _key(name)
+    if _key(root.tag) == want and (root.text or "").strip():
         return (root.text or "").strip()
     for el in root.iter():
-        if _local(el.tag) == name and (el.text or "").strip():
+        if _key(el.tag) == want and (el.text or "").strip():
             return (el.text or "").strip()
     return default
+
+
+def _first(root: Optional[ET.Element], *names: str) -> str:
+    """İlk dolu alanı döndürür; alan adı sürüme göre değiştiği için birden çok ad denenir."""
+    for name in names:
+        value = _text(root, name)
+        if value:
+            return value
+    return ""
 
 
 def _all(root: Optional[ET.Element], name: str) -> List[ET.Element]:
     if root is None:
         return []
-    return [el for el in root.iter() if _local(el.tag) == name]
+    want = _key(name)
+    return [el for el in root.iter() if _key(el.tag) == want]
 
 
 def _money(value: Any) -> str:
@@ -235,28 +261,68 @@ def parse_ticket(body: bytes) -> str:
     return ticket
 
 
+# Servisin fatura satırını sardığı bilinen etiketler (küçük harf, alt tiresiz).
+_ROW_TAGS = {
+    "invoicestateresult", "invoiceinforesult", "invoiceinfo", "invoiceresult",
+    "incominginvoiceresult", "incominginvoiceinfo", "incominginvoice",
+    "inboxinvoiceresult", "inboxinvoice", "invoicelistresult",
+}
+# Bir düğümü "fatura satırı" yapan doğrudan alt alanlar.
+_ROW_MARKERS = {"uuid", "ettn", "invoiceuuid", "documentuuid", "invoiceid", "returnvalue"}
+
+
+def _innermost(cand: List[ET.Element]) -> List[ET.Element]:
+    """Başka bir adayı içeren adayları atar; yalnızca en içtekiler kalır."""
+    inner = []
+    for el in cand:
+        descendants = {id(x) for x in el.iter()} - {id(el)}
+        if any(id(other) in descendants for other in cand):
+            continue
+        inner.append(el)
+    return inner
+
+
+def invoice_rows(node: Optional[ET.Element]) -> List[ET.Element]:
+    """Yanıttaki fatura düğümlerini bulur.
+
+    Bir düğümün fatura satırı olması için doğrudan altında UUID/ETTN/
+    InvoiceId/ReturnValue taşıması gerekiyor; `_ROW_TAGS` yalnızca birden çok
+    aday olduğunda hangisinin satır olduğunu ayırmaya yarıyor. Eskiden ada
+    bakmak tek başına yeterliydi ve liste kabı da (`InvoiceListResult`) bu
+    kümede olduğu için iki ayrı hata çıkıyordu: kap satır sayılıp `_text` alt
+    düğümleri taradığından ilk faturanın kopyası ikinci kez ekleniyor, kabın
+    çocukları bilinen bir ad taşımadığında ise yalnızca kap dönüp listedeki
+    diğer faturalar sessizce kayboluyordu.
+    """
+    if node is None:
+        return []
+    marked = [el for el in node.iter() if any(_key(c.tag) in _ROW_MARKERS for c in el)]
+    named = [el for el in marked if _key(el.tag) in _ROW_TAGS]
+    return _innermost(named or marked)
+
+
 def parse_service_result(root: ET.Element, result_tag: str) -> Dict[str, Any]:
     _fault(root)
-    node = next((el for el in root.iter() if _local(el.tag) == result_tag), root)
+    node = next((el for el in root.iter() if _key(el.tag) == _key(result_tag)), root)
     status = _text(node, "ServiceResult")
     desc = _text(node, "ServiceResultDescription")
     if status and status.lower() not in ("successful", "success", ""):
         raise HTTPException(status_code=502, detail=f"n11 Faturam: {desc or status}")
     invoices = []
-    for inv in _all(node, "InvoiceStateResult") + _all(node, "InvoiceInfoResult"):
+    for inv in invoice_rows(node):
         invoices.append({
-            "uuid": _text(inv, "UUID"),
-            "invoice_id": _text(inv, "InvoiceId"),
+            "uuid": _first(inv, "UUID", "Ettn", "InvoiceUUID", "DocumentUUID"),
+            "invoice_id": _first(inv, "InvoiceId", "InvoiceNumber", "DocumentId"),
             "status": _text(inv, "ServiceResult") or status,
-            "status_description": _text(inv, "StatusDescription") or _text(inv, "ServiceResultDescription"),
+            "status_description": _first(inv, "StatusDescription", "ServiceResultDescription"),
             "status_code": _text(inv, "StatusCode"),
-            "sender_tax_id": _text(inv, "Sendertaxid"),
-            "receiver_tax_id": _text(inv, "Receivertaxid"),
-            "party_name": _text(inv, "Partyname"),
-            "payable": _text(inv, "Payableamount"),
-            "issue_date": _text(inv, "Issuedate"),
-            "profile": _text(inv, "Profileid"),
-            "return_value": _text(inv, "ReturnValue"),
+            "sender_tax_id": _first(inv, "Sendertaxid", "SenderTaxNumber", "SenderIdentifier"),
+            "receiver_tax_id": _first(inv, "Receivertaxid", "ReceiverTaxNumber", "ReceiverIdentifier"),
+            "party_name": _first(inv, "Partyname", "SenderName", "CompanyName", "Title"),
+            "payable": _first(inv, "Payableamount", "Amount"),
+            "issue_date": _first(inv, "Issuedate", "InvoiceDate", "CreateDate"),
+            "profile": _first(inv, "Profileid", "Profile"),
+            "return_value": _first(inv, "ReturnValue", "InvoiceRawData", "XmlData", "InvoiceData"),
         })
     first = invoices[0] if invoices else {}
     if first.get("status") and first["status"].lower() not in ("successful", "success", ""):
@@ -392,16 +458,79 @@ async def send_document(settings: dict, password: str, invoice: dict, contact: O
     }
 
 
-def _decode_xml(b64: str) -> Optional[bytes]:
-    if not b64:
+UBL_ROOTS = ("Invoice", "DespatchAdvice")
+# Arşiv sınırları: bir e-fatura ZIP'i tek bir UBL taşır, kalanı imza ve ek olur.
+MAX_ZIP_ENTRIES = 32
+MAX_ZIP_MEMBER_BYTES = 4 * 1024 * 1024
+MAX_ZIP_TOTAL_BYTES = 16 * 1024 * 1024
+_ROOT_RE = re.compile(rb"<\s*(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)[\s/>]")
+
+
+def _root_name(data: bytes) -> str:
+    """Belgenin kök etiketinin yerel adını döndürür (bildirim, yorum ve DOCTYPE atlanır)."""
+    head = re.sub(rb"<\?.*?\?>|<!--.*?-->|<!\[CDATA\[.*?\]\]>|<!DOCTYPE[^>]*>", b" ", data[:4096], flags=re.S)
+    m = _ROOT_RE.search(head)
+    return m.group(2).decode("ascii", "ignore") if m else ""
+
+
+def _zip_xml_members(z: zipfile.ZipFile):
+    """Arşivdeki XML girdilerini sınırlı boyutta okur.
+
+    Girdiler tek tek ve üst sınırla okunuyor: başlıktaki boyut yalan
+    söyleyebildiği için sıkıştırma oranı yüksek bir arşiv, tek bir istekle
+    paylaşılan API işçisinin belleğini tüketebilir. Girdi sayısı, tek girdinin
+    açılmış boyutu ve toplam açılan bayt ayrı ayrı sınırlı.
+    """
+    total = 0
+    for info in z.infolist()[:MAX_ZIP_ENTRIES]:
+        if info.is_dir() or not info.filename.lower().endswith(".xml"):
+            continue
+        if info.file_size > MAX_ZIP_MEMBER_BYTES:
+            continue
+        with z.open(info) as fh:
+            member = fh.read(MAX_ZIP_MEMBER_BYTES + 1)
+        if len(member) > MAX_ZIP_MEMBER_BYTES:
+            continue
+        total += len(member)
+        if total > MAX_ZIP_TOTAL_BYTES:
+            return
+        yield member
+
+
+def _as_xml(data: Optional[bytes]) -> Optional[bytes]:
+    """Ham baytları UBL XML'e indirger; ZIP ise içindeki ilk XML'i çıkarır.
+
+    Kök etiketi Invoice/DespatchAdvice olmayan içerik atılır: eskiden `<?xml`
+    görmek yetiyordu, bu yüzden SOAP zarfları ve hata belgeleri fatura sanılıp
+    tamamen boş kayıt olarak gelen kutusuna düşüyordu.
+    """
+    if not data:
         return None
+    if data[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                data = next((d for d in _zip_xml_members(z) if _root_name(d) in UBL_ROOTS), None)
+                if data is None:
+                    return None
+        except (zipfile.BadZipFile, KeyError, RuntimeError, ValueError):
+            return None
+    data = data.lstrip(b"\xef\xbb\xbf").lstrip()
+    return data if _root_name(data) in UBL_ROOTS else None
+
+
+def _decode_xml(payload: str) -> Optional[bytes]:
+    """ReturnValue alanını XML'e çevirir: base64, base64'lü ZIP ya da düz XML olabilir."""
+    if not payload:
+        return None
+    text = payload.strip()
+    if text.startswith("<"):
+        return _as_xml(text.encode("utf-8"))
     try:
-        data = base64.b64decode(b64, validate=False)
+        # Servis base64'ü satır sonlarıyla bölerek gönderiyor; boşlukları at.
+        data = base64.b64decode("".join(text.split()), validate=False)
     except Exception:
         return None
-    if b"<Invoice" in data[:800] or b"<?xml" in data[:80] or b"<DespatchAdvice" in data[:800]:
-        return data
-    return None
+    return _as_xml(data)
 
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
@@ -422,14 +551,25 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
     )
     out = []
     for inv in parsed.get("invoices") or []:
-        xml_bytes = _decode_xml(inv.get("return_value") or "")
+        raw = inv.get("return_value") or ""
+        xml_bytes = _decode_xml(raw)
+        error = "n11'in gönderdiği belge UBL e-Fatura değil." if raw and not xml_bytes else ""
         if not xml_bytes and inv.get("uuid"):
             xml_inner = (
                 f'<GetInvoiceXML xmlns="{NS_SOAP}">'
                 f"<Ticket>{_esc(ticket)}</Ticket><UUID>{_esc(inv['uuid'])}</UUID>"
                 "</GetInvoiceXML>"
             )
-            xml_root = parse_soap_xml(await _post(soap_url(settings), "GetInvoiceXML", xml_inner))
-            xml_bytes = _decode_xml(_text(xml_root, "ReturnValue"))
-        out.append({**inv, "xml": xml_bytes})
+            try:
+                xml_root = parse_soap_xml(await _post(soap_url(settings), "GetInvoiceXML", xml_inner))
+                xml_bytes = _decode_xml(_first(xml_root, "GetInvoiceXMLResult", "ReturnValue", "InvoiceRawData", "XmlData"))
+                if not xml_bytes:
+                    error = _text(xml_root, "ServiceResultDescription") or "n11 bu fatura için XML döndürmedi."
+            except HTTPException as e:
+                # Tek bir faturanın XML'i alınamıyorsa kalan faturalar yine de çekilsin.
+                error = str(e.detail)
+                logger.warning("n11 Faturam GetInvoiceXML başarısız (%s): %s", inv.get("uuid"), error)
+        elif not xml_bytes:
+            error = error or "Faturanın UUID'si yok, XML istenemedi."
+        out.append({**inv, "xml": xml_bytes, "xml_error": "" if xml_bytes else error})
     return out

@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Inbox, Upload, CheckCircle2, XCircle, UserPlus, PackagePlus, Loader2, Link2, RefreshCw } from "lucide-react";
+import { Inbox, Upload, CheckCircle2, XCircle, UserPlus, PackagePlus, Loader2, Link2, RefreshCw, AlertTriangle, FileCode2, Trash2, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 
@@ -19,12 +19,17 @@ export default function EdocInboxPage() {
   const [products, setProducts] = useState([]);
   const [busy, setBusy] = useState("");
   const [opts, setOpts] = useState({ update_stock: true, update_cost: true, allow_unmatched: false });
+  const [pullNote, setPullNote] = useState(null);
+  const [xml, setXml] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId, status: status || undefined } }).then((r) => { setData(r.data); if (sel) setSel(r.data.items.find((i) => i.id === sel.id) || null); }).catch(() => toast.error("Gelen belgeler yüklenemedi.")), [companyId, status]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
   useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => setProducts(r.data)).catch(() => {}); }, [companyId]);
   const act = async (fn, okMsg) => { setBusy("act"); try { const r = await fn(); toast.success(r?.data?.message || okMsg); await load(); return r; } catch (e) { toast.error(e.response?.data?.detail || "İşlem başarısız."); } finally { setBusy(""); } };
   const upload = (file) => { if (!file) return; const fd = new FormData(); fd.append("file", file); fd.append("company_id", companyId); act(() => axios.post(`${API_URL}/edocs/inbox/upload`, fd).then((r) => { setStatus("pending"); setSel(r.data); return r; }), "Belge alındı."); };
-  const pullN11 = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, { params: { company_id: companyId, days: 14 } }).then((r) => { setStatus("pending"); return r; }), "n11 Faturam gelen kutusu çekildi.");
+  const pullN11 = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, { params: { company_id: companyId, days: 14 } }).then((r) => { setStatus("pending"); setPullNote(r.data); return r; }), "n11 Faturam gelen kutusu çekildi.");
+  const cleanup = () => { if (!window.confirm("Tedarikçisi, kalemi ve tutarı okunamamış bekleyen kayıtlar silinecek. Faturaları entegratörden yeniden çekebilirsiniz. Devam edilsin mi?")) return; act(() => axios.post(`${API_URL}/edocs/inbox/cleanup`, null, { params: { company_id: companyId } }).then((r) => { setSel(null); return r; })); };
+  const reparse = () => act(() => axios.post(`${API_URL}/edocs/inbox/reparse`, null, { params: { company_id: companyId } }));
+  const showXml = async () => { try { const r = await axios.get(`${API_URL}/edocs/inbox/${sel.id}/xml`, { params: { company_id: companyId } }); setXml(r.data.xml); } catch (e) { toast.error(e.response?.data?.detail || "Ham XML alınamadı."); } };
   const setLine = (idx, product_id) => act(() => axios.put(`${API_URL}/edocs/inbox/${sel.id}/lines`, { lines: [{ idx, product_id }] }).then((r) => { setSel(r.data); return { data: { message: "Satır eşleştirildi." } }; }));
   return (
     <div className="space-y-4" data-testid="edoc-inbox-page">
@@ -35,11 +40,33 @@ export default function EdocInboxPage() {
           <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer" data-testid="edoc-upload-label"><Upload className="w-4 h-4" /> XML / PDF Yükle<input type="file" accept=".xml,.pdf" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="edoc-upload-input" /></label>
         </div>
       </div>
+      {pullNote && (
+        <div className={`rounded-2xl border p-3 text-xs ${pullNote.failed?.length ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`} data-testid="edoc-pull-note">
+          <div className="flex items-start gap-2">
+            <div className="flex-1">
+              <b>{pullNote.message}</b>
+              <div className="text-[10px] opacity-80">n11 Faturam {pullNote.found} belge listeledi · {pullNote.pulled} yeni · {pullNote.already} zaten kayıtlı · {pullNote.failed?.length || 0} alınamadı</div>
+              {pullNote.failed?.length > 0 && (
+                <ul className="mt-2 space-y-0.5 max-h-32 overflow-y-auto" data-testid="edoc-pull-failed">
+                  {pullNote.failed.slice(0, 20).map((f, i) => <li key={i}><span className="font-mono">{f.invoice}</span> — {f.reason}</li>)}
+                  {pullNote.failed.length > 20 && <li className="opacity-70">…ve {pullNote.failed.length - 20} belge daha.</li>}
+                </ul>)}
+            </div>
+            <button type="button" onClick={() => setPullNote(null)} className="p-1 rounded hover:bg-black/5" title="Kapat" data-testid="edoc-pull-note-close"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        </div>)}
+      {data?.blank > 0 && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 flex flex-wrap items-center gap-3" data-testid="edoc-blank-warning">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <div className="flex-1 min-w-[220px]"><b>{data.blank} belge okunamamış.</b> Tedarikçisi, kalemi ve tutarı boş; bu haliyle onaylanamazlar. Saklanan ham XML varsa yeniden okuyun, yoksa silip entegratörden tekrar çekin.</div>
+          <button type="button" onClick={reparse} disabled={busy === "act"} className="px-3 py-1.5 rounded-lg border border-rose-300 bg-white font-semibold inline-flex items-center gap-1 disabled:opacity-60" data-testid="edoc-reparse"><RefreshCw className="w-3.5 h-3.5" /> Ham XML'den yeniden oku</button>
+          <button type="button" onClick={cleanup} disabled={busy === "act"} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-semibold inline-flex items-center gap-1 disabled:opacity-60" data-testid="edoc-cleanup"><Trash2 className="w-3.5 h-3.5" /> Boş kayıtları sil</button>
+        </div>)}
       <div className="flex gap-2 text-xs">{[["pending", "Bekleyen"], ["approved", "Onaylanan"], ["rejected", "Reddedilen"], ["", "Tümü"]].map(([k, l]) => <button key={k} onClick={() => setStatus(k)} className={`px-3 py-1.5 rounded-lg border font-semibold ${status === k ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`edoc-filter-${k || "all"}`}>{l}{k && data ? ` (${data.counts[k]})` : ""}</button>)}</div>
       <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-3 text-xs">
         <div className="bg-white border border-slate-200 rounded-2xl divide-y max-h-[70vh] overflow-y-auto" data-testid="edoc-list">
           {!data ? <div className="p-6 text-slate-400">Yükleniyor…</div> : data.items.length === 0 ? <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. Entegratörünüzden indirdiğiniz UBL XML'i ya da tedarikçi PDF faturasını yükleyin.</div> : data.items.map((d) => (
-            <button key={d.id} onClick={() => setSel(d)} className={`w-full text-left p-3 hover:bg-slate-50 ${sel?.id === d.id ? "bg-indigo-50/60" : ""}`} data-testid={`edoc-item-${d.id}`}>
+            <button key={d.id} onClick={() => { setSel(d); setXml(null); }} className={`w-full text-left p-3 hover:bg-slate-50 ${sel?.id === d.id ? "bg-indigo-50/60" : ""}`} data-testid={`edoc-item-${d.id}`}>
               <div className="flex items-center justify-between"><b className="text-slate-900 truncate max-w-[200px]">{d.supplier?.name || "Tedarikçi ?"}</b><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS[d.status][1]}`}>{STATUS[d.status][0]}</span></div>
               <div className="text-[10px] text-slate-500">{d.kind === "dispatch" ? "e-İrsaliye" : "e-Fatura"} · {d.number || "-"} · {d.issue_date} · <b>{fmt(d.grand_total)} ₺</b> · {d.matched_lines}/{d.lines.length} satır eşleşti{d.contact_id ? "" : " · tedarikçi yok"}</div>
             </button>))}
@@ -48,10 +75,16 @@ export default function EdocInboxPage() {
           {!sel ? <div className="text-slate-400 p-6 text-center">Detay için soldan belge seçin.</div> : (<>
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div><div className="text-sm font-bold text-slate-900">{sel.kind === "dispatch" ? "Gelen e-İrsaliye" : "Gelen e-Fatura"} {sel.number}</div><div className="text-slate-500">{sel.issue_date} · {sel.source === "ubl_xml" ? "UBL XML" : sel.source === "n11faturam" ? "n11 Faturam" : "PDF (AI)"} · {sel.profile || ""} {sel.type_code || ""}</div></div>
-              <div className="text-right"><div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div><div className="text-[10px] text-slate-500">Matrah {fmt(sel.subtotal)} · KDV {fmt(sel.vat_total)}</div></div>
+              <div className="text-right"><div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div><div className="text-[10px] text-slate-500">Matrah {fmt(sel.subtotal)} · KDV {fmt(sel.vat_total)}</div>
+                {sel.source !== "ai_pdf" && <button type="button" onClick={showXml} className="mt-1 text-[10px] text-indigo-600 font-semibold inline-flex items-center gap-1" data-testid="edoc-show-xml"><FileCode2 className="w-3 h-3" /> Ham XML</button>}</div>
             </div>
+            {xml !== null && (
+              <div className="rounded-xl border border-slate-200 bg-slate-900 text-slate-100 p-3" data-testid="edoc-xml-view">
+                <div className="flex items-center justify-between mb-2"><b className="text-[10px] uppercase tracking-wide text-slate-400">Entegratörden gelen ham UBL</b><button type="button" onClick={() => setXml(null)} className="text-slate-400 hover:text-white" data-testid="edoc-xml-close"><X className="w-3.5 h-3.5" /></button></div>
+                <pre className="text-[10px] leading-relaxed overflow-auto max-h-64 whitespace-pre-wrap break-all">{xml}</pre>
+              </div>)}
             <div className="bg-slate-50 rounded-xl p-3 flex flex-wrap items-center gap-2" data-testid="edoc-supplier">
-              <div className="flex-1 min-w-[200px]"><b>{sel.supplier?.name}</b><div className="text-[10px] text-slate-500">VKN {sel.supplier?.tax_id || "-"} · {sel.supplier?.tax_office || ""} · {sel.supplier?.address || ""}</div></div>
+              <div className="flex-1 min-w-[200px]"><b className={sel.supplier?.name ? "" : "text-rose-600"}>{sel.supplier?.name || "Tedarikçi okunamadı"}</b><div className="text-[10px] text-slate-500">VKN {sel.supplier?.tax_id || "-"} · {sel.supplier?.tax_office || ""} · {sel.supplier?.address || ""}</div></div>
               {sel.contact_id ? <span className="text-emerald-700 font-semibold flex items-center gap-1" data-testid="edoc-supplier-linked"><Link2 className="w-3 h-3" /> {sel.contact_name}</span> : sel.status === "pending" && (<>
                 <div className="w-56"><SearchSelect value="" options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Mevcut cari seç…" onChange={(id) => act(() => axios.put(`${API_URL}/edocs/inbox/${sel.id}/supplier`, { contact_id: id }), "Tedarikçi eşleştirildi.")} testId="edoc-supplier-select" /></div>
                 <button onClick={() => act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/create-supplier`, {}))} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="edoc-create-supplier"><UserPlus className="w-3.5 h-3.5" /> Yeni Tedarikçi Ekle</button></>)}

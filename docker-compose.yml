@@ -45,6 +45,12 @@ services:
     environment:
       MYSQL_HOST: 127.0.0.1
       MYSQL_PORT: "3306"
+      # Left empty on purpose: MYSQL_HOST above is loopback, and an unset mode
+      # means "the host decides", which is plaintext for a MySQL on this
+      # machine and verified TLS for one anywhere else. Naming a mode here
+      # would also apply it to a database on another host.
+      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-}
+      MYSQL_SSL_CA: ${MYSQL_SSL_CA:-}
       MYSQL_USER: ${MYSQL_USER:-tamkobi}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
       MYSQL_DATABASE: ${DB_NAME:-tamkobi}

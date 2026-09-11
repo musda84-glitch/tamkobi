@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 import rbac
 import applog
 import perfmon
-from auth_utils import hash_password, verify_password
+from auth_utils import get_user_from_token, hash_password, session_token, verify_password
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -535,15 +535,13 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
 
 
 async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14, module_overrides: Optional[dict] = None, extra: Optional[dict] = None):
-    doc = {"plan_id": plan_id, "status": "trial", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(), "expires_at": None, "module_overrides": module_overrides or {}, "user_limit": None, "notes": f"{days} gün deneme", "created_at": _now()}
-    if extra:
-        doc.update(extra)
-    # $set (not $setOnInsert): a new company must actually receive the trial even if
-    # seed() already inserted a stub license, and the MySQL upsert must keep _id=company_id.
-    await _db.company_licenses.update_one({"_id": company_id}, {"$set": {**doc, "_id": company_id}}, upsert=True)
-    invalidate(company_id)
-async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14):
-    """Start or refresh a trial on the shared parent license. Do not overwrite a paid active plan."""
+    """
+    Ortak ana lisans üzerinde denemeyi başlatır veya tazeler; ödenmiş aktif planın
+    üzerine yazmaz.
+
+    module_overrides ve extra özel paketle kaydolanlar için: seçilen modüller ve
+    anlaşılan fiyat deneme süresince de geçerli olmalı.
+    """
     lid = await license_id_of(company_id)
     existing = await _db.company_licenses.find_one({"_id": lid}) or {}
     paid_until = _as_dt(existing.get("expires_at"))
@@ -553,25 +551,30 @@ async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14
         invalidate(lid)
         return
     trial_end = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    changes = {
+        "plan_id": plan_id,
+        "status": "trial",
+        "trial_ends_at": trial_end,
+        "expires_at": None,
+        "notes": f"{days} gün deneme",
+        "updated_at": _now(),
+    }
+    if module_overrides:
+        changes["module_overrides"] = module_overrides
+    if extra:
+        changes.update(extra)
+    on_insert = {
+        "started_at": _now(),
+        "created_at": _now(),
+        "module_overrides": {},
+        "user_limit": None,
+        "company_id": lid,
+    }
+    # Aynı alan hem $set hem $setOnInsert içinde olamaz.
+    on_insert = {k: v for k, v in on_insert.items() if k not in changes}
     await _db.company_licenses.update_one(
         {"_id": lid},
-        {
-            "$set": {
-                "plan_id": plan_id,
-                "status": "trial",
-                "trial_ends_at": trial_end,
-                "expires_at": None,
-                "notes": f"{days} gün deneme",
-                "updated_at": _now(),
-            },
-            "$setOnInsert": {
-                "started_at": _now(),
-                "created_at": _now(),
-                "module_overrides": {},
-                "user_limit": None,
-                "company_id": lid,
-            },
-        },
+        {"$set": changes, "$setOnInsert": on_insert},
         upsert=True,
     )
     invalidate(lid)
@@ -579,9 +582,15 @@ async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14
 
 # ---------------- Super admin dependency ----------------
 async def require_super_admin(request: Request) -> dict:
-    if not (request.cookies.get("access_token") or request.headers.get("Authorization", "").startswith("Bearer ")):
+    """Sistem paneli: dolu tokendan kullanıcı, demo yöneticiye düşülmez.
+
+    Boş `Authorization: Bearer ` eskiden oturum sayılıp `get_current_user`'a
+    gidiyordu; o da boş Bearer'ı yok sayıp tohum `admin@nexus.com`'a düşüyordu.
+    """
+    token = session_token(request)
+    if not token:
         raise HTTPException(status_code=401, detail="Sistem paneli için giriş yapmanız gerekiyor.")
-    user = await _current_user(request)
+    user = await get_user_from_token(token, _db)
     if not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Bu alan yalnızca platform (sistem) yöneticisine açıktır.")
     return user

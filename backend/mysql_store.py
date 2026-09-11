@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
+import db_ssl
+
 MISSING = object()
 SKIP_TOMBSTONE = frozenset({"sync_tombstones", "trash", "login_attempts", "activity_logs", "notifications"})
 
@@ -100,23 +102,31 @@ def mysql_settings_from_env() -> Dict[str, Any]:
             url = "mysql://" + url.split("://", 1)[1]
         parsed = urlparse(url)
         db = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
+        host = parsed.hostname or "127.0.0.1"
+        ssl_mode, ssl_ca = db_ssl.resolve(host)
         return {
-            "host": parsed.hostname or "127.0.0.1",
+            "host": host,
             "port": parsed.port or 3306,
             "user": unquote(parsed.username or "root"),
             "password": unquote(parsed.password or ""),
             "db": db.split("?")[0] or "tamkobi",
             "charset": "utf8mb4",
             "autocommit": True,
+            "ssl_mode": ssl_mode,
+            "ssl_ca": ssl_ca,
         }
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
+    ssl_mode, ssl_ca = db_ssl.resolve(host)
     return {
-        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "host": host,
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": os.environ.get("MYSQL_USER", "tamkobi"),
         "password": os.environ.get("MYSQL_PASSWORD") or "",
         "db": os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": ssl_mode,
+        "ssl_ca": ssl_ca,
     }
 
 
@@ -168,7 +178,9 @@ def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
             continue
         expr = _json_unquote(k)
         if not isinstance(v, dict):
-            if isinstance(v, bool) or isinstance(v, (int, float)):
+            # None ve sayılar SQL'de metne çevrilince eşleşmez (str(None) == "None"),
+            # JSON null ile karşılaştırma da yanlış sonuç verir; bunları Python tarafına bırak.
+            if v is None or isinstance(v, (bool, int, float)):
                 continue
             clauses.append(f"{expr} = %s")
             params.append(str(v))
@@ -588,9 +600,23 @@ def normalize_sort(sort, direction=1):
     return sort
 
 
+def newest_first(docs: List[dict]) -> List[dict]:
+    """
+    Sıralama istenmediğinde uygulanan varsayılan düzen.
+
+    MySQL `docs` tablosunun birincil anahtarı (collection, id) ve id bir uuid4.
+    Sıralamasız bir SELECT bu yüzden satırları rastgele uuid sırasında döndürür,
+    kayıt sırasında değil. `.to_list(100)` gibi bir sınır o rastgele sıranın ilk
+    100'ünü aldığı için yeni eklenen bir kayıt, uuid'si sona düşmüşse listede
+    hiç görünmez. En yeniyi başa alarak sınır, kaybedilmesi en pahalı kayıtları
+    değil en eskilerini kırpar.
+    """
+    return sorted(docs, key=lambda d: (str(d.get("created_at") or ""), str(d.get("_id") or "")), reverse=True)
+
+
 def sort_docs(docs: List[dict], key) -> List[dict]:
     if not key:
-        return docs
+        return newest_first(docs)
     if isinstance(key, str):
         pairs = [(key, 1)]
     elif isinstance(key, tuple) and len(key) == 2 and isinstance(key[0], str):
@@ -749,10 +775,12 @@ class MySQLCollection:
 
     async def _load_sql(self, sql: str, params: list) -> List[dict]:
         await self._db._ensure()
+        t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
@@ -761,28 +789,6 @@ class MySQLCollection:
             docs = await self._load_sql(sql, params)
         except Exception:
             docs = await self._load_all()
-    async def _load_by_company(self, company_id) -> List[dict]:
-        await self._db._ensure()
-        t0 = time.perf_counter()
-        async with self._db._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
-                    (self.name, str(company_id)),
-                )
-                rows = await cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
-
-    async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
-        cid = _simple_eq(query, "company_id")
-        if cid is not None:
-            docs = await self._load_by_company(cid)
-            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
-            if not rest:
-                return docs
-            return [d for d in docs if match_query(d, rest)]
-        docs = await self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]
@@ -1050,6 +1056,8 @@ class MySQLDatabase:
         if self._pool is None:
             import aiomysql
             cfg = {k: v for k, v in self._settings.items() if k in {"host", "port", "user", "password", "db", "charset", "autocommit"}}
+            db_ssl.warn_if_unverified(self._settings)
+            cfg.update(db_ssl.connect_kwargs(self._settings))
             self._pool = await aiomysql.create_pool(minsize=1, maxsize=10, **cfg)
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cur:
@@ -1139,6 +1147,7 @@ def _sync_connect(settings: dict):
         database=settings["db"],
         charset=settings.get("charset") or "utf8mb4",
         autocommit=True,
+        **db_ssl.connect_kwargs(settings),
     )
 
 
@@ -1192,35 +1201,17 @@ class SyncMySQLCollection:
         _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
 
-    def _load_by_company(self, company_id):
-        self._db._ensure()
-        t0 = time.perf_counter()
-        with self._db._conn.cursor() as cur:
-            cur.execute(
-                "SELECT doc FROM docs WHERE collection=%s AND company_id=%s",
-                (self.name, str(company_id)),
-            )
-            rows = cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
-
     def _load_filtered(self, query):
         sql, params = sql_pushdown(self.name, query)
         self._db._ensure()
+        t0 = time.perf_counter()
         try:
             with self._db._conn.cursor() as cur:
                 cur.execute(sql, params)
                 docs = [loads(r[0]) for r in cur.fetchall()]
+            _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         except Exception:
             docs = self._load_all()
-        cid = _simple_eq(query, "company_id")
-        if cid is not None:
-            docs = self._load_by_company(cid)
-            rest = {k: v for k, v in (query or {}).items() if k != "company_id"}
-            if not rest:
-                return docs
-            return [d for d in docs if match_query(d, rest)]
-        docs = self._load_all()
         if not query:
             return docs
         return [d for d in docs if match_query(d, query)]

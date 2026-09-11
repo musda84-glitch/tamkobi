@@ -3,22 +3,87 @@ name: Deploy to Server
 on:
   push:
     branches:
-      - main  # Hangi dalda çalışacağını buraya yaz (main veya master)
+      - main
+  workflow_dispatch:
+
+# Aynı anda iki dağıtım çakışmasın; sıradakini iptal etmeden bekletir.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v0.1.10
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 30m
+          # script_stop kullanılmıyor: eylem, betiğin her satırından sonra bir çıkış
+          # kodu kontrolü enjekte ediyor ve bu, çok satırlı if/else ile for bloklarını
+          # bozuyor (appleboy/ssh-action#139, #335). Hata durumunda durmayı betiğin
+          # kendi "set -eu" satırı sağlıyor; eylemin önerdiği yol da bu.
+          envs: DEPLOY_PATH
           script: |
-            cd ${{ secrets.DEPLOY_PATH }}
-            git pull origin main
+            set -eu
+            cd "$DEPLOY_PATH"
+
+            # docker compose (v2) / docker-compose (v1) ve sudo gereğini tespit et.
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif docker-compose version >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "HATA: sunucuda docker compose bulunamadı." >&2
+              exit 1
+            fi
+            SUDO=""
+            if ! docker info >/dev/null 2>&1; then
+              SUDO="sudo"
+              DC="sudo $DC"
+            fi
+
+            echo "--- Kod güncelleniyor"
+            git fetch origin main
+            if ! git rev-parse --abbrev-ref HEAD | grep -qx main; then
+              git checkout main
+            fi
+            if ! git merge --ff-only origin/main; then
+              echo "HATA: sunucudaki kopya main'den ayrışmış, ileri sarılamıyor." >&2
+              echo "Sunucuda yerel değişiklikleri inceleyin (git status) ve temizleyin." >&2
+              exit 1
+            fi
+            echo "Dağıtılan sürüm: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+
+            # Frontend üretim derlemesi ve backend bağımlılıkları imajın İÇİNE gömülüdür.
+            # Bu yüzden salt "git pull" çalışan siteyi değiştirmez; imajlar yeniden
+            # derlenip konteynerler değiştirilmeli.
+            echo "--- İmajlar derleniyor ve servisler değiştiriliyor"
+            $DC up -d --build --remove-orphans
+
+            echo "--- Sağlık kontrolü"
+            ok=""
+            for i in $(seq 1 40); do
+              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:8000/ \
+                 && curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3000/; then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            if [ -z "$ok" ]; then
+              echo "HATA: backend (:8000) veya frontend (:3000) ayağa kalkmadı." >&2
+              $DC ps || true
+              $DC logs --tail 80 backend frontend || true
+              exit 1
+            fi
+
+            $DC ps
+            # Derleme artığı imajlar birikmesin; daemon sudo istiyorsa prune da istiyor.
+            $SUDO docker image prune -f >/dev/null 2>&1 || true
+            echo "Dağıtım tamam."
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}

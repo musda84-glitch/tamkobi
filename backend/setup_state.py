@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import db_ssl
+
 _DB_NAME_RE_OK = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 
 
@@ -71,6 +73,9 @@ def load_database_settings() -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         port = 3306
     db = str(raw.get("db") or raw.get("database") or "").strip() or "tamkobi"
+    # Files written before the TLS field existed record no mode; db_ssl reads
+    # that silence as "decide from the host", not as plaintext.
+    ssl_mode, ssl_ca = db_ssl.settings({**raw, "host": host})
     return {
         "host": host,
         "port": port,
@@ -79,10 +84,13 @@ def load_database_settings() -> Optional[Dict[str, Any]]:
         "db": db,
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": ssl_mode,
+        "ssl_ca": ssl_ca,
     }
 
 
 def save_database_settings(settings: dict) -> None:
+    ssl_mode, ssl_ca = db_ssl.settings(settings)
     _atomic_write(
         database_path(),
         {
@@ -93,6 +101,8 @@ def save_database_settings(settings: dict) -> None:
             "db": settings["db"],
             "charset": "utf8mb4",
             "autocommit": True,
+            "ssl_mode": ssl_mode,
+            "ssl_ca": ssl_ca,
         },
     )
 
@@ -136,6 +146,8 @@ def public_defaults() -> dict:
             "db_port": int(file_cfg["port"]),
             "db_name": file_cfg["db"],
             "db_user": file_cfg["user"],
+            "ssl_mode": file_cfg["ssl_mode"],
+            "ssl_ca": file_cfg["ssl_ca"],
         }
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     host, port, user, db = "127.0.0.1", 3306, "tamkobi", "tamkobi"
@@ -154,4 +166,12 @@ def public_defaults() -> dict:
             port = 3306
         user = os.environ.get("MYSQL_USER", user)
         db = os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or db
-    return {"db_host": host, "db_port": port, "db_name": db, "db_user": user}
+    mode, ca = db_ssl.resolve(host)
+    return {
+        "db_host": host,
+        "db_port": port,
+        "db_name": db,
+        "db_user": user,
+        "ssl_mode": mode,
+        "ssl_ca": ca,
+    }
