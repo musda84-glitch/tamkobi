@@ -89,12 +89,14 @@ def _mysql_snapshot() -> Dict[str, Any]:
     if mysql_settings_from_env is None:
         return {"ok": False, "error": "mysql_store unavailable"}
     try:
+        import db_ssl
         import pymysql
         cfg = mysql_settings_from_env()
         conn = pymysql.connect(
             host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
             password=cfg["password"], database=cfg["db"], charset="utf8mb4",
             cursorclass=pymysql.cursors.DictCursor, connect_timeout=3,
+            **db_ssl.connect_kwargs(cfg),
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}

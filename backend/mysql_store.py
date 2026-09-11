@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
+import db_ssl
+
 MISSING = object()
 SKIP_TOMBSTONE = frozenset({"sync_tombstones", "trash", "login_attempts", "activity_logs", "notifications"})
 
@@ -100,23 +102,31 @@ def mysql_settings_from_env() -> Dict[str, Any]:
             url = "mysql://" + url.split("://", 1)[1]
         parsed = urlparse(url)
         db = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
+        host = parsed.hostname or "127.0.0.1"
+        ssl_mode, ssl_ca = db_ssl.resolve(host)
         return {
-            "host": parsed.hostname or "127.0.0.1",
+            "host": host,
             "port": parsed.port or 3306,
             "user": unquote(parsed.username or "root"),
             "password": unquote(parsed.password or ""),
             "db": db.split("?")[0] or "tamkobi",
             "charset": "utf8mb4",
             "autocommit": True,
+            "ssl_mode": ssl_mode,
+            "ssl_ca": ssl_ca,
         }
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
+    ssl_mode, ssl_ca = db_ssl.resolve(host)
     return {
-        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "host": host,
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": os.environ.get("MYSQL_USER", "tamkobi"),
         "password": os.environ.get("MYSQL_PASSWORD") or "",
         "db": os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": ssl_mode,
+        "ssl_ca": ssl_ca,
     }
 
 
@@ -1050,6 +1060,8 @@ class MySQLDatabase:
         if self._pool is None:
             import aiomysql
             cfg = {k: v for k, v in self._settings.items() if k in {"host", "port", "user", "password", "db", "charset", "autocommit"}}
+            db_ssl.warn_if_unverified(self._settings)
+            cfg.update(db_ssl.connect_kwargs(self._settings))
             self._pool = await aiomysql.create_pool(minsize=1, maxsize=10, **cfg)
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cur:
@@ -1139,6 +1151,7 @@ def _sync_connect(settings: dict):
         database=settings["db"],
         charset=settings.get("charset") or "utf8mb4",
         autocommit=True,
+        **db_ssl.connect_kwargs(settings),
     )
 
 

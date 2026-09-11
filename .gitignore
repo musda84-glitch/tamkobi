@@ -66,6 +66,7 @@ chainlit.md
 # Data and databases
 agenthub/agents/youtube/db
 /backups/
+backend/data/backups/
 backend/data/*.json
 backend/data/*.json.tmp
 

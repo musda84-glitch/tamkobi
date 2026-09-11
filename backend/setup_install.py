@@ -11,6 +11,7 @@ from urllib.parse import quote_plus
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import db_ssl
 from auth_utils import hash_password
 from mysql_store import MySQLDatabase
 from setup_state import (
@@ -34,6 +35,8 @@ class DbProbe(BaseModel):
     db_name: str = Field(..., min_length=1, max_length=64)
     db_user: str = Field(..., min_length=1, max_length=128)
     db_password: str = ""
+    ssl_mode: Optional[str] = None
+    ssl_ca: str = ""
 
 
 class InstallRequest(DbProbe):
@@ -48,14 +51,27 @@ def _now() -> str:
 
 
 def _settings_from(req: DbProbe) -> dict:
+    host = req.db_host.strip()
+    # An explicit choice from the form wins; otherwise the host decides and
+    # MYSQL_SSL_MODE may only raise that, never lower it for another server.
+    env_mode, env_ca = db_ssl.for_target(host)
+    mode = (req.ssl_mode or "").strip() or env_mode
+    ca = (req.ssl_ca or "").strip() or env_ca
+    try:
+        mode = db_ssl.normalize_mode(mode)
+        db_ssl.context(mode, ca)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
-        "host": req.db_host.strip(),
+        "host": host,
         "port": int(req.db_port),
         "user": req.db_user.strip(),
         "password": req.db_password or "",
         "db": sanitize_db_name(req.db_name),
         "charset": "utf8mb4",
         "autocommit": True,
+        "ssl_mode": mode,
+        "ssl_ca": ca,
     }
 
 
@@ -71,6 +87,7 @@ def _connect(settings: dict, database: Optional[str]):
         charset="utf8mb4",
         autocommit=True,
         connect_timeout=8,
+        **db_ssl.connect_kwargs(settings),
     )
 
 
@@ -87,7 +104,7 @@ def probe_database(settings: dict) -> dict:
         try:
             conn = _connect(settings, None)
         except Exception as exc2:
-            raise RuntimeError(f"MySQL bağlantısı kurulamadı: {exc2}") from exc2
+            raise RuntimeError(f"MySQL bağlantısı kurulamadı: {exc2}.{db_ssl.explain(exc2)}") from exc2
         try:
             cur = conn.cursor()
             cur.execute(
@@ -114,6 +131,7 @@ def probe_database(settings: dict) -> dict:
             "server_version": version,
             "database": current or dbname,
             "created": created,
+            "ssl_mode": db_ssl.settings(settings)[0],
             "note": None if err is None else str(err),
         }
     finally:
@@ -121,6 +139,9 @@ def probe_database(settings: dict) -> dict:
 
 
 def apply_env(settings: dict) -> None:
+    ssl_mode, ssl_ca = db_ssl.settings(settings)
+    os.environ["MYSQL_SSL_MODE"] = ssl_mode
+    os.environ["MYSQL_SSL_CA"] = ssl_ca
     os.environ["MYSQL_HOST"] = str(settings["host"])
     os.environ["MYSQL_PORT"] = str(settings["port"])
     os.environ["MYSQL_USER"] = str(settings["user"])
@@ -134,7 +155,8 @@ def apply_env(settings: dict) -> None:
     )
 
 
-async def _rebind_runtime(settings: dict) -> None:
+async def rebind_runtime(settings: dict) -> None:
+    """Point the running API at `settings` without a restart."""
     import server as srv
 
     apply_env(settings)
@@ -261,7 +283,7 @@ async def perform_install(req: InstallRequest) -> dict:
         }
     )
     apply_saved_secrets()
-    await _rebind_runtime(settings)
+    await rebind_runtime(settings)
 
     import rbac
     import saas

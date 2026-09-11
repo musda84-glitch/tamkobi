@@ -64,6 +64,91 @@ def test_database_settings_roundtrip(data_dir):
     assert "password" not in defaults
 
 
+def test_database_settings_keep_the_tls_mode(data_dir):
+    save_database_settings(
+        {"host": "10.0.0.8", "port": 3306, "user": "app", "password": "s3cret", "db": "shop", "ssl_mode": "required"}
+    )
+    assert load_database_settings()["ssl_mode"] == "required"
+    assert public_defaults()["ssl_mode"] == "required"
+
+
+def test_settings_file_without_a_tls_mode_follows_the_host(data_dir, monkeypatch):
+    """A database.json from before the TLS field must not mean plaintext."""
+    import json
+
+    from mysql_store import mysql_settings_from_env
+
+    def legacy(host: str) -> None:
+        (data_dir / "database.json").write_text(
+            json.dumps({"host": host, "port": 3306, "user": "app", "password": "s3cret", "db": "shop"}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setenv("MYSQL_SSL_MODE", "disabled")
+    legacy("db.firma.com")
+    assert load_database_settings()["ssl_mode"] == "verify_identity"
+    assert mysql_settings_from_env()["ssl_mode"] == "verify_identity"
+    assert public_defaults()["ssl_mode"] == "verify_identity"
+
+    legacy("127.0.0.1")
+    assert load_database_settings()["ssl_mode"] == "disabled"
+
+    # A verifying environment repairs such a file without editing it, which is
+    # the way out when a remote server has a self-signed certificate.
+    legacy("db.firma.com")
+    monkeypatch.setenv("MYSQL_SSL_MODE", "verify_ca")
+    monkeypatch.setenv("MYSQL_SSL_CA", "/etc/ssl/mysql-ca.pem")
+    assert load_database_settings()["ssl_mode"] == "verify_ca"
+    assert load_database_settings()["ssl_ca"] == "/etc/ssl/mysql-ca.pem"
+
+
+def test_saving_settings_records_a_real_tls_mode(data_dir, monkeypatch):
+    """What is written back must not read as "no choice" next time."""
+    monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
+    save_database_settings({"host": "db.firma.com", "port": 3306, "user": "app", "password": "p", "db": "shop"})
+    import json
+
+    assert json.loads((data_dir / "database.json").read_text(encoding="utf-8"))["ssl_mode"] == "verify_identity"
+
+
+def test_wizard_verifies_remote_hosts_by_default(data_dir, monkeypatch):
+    from setup_install import DbProbe, _settings_from
+
+    monkeypatch.delenv("MYSQL_SSL_MODE", raising=False)
+    remote = _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app"))
+    assert remote["ssl_mode"] == "verify_identity"
+    # An empty mode from the form means "decide from the host", not "plaintext".
+    blank = _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode=""))
+    assert blank["ssl_mode"] == "verify_identity"
+    local = _settings_from(DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app"))
+    assert local["ssl_mode"] == "disabled"
+    assert public_defaults()["ssl_mode"] == "disabled"
+
+
+def test_wizard_keeps_the_deployment_tls_mode(data_dir, monkeypatch):
+    from setup_install import DbProbe, _settings_from
+
+    monkeypatch.setenv("MYSQL_SSL_MODE", "required")
+    monkeypatch.setenv("MYSQL_HOST", "127.0.0.1")
+    assert _settings_from(DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app"))["ssl_mode"] == "required"
+    assert public_defaults()["ssl_mode"] == "required"
+    chosen = _settings_from(
+        DbProbe(db_host="127.0.0.1", db_name="tamkobi", db_user="app", ssl_mode="disabled")
+    )
+    assert chosen["ssl_mode"] == "disabled"
+
+
+def test_wizard_rejects_verification_without_a_ca(data_dir):
+    from fastapi import HTTPException
+    from setup_install import DbProbe, _settings_from
+
+    with pytest.raises(HTTPException) as err:
+        _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode="verify_ca"))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException):
+        _settings_from(DbProbe(db_host="db.firma.com", db_name="tamkobi", db_user="app", ssl_mode="belki"))
+
+
 def test_probe_live_mysql(data_dir):
     from mysql_backup import load_env
     from mysql_store import mysql_settings_from_env

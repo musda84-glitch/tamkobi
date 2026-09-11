@@ -43,6 +43,13 @@ def load_env(repo_root: Optional[Path] = None) -> None:
     _load_dotenv(root / ".env")
 
 
+def _ssl_for(host: str) -> Dict[str, Any]:
+    import db_ssl
+
+    mode, ca = db_ssl.resolve(host)
+    return {"ssl_mode": mode, "ssl_ca": ca}
+
+
 def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, db: Optional[str] = None) -> Dict[str, Any]:
     url = (os.environ.get("MYSQL_URL") or os.environ.get("DATABASE_URL") or "").strip()
     if url.startswith("mysql"):
@@ -51,26 +58,32 @@ def mysql_settings(user: Optional[str] = None, password: Optional[str] = None, d
         parsed = urlparse(url)
         database = (parsed.path or "/tamkobi").lstrip("/") or "tamkobi"
         database = database.split("?")[0] or "tamkobi"
+        host = parsed.hostname or os.environ.get("MYSQL_HOST", "127.0.0.1")
         return {
-            "host": parsed.hostname or os.environ.get("MYSQL_HOST", "127.0.0.1"),
+            "host": host,
             "port": parsed.port or int(os.environ.get("MYSQL_PORT", "3306")),
             "user": user or unquote(parsed.username or os.environ.get("MYSQL_USER", "tamkobi")),
             "password": password if password is not None else unquote(parsed.password or os.environ.get("MYSQL_PASSWORD", "tamkobi")),
             "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or database,
             "charset": "utf8mb4",
+            **_ssl_for(host),
         }
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
     return {
-        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "host": host,
         "port": int(os.environ.get("MYSQL_PORT", "3306")),
         "user": user or os.environ.get("MYSQL_USER", "tamkobi"),
         "password": password if password is not None else os.environ.get("MYSQL_PASSWORD", os.environ.get("DB_PASSWORD", "tamkobi")),
         "database": db or os.environ.get("MYSQL_DATABASE") or os.environ.get("DB_NAME") or "tamkobi",
         "charset": "utf8mb4",
+        **_ssl_for(host),
     }
 
 
 def connect(settings: Optional[dict] = None, database: Optional[str] = None):
     import pymysql
+
+    import db_ssl
 
     cfg = dict(settings or mysql_settings())
     if database is not None:
@@ -84,6 +97,7 @@ def connect(settings: Optional[dict] = None, database: Optional[str] = None):
         charset=cfg.get("charset") or "utf8mb4",
         autocommit=True,
         cursorclass=pymysql.cursors.Cursor,
+        **db_ssl.connect_kwargs(cfg),
     )
 
 
@@ -294,8 +308,24 @@ def drop_database(name: str) -> None:
         conn.close()
 
 
-def restore_snapshot(snap: dict, target_db: str, drop_tables: bool = True, as_root: bool = False) -> dict:
-    if as_root:
+INSERT_CHUNK = 200
+
+
+def restore_snapshot(
+    snap: dict,
+    target_db: str,
+    drop_tables: bool = True,
+    as_root: bool = False,
+    settings: Optional[dict] = None,
+) -> dict:
+    """Recreate every table from `snap` in `target_db`.
+
+    `settings` restores into an arbitrary server (another host); without it the
+    target is the configured local server, optionally reached as root.
+    """
+    if settings is not None:
+        cfg = dict(settings)
+    elif as_root:
         ensure_database(target_db, as_root=True)
         cfg = _root_settings(target_db)
     else:
@@ -322,7 +352,9 @@ def restore_snapshot(snap: dict, target_db: str, drop_tables: bool = True, as_ro
                 col_sql = ", ".join(f"`{c}`" for c in cols)
                 sql = f"INSERT INTO `{table}` ({col_sql}) VALUES ({placeholders})"
                 payload = [tuple(_bind(v) for v in row) for row in rows]
-                cur.executemany(sql, payload)
+                # Chunked so a large docs table stays under max_allowed_packet.
+                for start in range(0, len(payload), INSERT_CHUNK):
+                    cur.executemany(sql, payload[start : start + INSERT_CHUNK])
             restored[table] = len(rows)
         cur.execute("SET FOREIGN_KEY_CHECKS=1")
         return restored

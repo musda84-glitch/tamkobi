@@ -70,7 +70,7 @@ export function groupMenuItems(items) {
 }
 
 /** Platform paneli: Web, Paketler, Kurallar — vitrin paketleri gibi klasörler.
- * `SYSTEM_NAV`'de olmayan path'ler sessizce atlanır (canlıdaki Posta / AI gibi ekler).
+ * Bölümlerin kendisi systemSections.jsx'te; burada yalnızca sıra ve etiketler var.
  */
 export const SYSTEM_NAV_GROUPS = [
   { id: "overview", label: null, paths: ["/sistem"] },
@@ -79,8 +79,25 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/kullanicilar"] },
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar"] },
   { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/ai", "/sistem/araclar"] },
-  { id: "kurallar", label: "Kurallar", paths: ["/sistem/ayarlar"] },
+  { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
 ];
+
+/** Platform bölümlerini yukarıdaki klasörlere dağıtır.
+ * Hiçbir gruba yazılmamış bir bölüm menüden düşmez, sonda "Diğer"de görünür:
+ * bölüm eklerken grubu unutmak bağlantıyı kaybetmeye yetmesin.
+ */
+export function groupSystemSections(sections) {
+  const byPath = new Map((sections || []).map((s) => [s.path, s]));
+  const placed = new Set();
+  const groups = SYSTEM_NAV_GROUPS.map((g) => {
+    const items = g.paths.map((p) => byPath.get(p)).filter(Boolean);
+    items.forEach((s) => placed.add(s.path));
+    return { id: g.id, label: g.label, items };
+  });
+  const rest = (sections || []).filter((s) => !placed.has(s.path));
+  if (rest.length) groups.push({ id: "diger", label: "Diğer", items: rest });
+  return groups.filter((g) => g.items.length);
+}
 
 /** Firma Ayarları sekmeleri — aynı paket klasörleri. */
 export const SETTINGS_TAB_GROUPS = [
