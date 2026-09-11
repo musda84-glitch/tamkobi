@@ -452,6 +452,10 @@ async def send_document(settings: dict, password: str, invoice: dict, contact: O
 
 
 UBL_ROOTS = ("Invoice", "DespatchAdvice")
+# Arşiv sınırları: bir e-fatura ZIP'i tek bir UBL taşır, kalanı imza ve ek olur.
+MAX_ZIP_ENTRIES = 32
+MAX_ZIP_MEMBER_BYTES = 4 * 1024 * 1024
+MAX_ZIP_TOTAL_BYTES = 16 * 1024 * 1024
 _ROOT_RE = re.compile(rb"<\s*(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)[\s/>]")
 
 
@@ -460,6 +464,30 @@ def _root_name(data: bytes) -> str:
     head = re.sub(rb"<\?.*?\?>|<!--.*?-->|<!\[CDATA\[.*?\]\]>|<!DOCTYPE[^>]*>", b" ", data[:4096], flags=re.S)
     m = _ROOT_RE.search(head)
     return m.group(2).decode("ascii", "ignore") if m else ""
+
+
+def _zip_xml_members(z: zipfile.ZipFile):
+    """Arşivdeki XML girdilerini sınırlı boyutta okur.
+
+    Girdiler tek tek ve üst sınırla okunuyor: başlıktaki boyut yalan
+    söyleyebildiği için sıkıştırma oranı yüksek bir arşiv, tek bir istekle
+    paylaşılan API işçisinin belleğini tüketebilir. Girdi sayısı, tek girdinin
+    açılmış boyutu ve toplam açılan bayt ayrı ayrı sınırlı.
+    """
+    total = 0
+    for info in z.infolist()[:MAX_ZIP_ENTRIES]:
+        if info.is_dir() or not info.filename.lower().endswith(".xml"):
+            continue
+        if info.file_size > MAX_ZIP_MEMBER_BYTES:
+            continue
+        with z.open(info) as fh:
+            member = fh.read(MAX_ZIP_MEMBER_BYTES + 1)
+        if len(member) > MAX_ZIP_MEMBER_BYTES:
+            continue
+        total += len(member)
+        if total > MAX_ZIP_TOTAL_BYTES:
+            return
+        yield member
 
 
 def _as_xml(data: Optional[bytes]) -> Optional[bytes]:
@@ -474,8 +502,7 @@ def _as_xml(data: Optional[bytes]) -> Optional[bytes]:
     if data[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
-                names = [n for n in z.namelist() if n.lower().endswith(".xml")]
-                data = next((d for d in (z.read(n) for n in names) if _root_name(d) in UBL_ROOTS), None)
+                data = next((d for d in _zip_xml_members(z) if _root_name(d) in UBL_ROOTS), None)
                 if data is None:
                     return None
         except (zipfile.BadZipFile, KeyError, RuntimeError, ValueError):

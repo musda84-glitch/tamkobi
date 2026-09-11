@@ -10,6 +10,7 @@ import base64
 import io
 import os
 import sys
+import tracemalloc
 import zipfile
 
 import pytest
@@ -192,6 +193,42 @@ class TestDecodePayload:
         out = n11faturam._decode_xml(_b64(buf.getvalue()))
         assert out is not None and b"Anadolu Tedarik" in out
 
+    def test_yuksek_oranli_arsiv_bellegi_tuketmiyor(self):
+        # Sıkıştırma bombası: 64 MB sıfır tek bir XML girdisine sığıyor. Sınır
+        # yoksa açılmış hali paylaşılan API işçisinin belleğine yazılırdı, o
+        # yüzden sonucun doğruluğu değil tepe bellek kullanımı ölçülüyor.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("bomba.xml", b"\0" * (64 * 1024 * 1024))
+            z.writestr("fatura.xml", UBL)
+        blob = buf.getvalue()
+        tracemalloc.start()
+        try:
+            out = n11faturam._as_xml(blob)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert out is not None and b"Anadolu Tedarik" in out
+        assert peak < 3 * n11faturam.MAX_ZIP_MEMBER_BYTES
+
+    def test_cok_sayida_girdi_sinirda_kesiliyor(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i in range(n11faturam.MAX_ZIP_ENTRIES + 20):
+                z.writestr(f"dolgu{i}.xml", b"<Signature/>")
+            z.writestr("fatura.xml", UBL)
+        assert n11faturam._decode_xml(_b64(buf.getvalue())) is None
+
+    def test_toplam_acilan_bayt_sinirli(self):
+        # Tek tek sınırın altında kalan girdiler toplamda sınırı aşıyor.
+        member = b"<Signature>" + b"x" * (3 * 1024 * 1024) + b"</Signature>"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i in range(8):
+                z.writestr(f"ek{i}.xml", member)
+            z.writestr("fatura.xml", UBL)
+        assert n11faturam._decode_xml(_b64(buf.getvalue())) is None
+
     def test_plain_xml_passthrough(self):
         assert n11faturam._decode_xml(UBL.decode()) is not None
 
@@ -276,6 +313,16 @@ class TestParseUbl:
             edocs.parse_ubl(b"<Invoice><ID>1</ID>")
 
 
+def _no_number(line_name: str) -> bytes:
+    """Numarası ve ETTN'si olmayan, yalnızca tedarikçi VKN'si ve tarihi olan bir UBL."""
+    return (
+        '<Invoice><IssueDate>2026-09-05</IssueDate>'
+        '<AccountingSupplierParty><Party><PartyName><Name>Ayni Tedarik Ltd.</Name></PartyName>'
+        '<PartyIdentification><ID schemeID="VKN">1234567801</ID></PartyIdentification></Party></AccountingSupplierParty>'
+        f'<InvoiceLine><Item><Name>{line_name}</Name></Item></InvoiceLine></Invoice>'
+    ).encode("utf-8")
+
+
 class TestIngest:
     def test_stores_details_and_raw_xml(self, db):
         doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, source="n11faturam"))
@@ -310,6 +357,17 @@ class TestIngest:
         doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, meta={"party_name": "Yanlış", "payable": "1"}))
         assert doc["supplier"]["name"] == "Anadolu Tedarik A.Ş." and doc["grand_total"] == 1080.0
 
+    def test_numarasiz_belgeler_birbirinin_kopyasi_sayilmaz(self, db):
+        # Numara ve ETTN yoksa geriye VKN ile tarih kalıyor; ikisi de aynı olan iki
+        # ayrı fatura eskiden tek anahtara düşüyor, ikincisi hiç kaydedilmiyordu.
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is not None
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Toplantı Masası"))) is not None
+        assert len(db.incoming_edocs.docs) == 2
+
+    def test_ayni_numarasiz_belge_yine_tekrarlanmaz(self, db):
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is not None
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is None
+
 
 class TestRepair:
     def _blank(self, db, n=3):
@@ -335,3 +393,45 @@ class TestRepair:
         assert r["fixed"] == 1
         assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Anadolu Tedarik A.Ş."
         assert db.incoming_edocs.docs[0]["grand_total"] == 1080.0
+
+    def test_ham_xml_baska_sirkete_verilmez(self, db):
+        # Ham UBL tedarikçi VKN'si, adresi ve kalem fiyatlarını taşıyor; belge
+        # kimliği tahmin edilerek başka şirketin faturası okunabilmemeli.
+        doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
+        assert asyncio.run(edocs.get_edoc_xml(doc["id"], company_id="comp1"))["xml"].startswith("<?xml")
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(edocs.get_edoc_xml(doc["id"], company_id="comp2"))
+        assert e.value.status_code == 404
+
+    def test_reparse_okunmus_belgeye_dokunmaz(self, db):
+        # Yeniden okuma taze çözümlemeyi olduğu gibi yazıyordu; elle eşlenen satır
+        # ve elle bağlanan cari, kullanıcı düğmeye bastığı anda siliniyordu.
+        asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
+        doc = db.incoming_edocs.docs[0]
+        doc["lines"][0].update({"product_id": "prd1", "product_name": "Sandalye", "auto_matched": False})
+        doc.update({"contact_id": "cnt1", "contact_name": "Elle Bağlanan Cari", "matched_lines": 1})
+        r = asyncio.run(edocs.reparse_inbox("comp1"))
+        assert r["fixed"] == 0
+        assert db.incoming_edocs.docs[0]["lines"][0]["product_id"] == "prd1"
+        assert db.incoming_edocs.docs[0]["contact_id"] == "cnt1"
+
+    def test_saklanan_liste_bilgisi_ham_xml_tasimaz(self, db):
+        # Liste satırı faturanın ham XML'ini de taşıyor. Satır olduğu gibi
+        # saklanırsa gelen kutusu yanıtı bu yükü geri gönderir; ham belgeyi ayrı
+        # koleksiyonda tutmanın anlamı kalmaz.
+        doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, source="n11faturam", meta={
+            "party_name": "Liste Tedarik Ltd.", "payable": "1250,00", "xml": UBL, "return_value": "b64…"}))
+        saved = db.incoming_edocs.docs[0]["source_meta"]
+        assert set(saved) == {"party_name", "payable"}
+        assert "source_meta" not in doc
+
+    def test_reparse_n11_listesinden_gelen_bilgiyi_silmez(self, db):
+        # UBL'de tedarikçi ve tutar hiç yok; bunlar liste yanıtından gelmişti.
+        bare = b'<Invoice><ID>NO-PARTY-2</ID><InvoiceLine><Item><Name>Hizmet</Name></Item></InvoiceLine></Invoice>'
+        asyncio.run(edocs.ingest_ubl_bytes("comp1", bare, source="n11faturam", meta={
+            "party_name": "Liste Tedarik Ltd.", "sender_tax_id": "5555555555", "payable": "1250,00"}))
+        doc = db.incoming_edocs.docs[0]
+        doc.update({"supplier": {"name": "", "tax_id": ""}, "lines": [], "grand_total": 0})
+        assert asyncio.run(edocs.reparse_inbox("comp1"))["fixed"] == 1
+        assert db.incoming_edocs.docs[0]["supplier"]["name"] == "Liste Tedarik Ltd."
+        assert db.incoming_edocs.docs[0]["grand_total"] == 1250.0
