@@ -10,6 +10,7 @@ import { HeaderFxRates } from "./HeaderFxRates";
 import { isPublicPath } from "../utils/publicPath";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
+import { BuildStamp } from "./BuildStamp";
 import AppSidebarNav from "./AppSidebarNav";
 import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
@@ -114,22 +115,25 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           <AppSidebarNav items={menuItems} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
         </nav>
 
-        <div className="p-3 border-t border-slate-800 bg-slate-950/40 flex items-center justify-between">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center font-bold text-xs text-white">
-              {user?.name?.charAt(0) || "U"}
+        <div className="p-3 border-t border-slate-800 bg-slate-950/40 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center font-bold text-xs text-white">
+                {user?.name?.charAt(0) || "U"}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
+                <p className="text-[10px] text-emerald-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
-              <p className="text-[10px] text-emerald-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <DataExportIconButton />
+              <button onClick={logout} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition" title="Çıkış Yap" data-testid="logout-btn">
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-0.5 shrink-0">
-            <DataExportIconButton />
-            <button onClick={logout} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition" title="Çıkış Yap" data-testid="logout-btn">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          <BuildStamp tone="dark" />
         </div>
       </aside>
 
