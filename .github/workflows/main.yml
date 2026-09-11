@@ -22,7 +22,10 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 30m
-          script_stop: true
+          # script_stop kullanılmıyor: eylem, betiğin her satırından sonra bir çıkış
+          # kodu kontrolü enjekte ediyor ve bu, çok satırlı if/else ile for bloklarını
+          # bozuyor (appleboy/ssh-action#139, #335). Hata durumunda durmayı betiğin
+          # kendi "set -eu" satırı sağlıyor; eylemin önerdiği yol da bu.
           envs: DEPLOY_PATH
           script: |
             set -eu
@@ -37,7 +40,9 @@ jobs:
               echo "HATA: sunucuda docker compose bulunamadı." >&2
               exit 1
             fi
+            SUDO=""
             if ! docker info >/dev/null 2>&1; then
+              SUDO="sudo"
               DC="sudo $DC"
             fi
 
@@ -77,7 +82,8 @@ jobs:
             fi
 
             $DC ps
-            docker image prune -f >/dev/null 2>&1 || true
+            # Derleme artığı imajlar birikmesin; daemon sudo istiyorsa prune da istiyor.
+            $SUDO docker image prune -f >/dev/null 2>&1 || true
             echo "Dağıtım tamam."
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
