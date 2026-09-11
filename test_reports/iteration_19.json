@@ -1,0 +1,45 @@
+{
+  "summary": "Frontend-only testing (iteration 19). (1) B2B portal /portal/57b063b0e3fb4e7e893b8429c3f8b654 at 390x844: zero horizontal overflow (documentElement.scrollWidth == clientWidth == 390) on all 4 tabs (Ürünler, Siparişlerim, Hesap Ekstresi, Taksitlerim) including with the mobile cart bar visible; header stacked correctly (firma + cari 'Trend Mağazacılık ve Perakende A.Ş.' + b2b-balance '73.095,48 ₺ alacak'); b2b-tabs is a real 4-col grid (86px x4); b2b-categories horizontally scrollable (scrollWidth 487 > 390, overflow-x auto); product grid 2 cols (178px x2); add→qty inc/dec→mobile cart bar (2.164,86 ₺) → cart sheet with correct KDV-dahil total (1804.05*1.20 = 2164.86) → note editable → close works; full order submission worked (B2B-2026-0016, success banner, cart cleared, auto switch to Siparişlerim) and was cleaned up via DELETE /api/orders. Mobile card lists render for orders/statement while tables stay hidden; at 1280 both tables become visible; at 1920 sticky b2b-cart visible and mobile bar hidden. (2) CameraScanner verified at all 4 integration points (StockCountPanel /stock?tab=count, /stock scanner-modal, ProductEditForm barcode field small camera btn, /invoices item camera btn 'Barkodla Ekle (kamera)'): scanner opens full-screen, <video> renders inside camera-scanner-view (Chromium fake device), NO camera-scanner-error within 3.5s, close returns to a working screen, manual stock-count scan of 8680001234011 still works (0 sayıldı → 1 sayıldı; reverted in Mongo). With getUserMedia stubbed to NotAllowedError the scanner shows camera-scanner-error 'Kamera izni verilmedi…' and app does not crash. Mobile quick-barcode-scan-btn is visible in the top bar and navigates to /stock?scan=true with scanner-modal auto-opened. No 'Failed to parse source map' warnings in console (craco ignoreWarnings works).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/public/b2b/{token}/orders (order_number generation)", "issue": "Duplicate order_number: the newly created B2B order got 'B2B-2026-0016' which already existed (order d2438f60… dated 2026-09-04, 5.412,15 ₺). Two distinct orders share the same number, so the B2B 'Siparişlerim' list shows two 'B2B-2026-0016' rows and data-testid b2b-order-B2B-2026-0016 is ambiguous. Numbering must be unique (atomic counter / max+1 on existing numbers).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/public/b2b/{token}", "issue": "2 invoices (IRS-2026-0006, IRS-2026-0008 — e-irsaliye docs) are returned with payment_status literally 'n/a', so the statement renders the raw text 'n/a'. Frontend fallback `payment_status || 'unpaid'` only covers empty/null. Either stop emitting 'n/a' from the API or map/normalize it on the frontend."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "StatementList (B2BPortalParts)", "issue": "Status badge shows raw 'n/a' for IRS-2026-0006 / IRS-2026-0008 (requirement says it must never show 'n/a'; should be 'Ödenmedi'). statusTr has no 'n/a' key and the || fallback does not trigger for a non-empty string.", "selector": "[data-testid='b2b-invoice-IRS-2026-0006']", "priority": "MEDIUM"},
+      {"component": "B2BPortalPage / CartBody", "issue": "CartBody is rendered twice (hidden desktop b2b-cart + mobile sheet), so data-testid b2b-note, b2b-cart-total and b2b-submit-order each exist twice in the DOM below lg. Strict Playwright fills on [data-testid='b2b-note'] resolve to the hidden desktop copy and time out. Suggest suffixing mobile ids (e.g. b2b-note-mobile) or not mounting the desktop cart on small screens.", "selector": "[data-testid='b2b-note']", "priority": "MEDIUM"},
+      {"component": "B2BPortalPage", "issue": "Order-success banner uses data-testid 'b2b-order-done', which collides with the b2b-order-* prefix used for order cards (prefix selectors count it as an order). Rename to b2b-order-success.", "selector": "[data-testid='b2b-order-done']", "priority": "LOW"},
+      {"component": "StockBarcodePage (StockToolbar selects)", "issue": "React dev warning in console: 'In HTML, <span> cannot be a child of <option>. This will cause a hydration error.' Triggered by <option>{c.name}{` (${c.count})`}</option> style multi-child options being instrumented. Build the label into a single template string to silence it.", "selector": "[data-testid='stock-filter-*']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/invoices → Yeni Fatura", "issues": ["Düzenleme/Vade Tarihi use native <input type=date> browser pickers instead of the shadcn calendar component (pre-existing, consistent across app)", "'Barkodla Ekle (kamera)' button floats directly over the top edge of the items table header row (-mt-1) on desktop; slight visual overlap with the KDV/İSKONTO header labels"]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix duplicate B2B order_number generation (unique/atomic sequence) — currently two orders share B2B-2026-0016",
+    "Normalize invoice payment_status 'n/a' → 'Ödenmedi' (backend value or statusTr/fallback in StatementList)",
+    "De-duplicate CartBody data-testids (b2b-note / b2b-cart-total / b2b-submit-order appear twice on mobile viewports)",
+    "Rename b2b-order-done testid to avoid prefix collision with b2b-order-<no>",
+    "Silence React <option><span> DOM-nesting warning on /stock by using single-string option labels"
+  ],
+  "critical_code_review_comments": [
+    "B2BPortalPage renders CartBody for both desktop (hidden lg:block) and mobile sheet → duplicated data-testids; scope ids per surface.",
+    "StatementList/OrdersList rely on statusTr(v) which passes unknown values through verbatim; add a safe default so API sentinel values like 'n/a' never surface to users.",
+    "CameraScanner error mapping and cleanup (stop/clear on unmount) are solid; permission-denied, no-device, non-HTTPS branches all covered.",
+    "Stock-count manual scan of a barcode absent from the session silently appends a new item with expected=0 (11 → 12 kalem, 1 fark). Verify this is intended for non-preloaded sessions."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "95%"},
+  "seed_data_creation": "Created B2B order B2B-2026-0016 (43a2769e-44c6-4eb3-882b-29b3de64a83e) via the portal and deleted it via DELETE /api/orders/{id} (200). Reverted the stock-count scan by removing the NX-BT-PRO item added to stock_count created_at 2026-09-05T01:06:54.263667+00:00. Cleared localStorage b2b_cart_<token>.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "/app/memory/test_credentials.md (admin@nexus.com / admin123); B2B portal needs no login, token 57b063b0e3fb4e7e893b8429c3f8b654",
+  "context_for_next_testing_agent": "Playwright note: the automation Chromium already runs with a fake video device, so CameraScanner opens successfully and renders <video> without any stubbing. add_init_script must be passed a plain script BODY (not '() => {...}', which is never invoked) — use `Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value: async()=>{throw NotAllowedError}})` to test the permission-denied path. On mobile B2B viewports scope selectors to [data-testid='b2b-mobile-cart-sheet'] because CartBody testids are duplicated. B2B mobile layout/overflow, all 4 camera entry points, and the sourcemap-warning regression all PASS; remaining open items are the duplicate order_number, 'n/a' statement status, and duplicate testids.",
+  "rca_of_the_issue": "'n/a': GET /api/public/b2b/{token} returns payment_status='n/a' for e-irsaliye documents; the UI fallback `i.payment_status || 'unpaid'` does not catch a non-empty sentinel and utils/labels.tr() returns unknown values verbatim. Duplicate order number: the B2B order-creation path derives the next sequence from a count/length rather than the max existing number, so a previously deleted/skewed sequence reproduces an existing number (B2B-2026-0016 now exists twice in the orders collection)."
+}

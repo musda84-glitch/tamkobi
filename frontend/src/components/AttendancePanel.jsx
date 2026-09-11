@@ -1,0 +1,52 @@
+
+import React, { useEffect, useState, useCallback } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning } from "lucide-react";
+import { API_URL } from "../context/AuthContext";
+import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
+import { ShiftPlanner } from "./ShiftPlanner";
+
+export const AttendancePanel = ({ companyId }) => {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [schedEmp, setSchedEmp] = useState(null);
+  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
+  useEffect(() => { load(); }, [load]);
+  const act = async (employee_id, body) => { try { const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id, ...body }); if (r.data.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
+  if (!data) return null;
+  return (
+    <div className="space-y-4 text-xs" data-testid="attendance-panel">
+      <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-600" /> Puantaj — Giriş / Çıkış & Mesai</h3><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-slate-50 border rounded-lg p-1.5" data-testid="attendance-month-input" /></div>
+      <WorkScheduleSettings companyId={companyId} onSaved={load} />
+      <ShiftPlanner companyId={companyId} onChanged={load} />
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Mesai</th><th className="px-4 py-2">Bugün</th><th className="px-4 py-2 text-right">Gün</th><th className="px-4 py-2 text-right">Devamsız</th><th className="px-4 py-2 text-right">İzin</th><th className="px-4 py-2 text-right">Saat</th><th className="px-4 py-2 text-right">F. Mesai</th><th className="px-4 py-2 text-right">Mesai ₺</th><th className="px-4 py-2 text-right">Geç</th><th className="px-4 py-2 text-right">Onaysız</th><th className="px-4 py-2"></th></tr></thead>
+        <tbody className="divide-y divide-slate-100">{data.summary.map((s) => (
+          <tr key={s.employee_id} data-testid={`att-row-${s.employee_id}`}>
+            <td className="px-4 py-2 font-semibold text-slate-900">{s.employee_name}</td>
+            <td className="px-4 py-2"><button onClick={() => setSchedEmp(s)} className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-md border hover:bg-slate-50 ${s.has_override ? "border-indigo-300 text-indigo-700 bg-indigo-50" : "text-slate-500"}`} title="Personele özel mesai saatleri" data-testid={`att-sched-${s.employee_id}`}><Timer className="w-3 h-3" /> {s.schedule.start}–{s.schedule.end}{s.has_override ? " ★" : ""}</button></td>
+            <td className="px-4 py-2 font-mono text-slate-600">{s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}${s.today.status !== "present" ? ` (${s.today.status === "absent" ? "Devamsız" : "İzinli"})` : ""}` : "—"}{s.today?.late_minutes ? <span className="ml-1 text-[9px] font-bold text-rose-600">{s.today.late_minutes} dk geç</span> : null}</td>
+            <td className="px-4 py-2 text-right font-bold text-emerald-700">{s.days_present}</td><td className="px-4 py-2 text-right text-rose-600">{s.days_absent}</td><td className="px-4 py-2 text-right text-amber-600">{s.days_leave}</td>
+            <td className="px-4 py-2 text-right font-bold">{s.total_hours}</td><td className="px-4 py-2 text-right font-bold text-indigo-700">{s.overtime_hours}</td>
+            <td className="px-4 py-2 text-right font-bold text-emerald-700" title={`${s.overtime_method === "fixed" ? "Sabit" : "Yasal"} · saatlik ${s.overtime_rate} ₺`} data-testid={`att-otpay-${s.employee_id}`}>{(s.overtime_pay || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</td>
+            <td className={`px-4 py-2 text-right font-semibold ${s.late_count ? "text-rose-600" : "text-slate-400"}`} title={`${s.late_minutes} dk`}>{s.late_count}</td>
+            <td className={`px-4 py-2 text-right font-semibold ${s.unconfirmed ? "text-amber-600" : "text-slate-400"}`}>{s.unconfirmed}</td>
+            <td className="px-4 py-2"><div className="flex justify-end gap-1">
+              <button onClick={() => act(s.employee_id, { action: "check_in" })} className="flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-semibold hover:bg-emerald-100" data-testid={`att-in-${s.employee_id}`}><LogIn className="w-3 h-3" /> Giriş</button>
+              <button onClick={() => act(s.employee_id, { action: "check_out" })} className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 rounded-lg font-semibold hover:bg-slate-200" data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
+              <button onClick={() => act(s.employee_id, { status: "absent" })} className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-700 rounded-lg font-semibold hover:bg-rose-100" data-testid={`att-absent-${s.employee_id}`}><CalendarX2 className="w-3 h-3" /> Devamsız</button>
+            </div></td>
+          </tr>))}</tbody></table></div></div>
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="px-4 py-2.5 border-b font-bold text-slate-900 flex items-center justify-between"><span>Günlük Kayıtlar ({data.records.length})</span><span className="text-[10px] text-slate-400 font-normal">Personel kendi kaydını Personel Giriş Çıkış Kayıtları ekranından onaylar veya itiraz eder</span></div><div className="max-h-72 overflow-y-auto divide-y divide-slate-100">{data.records.map((r) => (
+        <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`}>
+          <span><b>{r.employee_name}</b> <span className="text-slate-400 font-mono">{r.date}</span></span>
+          <span className="font-mono">{r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"} • ${r.hours || 0} sa` : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
+          {r.overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil)" : ""}</span>}
+          {r.late_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}
+          {r.early_leave_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{r.early_leave_minutes} dk erken</span>}
+          <span className="ml-auto flex items-center gap-2 text-[10px]">{r.source === "self" && <span className="text-slate-400">telefon/self</span>}{r.dispute_note ? <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3 h-3" /> İtiraz: {r.dispute_note}</span> : r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Personel onayladı</span> : <span className="text-amber-600 font-semibold">Onay bekliyor</span>}</span>
+        </div>))}{data.records.length === 0 && <div className="p-6 text-center text-slate-400">Bu ay kayıt yok.</div>}</div></div>
+      {schedEmp && <EmployeeScheduleModal employee={schedEmp} companySchedule={data.schedule} onClose={() => setSchedEmp(null)} onSaved={load} />}
+    </div>
+  );
+};

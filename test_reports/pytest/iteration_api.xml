@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="9" time="2.816" timestamp="2026-09-03T20:10:06.684357+00:00" hostname="agent-env-3039e7a6-2a7f-49f6-9f74-ba3c1bc0bad6"><testcase classname="tests.test_requested_flows" name="test_auth_and_dashboard" time="0.751" /><testcase classname="tests.test_requested_flows" name="test_read_all_seeded_modules" time="0.705" /><testcase classname="tests.test_requested_flows" name="test_contact_create_and_statement" time="0.164" /><testcase classname="tests.test_requested_flows" name="test_invoice_gib_and_preview_data" time="0.072" /><testcase classname="tests.test_requested_flows" name="test_banking_virman_persists_balances" time="0.073"><failure message="ValueError: not enough values to unpack (expected 2, got 1)">backend/tests/test_requested_flows.py:79: in test_banking_virman_persists_balances
+    source, target = list(accounts)[:2]
+    ^^^^^^^^^^^^^^
+E   ValueError: not enough values to unpack (expected 2, got 1)</failure></testcase><testcase classname="tests.test_requested_flows" name="test_barcode_and_stock_adjustment" time="0.077"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">backend/tests/test_requested_flows.py:96: in test_barcode_and_stock_adjustment
+    assert adjusted.status_code == 200
+E   assert 404 == 200
+E    +  where 404 = &lt;Response [404]&gt;.status_code</failure></testcase><testcase classname="tests.test_requested_flows" name="test_ecommerce_connection_and_sync" time="0.084"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">backend/tests/test_requested_flows.py:104: in test_ecommerce_connection_and_sync
+    assert tested.status_code == 200
+E   assert 404 == 200
+E    +  where 404 = &lt;Response [404]&gt;.status_code</failure></testcase><testcase classname="tests.test_requested_flows" name="test_cargo_shipment_and_order_conversion" time="0.148"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">backend/tests/test_requested_flows.py:120: in test_cargo_shipment_and_order_conversion
+    assert converted.status_code == 200
+E   assert 404 == 200
+E    +  where 404 = &lt;Response [404]&gt;.status_code</failure></testcase><testcase classname="tests.test_requested_flows" name="test_warehouse_production_payroll_and_ai" time="0.159"><failure message="assert 422 == 200&#10; +  where 422 = &lt;Response [422]&gt;.status_code">backend/tests/test_requested_flows.py:128: in test_warehouse_production_payroll_and_ai
+    assert transfer.status_code == 200
+E   assert 422 == 200
+E    +  where 422 = &lt;Response [422]&gt;.status_code</failure></testcase></testsuite></testsuites>

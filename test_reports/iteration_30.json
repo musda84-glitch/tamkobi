@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 30 — Migration AI mapping + BizimHesap connector + 69-channel e-commerce catalog + ShopPHP XML integration + Marketplace products (shopphp read-only) + Stock label quick-print. Backend pytest 11/11 PASSED at /app/backend/tests/test_iteration30.py. Frontend Playwright all 13 UI checks PASSED. Details below.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration30.py", "/app/test_reports/pytest/iter30.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "POST /api/integrations/ecommerce/add-channel returns id nested inside body.channel.id (not top-level). This is inconsistent with delete which takes id directly in the path — worth documenting for future API clients.",
+    "The `groups` array items in GET /api/integrations/ecommerce/catalog use field name `code` (not `id` or `channel`) for the channel identifier while the individual channel row API uses `channel`. Field-name inconsistency across endpoints.",
+    "Order dedupe uses both `order_number` and `external_id` — but response uses `order_number` only; older callers relying on `order_no`/`external_order_id` would miss it. Not a bug now, but standardize field names."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration30.py", "/app/test_reports/iteration_30.json", "/app/test_reports/pytest/iter30.xml"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (13/13)"},
+  "test_credentials": "admin@nexus.com / admin123 · company_id=comp_nexus_main_01",
+  "seed_data_creation": "Test created & removed a Pazarama e-commerce channel (once via API in test, once via UI click; UI-added one was cleaned up via API). Uploaded a temporary xlsx (/tmp/mig_ui.xlsx) and hit /api/migration/parse + /api/migration/ai-map (no import performed). BizimHesap /test called exactly once (returned 200 with real data). ShopPHP sync-now called once (idempotent upsert of the 2 real orders). No production/real data mutated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Add-channel response envelope: {status:'success', channel:{id,channel,channel_name,...}} — id is NESTED under `channel`. Catalog channel field name is `code` (not id). Orders use `order_number` as primary id, external_id for marketplace id. Pazarama channel is safe to add/delete during tests; ShopPHP and Trendyol must never be deleted (have orders). BizimHesap /products call is rate-limited; only call test once per run. ShopPHP marketplace_products push_supported=false and mp-send-btn is hidden. For UI: config-btn-{channel} testid opens settings modal (avoid `button:has-text(\"Ayarlar\")` — matches 8 buttons).",
+  "rca of the issue": "N/A — all tests pass. Three initial test failures were test-side field-name mismatches (id vs code vs channel; order_no vs order_number); fixed inside test code, no backend changes needed."
+}

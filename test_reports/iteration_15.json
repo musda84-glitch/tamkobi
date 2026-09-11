@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 15 full-stack test: expense budgets (PUT/GET /api/expense-budgets + create_expense warning), GET /api/dashboard/overview, loans module (real Claude AI PDF extract, create, installment pay with cash/bank + auto finance expense, delete), credit-card account type + AI statement import, and Excel/PDF export buttons. Backend: 20/20 pytest tests passed. Frontend: dashboard OverviewPanel, /expenses budget panel + export, /loans full AI→save→pay→delete flow, /banking credit-card + statement modal, export buttons on invoices/contacts/orders/stock/dispatches, /personnel geo card regression — all passed. All test data cleaned; bank_01 restored to 249812.5.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/banking/accounts/{id}", "issue": "Endpoint mevcut değil (405/404). Kredi kartı / test hesapları UI veya API ile silinemiyor; temizlik yalnızca Mongo ile yapılabildi."},
+      {"endpoint": "POST /api/banking/accounts/{id}/import-statement", "issue": "Kredi kartı ekstresi olmayan bir PDF (tedarikçi faturası) verildiğinde 200 + boş transactions[] ve tüm statement alanları null dönüyor; 500 yok ancak kullanıcıya 'ekstre okunamadı / uygun belge değil' anlamında geri bildirim üretilmiyor (dry-run sonucu boş tabloya düşüyor)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BankingPage - bank account card", "issue": "Kart <button> içinde 'Ekstre Aktar (AI)' butonu var → React 'button cannot be a descendant of button' hydration/DOM nesting hatası konsola düşüyor (tıklama çalışıyor)", "selector": "[data-testid^=\"bank-card-\"] [data-testid^=\"card-stmt-btn-\"]", "priority": "LOW"},
+      {"component": "OrdersB2BPage", "issue": "<table> içinde doğrudan <th> (thead/tr yok) → 'th cannot be a child of table' React DOM nesting hatası", "selector": "[data-testid=\"orders-b2b-page\"] table", "priority": "LOW"},
+      {"component": "Select option içinde <span>", "issue": "'span cannot be a child of option' konsol hatası (/expenses ve diğer sayfalarda select option içinde span/badge kullanımı)", "selector": "select option > span", "priority": "LOW"},
+      {"component": "CardStatementImport", "issue": "AI 0 hareket döndürdüğünde boş tablo + tüm alanlar '-' görünüyor; 'Hareket bulunamadı, geçerli bir kart ekstresi yükleyin' gibi bilgilendirme yok", "selector": "[data-testid=\"card-statement-modal\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/personnel - Bordro & Maaş Ödeme Geçmişi", "issues": ["Dönem etiketleri '2099-01 Dönemi' olarak görünüyor (tarih/dönem üretimi hatalı görünüyor) — bu iterasyon kapsamı dışı ama kullanıcıya yanlış veri gösteriyor"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration15.py", "/app/backend/tests/cleanup_iteration15.py", "/app/test_reports/pytest/it15_results.xml"],
+  "action_items": [
+    "İsteğe bağlı: DELETE /api/banking/accounts/{id} endpoint'i ekleyin (kredi kartı/test hesapları UI'dan silinemiyor).",
+    "CardStatementImport: AI 0 hareket döndürdüğünde anlamlı boş-durum mesajı gösterin (backend 200 + boş liste dönüyor).",
+    "React DOM nesting hatalarını düzeltin: BankingPage kart <button> içinde iç buton, OrdersB2BPage <table> içinde doğrudan <th>, select <option> içinde <span>.",
+    "Kapsam dışı gözlem: /personnel bordro geçmişinde dönem '2099-01' görünüyor."
+  ],
+  "critical_code_review_comments": [
+    "finance.py pay_installment: taksit ödemesi kısmi/geri alma (unpay) desteği yok — yanlış ödenen taksit yalnızca krediyi silerek düzeltilebilir; bakiye ve otomatik masraf kaydı geri alınamıyor (loan silinince bank_transactions/expenses kayıtları da orphan kalıyor).",
+    "finance.py delete_loan: kredi silindiğinde ilgili bank_transactions (Kredi Taksiti/Kredi Kullanımı) ve 'Kredi Faizi / Finansman' masraf kayıtları silinmiyor/geri alınmıyor → kasa-banka bakiyesi ve masraf raporları tutarsız kalır (testte manuel Mongo temizliği gerekti).",
+    "server.py 4249 satır — 700 satır sınırının çok üzerinde; modüllere bölünmeli.",
+    "expenses.create_expense içindeki bütçe hesabı ile get_budgets içindeki aynı 'aylık harcama toplamı' mantığı iki yerde tekrarlanıyor (DRY)."
+  ],
+  "updated_files": ["/app/frontend/src/pages/BankingPage.jsx (hesap türü select'ine data-testid=\"account-type-select\" eklendi)", "/app/backend/tests/test_iteration15.py", "/app/backend/tests/cleanup_iteration15.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (tüm istenen akışlar geçti)"},
+  "seed_data_creation": "Geçici: 'Yakıt' bütçesi 1000, masraf 'IT15 yakıt'/'IT15 UI yakıt' 850₺, kredi 'IT15 Kredi'/'Garanti BBVA Ticari Kredi' (6 taksit), 'IT15 Kart' kredi kartı hesabı. Hepsi silindi; bank_01 = 249812.5 doğrulandı.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (login sayfasında submit butonu type=submit değil; testte 'Giriş Yap' metniyle tıklandı)",
+  "context_for_next_testing_agent": "Backend testler: /app/backend/tests/test_iteration15.py (AI çağrıları gerçek, extract ~5s). Temizlik: python /app/backend/tests/cleanup_iteration15.py (loan_id'li bank_transactions/expenses siler, bank_01 -> 249812.5). AI ödeme planı çıkarımı: Garanti BBVA, 120000 anapara, 6 taksit x 23330, faiz 4200 + KKDF 630 = 4830. Toplam borç UI'da 137.273,00 ₺ (AI yuvarlaması, tolerans içinde). Login butonu type=submit DEĞİL, get_by_text('Giriş Yap') kullanın. Aktif şirket UI'da 'MATEK DEKORASYON' görünse de hesaplar comp_nexus_main_01 verisiyle aynı (bank_01 = Garanti Ticari TL Vadesiz).",
+  "rca_of_the_issue": "Fonksiyonel kritik hata bulunamadı. import-statement'ın boş sonuç dönmesi beklenen davranış (yüklenen PDF kart ekstresi değil, tedarikçi faturası); backend 500 yerine 200 + boş transactions döndürüyor, eksik olan yalnızca UI boş-durum mesajı. Konsol hataları React 19 DOM nesting doğrulamalarından kaynaklanıyor (iç içe button, table>th, option>span) ve işlevi engellemiyor."
+}

@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 17 full test: attendance self-service (/mesai), company + per-employee work schedules, auto overtime/late/early-leave calculation, confirm/dispute flow, RBAC skip paths, and banking retest (bank_match immutability, auto-match account filter, connection testids, BankMatchRow options). Backend: 22/22 pytest assertions passed (/app/backend/tests/test_iteration17.py). Frontend: /mesai and /personnel Puantaj tab and /banking connections all verified via Playwright with geolocation grant; no console errors anywhere.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PersonnelPage", "issue": "?tab=attendance query param is ignored — tab state is useState('payroll') with no URL sync, so the dispute notification link '/personnel?tab=attendance' (attendance.py dispute_attendance) lands on the payroll tab. Manager must click Puantaj manually.", "selector": "[data-testid=\"personnel-tab-attendance\"]", "priority": "MEDIUM"},
+      {"component": "MyAttendancePage", "issue": "After a personnel dispute, the row only shows 'İtiraz edildi' and the 'Onayla' button disappears, so the employee cannot later confirm/withdraw the objection (record stays unconfirmed forever from the employee side). Backend /confirm still works, so this is only a UI gating decision.", "selector": "my-att-confirm-<id>", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Personel → Puantaj → Firma Mesai Saatleri", "issues": ["ws-start/ws-end use native <input type=time> which renders in 12-hour AM/PM format (08:45 AM / 05:45 PM) in the test browser locale while the rest of the Turkish UI shows 24-hour times (e.g. table badge '08:45-17:45') — inconsistent; consider step/format hint or a 24h-forced control."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17.py",
+    "/app/backend/tests/cleanup_iteration17.py",
+    "/app/backend/tests/it17_helper.py",
+    "/app/test_reports/pytest/it17.xml"
+  ],
+  "action_items": [
+    "Sync PersonnelPage tab with URL query (?tab=attendance) so the 'Puantaj itirazı' notification deep link opens the Puantaj tab.",
+    "Decide whether an employee can confirm a record after disputing it (currently Onayla button is hidden after dispute in /mesai)."
+  ],
+  "critical_code_review_comments": [
+    "DRY: haversine + geo check-in/out logic is duplicated — server.py `_haversine_m` and `/api/personnel/attendance/geo` duplicate attendance.py `haversine_m` and `/api/personnel/attendance/self` (~40 duplicated lines incl. duplicate/late/early validation). Keep only the attendance.py self endpoint and let the legacy /geo route delegate to it.",
+    "File size: /app/backend/server.py is 4362 lines (>700 limit). Attendance/banking blocks should move to modules like attendance.py did.",
+    "attendance.py apply_day stores schedule_snapshot but existing records are never recalculated when the company schedule changes; confirm this is intended (UI toast says 'Yeni giriş/çıkışlar bu saatlere göre hesaplanır', so it appears intended).",
+    "put_work_schedule ignores unknown/extra keys silently and always resets missing keys to DEFAULT_SCHEDULE (a PUT with only {start,end} wipes previously customised break/tolerances). Consider merging with current company schedule instead of DEFAULT_SCHEDULE."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17.py",
+    "/app/backend/tests/cleanup_iteration17.py",
+    "/app/backend/tests/it17_helper.py",
+    "/app/test_reports/iteration_17.json"
+  ],
+  "success_rate": {"backend": "100% (22/22 tests)", "frontend": "~95% (all requested flows working; 1 deep-link + 1 minor UX gap)"},
+  "seed_data_creation": "Temporary only, all cleaned: attendance rows for emp_01/emp_02 on 2026-09-01..06 + today's self record; usr_admin_01.employee_id linked to emp_01 (backend) then emp_02 (UI) and unlinked; emp override work_schedule set/cleared; one TEST_it17_bankmatch bank_transaction (source=bank_match); one simulated Kuveyt Türk bank connection + 6 bank_sync transactions (deleted, bank_01 balance reverted 249812.50); dispute notifications deleted. Pre-existing 2026-09-05 attendance record was backed up and restored. Company location left untouched (41.104005, 28.812963, 300 m — note: NOT Kadıköy as the request assumed).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (usr_admin_01); no-token requests fall back to demo admin",
+  "context_for_next_testing_agent": "Verified backend: GET/PUT /api/companies/{id}/work-schedule (incl. 400 for end<=start and invalid time), POST /api/personnel/attendance manager entry (09:25→20:10 = 9.75h, OT 2.17, late 15; weekend 10:00→14:00 = off_day, 3h all OT; 09:00→17:30 early_leave 30; 09:00→18:10 OT 0 within tolerance; absent→present on check_in), GET /api/personnel/attendance summary fields (overtime_hours/late_count/late_minutes/unconfirmed/schedule/has_override, no _id leakage), per-employee override 08:00-17:00 → 08:00→18:00 gives OT 1.0 and has_override true, GET /personnel/attendance/me, POST /personnel/attendance/self (400 'Konum gerekli' w/o coords, 400 'uzaktasınız' for Ankara coords, 200 with company coords → source self, employee_confirmed true, geo_check_in set, duplicate check_in 400, check_out message with worked hours), /{id}/dispute (dispute_note + 'Puantaj itirazı' notification) and /{id}/confirm, 403 for disputing another employee's record, RBAC skip paths never 403, DELETE/PUT of source=bank_match tx → 400, POST /banking/transactions/auto-match?account_id=... → 200. Verified UI: /mesai no-employee warning, today card with schedule/work-days/location, check-in/check-out with granted geolocation (toast + my-att-today-in/out), confirm → 'Onaylandı', dispute → 'İtiraz edildi', month picker; /personnel Puantaj tab work-schedule form save+revert, F. Mesai/Geç/Onaysız columns, att-sched-emp_02 modal save (★) and clear, daily record labels ('Onay bekliyor'/'Personel onayladı'/'İtiraz:'), sidebar 'Mesaim' (Puantaj badge); /banking connections bank-conn-card-<connId> + auto-match-toggle-<connId>, 6 unmatched match rows, select options are plain strings (no 'cannot be a child of <option>' console error). Env fully restored via /app/backend/tests/cleanup_iteration17.py — re-run it if you re-execute test_iteration17.py. Note self check-in uses Europe/Istanbul date (today_date), so today's date may be UTC+1 day.",
+  "rca_of_the_issue": "PersonnelPage.jsx line 29 uses `const [tab, setTab] = useState('payroll')` with no useSearchParams/location sync, so any deep link with ?tab=... (including the dispute notification link written in attendance.py dispute_attendance) always renders the payroll tab."
+}

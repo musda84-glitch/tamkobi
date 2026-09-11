@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="33" time="13.885" timestamp="2026-09-04T08:45:35.874296+00:00" hostname="agent-env-3039e7a6-2a7f-49f6-9f74-ba3c1bc0bad6"><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_create_integration" time="0.159" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_list_users" time="0.134" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_invite_flow" time="0.792" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_get_integrations_masked" time="0.126" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_connection_test_returns_400_not_500" time="0.700" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_invite_existing_email_rejected" time="0.137" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_update_integration" time="0.095" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_permission_enforcement" time="0.177" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_geliver_shipment_live_error" time="0.437" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_deactivate_blocks_login" time="0.543" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_simulated_shipment" time="0.227" /><testcase classname="tests.test_iteration13.TestGeliverCargo" name="test_delete_integration" time="0.210" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_activity_logs" time="0.124" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_cleanup_users_and_invite" time="0.408" /><testcase classname="tests.test_iteration13.TestPersonnelCard" name="test_employee_card" time="0.186" /><testcase classname="tests.test_iteration13.TestPersonnelCard" name="test_card_404" time="0.110" /><testcase classname="tests.test_iteration13.TestPersonnelCard" name="test_document_upload_and_delete" time="1.281" /><testcase classname="tests.test_iteration13.TestUsersInvites" name="test_main_admin_cannot_be_deleted" time="0.423" /><testcase classname="tests.test_iteration13.TestRoles" name="test_list_roles" time="0.078" /><testcase classname="tests.test_iteration13.TestRoles" name="test_create_update_delete_role" time="0.466" /><testcase classname="tests.test_iteration13.TestRoles" name="test_admin_role_permissions_locked" time="0.121" /><testcase classname="tests.test_iteration13.TestRoles" name="test_system_role_delete_blocked" time="0.115" /><testcase classname="tests.test_iteration13_auth.TestAuthPlaybook" name="test_bcrypt_hash_format" time="0.009" /><testcase classname="tests.test_iteration13_auth.TestAuthPlaybook" name="test_login_sets_httponly_cookie_and_cors" time="0.618" /><testcase classname="tests.test_iteration13.TestPersonnelCard" name="test_create_user_for_employee" time="4.014"><failure message="AssertionError: employee already has a system user but a 2nd one was created (200)&#10;assert 200 == 400&#10; +  where 200 = &lt;Response [200]&gt;.status_code">self = &lt;test_iteration13.TestPersonnelCard object at 0xf8dce9fa2e90&gt;
+
+    def test_create_user_for_employee(self):
+        emp_id = TestPersonnelCard.state["emp_id"]
+        card = requests.get(f"{API}/personnel/employees/{emp_id}/card", timeout=30).json()
+        if card.get("user"):
+            pytest.skip("employee already has a system user")
+        r = requests.post(f"{API}/personnel/employees/{emp_id}/create-user",
+                          json={"email": "it13_emp@nexus.com", "role": "production", "password": "test1234"}, timeout=30)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["mode"] == "password"
+        user_id = d["user_id"]
+        TestPersonnelCard.state["user_id"] = user_id
+    
+        card = requests.get(f"{API}/personnel/employees/{emp_id}/card", timeout=30).json()
+        assert card["user"] and card["user"]["email"] == "it13_emp@nexus.com"
+        assert card["user"]["role"] == "production"
+    
+        # same e-mail again -&gt; 400
+        r = requests.post(f"{API}/personnel/employees/{emp_id}/create-user",
+                          json={"email": "it13_emp@nexus.com", "role": "production", "password": "test1234"}, timeout=30)
+        assert r.status_code == 400, f"duplicate e-mail should fail: {r.status_code} {r.text[:200]}"
+    
+        # KNOWN GAP (report-only): a *different* e-mail creates a 2nd user for the same employee
+        r2 = requests.post(f"{API}/personnel/employees/{emp_id}/create-user",
+                           json={"email": "it13_emp2@nexus.com", "role": "production", "password": "test1234"}, timeout=30)
+        if r2.status_code == 200:
+            requests.delete(f"{API}/users/{r2.json()['user_id']}", timeout=30)
+&gt;       assert r2.status_code == 400, f"employee already has a system user but a 2nd one was created ({r2.status_code})"
+E       AssertionError: employee already has a system user but a 2nd one was created (200)
+E       assert 200 == 400
+E        +  where 200 = &lt;Response [200]&gt;.status_code
+
+tests/test_iteration13.py:278: AssertionError</failure></testcase><testcase classname="tests.test_iteration13_auth.TestAuthPlaybook" name="test_me_requires_session_or_falls_back" time="1.179" /><testcase classname="tests.test_iteration13_auth.TestAuthPlaybook" name="test_brute_force_lockout" time="2.237" /><testcase classname="tests.test_iteration13.TestAuth" name="test_login_admin" time="0.307" /><testcase classname="tests.test_iteration13.TestPersonnelCard" name="test_cleanup_employee_user" time="0.297" /><testcase classname="tests.test_iteration13.TestAiPdfImport" name="test_extract" time="4.993" /><testcase classname="tests.test_iteration13.TestAuth" name="test_auth_me" time="0.039" /><testcase classname="tests.test_iteration13.TestAiPdfImport" name="test_extract_wrong_type" time="0.148" /><testcase classname="tests.test_iteration13.TestAiPdfImport" name="test_confirm" time="0.253" /></testsuite></testsuites>

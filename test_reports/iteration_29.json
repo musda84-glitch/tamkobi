@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 29 – Barkod Etiket Tasarımcısı (LabelDesigner) end-to-end verified. Backend pytest 8/8 PASSED at /app/backend/tests/test_iteration29_labels.py: POST /api/label-templates with QA payload → 200 id present, name/width/height/is_default correct, elements[0].type=barcode preserved; GET lists newly created id; PUT {is_default:true} → response is_default=true AND all other templates un-defaulted (exactly 1 default = new one); PUT {name:'QA Etiket 2'} → response + GET both show new name; DELETE → 200; second DELETE → 404. Cleanup restored 'Etiket 100×50' as sole default and removed all QA/(kopya) templates. Frontend Playwright verified: login admin@nexus.com/admin123 → /stock renders all 3 tabs (stock-tab-products/count/labels — regression OK). Tab 'Etiket Tasarımı' click → label-designer visible. label-tpl-select lists '★ Etiket 100×50 (100×50)'; selecting it renders label-canvas with exactly 4 label-el-* elements. label-new-50x30 → label-name becomes 'Etiket 50×30' with fresh canvas. label-add-qr increased element count from 4→6 (added 2 default elements per new template + qr). label-props panel visible. label-add-field + click 'Metin Alanı · Ürün Adı' layer → label-prop-field select visible; label-prop-font set to 14 and label-prop-bold checked (both persisted). label-name → 'QA UI Şablon' + label-save → toast 'Şablon kaydedildi.' and 'QA UI Şablon (50×30)' appears in label-tpl-select. label-copy → label-name becomes 'QA UI Şablon (kopya)' and label-save enabled (dirty). label-preview-product select populated with 300 products. label-print-open → label-print-modal opens with label-product-search input, 59 label-qty-* inputs; setting first product qty=3 → label-job-count='3 etiket'; label-page-mode='a4' → label-page-cols visible; label-preview-strip renders 3 mini labels. label-print-close closes modal (label-print-btn intentionally NOT clicked). Cleanup: reselected QA UI Şablon in select → label-delete + accepted confirm dialog → template removed; final label-tpl-select contains ONLY '★ Etiket 100×50 (100×50)'. Backend GET after cleanup confirms only 'Etiket 100×50' with is_default=true remains.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration29_labels.py", "/app/test_reports/pytest/iter29.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py POST /api/label-templates (line 3717-3725) does no company_id / auth validation — any client can create templates under any company_id. Consistent with existing endpoints but worth noting for future multi-tenant hardening.",
+    "server.py PUT /api/label-templates/{id} does not verify company_id in the payload matches the template's company_id — if allowed keys were expanded this could enable cross-tenant escalation. Currently safe because company_id is not in the allowed set.",
+    "LabelDesigner.jsx line 121 emits <option> whose child is dynamically wrapped in a <span> by the emergent instrumentation, producing a React dev-only hydration warning ('<span> cannot be a child of <option>'). Non-blocking; source code is clean and this warning is invisible in production builds.",
+    "PUT /api/label-templates handler silently ignores unknown keys (good) but also allows partial page/elements replacement without shape validation — a client could store malformed elements[] causing rendering crashes. Consider adding Pydantic model for label templates."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration29_labels.py", "/app/test_reports/iteration_29.json"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100%"},
+  "test_credentials": "admin@nexus.com / admin123, company_id=comp_nexus_main_01",
+  "seed_data_creation": "None persisted. All QA and (kopya) label templates deleted; 'Etiket 100×50' remains the sole is_default template as before.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "LabelDesigner CRUD + UI flow fully verified iter 29. Reusable pytest at /app/backend/tests/test_iteration29_labels.py — run with -o 'addopts=' to bypass -n loadscope from pytest.ini. When testing LabelDesigner UI, note that 'label-new-*' buttons create templates seeded with default elements (name + barcode + price + sku ≈ 4 elements) NOT empty, so 'label-add-qr' bumps count by 2 (own + a default), not 1. label-preview-product change may not always alter label-canvas innerText if the currently selected template has no field-type text elements. Real 'Etiket 100×50' template is production seed data — must remain and remain default.",
+  "rca of the issue": "N/A – no bugs found."
+}

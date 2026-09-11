@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 16 full test: 35 pytest cases (all passed) covering integrated-bank-account guards (banking/tx, virman, expense pay, loan installment), bank connection create/sync (simulated), advanced matching (cash-box virman / contact+invoice / category-only), unmatch reversal, match rules with target_account_id, auto-match + connection auto_match flag, bank account delete retest, custom roles CRUD (template copy, rename, bulk permissions, delete, system-role protection) and company location endpoints. Frontend Playwright: /banking?tab=connections (Banka Bağla modal hides integrated accounts, auto-match toggle, unmatched row 4 modes, virman match, matched list + unmatch, rules panel), /banking accounts tab (ENTEGRE badge x2, virman modal excludes integrated accounts, EŞLEŞTİ/EŞLEŞME BEKLİYOR badges, credit-card statement modal empty state with no DOM-nesting errors), /settings roles tab (create with template, rename, perm-all-view/edit/none, delete), /settings company location (Leaflet 10 tiles loaded, marker + radius circle, map-click pending box cancel/save, address search Kadıköy restore) and export buttons on /invoices, /contacts, /orders, /expenses with real CSV download events. All test-created data (2 bank connections, 9 simulated bank_sync txs, 3 match rules, credit-card test account, test role/expense/loan) was removed and every account balance restored to its original value (bank_01 249812.50, bank_02 182407.50, bank_03 26200.99, bank_04 96250.00). Company location left at Kadıköy as requested.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/banking/transactions/{tx_id}", "issue": "_assert_editable_tx only blocks source 'bank_sync'/'partner'; the auto-created counter transaction (source='bank_match') is still manually deletable/editable, which would orphan the match and leave the bank tx unable to revert the cash balance on unmatch. Consider adding 'bank_match' to the blocked sources."},
+      {"endpoint": "POST /api/banking/transactions/auto-match", "issue": "Runs company-wide over ALL unmatched bank_sync txs of every connection (no connection/account filter), so a rule learned on one bank silently posts matches for other banks' transactions. Consider an optional account_id/connection_id filter."},
+      {"endpoint": "POST /api/banking/match-rules", "issue": "No dedupe/validation that pattern tokens are meaningful — a 1-word generic pattern (e.g. 'ödeme' stripped) or a very short pattern can auto-match unrelated transactions; also match rule hits are incremented twice per auto-match (once in _learn/_auto_match_by_rules loop and once explicitly)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BankMatchRow", "issue": "React DOM-nesting/hydration console error: 'In HTML <span> cannot be a child of <option>' — caused by mixed text + JS expression children inside <option> (e.g. `<option value=\"\">Cari seçin{mode === 'contact' ? ' (boş = sadece onayla)' : ''}</option>` and `{c.name}{tx.suggested_contact_id === c.id ? ' ★' : ''}`). Compute the label into a single string before rendering to clear the warning.", "selector": "[data-testid^=\"match-contact-select-\"] option", "priority": "LOW"},
+      {"component": "BankConnectionsPanel", "issue": "data-testid values are keyed by provider (auto-match-toggle-<provider>, sync-conn-btn-<provider>, delete-conn-btn-<provider>). With two connections from the same provider the testids duplicate; key them by connection id instead.", "selector": "[data-testid^=\"auto-match-toggle-\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/expenses", "issues": ["Excel/PDF export buttons are correctly rendered but permanently disabled while the (empty) list has no rows — expected, but there is no tooltip/hint explaining why they are greyed out."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration16.py",
+    "/app/backend/tests/cleanup_iteration16.py",
+    "/app/test_reports/pytest/it16.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (LOW): build the <option> labels in BankMatchRow (and any other <option> with mixed text+expression children) as a single string to remove the React DOM-nesting/hydration console warning.",
+    "OPTIONAL (LOW): key BankConnectionsPanel per-connection testids by connection id instead of provider to avoid duplicates when two connections share a provider.",
+    "OPTIONAL: block source='bank_match' counter transactions in _assert_editable_tx so they cannot be deleted/edited independently of the matched bank transaction.",
+    "OPTIONAL: allow filtering /api/banking/transactions/auto-match by connection/account so learned rules don't fire across other banks."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 4366 lines — banking/matching, reports and company/geo endpoints should be split into routers (banking.py, reports.py) as done for expenses/finance/rbac.",
+    "_apply_match/_unmatch mutate account, contact and invoice documents in several independent awaits without a transaction; a mid-flow failure (e.g. contact not found after invoice update) leaves partial financial effects. Validate all referenced documents first, then apply mutations.",
+    "list_bank_accounts issues one bank_connections query per company (fine) but returns conn['_id'] as connection_id while every other payload is cleaned via clean_docs — keep the id naming consistent ('id')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration16.py",
+    "/app/backend/tests/cleanup_iteration16.py"
+  ],
+  "success_rate": {"backend": "100% (35/35 pytest cases)", "frontend": "100% of tested flows passed (2 low-priority console/testid nits)"},
+  "seed_data_creation": "Temporary only, all removed: bank connections on bank_01 (Garanti) and bank_02 (İş Bankası) with 9 simulated bank_sync txs, 3 match rules, TEST_Silinecek Kasa + TEST_Kredi Kartı accounts, TEST_guard masraf, TEST_Guard Kredi, TEST_Saha Satış / TEST_UI Saha Satış roles. All bank/cash balances verified back to original values and match rules/connections deleted.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (UI does not require login in preview; backend falls back to demo admin)",
+  "context_for_next_testing_agent": "Run the iteration-16 suite serially: `cd /app/backend && python -m pytest tests/test_iteration16.py -n 0` (classes share module-level state; pytest.ini forces -n 2 which breaks it). ALWAYS run `python tests/cleanup_iteration16.py clean` afterwards — the suite creates bank connections + simulated bank_sync transactions that alter account/contact/invoice balances, and bank_sync txs cannot be deleted through the API (cleanup script uses Mongo directly and reverts balances). API field notes: bank account type field is `type` (not account_type) and POST /api/banking/accounts requires bank_name+account_name; expenses list returns {expenses, summary}; loans list returns {loans, summary}; there is no GET /api/contacts/{id} or /api/invoices/{id} (use list endpoints). Company location was restored to Kadıköy (40.991295, 29.024563, radius 300 m); the pre-test value was 41.104005, 28.812963.",
+  "rca_of_the_issue": "No functional defects found this round. The only console noise is the React 19 DOM-nesting warning triggered by dynamic expressions rendered as separate children inside <option> elements (the preview instrumentation wraps each expression in a <span>), which is cosmetic/dev-only but pollutes the console on every page that renders BankMatchRow or similar selects."
+}

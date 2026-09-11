@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 39 e2e testing of impersonation (Şirket Olarak Gir), auto e-Archive subscription invoice, and PayTR iFrame provider. Backend pytest: 15/15 PASS (100%) covering (a) impersonation gating (401 no token, 403 sales, 400 unknown company) and full flow: super-admin cookie → POST /system/companies/comp_nexus_b2b_02/impersonate → 200 with message + company_name, Set-Cookie access_token + sa_return; new cookie /auth/me → admin@nexus.com with impersonation.by='musda84@gmail.com'; POST /auth/impersonate/exit → {redirect:'/sistem/sirketler'} then /auth/me back to musda84 with impersonation null. (b) PayTR: /payments/providers → {stripe:true, paytr:false} when disabled; /payments/paytr/session → 400 'PayTR aktif değil'; GET /system/paytr enabled=false; PUT /system/paytr with merchant_id/key/salt persists (has_key/has_salt true); callback with wrong hash → 400 'invalid PayTR hash'; callback with correct HMAC-SHA256 hash but unknown merchant_oid → 404. Cleanup disable applied. (c) Auto-invoice: /api/invoices?company_id=comp_nexus_main_01&type=sales contains source='subscription' items with ABN2026xxxxxx, e_type=e_archive, payment_status=paid; /system/payments has paid row with invoice_number starting ABN2026; /payments/status/{session_id} returns invoice_number. Frontend: super-admin /sistem/giris → /sistem, /sistem/sirketler shows company-impersonate-comp_nexus_b2b_02 button; confirm→'/' shows impersonation-banner 'Destek modu: Nexus Global Toptan ve B2B Dağıtım Ltd. Şti. şirketine Mustafa BAL tarafından girildi'; impersonation-exit returns to /sistem/sirketler with system-layout re-listed. /sistem/ayarlar renders paytr-settings with all 6 fields (paytr-enabled, paytr-merchant-id, paytr-merchant-key, paytr-merchant-salt, paytr-test-mode, paytr-save); saving + reload shows '(kayıtlı)' labels for key+salt. /sistem/odemeler shows 3 pay-row-* rows with Stripe badges and pay-invoice-ABN2026000001 visible. ERP admin@nexus.com /settings?tab=plan renders 3 plan-pay-* Stripe buttons and 0 plan-paytr-* buttons (PayTR disabled — correct visibility gate).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/system/payments", "issue": "Legacy paid rows created before this iteration lack an explicit 'provider' field on payment_transactions; frontend PaymentsPanel already falls back to 'Stripe' display, but the JSON returned to super-admin has provider=undefined for those rows. New Stripe/PayTR payments store provider correctly. Consider a one-time migration $set:{provider:'stripe'} where provider is missing."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration39.py",
+    "/app/test_reports/pytest/iteration39.xml"
+  ],
+  "action_items": [
+    "(optional) Backfill 'provider' field on existing payment_transactions so /api/system/payments consistently returns provider for every row."
+  ],
+  "critical_code_review_comments": [
+    "saas_extras.impersonate stores active_company_id on the target user; after tests, admin@nexus.com's active_company_id is now comp_nexus_b2b_02 (Standart) instead of comp_nexus_main_01 (Kurumsal). This is a side effect visible in ERP UI when re-logging in as admin. If desired, reset active_company_id on impersonate_exit or restrict the mutation to a session-scoped field so the real user's default company isn't rewritten.",
+    "saas_extras.paytr_session builds the PayTR token but any failure of httpx.post to paytr.com is masked as 502; during automated tests with dummy creds we correctly don't hit it (gated by 'PayTR aktif değil' 400). Good.",
+    "paytr_callback uses hmac.compare_digest against a base64 HMAC and returns 'OK' (PlainTextResponse) on success — matches PayTR contract.",
+    "issue_subscription_invoice: seq counter increments per platform_cid+source=subscription; if the platform company changes, invoice_number sequence resets — worth documenting. Currently ABN2026000001 is on comp_nexus_main_01 (also serving as the platform sender).",
+    "saas_extras.paytr_conf: decrypts on every call; low volume so acceptable, but consider caching in-memory."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration39.py"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "test_credentials": "musda84@gmail.com / Nexus2026! (süper admin), admin@nexus.com / admin123, satis@nexus.com / satis123",
+  "seed_data_creation": "No new persistent test data. Left PayTR settings with has_key/has_salt=true (merchant_id=123456, testkey/testsalt) but enabled=false so /payments/providers.paytr remains false as required. admin@nexus.com's active_company_id was flipped to comp_nexus_b2b_02 by the impersonation flow (documented above).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PayTR settings persist encrypted in platform_settings.paytr; to fully disable including creds you must set enabled=false (already done). Impersonation writes active_company_id on target user; the admin@nexus.com currently defaults to comp_nexus_b2b_02 after this run — this affects any subsequent test that assumes admin lands on Nexus main company. Backend Stripe checkout completion via Playwright not exercised (per spec, requires real card interaction). Regression: comp_nexus_main_01 lisansı unchanged; comp_nexus_b2b_02 currently Standart/aktif due to prior iteration Stripe test payment (expected per spec).",
+  "rca of the issue": "N/A — no bugs found."
+}

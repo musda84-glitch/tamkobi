@@ -1,0 +1,43 @@
+{
+  "summary": "Full-stack smoke and workflow testing completed. All 11 frontend routes render and dashboard/chart/official invoice preview work, but seeded-record action flows are blocked because list APIs omit record IDs.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/banking/accounts -> POST /api/banking/virman", "issue": "Seeded account list omits _id/id; UI cannot submit source_account_id/target_account_id and virman flow cannot start.", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/products -> POST /api/products/quick-stock-adjust", "issue": "Seeded product list omits _id/id; barcode result cannot identify product for stock adjustment (404).", "priority": "HIGH"},
+      {"endpoint": "GET /api/integrations/ecommerce -> POST /api/integrations/ecommerce/{id}/sync-now", "issue": "Seeded integration list omits _id/id; Test Connection and Sync Orders actions receive an invalid ID (404).", "priority": "HIGH"},
+      {"endpoint": "GET /api/orders -> POST /api/orders/{id}/convert-to-invoice", "issue": "Seeded order list omits _id/id; invoice conversion from the orders UI fails (404).", "priority": "HIGH"},
+      {"endpoint": "POST /api/warehouses/transfer", "issue": "Frontend cannot reliably identify seeded product/warehouse records; tested transfer payload returned 422 after list IDs were absent.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "Invalid credentials return 400 rather than the conventional 401; brute-force lockout after five failures is not implemented."},
+      {"endpoint": "All list endpoints", "issue": "Responses project out Mongo _id without mapping it to an id field, violating the frontend contract and preventing seeded CRUD actions."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Invoice GİB send", "issue": "Invoice table renders, but clicking the visible send button shows 'GİB'e gönderim başarısız.' because the seeded invoice has no id/_id in the list response.", "affected_selectors": ["[data-testid^=send-gib-btn-]"]},
+      {"flow": "Seeded record actions", "issue": "Banking, stock, ecommerce, orders, and warehouse action buttons cannot pass identifiers returned by their list APIs.", "affected_selectors": ["[data-testid=submit-virman-btn]", "[data-testid=scanner-search-btn]", "[data-testid^=sync-btn-]", "[data-testid^=convert-inv-btn-]", "[data-testid=confirm-transfer-btn]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_requested_flows.py", "/app/test_reports/pytest/iteration_api.xml"],
+  "action_items": [
+    "Map Mongo _id to id (or return _id) in every seeded list response, while continuing to exclude raw ObjectId values; verify all frontend action IDs.",
+    "Retest virman, barcode stock adjustment, ecommerce test/sync, order conversion, warehouse transfer, and GİB send after the identity fix.",
+    "Add auth brute-force lockout and return 401 for invalid login credentials.",
+    "Use explicit configured CORS origins instead of wildcard credentials in production configuration."
+  ],
+  "critical_code_review_comments": [
+    "get_current_user falls back to demo admin whenever no token is supplied, so every protected endpoint is effectively unauthenticated.",
+    "The backend hardcodes fallback MONGO_URL, DB_NAME, JWT secret, and CORS wildcard despite the environment-only configuration requirement.",
+    "GİB, marketplace sync, cargo, and cashflow behavior are generated simulations in code; these should be labeled MOCKED in product behavior or replaced with real integrations before claiming live connectivity."
+  ],
+  "updated_files": ["/app/backend/tests/test_requested_flows.py", "/app/test_reports/iteration_1.json"],
+  "success_rate": {"backend": "44% (4/9 tests)", "frontend": "92% route/preview checks; critical action integration failed"},
+  "seed_data_creation": "Created one TEST contact, one TEST invoice, one virman movement, one stock adjustment, one simulated ecommerce order/invoice, one cargo shipment, one warehouse transfer attempt, and 2099-01 payroll records during API tests.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "All routes rendered successfully. Focus retest on list-response IDs and all seeded-record action buttons; remove or isolate test-generated records if a clean demo database is required.",
+  "rca of the issue": "Seed data stores identifiers in Mongo _id, but list endpoints use projection {'_id': 0} and return documents without translating _id to id. Frontend consistently computes action IDs as row.id || row._id, yielding undefined for seeded rows. Actions then call endpoints with undefined/invalid path or body IDs, producing 404/422. Create endpoints return Pydantic models with id, which is why newly created records behave differently from seeded records."
+}

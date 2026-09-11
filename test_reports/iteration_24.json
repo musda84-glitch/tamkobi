@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 24 backend + frontend PASS. Backend pytest 14/14 (test_iteration24.py): TrendyolLive → POST /api/integrations/ecommerce/ecom_trendyol/test-connection returns {status:'success', live:true, message contains 'doğrulandı'}; POST /sync-now?days=14 returns live:true with message 'Trendyol canlı senkron: N paket ...'; GET /api/orders finds real order 11571862893 with channel='trendyol', source='marketplace_sync', is_simulated missing, and expected fields (marketplace_status, cargo_carrier_name, cargo_tracking_number, shipment_package_id, items[0].barcode); 2nd sync is idempotent (inserted=0, updated≥1); days=45 succeeds via 14-day chunking. MarketplacePanels → GET /marketplace/claims and /questions return 200 lists (empty); /questions/{id}/answer with short text → 400, with non-existent id (10+ char) → 404; /claims/{id}/approve non-existent → 404. OrderDeletion → created 2 TEST_it24 orders (with required shipping_address/city/product_id/sku), DELETE /orders/{id} → 200 (verified gone), POST /orders/bulk-delete → deleted:1, invoiced order returns 400 on delete, mark-labels-printed sets label_printed_at ISO timestamp. Frontend (/orders, 1920×1080, admin@nexus.com): order-row-11571862893 renders with TRENDYOL channel badge, customer 'Mustafa Bal', İstanbul, 1× 'Duvar Rafı Çizgili C8 35x20cm DRC-35, 35 x 19' at 459,00 ₺, tracking 7330036871799757; order-select checkbox → orders-bulk-bar visible with bulk-thermal-btn, bulk-labels-btn, bulk-delete-btn all visible; bulk-thermal-btn opens new window titled 'Kargo Etiketleri (1)' with 1 .label element + CODE128 <svg> and @page 100mm 150mm in content; tab-claims → claims-panel, tab-cancelled → cancelled-panel, tab-questions → questions-panel all render without console errors. order-delete-11571862893 button present (real order not invoiced) — NOT clicked per instructions. /ecommerce Trendyol card 'Test Et' click updated Son Senkronizasyon timestamp (11:42→11:45) confirming live API call; 'Sipariş Çek' triggered live sync. No console errors. All TEST_it24 orders cleaned up (verified 0 remaining).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/ecommerce Trendyol card", "issues": ["Toast messages disappear too quickly (sonner default ~2s?) — success/live sync verification relies on 'Son Senkronizasyon' timestamp change. Consider longer toast duration for live sync results with metrics."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24.py",
+    "/app/test_reports/pytest/iteration_24.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "TrendyolClient.orders() correctly chunks date range into 14-day windows (Trendyol API limit) and de-duplicates by package id — good.",
+    "_upsert_marketplace_orders preserves invoice_id/is_invoiced/contact_id/internal_note/label_printed_at on re-sync — prevents accidental overwrite of local invoicing state. Good.",
+    "sync_ecommerce_channel: when calling client.claims()/questions() live, order sync of pkgs still happens even if claims/questions call throws — actually they are all awaited before any DB write; if questions call throws after orders fetched, orders won't be persisted. Consider try/except around claims/questions separately so partial results are saved.",
+    "test_ecommerce_connection issues client.orders(days=1) on every ping which consumes rate limit budget. Trendyol allows only 50 req/10s across all endpoints, so back-to-back UI Test Et + Sipariş Çek can hit 429. Consider a lighter probe (e.g., /suppliers/{id}/products?size=1) for connection test.",
+    "answer_marketplace_question returns 400 on 'WAITING_FOR_ANSWER' status mismatch AFTER 400 short-text check — but short-text uses len<10 which counts characters not bytes; Turkish chars are fine. Acceptable.",
+    "bulk_delete_orders calls delete_order() which raises HTTPException for invoiced orders and continue-swallows — this silently skips invoiced orders with no per-id failure reason returned to UI. Consider returning {deleted, skipped:[{id, reason}]} for better UX.",
+    "mark_labels_printed accepts any ids (no company_id scoping / no auth check) — potential cross-tenant risk if multi-tenant expands.",
+    "OrdersB2BPage.jsx line 348 — inline confirm+delete for individual orders is fine but toast on failure exposes raw backend detail; acceptable for admin CRM.",
+    "Frontend delete button uses window.confirm — brittle in automated tests but acceptable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration24.py",
+    "/app/test_reports/iteration_24.json",
+    "/app/test_reports/pytest/iteration_24.xml"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all requested flows)"},
+  "test_credentials": "admin@nexus.com / admin123",
+  "seed_data_creation": "Backend: 3 TEST_it24 orders created via POST /orders and all cleaned up via DELETE / bulk-delete + one direct Mongo cleanup for the intentionally-invoiced test order (delete_order rejects invoiced). Verified 0 TEST_it24_* orders remaining. Trendyol live data was READ-only; no writes to Trendyol API (no claim approvals, no question answers, no package status changes).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Trendyol live sync runs every 10 minutes; auto-sync loop uses days=3 window. Real order 11571862893 is currently in DB with is_invoiced=false (delete button visible in UI — do NOT click). Trendyol rate limit is 50 req/10s across all endpoints — batch sync calls sparingly. When creating test orders via POST /api/orders, required fields include shipping_address, city, and items[].product_id + items[].sku (Pydantic 422 otherwise). bulk-delete silently skips invoiced orders; frontend toast durations are short so use 'Son Senkronizasyon' timestamp on /ecommerce as a stronger UI signal for sync success.",
+  "rca_of_the_issue": "Original user report ('Trendyol siparişi düşmedi') RCA: prior implementation was fully simulated (marketplace_providers.simulated_orders returned static Ayşe Gökmen record with is_simulated=true and never called Trendyol). E1 fix: added real httpx-based TrendyolClient with proper HTTP Basic auth (api_key/api_secret), storefrontCode header, seller-namespaced paths, 14-day chunked orders/claims fetching, and questions filter endpoint. server.py test_ecommerce_connection now issues client.orders(days=1,size=1) live probe → returns 401/403/429 as HTTPException with Turkish detail. sync_ecommerce_channel maps packages via map_trendyol_order + upserts by (company_id, channel, order_number) preserving local invoice state. Live sync of the real seller (supplier 304401) successfully imports order 11571862893 with all Trendyol fields. Auto-sync loop wakes every 10 min. Frontend: bulk thermal 100×150 mm labels use CODE128 svg with @page CSS, tab panels for Claims/Cancelled/Questions render marketplace collections."
+}

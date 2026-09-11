@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 11 short regression of NexusHesap. BACKEND (new pytest suite /app/backend/tests/test_iteration11.py, 14/14 PASSED): POST /api/public/b2b/{token}/orders now returns 200 with order_number B2B-2026-00NN, channel=b2b, order_status=pending, no _id leak; the order appears in GET /api/orders and in the portal payload (iteration-10 500 is FIXED); empty cart -> 400. DELETE /api/orders/{id} deletes an uninvoiced order (verified gone from list), 404 for unknown id, 400 'Faturalanmış sipariş silinemez.' for an invoiced order. Cargo: POST /api/integrations/cargo {carrier_code:'geliver', api_key} -> status connected with masked key, the provider is now returned by GET /api/integrations/cargo (collection mismatch FIXED, both use db.cargo_configs), catalog installed=true, duplicate -> 400, unknown code -> 400, DELETE removes it and catalog flips back to false. convert-to-invoice: already-invoiced order returns {status:'info'} and creates NO duplicate invoice (invoice count unchanged); converting an uninvoiced B2B order with {e_type:'paper'} creates invoice with e_type=paper, contact resolved from order.contact_id/customer_name (contact exists and name matches, no hardcoded fallback), order flagged is_invoiced+invoice_id, second call -> 'info'. Units: GET /api/products/units returns 17 defaults with int counts (Adet count>0), POST 'Rulo' adds, PUT renames to 'Rulo2', DELETE removes it, empty name -> 400, DELETE used unit 'Adet' -> 400 and unit preserved. Categories: add/delete unused works, delete used category -> 400. FRONTEND (Playwright, preview URL): /settings?tab=units renders units-box (17 chips w/ counts) + categories-box; add via Ekle button, pencil rename via prompt, units-box-del-* delete of unused unit, used-unit delete shows 'Bu birimi kullanan ürünler var…' error toast and used-category delete shows 'Bu kategoride ürün var…' error toast — all correct, EXCEPT units-box-input/categories-box-input lose focus after every keystroke (only 'R' of 'Rulo' registered) so Enter-to-add is effectively broken for multi-character names. /stock: product-units-list datalist has 17 units + 7 categories, new-product-unit input bound to it, edit-unit-input in ProductEditForm also bound and editable. /orders: convert-inv-btn-<no> opens inv-type-chooser-<no> with e_invoice/e_archive/paper + inv-chooser-approve for pending orders; choosing 'Kağıt Fatura' created invoice NX202614187272 (verified e_type=paper in API) and the row switched to 'Faturalandı'. Bulk: selecting only invoiced orders -> info toast 'Seçili siparişlerin tümü zaten faturalanmış.'; bulk-approve on non-pending -> info toast 'Seçili siparişlerde onaylanacak (beklemede) sipariş yok.'. /portal/<token>: add product -> b2b-submit-order -> POST 200, b2b-order-done banner 'Siparişiniz alındı: B2B-2026-0013' and the order visible in Siparişlerim (2) — regression fixed. All test data removed (orders back to 11, invoices 22, units 17, no Rulo/TEST_ categories, no geliver config).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/public/b2b/{token}", "issue": "Portal 'Siparişlerim' filters by contact_id only, so the legacy seeded order B2B-2026-004 (same customer_name 'Trend Mağazacılık…', no contact_id) is invisible to the customer. Consider falling back to customer_name or backfilling contact_id."},
+      {"endpoint": "POST /api/orders/{id}/convert-to-invoice", "issue": "Response returns only {status,message,invoice_id} (no invoice object) while /quotes/{id}/convert-to-invoice returns the full invoice — inconsistent API shape. Also server.py:3292 sets 'e_type':'e_archive' and then re-sets 'e_type' at 3297 in the same dict literal (duplicate key, dead code)."},
+      {"endpoint": "POST /api/orders/{id}/convert-to-invoice", "issue": "Still hardcodes unit 'Adet', vat_rate 20 and payment_status='paid'/paid_amount=grand_total for every converted order; subtotal/vat computed by /1.20 regardless of item VAT."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SettingsPage / UnitsCategories", "issue": "HIGH: the inner `Box` component is declared inside UnitsCategories, so a new component type is created on every render; each keystroke re-renders the parent and React unmounts/remounts the subtree, so the text input loses focus after the first character (typing 'Rulo' leaves 'R'). Units/categories cannot be added by typing + Enter. Fix: move `Box` outside UnitsCategories (or memoize it) and keep local input state inside it.", "selector": "[data-testid=\"units-box-input\"], [data-testid=\"categories-box-input\"]", "priority": "HIGH"},
+      {"component": "OrdersB2BPage invoice-type chooser", "issue": "The chooser is positioned with `bottom-full` (opens upward); for the first table row the top option 'E-Fatura' is clipped/hidden by the table container so only E-Arşiv / Kağıt Fatura / Önce Onayla are visible. Flip direction when there is no room above.", "selector": "[data-testid^=\"inv-type-chooser-\"]", "priority": "MEDIUM"},
+      {"component": "ProductEditForm VAT selects", "issue": "React console error 'In HTML, <span> cannot be a child of <option>' when the product edit modal opens (option children wrapped by dynamic expression spans). Cosmetic/dev-only but pollutes the console.", "selector": "[data-testid=\"vat-details\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/settings?tab=units", "issues": ["Unit/category chips use only a tiny pencil/trash icon (12px) with grey-400 on white — low contrast and small hit area.", "No inline validation feedback for duplicate names (silent upsert)."]},
+      {"screen": "Top bar (pre-existing)", "issues": ["Active company label still reads 'MATEK DEKORASYON' while all requests use comp_nexus_main_01 (reported since iteration 6)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/backend/tests/cleanup_iteration11.py",
+    "/app/test_reports/pytest/pytest_it11.xml"
+  ],
+  "action_items": [
+    "HIGH: move the `Box` sub-component out of UnitsCategories in SettingsPage.jsx — the input currently loses focus after each keystroke, blocking unit/category creation by typing.",
+    "MEDIUM: make inv-type-chooser flip below the button when there is not enough space above (first row's 'E-Fatura' option is clipped).",
+    "LOW: remove the duplicate 'e_type' key in convert_order_to_invoice (server.py:3292 vs 3297) and return the created invoice object for API consistency; stop hardcoding unit/vat/payment_status.",
+    "LOW: portal order list should also match orders by customer_name (or backfill contact_id on seeded B2B orders); fix the <span> inside <option> React warning in ProductEditForm."
+  ],
+  "critical_code_review_comments": [
+    "SettingsPage.jsx:113 — component defined inside a component (classic React remount anti-pattern) causing the focus-loss bug; also duplicated add/rename/delete logic could stay in one stable memoized component.",
+    "server.py convert_order_to_invoice builds a dict literal with 'e_type' twice; static analysis/linters would flag this and the first value is silently dropped.",
+    "server.py is 3828 lines — units/categories, cargo, orders and reports should be split into routers; GET /products/units performs one count_documents per unit (N+1, 17 queries per call) — use a single aggregation.",
+    "OrdersB2BPage bulk() now correctly skips (o.is_invoiced || o.invoice_id) and shows info toasts — verified; keep this guard in sync with the backend."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11.py (new)",
+    "/app/backend/tests/cleanup_iteration11.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "~90% (all requested flows verified; units/categories text input focus bug is the only failure)"},
+  "seed_data_creation": "Temporary only, fully cleaned: B2B orders B2B-2026-0012 (converted to paper invoice NX202614187272, both deleted), B2B-2026-0013 (portal UI, deleted via DELETE /api/orders), units Rulo/Rulo2, category TEST_IT11_KAT, cargo integration geliver, and the b2b_order notifications. Final state: 11 orders, 22 invoices, 17 units, no test categories, no geliver config.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "/app/memory/test_credentials.md (admin@nexus.com / admin123) — backend endpoints tested are open (demo-admin fallback), no login needed.",
+  "context_for_next_testing_agent": "Backend regression suite for this iteration: /app/backend/tests/test_iteration11.py (14 tests, all green) + cleanup_iteration11.py which removes TEST_IT11 orders/invoices/units/categories/geliver. Baseline data: 11 orders, 22 invoices, 17 units, cnt_01 b2b_token=57b063b0e3fb4e7e893b8429c3f8b654 (enabled, 5% discount). Remaining known issue to verify after fix: SettingsPage units/categories input focus loss (type char-by-char with keyboard.type(delay) to reproduce; page.fill masks it).",
+  "rca_of_the_issue": "Units/categories input focus loss: `const Box = ({...}) => (...)` is declared in the body of UnitsCategories, so its function identity changes on every parent render. Because the input's value lives in the parent state (nu/nc), each keystroke re-renders UnitsCategories, React sees a different component type and unmounts/remounts the whole Box subtree, destroying the focused <input>. Repro: click units-box-input and type 'Rulo' with a delay -> only 'R' remains. Fix: hoist Box to module scope (props already passed in) or keep the draft value in Box's own state."
+}

@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration-5 verification of NexusHesap Phase-5. BACKEND: new pytest suite /app/backend/tests/test_iteration5.py (22 cases) => 21 passed / 1 failed (95%). Covered: ecommerce mappings GET/POST/DELETE (upsert returns same id on duplicate, missing sku -> 400, unknown product -> 404, unmapped list), POST /orders/{id}/approve (order_status 'Onaylandı' + cargo_carrier 'aras', 404), /create-dispatch (invoice_type dispatch, e_type e_dispatch, number IRS-2026-0001, 2nd call -> status 'exists' with same id), /return (return doc + refund_amount 1899, order_status 'İade Edildi', product stock +qty verified via GET /products/{id}, listed in GET /returns, 2nd return -> 400), attendance check_in/check_out (hours>=0, summary days_present/today, absent clears times, unknown employee 404), accountant summary 2026-09 (sales/purchases/vat calculated-deductible-payable consistency/cash/payroll/e_docs/invoices) and CSV export for kind=invoices & transactions (BOM + header row + text/csv), WhatsApp settings simulated->connected (token never returned, has_token true), webhook GET verify (403 on wrong token, plain '123' on match), webhook POST Meta payload (saved=1, inbound log), send (simulated + wa_link), send validation 400, settings reset to simulated, invoice draft PUT (e_type paper + item recalc 300/60/360 persisted, send-to-gib with e_type -> approved, PUT on non-draft -> 400, 404). FRONTEND smoke on public preview URL: /accountant (5 acc cards + KDV by-rate table + acc-export-invoices), /personnel puantaj (att-in/att-out fill today column 22:36 -> 22:36), /ecommerce product-mapping-panel (SKU + SearchSelect product + Eşleştir -> row created, toast 'Ürün eşleştirildi'), /orders (dispatch-btn opens print-document with İRSALİYE + IRS number; return-order-btn -> return-modal -> return-confirm-btn -> toast 'TY-98421049 için 1.899,00 ₺ iade kaydedildi ve stok geri alındı'), /contacts?contact_id=cnt_01 (detail-tab-whatsapp -> phone prefilled 0532 340 50 60, detail-wa-log-btn -> bubble added; detail-tab-invoices -> 4 detail-etype-* selects + 4 detail-gib-btn; detail-inv-edit-NX202600000010 -> invoice-edit-modal, e_type paper + qty 3 -> save -> 'Fatura güncellendi', modal closes, row/total and cari balance update), /settings?tab=whatsapp (whatsapp-settings + save-wa-btn -> 'Kaydedildi — anahtar girilmeden SİMÜLE', badge SİMÜLE). All test artefacts reverted by /app/backend/tests/cleanup_iteration5.py (cnt_01 balance back to -73.573,73, NX-BT-PRO stock 142).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/comm/whatsapp/webhook", "issue": "Inbound message is NOT matched to the local contact: contact lookup uses {\"phone\": {\"$regex\": phone[-7:]}} but seeded phones are stored formatted ('0532 340 50 60'), so the digits-only regex '3405060' never matches. Verified: wa_id 905323405060 -> log saved with contact_id=null (expected cnt_01). Fix: store/compare a normalized phone field (e.g. phone_normalized) or build a spacing-tolerant regex."},
+      {"endpoint": "POST /api/personnel/attendance", "issue": "'check_in' after a day was marked 'absent' is a silent no-op: status falls back to existing ('absent') and the branch at server.py:2148 wipes check_in/check_out/hours. Response: {status:'absent', check_in:null}. An explicit check_in/check_out action should force status='present'."},
+      {"endpoint": "PUT /api/comm/whatsapp/settings", "issue": "Clearing phone_number_id/verify_token keeps access_token_enc, so status flips to 'simulated' while has_token stays true and the UI still renders 'Erişim Token (kayıtlı)'. Same defect previously reported for /einvoice/settings."},
+      {"endpoint": "POST /api/orders/{id}/approve, /return", "issue": "Order status vocabulary is mixed: these endpoints write Turkish labels ('Onaylandı', 'İade Edildi', 'Kısmi İade') while seed/PUT /orders/{id}/status use english codes ('pending','approved','shipped'). Breaks the UI status <select> (see frontend issue) and any filtering."},
+      {"endpoint": "POST /api/orders/{id}/create-dispatch", "issue": "Dispatch is created with vat_total=0 and grand_total=order.total_amount while each item carries vat_rate 20, so the printed İRSALİYE shows KDV 0,00 with a %20 item line (inconsistent document)."},
+      {"endpoint": "GET /api/accountant/summary", "issue": "by_rate uses `i in sales` list-membership on dicts (O(n^2) and relies on dict equality) to decide sales vs purchase; use the invoice_type field directly. Also vat.by_rate ignores dispatch documents' 20% lines only implicitly."},
+      {"endpoint": "all endpoints (clean_doc)", "issue": "Mongo `_id` is still returned next to `id` (e.g. POST /personnel/attendance response), carried over from iterations 3-4."},
+      {"endpoint": "no DELETE /api/invoices/{id}", "issue": "There is no delete endpoint for invoices, so test/aborted drafts can only be removed directly in Mongo (cleanup had to use motor)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OrdersB2BPage status select", "issue": "The <select> options only contain pending/approved/preparing/shipped/completed, so orders whose status was set by the new approve/return endpoints ('Onaylandı', 'İade Edildi') render with no matching option — a returned order still displays 'Beklemede'. The user gets no visual confirmation of the return/approval in the status column.", "selector": "[data-testid^='order-status-select-']", "priority": "MEDIUM"},
+      {"component": "ContactDetailPanel invoice edit modal", "issue": "React DOM-nesting console error persists while rendering the KDV rate options: '<span> cannot be a child of <option>' (ContactDetailPanel.jsx:186).", "selector": "[data-testid='invoice-edit-modal'] select option", "priority": "LOW"},
+      {"component": "SettingsPage WhatsApp tab", "issue": "Badge shows SİMÜLE while the token field label still says 'Erişim Token (kayıtlı)' — contradictory state (backend keeps the token, see backend minor issue).", "selector": "[data-testid='whatsapp-settings']", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "WhatsApp inbound webhook -> contact detail WhatsApp tab", "issue": "Because the webhook cannot match formatted phone numbers, inbound Cloud API messages are saved with contact_id=null and therefore never appear in the contact's WhatsApp thread (detail-whatsapp-tab filters by contact).", "affected_selectors": ["[data-testid='detail-whatsapp-tab']", "[data-testid^='detail-wa-msg-']"]}
+    ],
+    "design_issues": [
+      {"screen": "/ecommerce Ürün Eşleştirme", "issues": ["The 'Eşleşmemiş pazaryeri ürünleri' banner is not refreshed/filtered after a mapping is saved for a different SKU; it keeps advertising NX-BT-PRO as unmapped, which is confusing right after a successful mapping toast"]},
+      {"screen": "/personnel Puantaj", "issues": ["Check-in/check-out use the server's UTC-based clock string (22:36 for a 'now' click), Turkish users will expect local (TR) time; hours column shows 0 because a fixed 1h break is subtracted with no UI hint"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/backend/tests/cleanup_iteration5.py",
+    "/app/test_reports/pytest/iteration5_results.xml"
+  ],
+  "action_items": [
+    "Fix WhatsApp webhook contact matching (normalize stored contact phones or strip non-digits in the query) — the failing test test_webhook_inbound_message documents the expected cnt_01 match.",
+    "Make attendance check_in/check_out force status='present' so a day marked 'absent' can be corrected.",
+    "Unify order status values (use one vocabulary) and add 'Onaylandı/İade Edildi/Kısmi İade' to the OrdersB2BPage status select so returns/approvals are visible.",
+    "Clear access_token_enc when WhatsApp phone_number_id is emptied (has_token/label currently lie).",
+    "Compute vat_total/grand_total for the e-İrsaliye document consistently with the item vat_rate (or set item vat_rate 0).",
+    "Optional: exclude Mongo _id from clean_doc; add DELETE /api/invoices/{id}; replace `i in sales` membership check in accountant_summary with invoice_type comparison; fix <span> inside <option>."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2803 lines with Phase-5 blocks appended mid-file — split into routers (ecommerce, personnel, accountant, comm) per the 700-line guideline.",
+    "create_dispatch/return/approve mutate orders with hard-coded Turkish status strings; introduce an enum/constant module shared with the frontend.",
+    "unmapped_items() contains dead logic: `(it.get('product_id') in products and key in mapped)` is unreachable because `key in mapped` is already checked first.",
+    "accountant_export builds the CSV with a per-invoice contacts.find_one inside the loop (N+1 queries); batch with $in.",
+    "wa_webhook trusts the payload without verifying the Meta X-Hub-Signature-256 header — anyone can POST inbound messages into the log."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (new)",
+    "/app/backend/tests/cleanup_iteration5.py (new)",
+    "/app/test_reports/iteration_5.json (new)"
+  ],
+  "success_rate": {"backend": "95% (21/22 pytest cases; the single failure is the real webhook contact-matching defect)", "frontend": "100% of the requested Phase-5 smoke flows rendered and worked"},
+  "seed_data_creation": "All temporary: mapping TEST-UI-SKU/TEST-SKU, whatsapp logs (wamid.TEST1, TEST_mesaj, TEST_UI_wa_log), attendance emp_01 2026-09-03, invoice NX202600000015 (TEST_Cari), returns on TR-26334632 & TY-98421049, dispatch IRS-2026-0001. Everything reverted by cleanup_iteration5.py: order statuses back to 'pending', NX-BT-PRO stock 142, NX202600000010 draft restored to 1x100 (120 ₺), cnt_01 balance -73.573,73, whatsapp settings emptied (phone_number_id/verify_token '' and access_token_enc unset).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@nexus.com / admin123 (API also works unauthenticated)",
+  "context_for_next_testing_agent": "Suites: backend_test.py (it2), test_iteration3.py, test_iteration4.py (1 known failure = /auth/me preferences), test_iteration5.py (1 known failure = whatsapp webhook contact match). Run `python /app/backend/tests/cleanup_iteration5.py` after any iteration-5 UI/API run — it reverts returns/dispatch/stock/balance and empties WhatsApp settings; it is idempotent except the NX202600000010 revert (guarded by grand_total==360). Note the return/dispatch tests pick the first eligible seeded order, so order statuses are mutated: verify GET /api/orders before assuming seed state. Not retested this round: SMS/mail, banking, cargo, production.",
+  "rca_of_the_issue": "wa_webhook normalizes the incoming wa_id via comm_service.normalize_phone ('905323405060' -> '5323405060') and then queries contacts with {'phone': {'$regex': '3405060'}}. Seeded contact phones keep the human formatting ('0532 340 50 60'), so the 7-digit substring is split by spaces ('340 50 60') and the regex never matches -> contact_id stays null and the message is invisible in the contact's WhatsApp thread. Reproduce: POST /api/comm/whatsapp/webhook with the Meta payload for 905323405060, then GET /api/comm/whatsapp/logs. Mitigation: persist a digits-only phone_normalized field on contacts (or build the regex allowing optional separators) and match on it."
+}

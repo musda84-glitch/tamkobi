@@ -1,0 +1,99 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: tamkobi-mysql
+    restart: always
+    environment:
+      # Root password is NOT the app password. Replace bootstrap defaults via scripts/mysql_harden.sh
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-tamkobi}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-${DB_NAME:-tamkobi}}
+      MYSQL_USER: ${MYSQL_USER:-tamkobi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
+      MYSQL_BACKUP_PASSWORD: ${MYSQL_BACKUP_PASSWORD:-}
+      MYSQL_MIGRATE_PASSWORD: ${MYSQL_MIGRATE_PASSWORD:-}
+      MYSQL_DBA_PASSWORD: ${MYSQL_DBA_PASSWORD:-}
+    ports:
+      - "3306:3306"
+    command: --bind-address=0.0.0.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --slow-query-log=1 --long-query-time=1 --slow-query-log-file=/var/lib/mysql/tamkobi-slow.log --log-error=/var/lib/mysql/tamkobi-error.log
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/schema.mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/mysql/logging.cnf:/etc/mysql/conf.d/logging.cnf:ro
+      - ./backend/mysql/perf.cnf:/etc/mysql/conf.d/perf.cnf:ro
+      - ./backend/docker/mysql-init-privileges.sh:/docker-entrypoint-initdb.d/02-privileges.sh:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-tamkobi}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 25s
+
+  backend:
+    build: ./backend
+    container_name: tamkobi-backend
+    restart: always
+    # Host network: compose bridge (172.18) cannot reach the public internet in
+    # this environment (BizimHesap, GİB, Stripe…). docker0 (172.17) can; host
+    # can. Uvicorn binds :8000 on the host directly (no ports: mapping).
+    network_mode: host
+    env_file:
+      - ./backend/env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+      # Left empty on purpose: MYSQL_HOST above is loopback, and an unset mode
+      # means "the host decides", which is plaintext for a MySQL on this
+      # machine and verified TLS for one anywhere else. Naming a mode here
+      # would also apply it to a database on another host.
+      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-}
+      MYSQL_SSL_CA: ${MYSQL_SSL_CA:-}
+      MYSQL_USER: ${MYSQL_USER:-tamkobi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-tamkobi}
+      MYSQL_DATABASE: ${DB_NAME:-tamkobi}
+      DATABASE_URL: mysql://${MYSQL_USER:-tamkobi}:${MYSQL_PASSWORD:-tamkobi}@127.0.0.1:3306/${DB_NAME:-tamkobi}
+      CORS_ORIGINS: http://127.0.0.1,http://localhost,http://127.0.0.1:80,http://localhost:80,http://127.0.0.1:3000,http://localhost:3000,http://tamkobi.com,https://tamkobi.com,http://www.tamkobi.com,https://www.tamkobi.com
+      PUBLIC_APP_URL: http://127.0.0.1
+      REACT_APP_BACKEND_URL: http://127.0.0.1:8000
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-nuqesh1AON2WgDOQc_6wU9uPk5nh4tu6f_x6H8ZAmN8=}
+      LOG_DIR: /var/log/tamkobi
+      LOG_MAX_BYTES: "52428800"
+      LOG_RETENTION_DAYS: "14"
+      LOG_SQL_SLOW_MS: "200"
+      PERF_INTERVAL_SEC: "60"
+      PERF_DISK_PCT: "90"
+      PERF_MEM_PCT: "90"
+    volumes:
+      - backend_logs:/var/log/tamkobi
+      - ./backend/data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: ""
+    container_name: tamkobi-frontend
+    restart: always
+    extra_hosts:
+      - "backend:host-gateway"
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+  backend_logs:

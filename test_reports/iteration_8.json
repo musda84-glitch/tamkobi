@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 8 (Faz 8) testing of NexusHesap: production work orders (iş emirleri) backend + /atolye shop-floor UI + iteration-7 fix verifications. Backend: new pytest suite /app/backend/tests/test_iteration8.py — 19/21 passed. Verified PUT /production/recipes/rec_01 persists steps; POST /production/orders generates 2 work orders (step1 ready / step2 waiting) with step_count, station, unit, planned_quantity; GET /production/work-orders/stations lists 'Montaj Hattı 1' + 'QC'; start wo1 (operator Ali) -> in_progress + production order in_production + elapsed_min; starting waiting wo2 -> 400; pause -> paused + paused_at (2nd pause -> 400); resume -> in_progress with paused_seconds accumulated (>=1s) and paused_at cleared; PUT /work-orders/{id}/assign persists assigned_to/assigned_name; finish wo1 (produced 2) -> done + wo2 becomes ready, order_completed absent; re-finishing a done wo -> 400; finish last step -> order_completed true, production order completed, completed_quantity 2, finished stock +2 and all 3 raw materials decreased; generate-work-orders idempotent (count stays 2); status/station filters and 404s for unknown ids. Iteration-7 fixes: POST /products without barcode auto-generates (fixed); complete on a 'planned' order -> 400 'Önce üretimi başlatın (Başlat).'; complete without update_cost keeps purchase_price and adds stock; PUT /api/invoices/{approved} {notes,items} -> 400 while notes-only -> 200. Frontend (Playwright, preview URL): /atolye full flow verified (page render, no-operator warning, operator options from employees, localStorage persistence of operator+station across reload, wo-card/wo-start/wo-pause/wo-resume/wo-finish, elapsed 'dk geçti', finish modal produced/scrap/notes + toast 'Montaj tamamlandı. Sıradaki adım: Kalite Kontrol (QC).', step-2 card becomes Hazır, station filter, kiosk fixed-overlay toggle, toggle-done shows finished cards); /production (po-steps-<code> 'Adım 1/2 • Kalite Kontrol', po-complete only on in_production rows, planned rows show Başlat+cancel, recipe-modal recipe-add-step + step name/station inputs, Escape closes recipe-modal & production-order-modal, goto-shopfloor-btn navigates to /atolye); /contacts detail (installments tab with summary + 2 groups + Tahsil Et/Öde buttons after fixing a crash — see below, invoice right-click context menu with ctx-issued-info, Escape closes installment-plan-modal & statement-print-modal with no ghost overlay); /projects (sent+approval-pending quote stays in default Teklifler view with 'Onay bekliyor' badge, tab counter == visible rows, approval modal e-mail channel unchecked by default, Escape closes it); /invoices action column uniform (6 slots / 220px on all rows); /stock has no '+ Kategori' button and category buttons filter (9 -> 2 rows). All test data created was cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/production/recipes", "issue": "Iteration-7 fix NOT applied: models.py Recipe still declares `code: str` (required), so posting a recipe without 'code' returns 422 and the server-side auto-code fallback stays dead code. Product.barcode was fixed, Recipe.code was not."},
+      {"endpoint": "all endpoints via clean_doc()", "issue": "Raw Mongo `_id` is still returned next to `id` in every payload including /production/work-orders (pre-existing since iteration 6)."},
+      {"endpoint": "POST /api/production/work-orders/{id}/finish (last step)", "issue": "Calls complete_production_order with update_cost=True hard-coded, so finishing the last work order silently overwrites the finished product's purchase_price with the recipe unit cost (prod_01 850 -> 670 during this run). Contradicts the iteration-7 decision to make update_cost opt-in; make it configurable/audited."},
+      {"endpoint": "POST /api/production/work-orders/{id}/finish", "issue": "produced_qty/scrap_qty are not validated against planned_quantity (finishing with produced 999 is accepted; complete_production_order clamps with min(produced, remaining) so the extra is silently dropped and scrap is never reconciled with material consumption)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ContactDetailPanel", "issue": "CRITICAL (found & patched by tester): the new installments useEffect referenced `c` (dependency `[tab, c.id]` + `c.company_id`) while `const { contact: c } = data` is destructured ~50 lines later, causing 'ReferenceError: Cannot access c before initialization' on every render — the whole cari detail panel (all tabs, terms/statement/installments/context-menu features) crashed with the red runtime overlay. Patched to use data?.contact / contactId; please review the final shape.", "selector": "[data-testid=\"contact-detail-panel\"]", "priority": "CRITICAL"},
+      {"component": "ShopFloorPage operator select", "issue": "React console error 'In HTML, <span> cannot be a child of <option>' logged for the operator <option> (same pre-existing pattern as PaymentTargetSelect).", "selector": "[data-testid=\"shopfloor-operator\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Cari Hesap Ekstresi modal (statement-modal)", "issues": ["Escape closes the inner print preview but not the statement modal itself (only X) — inconsistent with the other Faz 7/8 modals that now use useEscape"]},
+      {"screen": "/atolye kiosk (Tablet Modu)", "issues": ["Kiosk overlay hides the app sidebar/header as intended, but there is no visible exit affordance other than the 'Çık' button at the top-right; on a small tablet the button scrolls out of view with many cards"]},
+      {"screen": "Üst bar / aktif şirket", "issues": ["Active company still shows 'MATEK DEKORASYON' while every list (incl. work orders) queries comp_nexus_main_01 (pre-existing from iterations 6-7)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8.py",
+    "/app/backend/tests/cleanup_iteration8.py",
+    "/app/test_reports/pytest/pytest_it8.xml"
+  ],
+  "action_items": [
+    "models.py: make Recipe.code Optional[str] = '' — POST /api/production/recipes without code still returns 422 (iteration-7 action item not done).",
+    "Review/keep the tester's ContactDetailPanel fix (TDZ crash on `c`) and add a lint rule / smoke test so the cari detail panel is exercised after every change.",
+    "finish_work_order: stop hard-coding update_cost=True (it rewrites the product's purchase_price), and validate produced_qty/scrap_qty against planned_quantity/remaining instead of silently clamping.",
+    "Exclude Mongo `_id` in clean_doc() (still leaking in every response, incl. work orders).",
+    "Optional: add useEscape to the statement modal in ContactsPage and render option labels as plain text (no <span> child) in ShopFloorPage/PaymentTargetSelect."
+  ],
+  "critical_code_review_comments": [
+    "ContactDetailPanel.jsx declares hooks/handlers that reference the destructured `c` before line 96 — several other handlers (openPay, sendWa, openEditPay) only work because they run after render; move `const { contact: c } = data` above all handlers or pass contactId explicitly.",
+    "server.py is 3504 lines; the production/work-order block (~250 lines) is a natural router extraction.",
+    "_generate_work_orders sorts recipe steps by 'no' but renumbers step_no by index, so a recipe with duplicate/missing 'no' values silently reorders work orders — validate step numbering when saving the recipe.",
+    "finish_work_order swallows HTTPException from complete_production_order into a message string; the work order is already marked done, so a stock failure leaves the order permanently out of sync with no retry path.",
+    "ShopFloorPage polls every 15s with 3 parallel requests and no cancellation; on a tablet left open this is ~720 requests/hour — consider a single aggregated endpoint or visibility-aware polling."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/ContactDetailPanel.jsx (fixed TDZ crash: installments effect now uses data?.contact / contactId)",
+    "/app/backend/tests/test_iteration8.py (new)",
+    "/app/backend/tests/cleanup_iteration8.py (new)"
+  ],
+  "success_rate": {"backend": "90% (19/21 — 2 known failures: Recipe.code 422 and Mongo _id leak)", "frontend": "100% of Faz 8 flows after fixing the ContactDetailPanel crash (that crash blocked all /contacts detail features before the patch)"},
+  "seed_data_creation": "Temporary, all reverted by /app/backend/tests/cleanup_iteration8.py: 6 production orders (URT-2026-14495/14951/25528/28044/47266/33388) + their work orders deleted, finished product stock -4 restored to 143 and purchase_price restored to 850.0, raw materials prod_raw_01/02/03 restored to 450/520/380, 2 TEST_Ürün_it8 products deleted, TEST_it8 quote (TKF-2026-0044) deleted. Dev's 'Tablet test' order URT-2026-10259 with its 2 work orders left untouched. NOTE: leftover balance installment plan 'AÇIK BAKİYE' (3 rows) on cnt_01 from iteration 7 is still in DB.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "/app/memory/test_credentials.md present (admin@nexus.com / admin123); app API and UI are reachable without login in preview, so no auth flow was exercised this iteration.",
+  "context_for_next_testing_agent": "Backend work-order suite: /app/backend/tests/test_iteration8.py (run with `-n 0`; it mutates rec_01 steps to Montaj/QC which matches the seeded values, creates its own production orders and does NOT auto-clean — run tests/cleanup_iteration8.py afterwards and adjust its created_at cutoff). Known failing assertions there are intentional defect markers: TestWorkOrderFlow::test_03b (Mongo _id leak) and TestIteration7Fixes::test_recipe_without_code_autogenerates (Recipe.code required). Frontend: /atolye needs at least one production order with a 2-step recipe; create via POST /api/production/orders {recipe_id:'rec_01', planned_quantity:2} and use wo-card-<order_code>-<step> testids. ContactDetailPanel was patched by the tester for a TDZ crash — verify it is still intact before testing /contacts.",
+  "rca_of_the_issue": "ContactDetailPanel crash: the Faz 8 installments feature added `const loadInsts = () => ...c.company_id...` and `useEffect(..., [tab, c.id])` at line 46-47, but `c` comes from `const { contact: c } = data` at line 96 (after the `if (!data) return` guard). The dependency array is evaluated during render, so React hit the const's temporal-dead-zone and threw ReferenceError before any JSX rendered, killing the entire panel for every contact (reproduce: open /contacts?contact_id=cnt_01 on the unpatched build). Mitigation applied: read company_id from data?.contact and use contactId in the deps."
+}

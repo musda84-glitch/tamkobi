@@ -1,0 +1,22 @@
+{
+  "summary": "Frontend-only verification for /orders after B2B tab removal. Confirmed 'B2B Bayi Kataloğu' tab and content are removed on both 1920 desktop and 390 mobile. Title is 'Sipariş Modülü'. Remaining tabs (tab-orders, tab-claims, tab-cancelled, tab-questions) render and are clickable. Order table renders 30 orders including real Trendyol order 11571862893 (not deleted). Row selection works (order-select-*) and reveals bulk toolbar with bulk-thermal-btn and bulk-delete-btn. Row actions Faturala + order-delete-* visible for eligible orders. No console errors captured. Regression: /portal/<b2b_token> for Trend Mağazacılık still loads and lists products (Ürünler tab, categories, product cards with prices and 'Sepete Ekle' buttons).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OrdersB2BPage.jsx still contains leftover B2B state and helpers (b2bCustomer state, useEffect fetch of b2b products/contacts at line ~93, submitB2b handler around lines 157-186). Since the b2b_portal tab was removed, these are dead code and should be pruned to reduce bundle size and confusion. Also the comment on line 35 'orders | b2b_portal' is stale."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "test_credentials": "Demo admin session used automatically via preview URL",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "B2B tab removal verified on /orders at desktop (1920) and mobile (390). Real order 11571862893 preserved. Portal (/portal/<token>) regression verified with Trend Mağazacılık token. Dead B2B code still exists in OrdersB2BPage.jsx and can be cleaned up.",
+  "rca of the issue": "N/A - feature removal verification, no bug"
+}

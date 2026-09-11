@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 23 both backend + frontend PASS. Backend pytest 10/10 (test_iteration23.py): shift-templates CRUD (POST OK; missing name -> 400; end<=start -> 400; GET lists; DELETE 200 then 404); bulk-assign happy path with template_id + department='Lojistik & Depo' -> employees>0, saved == employees*6 (Mon-Fri + Sat off from template), grid confirms Mon 08:00-16:00 planned and Sat off planned; unknown department -> 404; department='all' with body 'days' works and shows skipped_existing >= previous dept employees when overwrite:false; employee_ids restricts to a single employee (employees==1); leave interaction: POST /api/personnel/leaves + /decide approved for 2026-09-22 (unpaid) then skip_leave:true -> skipped_leave>=1 and 2026-09-22 cell.planned==false; skip_leave:false -> conflicts list non-empty and message contains 'Uyarı'. All shift_plans/leave/templates cleaned up via DELETE endpoints. Frontend (/personnel?tab=attendance at 1920x1080 as admin@nexus.com): navigated to week 2026-09-21, opened bulk-assign-modal via shift-bulk-assign; bulk-dept shows 'Tüm personel (3)' + all 3 departments with counts; selecting 'Lojistik & Depo (1)' sets bulk-count=1; edited bulk-start-0=08:00, bulk-end-0=16:00, bulk-break-0=30; bulk-save-name='TEST_it23_Sabah'; bulk-apply -> toast '1 personel için 7 vardiya atandı.' and Mon cell for Lojistik employee turned blue (indigo-50). Reopening bulk modal, bulk-template now lists 'TEST_it23_Sabah'; selecting it populates bulk-start-0 back to 08:00; bulk-template-delete removes it (confirm dialog accepted). Cleaned up 7 shift_plans via JS fetch DELETE. Note: seed data has only 3 active employees (1 per department) so employees×days is small but scaling is verified by backend integer arithmetic.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23.py",
+    "/app/test_reports/pytest/iteration_23.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "attendance.bulk_assign_shifts correctly resolves template days from either req.days (inline) or template_id (fetched); _clean_template_days raises 400 for empty/invalid input which flows nicely into the modal error toast.",
+    "The default frontend days include 'off:true' entries for Sat/Sun which are still written to shift_plans (as off=true rows). This is intentional (grid shows 'İzin' cell as planned=true with off), but means saved count includes off rows — visible in toast '1 personel için 7 vardiya atandı.'. If E1 wants 'saved' to only count working days, filter tpl.get('off') out of the count.",
+    "shift_plans has no unique index on (employee_id, date); upsert relies on the query filter, which is fine here but adding a compound unique index would guard against concurrent bulk-apply races.",
+    "BulkAssignModal.apply always sends department even when 'all' — backend treats department:'all' as no-op filter, correct. The saveName template is created BEFORE bulk-assign; if bulk-assign fails, the template is still saved (partial success). Consider chaining or rollback for consistency.",
+    "delete_shift_template does not check if any shift_plans reference it (bulk creates independent shift_plans, so no dangling refs) — OK."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration23.py", "/app/test_reports/iteration_23.json"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all flows)"},
+  "test_credentials": "admin@nexus.com / admin123",
+  "seed_data_creation": "Backend test created 1 shift_template ('Sabah'), 1 leave (unpaid 2026-09-22 approved) and multiple shift_plans across the 2026-09-21 week for Lojistik & Depo + all departments — all deleted via API endpoints in fixture teardown. Frontend test created 1 template ('TEST_it23_Sabah') + 7 shift_plans, deleted via bulk-template-delete + JS DELETE loop.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Seed dataset has only 3 active employees (1 per department: Lojistik & Depo, Pazarlama & E-Ticaret, Üretim & Montaj). Week starting Mon requires monday() normalization — the backend _week_dates already normalizes any date to its Monday. Login flow: POST /api/auth/login sets httpOnly cookie; page.url may remain /login briefly but direct navigation to /personnel works afterwards. Bulk-assign 'saved' counts off-days too because BulkAssignModal defaults include off entries for Sat/Sun.",
+  "rca_of_the_issue": ""
+}

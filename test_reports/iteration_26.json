@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 26 - Profitability & channel fees + orders customer/print-label. Backend pytest (5/5) validates GET /api/marketplace/profitability structure (total, channels with fee_settings & channel_id, orders with all fee fields, top_products, low_margin), calculation correctness for a Trendyol order (commission = revenue * rate/100, commission_vat = commission * 20%, sale_vat = revenue - revenue/1.2, net formula), exclusion of b2b/manual channels and cancelled/returned orders, PUT /api/integrations/ecommerce/{id}/fees update-then-recompute cycle, invalid (150 / -1) → 400 and unknown channel → 404. Restored trendyol fees to commission_rate=21.5 & service_fee=12.99. Frontend Playwright verified: /orders order-customer-11571862893 click navigates to /contacts?search=Mustafa%20Bal (goContact works); print-label single order opens new window with title 'Kargo Etiketleri (1)' and 1 .label section; tab-profit reveals profitability-panel with profit-days selector, all four profit-total-* cards, profit-channel-trendyol card, fee-editor-trendyol; changing fee-commission-trendyol from 21.5→30 and clicking fee-save-trendyol triggers toast 'Trendyol komisyon ayarları kaydedildi.' — restored to 21.5 afterwards; 21 profit-row-* rows rendered; regression tabs (tab-claims, tab-cancelled, tab-questions, tab-orders) still open; real Trendyol order 11571862893 preserved.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/contacts (select dropdowns)", "issues": ["React hydration warning in console: '<span> cannot be a child of <option>' from ContactsPage select options — caused by emergent instrumentation spans injected inside <option>. Not a regression of iteration 26 but visible while navigating from /orders."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration26.py", "/app/test_reports/pytest/iter26.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "profit-low-margin section did not appear in the current dataset (all margins >=10%). Consider a demo scenario/seed order to exercise the low-margin UI in future iterations.",
+    "OrdersB2BPage.jsx line 39 comment 'orders | b2b_portal' is stale after b2b removal in iteration 25 (still not cleaned)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration26.py"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100%"},
+  "test_credentials": "Demo admin via preview URL; company_id=comp_nexus_main_01",
+  "seed_data_creation": "None. Trendyol fees mutated temporarily and restored (commission_rate=21.5, service_fee=12.99).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend profitability endpoint and PUT fees endpoint are stable. Frontend goContact, print-label single window, and tab-profit fee editor all working. Real Trendyol order 11571862893 preserved. Only pre-existing hydration warning on ContactsPage <option><span> remains.",
+  "rca of the issue": "N/A"
+}

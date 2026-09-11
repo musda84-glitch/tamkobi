@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 12 regression testing (refactor/security only). Backend: 75/75 pytest tests green (test_iteration10 + 11 + new test_iteration12) — conftest dynamic B2B token resolution verified without TEST_B2B_TOKEN env (POST /api/contacts/cnt_01/b2b-access → token works against /api/public/b2b/{token}, idempotent), banking connections list/test/sync verified (sha256 simulation seed produces 3-6 movements, external_id dedupe makes a 2nd sync insert 0, unknown conn → 404), plus 19 page-level GET endpoints smoke-checked for 200 + no _id leak. Frontend: all 18 routes loaded with real data; NO infinite request loops (0 API calls after the first ~1.3s in 20s observation windows), no React runtime console errors. Verified filter/tab re-fetch behaviour on stock (category chip), contacts (type filter), installments (status/direction filters), reports (report type + date change), personnel (izin/prim/puantaj + month change), banking (Ortaklar / Banka Entegrasyonu), settings (Birimler & Kategoriler, B2B Portal), communication (E-posta empty state, SMS, WhatsApp), ecommerce product-mapping panel, cargo catalog. ContactDetailPanel opens/loads all tabs (Faturalar/Ödemeler/Taksitler with installments+accounts fetch)/closes; ProductionOrderModal auto-selects the recipe and loads the requirement table; ApproveOrderModal pre-selects the carrier (Yurtiçi) and cancels cleanly; B2B portal cart writes localStorage b2b_cart_<token> and survives reload. ESLint: 0 react-hooks/exhaustive-deps warnings and 0 eslint-disable suppressions → the 44→0 claim is genuine.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/banking/connections + /sync", "issue": "The `mode` field is ignored: bank_providers.test_connection/fetch_transactions decide simulation purely by has_credentials(). A connection saved with client_id/secret AND mode='simulation' performs a live OAuth call; in the preview sandbox DNS fails and /sync returns 502 with status=error. Simulation mode should short-circuit before any network call."},
+      {"endpoint": "DELETE /api/orders/{id} & /api/invoices/{id}", "issue": "Invoiced orders cannot be removed (400 'Faturalanmış sipariş silinemez') and there is no DELETE for invoices (405). Combined with the test leak below, test data is unremovable through the API."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Every page mount", "issue": "Each initial GET is fired 4x on mount (2x React StrictMode double-invoke + 2 more from a companyId/auth-resolution re-render): /invoices = 20 API calls, /stock = 18, /personnel = 16. Not a loop (all within ~1.3s, nothing after 5s) but redundant; gate loads until activeCompany is resolved.", "affected_selectors": ["/api/invoices", "/api/products", "/api/contacts", "/api/banking/accounts"]}
+    ],
+    "design_issues": [
+      {"screen": "/reports, /personnel (Puantaj)", "issues": ["Native browser date/month pickers (input type=date/month) instead of the shadcn calendar component"]},
+      {"screen": "/orders, /atolye", "issues": ["React DOM nesting warnings in console: '<th> cannot be a child of <table>' (orders table) and '<span> cannot be a child of <option>' (atolye station select) — hydration warnings, pre-existing"]},
+      {"screen": "B2B portal (/portal/<token>)", "issues": ["Catalog exposes test/seed noise to customers: product 'deneme' and 'drc70' with 0,00 ₺ price"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/backend/tests/cleanup_iteration12.py",
+    "/app/backend/tests/cleanup_iteration12_orders.py",
+    "/app/test_reports/pytest/iteration12.xml"
+  ],
+  "action_items": [
+    "bank_providers.py: honour conn['mode']=='simulation' (skip live OAuth/HTTP) so a saved-credentials connection in simulation mode cannot 502.",
+    "test_iteration11.py::TestConvertToInvoice::test_convert_paper_resolves_contact leaks one B2B order + invoice per run (18 'TEST_IT11_CONV' orders now in DB, not deletable via API) — add real teardown (cancel invoice + delete order, or direct mongo cleanup).",
+    "Reduce the 4x duplicate initial fetches per page (skip load while activeCompany/companyId is unresolved).",
+    "Test isolation under pytest.ini's `-n 2 --dist loadscope`: test_iteration10/11 both mutate the shared cargo 'geliver' provider and it11/it12 both resolve the cnt_01 B2B token via a mutating POST at import time → observed 2 cross-worker flakes. I added a leftover-cleanup guard to it10; consider distinct carrier codes per file and a locked/session-scoped token resolution."
+  ],
+  "critical_code_review_comments": [
+    "bank_providers.fetch_transactions/test_connection ignore the persisted `mode` flag — simulation is inferred only from missing credentials; this makes 'simulation' mode misleading and returns 502 on sandbox DNS failure.",
+    "MailClient folder switching is driven by explicit loadMessages(f) inside onClick and the mount effect only depends on stable useCallbacks — no INBOX reset regression (code-verified; live IMAP untestable, no mail account configured).",
+    "ProductionOrderModal recipe auto-select effect uses setRecipeId((cur) => cur || ...) so a user selection is not overwritten — correct.",
+    "conftest.resolve_b2b_token() performs a state-mutating POST at module import in every xdist worker; prefer a read-only lookup or a session lock to avoid cross-worker races."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/backend/tests/test_iteration10.py",
+    "/app/backend/tests/cleanup_iteration12.py",
+    "/app/backend/tests/cleanup_iteration12_orders.py"
+  ],
+  "success_rate": {"backend": "100% (75/75 pytest)", "frontend": "100% of tested flows (18 routes + 12 interaction flows) — only minor perf/design findings"},
+  "seed_data_creation": "Created (and removed afterwards) one simulated kuveytturk bank connection + its synced transactions. Cleanup also removed 50 leftover simulated bank_sync transactions accumulated by earlier iterations and reverted the inflated bank balance (~166.481,24 ₺); total liquidity now 531.822,26 ₺ instead of the previously inflated 698.303,50 ₺. Deleted 21 orphan/test b2b_order notifications. 18 pre-existing 'TEST_IT11_CONV' B2B orders + invoices could NOT be removed (API forbids deleting invoiced orders).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (session already active; all endpoints answered via demo-admin fallback)",
+  "context_for_next_testing_agent": "Run backend tests as `cd /app/backend/tests && python -m pytest test_iteration10.py test_iteration11.py test_iteration12.py -q` (pytest.ini forces -n 2 --dist loadscope; 5 consecutive green runs after the it10 leftover guard). Always run `python cleanup_iteration12.py` afterwards — test_iteration12 leaves a simulated bank connection + synced transactions that inflate bank balances. Frontend loop detection recipe: attach page.on('request') and assert no /api/ request occurs later than 5s after navigation; all 18 routes are clean today. Real route names: /warehouses (not /warehouse), /ai-advisor (not /ai); unknown routes redirect to Dashboard.",
+  "rca_of_the_issue": "First parallel pytest run showed 2 cargo failures (geliver 'zaten ekli' 400 + catalog installed=True). RCA: test_iteration10 and test_iteration11 both add/delete the same 'geliver' cargo provider and pytest.ini pins them to different xdist workers running concurrently, so leftover state from an aborted earlier run plus the race made them fail; a later run also hit a 404 in it11 TestB2BOrders because it11 and it12 both resolve the cnt_01 B2B token with a mutating POST at import time. Serial (-n 0) runs were always green. Mitigation applied (test-code only): idempotency guard test in it10 that deletes leftover navlungo/geliver before the suite; verified 5 consecutive green parallel runs. Not application code — no product behaviour changed."
+}

@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration-3 verification of NexusHesap Phase-3 features. BACKEND: created /app/backend/tests/test_iteration3.py (27 pytest cases, 27 passing = 100%) covering contact overview, barcode stock counts (preload/scan/manual set/complete+apply/400 on completed/list/delete), personnel leaves (days calc, balance guard, approve increments used_leave_days, reject doesn't, double-decide 400), salary calc (gross->net, net->gross roundtrip +/-1 TL, employer cost = gross*1.175, 400 guards), unofficial bonuses (bank_03 debit + 'Gayri Resmi' bank_transaction, pending without account, delete restores balance, 404/400 guards) and product flags (show_in_b2b filter on ?b2b_only=true, track_stock blocking quick-stock-adjust). Auth playbook re-verified: bcrypt $2b$ hash, httpOnly+Secure+SameSite=None cookies on login, CORS explicit origins with credentials, brute-force 429 lockout after 5 fails (login_attempts row cleared afterwards). FRONTEND: contact detail panel (4 tabs, summary cards, quick-message modal, close, direct URL ?contact_id=, 'E-Faturaya Kes' on a draft invoice -> GİB Onaylı), invoice->contact navigation, searchable contact/product pickers with thumbnails + 'Kağıt Fatura' e-type, barcode stock count UI (scan 8680001234013 -> toast + red diff row, manual counted=60, Tamamla & Stoğu Güncelle -> TAMAM), personnel leaves/salary/bonus flows, /stock B2B+Takip toggles and add-product checkboxes, /orders B2B portal reflecting show_in_b2b. ONE BLOCKING DEFECT: POST /api/invoices returns 422 (invoice_number required) so no invoice can be created from the New Invoice modal. All test artefacts cleaned; prod_01 v2 stock restored to 60, prod_03 flags restored true/true, bank_03 balance 25.850,00, emp_01 used_leave_days back to 4.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/invoices", "issue": "422 Unprocessable Entity: {'loc':['body','invoice_number'],'msg':'Field required'}. models.Invoice declares invoice_number: str (required) while create_invoice() itself auto-generates it when falsy (`if not invoice.invoice_number: ...`). Frontend (InvoicesPage.handleCreateInvoice) never sends invoice_number, so EVERY invoice creation from the UI fails with toast 'Fatura kaydedilemedi.' Fix: make invoice_number Optional[str] = None (or default '') in models.Invoice.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/products?b2b_only=true", "issue": "Filter only checks show_in_b2b/is_active, so raw materials (prod_raw_01..03, type='raw_material', sale_price 0) and the junk product 'deneme' (SKU ddd, 0 stock, 0 price) are listed in the B2B dealer catalog with 0,00 ₺ prices. Consider excluding type in ('raw_material','service') and/or sale_price<=0."},
+      {"endpoint": "personnel/leaves", "issue": "No DELETE/cancel endpoint for a leave request; pending/approved leaves can never be removed via API (had to clean test rows directly in Mongo)."},
+      {"endpoint": "clean_doc() (all endpoints)", "issue": "clean_doc keeps `_id` alongside `id` in every response, so raw Mongo _id is exposed in all payloads (harmless string UUIDs today, but violates the exclude-_id convention and doubles payload keys)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "InvoicesPage new-invoice modal", "issue": "Save fails (backend 422) and the toast shows only generic 'Fatura kaydedilemedi.' – server detail (err.response.data.detail) is discarded, hiding the real cause. Modal stays open with no field-level error.", "selector": "[data-testid='save-invoice-btn']", "priority": "HIGH"},
+      {"component": "PersonnelPage (console)", "issue": "React DOM-nesting warning on /personnel: 'In HTML, <span> cannot be a child of <option>. This will cause a hydration error.' Console noise only; no functional impact.", "selector": "select option", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/orders B2B Bayi Portalı", "issues": ["Raw-material cards (Bluetooth çipi, Batarya, Kasa gövdesi) and the junk 'deneme' product are shown to dealers", "Those cards display strike-through '0 ₺' and price '0,00 ₺' which looks broken"]},
+      {"screen": "/warehouses Barkodlu Stok Sayımı", "issues": ["Leftover dev session 'Test Sayım' (status AÇIK) is still listed – not a code bug, stale data"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/restore_it3.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: make Invoice.invoice_number optional in /app/backend/models.py so POST /api/invoices (UI new-invoice modal) works; retest 'Kağıt Fatura' creation end-to-end.",
+    "Surface backend error detail in InvoicesPage catch block instead of the generic toast.",
+    "Filter raw materials / zero-price / inactive junk products out of the B2B portal catalog (b2b_only query or OrdersB2BPage).",
+    "Optional: add DELETE /api/personnel/leaves/{id} for cancelling leave requests.",
+    "Optional: stop returning `_id` from clean_doc (return only `id`)."
+  ],
+  "critical_code_review_comments": [
+    "models.Invoice.invoice_number is required but server.create_invoice auto-generates it — required/optional mismatch makes the endpoint unusable from the UI (422).",
+    "complete_stock_count loops per item and issues one find/update per product; acceptable at current scale but O(n) round-trips for large counts.",
+    "server.py is 2216 lines — split into routers (contacts, products, warehouses, personnel, banking) per the 700-line guideline.",
+    "Leave 'days' is computed as calendar days (end-start+1); weekends/holidays are counted as annual leave — confirm this is intended business logic."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new)",
+    "/app/backend/tests/restore_it3.py (new cleanup/restore script)",
+    "/app/test_reports/iteration_3.json (new)"
+  ],
+  "success_rate": {"backend": "100% (27/27 pytest cases)", "frontend": "92% (11/12 flows; invoice save blocked by backend 422)"},
+  "seed_data_creation": "Temporary only, all removed: stock counts 'TEST_Sayim_it3'/'TEST_del_it3'/'TEST_UI_Sayim', leave requests (2026-08-xx, 2026-10-05), bonuses (TEST_it3 1000/2500 + UI 1500), draft invoice TEST2026001. Restored prod_01 variant v2 stock=60 (sum 142), prod_03 show_in_b2b/track_stock=true, bank_03 balance 25.850,00, emp_01 used_leave_days=4. Pre-existing dev artefacts left untouched: bonus 2.500 ₺ (2026-09, bank_03), open stock count 'Test Sayım', product 'deneme' (SKU ddd), pending leave 2026-09-10.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (works; note muhasebe@nexus.com was temporarily locked during brute-force test and its login_attempts row was cleared afterwards)",
+  "context_for_next_testing_agent": "Backend regression suites: /app/backend/tests/backend_test.py (iter2) and /app/backend/tests/test_iteration3.py (iter3, 27 cases, all green). Run `python /app/backend/tests/restore_it3.py` after any stock-count test to restore prod_01 v2=60 and purge TEST artefacts. Use the public preview URL from /app/frontend/.env (localhost:3000 blocks credentialed writes). Only open defect after this run: POST /api/invoices 422 (invoice_number required in models.Invoice) — verify UI invoice creation ('Kağıt Fatura' tag in list) once fixed. Everything else in Phase-3 (contact detail panel + GİB send, barcode count, leaves/salary/bonus, b2b/track flags, B2B portal filtering) verified working on UI and API.",
+  "rca_of_the_issue": "Invoice creation 422: Pydantic model Invoice inherits BaseDocument and declares `invoice_number: str` without default, so FastAPI rejects the request body before create_invoice() can run its own auto-numbering branch (`if not invoice.invoice_number`). Reproduce: curl -X POST /api/invoices with a valid body omitting invoice_number -> 422 'Field required'. Same request with invoice_number supplied returns 200. Mitigation: declare invoice_number as Optional[str] = None (auto-numbering already handles the empty case); frontend should also display err.response.data.detail."
+}

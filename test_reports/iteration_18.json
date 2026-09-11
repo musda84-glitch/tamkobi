@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 18 (overtime pay in payroll, per-day work schedule, attendance alerts, bank rule suggestions, mobile Mesaim, personnel compensation tab) tested end-to-end. Backend: 20/20 pytest cases pass (test_iteration18.py + test_iteration18b.py) covering GET/PUT work-schedule with per-day override + validation, employee compensation fields, legal & fixed overtime rate math, overtime-preview, payroll upsert with overtime_pay/second_salary/final_payable, missing-checkin alerts (sent → duplicate, mail skipped, notification title), late check-in notification (and suppression when notify_late_checkin=false), and the bank match-rule suggestion → accept → auto-apply → suggestion disappears flow. Frontend: work-schedule settings (day table, overtime, notify blocks) save+persist+revert, att-otpay column, employee schedule/compensation modal, Personel Kartı 'Ücret & Mesai' tab (45.000 brüt + 5.000 2. maaş shown in Özet), payroll breakdown line, mobile /mesai (390x844) big buttons + clock + geolocation check-in with no horizontal overflow, and /banking?tab=connections rule suggestion accept (rules 9→10, pending tx auto-processed). Two backend input-validation defects found (unvalidated employee PUT body). All test data cleaned up (attendance, payrolls 2026-09, employee fields, company schedule, alerts/notifications, bank txs/rule, admin employee_id link) and bank balances verified unchanged (529.923,26 ₺).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PUT /api/personnel/employees/{id} + GET /api/personnel/overtime-preview", "issue": "Employee update accepts arbitrary unvalidated payload (raw Dict, no Pydantic). Sending payroll_salary=\"abc\" is stored with HTTP 200; afterwards GET /api/personnel/overtime-preview (and generate-payroll / attendance list, which share overtime_rate()) returns 500 (float('abc') ValueError). Numeric coercion/validation needed for payroll_salary, second_salary, overtime_hourly_rate, overtime_method enum and work_schedule shape.", "priority": "HIGH"},
+      {"endpoint": "PUT /api/personnel/employees/{id}", "issue": "Mass-assignment: body keys are $set blindly, so {\"_id\": \"hacked\"} → 500 Internal Server Error (mongo immutable _id). Client can also overwrite company_id/user_id. Whitelist updatable fields.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/personnel/attendance/run-alerts", "issue": "Unknown company_id silently returns {status:success, results:[]} (200) instead of 404; also no auth/RBAC guard on this POST while it writes notifications."},
+      {"endpoint": "POST /api/personnel/attendance/run-alerts?force=true", "issue": "force=true bypasses the company notify_missing_checkin=false setting (documented in code, but an admin-triggered run should arguably respect the switch)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/banking?tab=connections rule suggestions", "issues": ["Header wording is misleading: 'Kural önerileri — aynı açıklamayla 1 tekrar eden eşleşme bulundu' where 1 is the number of suggestion groups, not repetitions (group itself shows '2×'). Suggest 'N kural önerisi bulundu'."]},
+      {"screen": "/mesai (mobile & desktop)", "issues": ["Disabled action button label (e.g. 'Giriş Yap / Giriş 03:35' at opacity-40 on the dark card) has weak contrast; consider a solid muted state instead of 40% opacity."]},
+      {"screen": "Console (EmployeeCompensationForm)", "issues": ["React hydration warning: '<span> cannot be a child of <option>' triggered by the dynamic expression inside <option> at WorkScheduleSettings.jsx:117 (emp-ot-method). Move the computed label into a plain string to silence it."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18.py",
+    "/app/backend/tests/test_iteration18b.py",
+    "/app/backend/tests/it18_helper.py",
+    "/app/test_reports/pytest/iteration18_results.xml"
+  ],
+  "action_items": [
+    "Validate/whitelist PUT /api/personnel/employees/{id} body (Pydantic model or explicit field coercion) so non-numeric salaries and _id/company_id cannot be written; this currently causes 500s in overtime-preview, attendance list and generate-payroll.",
+    "Guard overtime_rate()/overtime_pay_for_period() against non-numeric stored values (defensive float parsing) so a single bad record cannot 500 the whole company preview.",
+    "Return 404 for unknown company_id in POST /api/personnel/attendance/run-alerts and add an auth/RBAC guard.",
+    "Fix suggestion box wording in BankConnectionsPanel and the <option> child-span hydration warning in WorkScheduleSettings.jsx:117."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 4386 lines — split personnel/payroll and banking-match sections into modules (attendance.py precedent already exists).",
+    "generate_payroll recomputes overtime with overtime_pay_for_period per employee inside a loop (N+1 mongo queries); acceptable at this scale but batch by period if employee count grows.",
+    "overtime_rate() fixed method derives holiday_rate = base*holiday_multiplier/overtime_multiplier (150 → 200) which matches the spec expectation (2×150 + 2×200 = 700); verified by test. Keep this documented in the UI helper text as it is non-obvious.",
+    "clean_days() ignores invalid weekday keys silently (days:{'9':...} dropped) — fine, but returning a 400 would be clearer for API consumers.",
+    "Employee/company work-schedule endpoints take raw Dict[str, Any]; consider Pydantic models for the schedule + compensation payloads."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18.py",
+    "/app/backend/tests/test_iteration18b.py",
+    "/app/backend/tests/it18_helper.py"
+  ],
+  "success_rate": {"backend": "100% (20/20 pytest cases; 2 extra negative-path probes revealed the validation defects above)", "frontend": "100% of requested flows verified (6/6)"},
+  "seed_data_creation": "Temporary only, all removed: attendance rows 2026-09-01/05/06/07 for emp_01, employee payroll_salary 45000 / second_salary 5000 / overtime fixed 150, company per-day Saturday schedule 10:00-14:00 and shifted start for the late-checkin case, 3 bank_sync txs 'TEST_ABONELIK SUNUCU KIRASI' (tx_it18_0..2) + rule 'test_abonelik sunucu kirasi', admin→emp_01 employee_id link, 2026-09 pending payrolls (deleted). Bank account balances re-verified unchanged.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@nexus.com / admin123 (from /app/memory/test_credentials.md); company_id=comp_nexus_main_01",
+  "context_for_next_testing_agent": "Run iteration-18 backend tests with `pytest test_iteration18.py test_iteration18b.py -n0` from /app/backend/tests — pytest.ini enables xdist LoadScope which breaks these stateful class-ordered tests, so -n0 is mandatory. Before re-running, execute `python it18_helper.py reset_alerts` (attendance_alerts dedupe blocks the 'sent' assertion) and after running `python it18_helper.py cleanup` plus unmatch/delete of tx_it18_* and the 'test_abonelik...' rule (see the cleanup snippet in the report history). Istanbul clock in this environment is ~03:30 on Sat 2026-09-05, so late/missing check-in tests must temporarily shift work start and add today's weekday to work_days (test_iteration18b does this and restores). Playwright: login via /login testids then navigate; geolocation = 41.104005414801456 / 28.812963 with context.grant_permissions(['geolocation']).",
+  "rca_of_the_issue": "PUT /api/personnel/employees/{id} does `db.employees.update_one({_id}, {$set: data})` with the raw request body. Because no schema validates the payload, (a) reserved keys such as _id reach mongo and raise an immutable-field error surfaced as 500, and (b) string values land in numeric compensation fields; attendance.overtime_rate() then calls float(employee['payroll_salary']) and raises ValueError, turning GET /personnel/overtime-preview, GET /personnel/attendance and POST /personnel/generate-payroll into 500s for the whole company. Reproduce: PUT {\"payroll_salary\":\"abc\"} → 200, then GET /api/personnel/overtime-preview?company_id=comp_nexus_main_01&period=2026-09 → 500. Mitigation: Pydantic model with whitelisted, typed optional fields + defensive float coercion in overtime_rate()."
+}

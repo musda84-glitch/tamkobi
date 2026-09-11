@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 14 full backend + frontend verification of NexusHesap: Masraflar (expenses) module, İrsaliye (dispatch) flows, partner transaction edit/delete, personnel advance/expense quick pay, invoice quick-contact + prefill + toolbar, contact row layout/detail panel sortable-draggable columns, banking partner tx table, stock toolbar. Backend: 7/7 pytest tests pass (/app/backend/tests/test_iteration14.py). Frontend: all requested flows verified via Playwright on the public URL; every bank balance mutated during testing was verified back to its starting value (bank_01 249.812,50; bank_02 182.407,50; bank_03 26.201,00; bank_04 96.250,00) and all IT14 test data (expenses, category, contact, bonus, dispatch, converted invoice) removed. Auth playbook regression (bcrypt $2b$, httpOnly cookie, CORS credentials, 5-fail lockout) re-run and passing. No critical or blocking defects found; only cosmetic/formatting and tooling notes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/invoices/{id}", "issue": "Endpoint does not exist (405). Dispatches/converted invoices created by mistake can only be removed from Mongo; UI has no delete/cancel for an irsaliye. Consider adding a delete/cancel endpoint."},
+      {"endpoint": "seed_data.seed_all_data", "issue": "Returns early when admin@nexus.com exists, so a changed seed password/role is never re-synced (auth playbook item 5 'seed_admin updates existing admin'). Current credentials still work, so non-blocking."},
+      {"endpoint": "pytest.ini (xdist loadscope)", "issue": "Default parallel run makes balance-sensitive tests from different classes mutate the same bank account concurrently → false failures. test_iteration14.py must be run with -n 0 (documented in file header/report)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "InvoicesPage / DispatchesPage amount column + toolbar total", "issue": "Currency printed with 3 decimals: IRS row showed '4.510,125 ₺' and toolbar total '15.066,125 ₺'. toLocaleString('tr-TR', {minimumFractionDigits: 2}) is missing maximumFractionDigits: 2.", "selector": "tr[data-testid^='invoice-row-'], [data-testid='inv-result-summary']", "priority": "LOW"},
+      {"component": "PersonnelPage quick-pay account select", "issue": "Account balance shown as '249.812,5 ₺' (one decimal) – missing minimumFractionDigits: 2.", "selector": "[data-testid='quick-pay-account']", "priority": "LOW"},
+      {"component": "ExpensesPage VAT field", "issue": "data-testid='exp-vat' is on the VAT *rate* <select> (text renders as '%0%1%10%20'); there is no testid for the computed VAT amount. Rename to exp-vat-rate and add exp-vat-amount for unambiguous assertions.", "selector": "[data-testid='exp-vat']", "priority": "LOW"},
+      {"component": "ExpensesPage VAT rate options", "issue": "Console error 'In HTML, <span> cannot be a child of <option> … hydration error' on every render of the VAT-rate select (ExpensesPage line 47 inline array map). Functionality unaffected but console is noisy.", "selector": "[data-testid='exp-vat'] option", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/stock product table", "issues": ["Action cell control count varies per row (4 vs 5 controls) because one icon is conditional; icons themselves are perfectly aligned within each row."]},
+      {"screen": "Seed/dev data hygiene (not new code)", "issues": ["Payroll rows show period '2099-01 Dönemi'", "Products 'deneme' and 'drc70' with 0,00 prices in stock list", "Ortak Hareketleri has many duplicated 'Kâr Payı / Kâr Payı (Tahakkuk)' -6.000,00 rows from earlier test/dev runs"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14.py",
+    "/app/backend/tests/cleanup_iteration14.py",
+    "/app/backend/tests/cleanup_it14_ui.py",
+    "/app/backend/tests/restore_it14.py",
+    "/app/test_reports/pytest/it14.xml"
+  ],
+  "action_items": [
+    "Add maximumFractionDigits: 2 (and minimumFractionDigits: 2) to currency toLocaleString calls in InvoicesPage rows/toolbar total and PersonnelPage quick-pay account select.",
+    "Rename exp-vat testid to exp-vat-rate and expose the computed VAT amount with its own data-testid.",
+    "Fix the <option> children warning on ExpensesPage VAT-rate select (render plain text label instead of an expression that the instrumentation wraps in a span).",
+    "Optional: add a delete/cancel endpoint for dispatch documents so wrongly created irsaliyeler can be removed from the UI.",
+    "Optional: make seed_all_data re-sync the seeded admin password/role instead of returning early."
+  ],
+  "critical_code_review_comments": [
+    "expenses.py _reverse_payment matches the bank movement by expense_id only via find_one; if an expense were ever paid twice (two bank_transactions), only one would be reversed. Current pay/unpay guards prevent it, but a delete_many/one-per-expense invariant would be safer.",
+    "expenses.py update_expense re-posts the payment when total changes but always reuses exp['paid_date']; if account_id is passed without a paid expense the value is silently ignored — acceptable, but worth documenting.",
+    "server.py is 4138 lines — well past the 700-line guideline; expenses.py extraction was the right direction, invoices/banking/personnel should be split next.",
+    "convert_dispatch_to_invoice re-derives VAT from product master when the dispatch line has vat_rate 0; for products deleted after the dispatch was issued it silently falls back to 20% — consider surfacing this in the response message."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration14.py",
+    "/app/backend/tests/cleanup_iteration14.py",
+    "/app/backend/tests/cleanup_it14_ui.py",
+    "/app/backend/tests/restore_it14.py"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest + 4/4 auth playbook regression)", "frontend": "100% of requested flows verified (expenses CRUD/pay/unpay/filters, dispatch create+convert, invoice quick contact/prefill/toolbar, contacts rows/fin filter/detail panel/column sort+drag+persist+reset, partner tx sort/inline edit, personnel quick expense pay, stock toolbar)"},
+  "seed_data_creation": "All test data was temporary and removed: expenses 'IT14 kira'/'IT14 vat dahil'/'UI IT14 yakıt', expense category 'IT14 Kat', contact 'IT14 Hızlı Cari', partner capital_in 1000/1500 'IT14', bonuses (advance/expense 250 + UI expense 100), dispatches IRS-2026-0009/0010/0011 and converted invoice NX202600000029. Verified afterwards: 0 expenses, no IT14 contacts/categories, dispatch list back to the 6 pre-existing IRS docs, all bank balances at their pre-test values.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "/app/memory/test_credentials.md — admin@nexus.com / admin123 (endpoints also fall back to demo admin when no token)",
+  "context_for_next_testing_agent": "Run /app/backend/tests/test_iteration14.py with `-n 0`: pytest.ini enables xdist loadscope and the expense/partner/bonus classes all mutate bank_01, so parallel execution produces false balance-assertion failures. Helper scripts: cleanup_iteration14.py (--invoice-ids/--delete-ids + IT14 purge), cleanup_it14_ui.py <IRS-number> (deletes a dispatch + its converted invoice and unsets the source invoice links), restore_it14.py (recovers a leaked expense bank movement). There is no DELETE /api/invoices endpoint — dispatch cleanup must go through Mongo. UI note: inv-pay-filter is a segmented button group, use [data-testid='inv-pay-unpaid'] instead of select_option; contact invoice column layout is persisted in localStorage key 'nexus_contact_inv_cols_v1' (clear it before layout assertions).",
+  "rca_of_the_issue": "No functional defect. The two initially observed failures were self-inflicted: (a) pytest-xdist ran the expense and partner classes on separate workers against the same bank account, so absolute balance assertions raced; re-running serially passed, and the leaked 6.000 ₺ expense bank movement from the aborted run was reversed via restore_it14.py; (b) my first dispatch cleanup assumed DELETE /api/invoices exists (405) — cleanup was moved to a Mongo script. The 3-decimal currency rendering stems from toLocaleString being given only minimumFractionDigits while an unrounded legacy subtotal (4510.125) exists in seeded data."
+}

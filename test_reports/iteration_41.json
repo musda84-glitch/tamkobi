@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 41 tested (1) B2B access endpoint /contacts/cnt_01/b2b-access (password + login_email + base_url), (2) POST /public/b2b/login (email, VKN, wrong password), (3) POST /public/b2b/{token}/ai-cart with Excel upload → Claude parse + catalog match (3 matched, 1 unmatched), (4) GET /api/search global search, (5) PUT /contacts/{id} field-filter behavior (contact_person/tags/risk_status persisted; balance & company_id ignored; b2b_password hashed and usable via login), (6) B2B login UI (correct/wrong flows + redirect), (7) B2B portal AI cart UI end-to-end (upload xlsx → modal with items → change qty → apply → 3 items in cart with 'Sepet (3)'), (8) ContactForm 6 tabs (general/tax/address/finance/b2b/notes) create + edit with 'Cari Bilgilerini Güncelle' title + save toast, (9) new contact's B2B login (test.b2b@x.com / sifre123) → /portal/... redirected, (10) Header quick actions: global-search-input+global-search-results (product result → /stock?q=SKU with param), quick-new-contact-btn opens contact-form, quick-new-order-btn navigates to /orders?new=1 and opens new-order-modal, (11) /orders order-item-link-* → /stock?q=<sku>, (12) Print template hide_all_prices toggle now REFRESHES OPEN preview automatically (iteration_40 UX gap is fixed — 'Birim Fiyat'/'Tutar' columns disappear immediately without close/reopen). Backend pytest: 10/10 PASS. Frontend: all critical selectors and flows verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/contacts/{id}", "issue": "Response body includes the sensitive 'b2b_password_hash' field when the contact has one. clean_doc does not strip password hashes. Recommend explicitly popping 'b2b_password_hash' from the response (and also for GET /contacts, GET /contacts/{id}/statement, and the /search results) to avoid leaking bcrypt hashes to authenticated clients / logs. Detected on cnt_01."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ContactForm modal", "issues": ["Tab strip and Kaydet button can fall outside the viewport at 1600×900. Modal is not scrollable-in-place unless the container height accommodates all fields. Users on smaller laptop screens (e.g. 1366×768) may need to scroll the entire page to reach the Kaydet button. Consider a fixed footer with cf-save button and internal scroll for the body."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41.py",
+    "/app/test_reports/pytest/iteration41.xml"
+  ],
+  "action_items": [
+    "(Security/Minor) Strip 'b2b_password_hash' from all contact responses (list, get, update, statement, /search). Currently PUT /api/contacts/{id} echoes it back in JSON."
+  ],
+  "critical_code_review_comments": [
+    "server.update_contact returns db document via clean_doc without stripping the password hash — sensitive credential material leaks in every PUT response. Fix: `res.pop('b2b_password_hash', None)` before return, and audit clean_doc/clean_docs to add a common denylist for password_hash fields.",
+    "server.b2b_login uses regex email match; email input is not escaped for regex metacharacters at the branch `email: {\\$regex: \"^...$\"}` — however the value is passed through re.escape() so that path is safe. Good.",
+    "server.global_search does not filter by user's accessible companies; caller can pass any company_id via query string and read data. Consider gating on the authenticated user's company_ids list.",
+    "server.b2b_ai_cart passes user-uploaded file text directly to Claude with no size cap after read (10MB check is on bytes only). Consider truncating text to a max character length before calling ai_service_extract_orders to avoid runaway prompts / costs.",
+    "ContactForm modal layout: at 1600×900 the tab strip and Kaydet button clip out of the visible modal region (Playwright had to scroll to interact). Add overflow-y auto to modal body and pin the action bar."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration41.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all flows verified: B2B login, B2B AI cart with 3 matched items, ContactForm 6-tab CRUD, header quick actions, /stock?q= navigation, print template auto-refresh)"},
+  "test_credentials": "admin@nexus.com / admin123 ; B2B: b2btest@musteri.com / b2b12345 (cnt_01) — restored to b2b12345 after tests",
+  "seed_data_creation": "Created and cleaned up: TEST_Gelişmiş Cari (vkn 1234567890) with B2B email test.b2b@x.com; also swept prior TEST_ contacts (TEST_it27 cari, TEST_it27 order cust, TEST_QA UI Sipariş). cnt_01 b2b password rotated to 'yeni1234' during test then restored to 'b2b12345'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PrintTemplateEditor now correctly refreshes the open PrintDocument after tpl-save-btn (iteration_40 issue fixed). Only remaining minor concern: PUT /api/contacts/{id} echoes b2b_password_hash in response — recommend main agent add explicit strip. ContactForm tabs may need scroll_into_view_if_needed in Playwright on smaller viewports.",
+  "rca of the issue": "b2b_password_hash leak: server.py update_contact filters incoming fields but response uses clean_doc(res) which does not remove password hashes stored on the document. Simple fix: `res.pop('b2b_password_hash', None); return clean_doc(res)` (and apply consistently to other contact-returning endpoints)."
+}
