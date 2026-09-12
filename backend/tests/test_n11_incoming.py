@@ -108,13 +108,31 @@ def _inbox_xml(rows: str, wrapper: str = "InvoiceInfoResult") -> bytes:
 </soap:Body></soap:Envelope>""".encode()
 
 
-def _invoice_xml_response(payload: str) -> bytes:
+def _invoice_xml_response(payload: str, *, action: str = "GetInvoiceXML", as_return_value: bool = False) -> bytes:
+    """GetInvoiceXML* SOAP yanıtı üretir.
+
+    Gerçek Digital Planet yanıtı ServiceResult + ReturnValue çocukları taşır;
+    eski testler gövdeyi doğrudan Result metnine koyuyordu — ikisini de
+    destekliyoruz.
+    """
+    if as_return_value:
+        body = (
+            "<ServiceResult>Successful</ServiceResult>"
+            "<ServiceResultDescription>Invoice is retrieved successfully.</ServiceResultDescription>"
+            f"<ReturnValue>{payload}</ReturnValue>"
+        )
+    else:
+        body = payload
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>
-  <GetInvoiceXMLResponse xmlns="http://tempuri.org/">
-    <GetInvoiceXMLResult>{payload}</GetInvoiceXMLResult>
-  </GetInvoiceXMLResponse>
+  <{action}Response xmlns="http://tempuri.org/">
+    <{action}Result>{body}</{action}Result>
+  </{action}Response>
 </soap:Body></soap:Envelope>""".encode()
+
+
+def _empty_success_xml(action: str = "GetInvoiceXML") -> bytes:
+    return _invoice_xml_response("", action=action, as_return_value=True)
 
 
 class FakeCollection:
@@ -276,15 +294,17 @@ class TestFieldNameVariants:
 
 
 class TestListIncoming:
-    def _run(self, inbox_bytes, xml_response=None):
+    def _run(self, inbox_bytes, xml_by_action=None):
+        xml_by_action = xml_by_action or {}
+
         async def fake_post(url, action, inner):
             if action == "GetFormsAuthenticationTicket":
                 return _ticket_xml()
             if action == "GetIncomingInvoicesByIssueDate":
                 return inbox_bytes
-            if action == "GetInvoiceXML":
-                assert xml_response is not None, "beklenmeyen GetInvoiceXML çağrısı"
-                return xml_response
+            if action in ("GetInvoiceXMLWithOutFlag", "GetInvoiceXML"):
+                assert action in xml_by_action, f"beklenmeyen {action} çağrısı"
+                return xml_by_action[action]
             raise AssertionError(action)
 
         with patch.object(n11faturam, "_post", side_effect=fake_post):
@@ -295,14 +315,57 @@ class TestListIncoming:
         rows = self._run(_inbox_xml([row]))
         assert rows[0]["xml"] is not None and rows[0]["xml_error"] == ""
 
-    def test_falls_back_to_get_invoice_xml(self):
-        rows = self._run(_inbox_xml(["<UUID>u-1</UUID>"]), _invoice_xml_response(_b64(UBL)))
+    def test_falls_back_to_get_invoice_xml_without_flag(self):
+        rows = self._run(
+            _inbox_xml(["<UUID>u-1</UUID>"]),
+            {
+                "GetInvoiceXMLWithOutFlag": _invoice_xml_response(
+                    _b64(UBL), action="GetInvoiceXMLWithOutFlag", as_return_value=True
+                ),
+            },
+        )
+        assert rows[0]["xml"] is not None and rows[0]["xml_error"] == ""
+
+    def test_empty_success_description_is_not_shown_as_failure_reason(self):
+        # Canlıdaki çelişki: Successful + "Invoice is retrieved successfully." + boş ReturnValue.
+        rows = self._run(
+            _inbox_xml(["<UUID>u-1</UUID>"]),
+            {
+                "GetInvoiceXMLWithOutFlag": _empty_success_xml("GetInvoiceXMLWithOutFlag"),
+                "GetInvoiceXML": _empty_success_xml("GetInvoiceXML"),
+            },
+        )
+        assert rows[0]["xml"] is None
+        assert "successfully" not in (rows[0]["xml_error"] or "").lower()
+        assert "UBL" in rows[0]["xml_error"] or "XML" in rows[0]["xml_error"]
+
+    def test_without_flag_recovers_after_empty_get_invoice_xml(self):
+        # GetInvoiceXMLWithOutFlag önce denenir; o da boşsa GetInvoiceXML'e düşülür.
+        # Bu testte WithOutFlag UBL döndürür — boş GetInvoiceXML'e hiç gidilmez.
+        rows = self._run(
+            _inbox_xml(["<UUID>ALE2026000007165</UUID>"]),
+            {
+                "GetInvoiceXMLWithOutFlag": _invoice_xml_response(
+                    _b64(UBL), action="GetInvoiceXMLWithOutFlag", as_return_value=True
+                ),
+                "GetInvoiceXML": _empty_success_xml("GetInvoiceXML"),
+            },
+        )
         assert rows[0]["xml"] is not None
 
     def test_non_ubl_payload_is_reported_not_ingested(self):
         row = f"<UUID>u-1</UUID><ReturnValue>{_b64(SOAP_NOT_UBL)}</ReturnValue>"
-        rows = self._run(_inbox_xml([row]), _invoice_xml_response(_b64(SOAP_NOT_UBL)))
+        rows = self._run(
+            _inbox_xml([row]),
+            {
+                "GetInvoiceXMLWithOutFlag": _invoice_xml_response(
+                    _b64(SOAP_NOT_UBL), action="GetInvoiceXMLWithOutFlag", as_return_value=True
+                ),
+                "GetInvoiceXML": _invoice_xml_response(_b64(SOAP_NOT_UBL), as_return_value=True),
+            },
+        )
         assert rows[0]["xml"] is None and rows[0]["xml_error"]
+        assert "successfully" not in rows[0]["xml_error"].lower()
 
 
 class TestParseUbl:

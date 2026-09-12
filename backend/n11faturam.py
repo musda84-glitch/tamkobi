@@ -533,6 +533,94 @@ def _decode_xml(payload: str) -> Optional[bytes]:
     return _as_xml(data)
 
 
+def _extract_invoice_payload(root: Optional[ET.Element]) -> Optional[bytes]:
+    """GetInvoiceXML* yanıtından UBL baytlarını çıkarır.
+
+    Sonuç sarmalayıcısının (GetInvoiceXMLResult) kendi metni değil; önce
+    ReturnValue / InvoiceRawData gibi gövde alanlarına bakılır. Aksi halde
+    boş ReturnValue + 'Invoice is retrieved successfully.' çifti başarı
+    açıklamasını hata sanmadan sessizce XML'siz kalıyordu.
+    """
+    if root is None:
+        return None
+    raw = _first(root, "ReturnValue", "InvoiceRawData", "XmlData", "InvoiceData", "FileContent")
+    decoded = _decode_xml(raw)
+    if decoded:
+        return decoded
+    # Bazı ortamlarda UBL doğrudan sonuç etiketinin metninde (iç çocuk yok).
+    for el in root.iter():
+        if _key(el.tag) not in ("getinvoicexmlresult", "getinvoicexmlwithoutflagresult"):
+            continue
+        if list(el):
+            continue
+        text = (el.text or "").strip()
+        if not text:
+            continue
+        decoded = _decode_xml(text)
+        if decoded:
+            return decoded
+    # ReturnValueBySovos: UBL SOAP ağacına gömülü gelebilir.
+    for el in root.iter():
+        if _key(el.tag) not in ("invoice", "despatchadvice"):
+            continue
+        if not (list(el) or (el.text or "").strip()):
+            continue
+        try:
+            blob = ET.tostring(el, encoding="utf-8")
+        except Exception:
+            continue
+        got = _as_xml(blob)
+        if got:
+            return got
+    return None
+
+
+def _xml_error_message(root: Optional[ET.Element], *, had_non_ubl: bool = False) -> str:
+    """Servis açıklamasını kullanıcıya göstermek için Türkçeleştirir.
+
+    'Invoice is retrieved successfully.' başarı metnidir; boş gövdede bunu
+    hata nedeni olarak göstermek '22 alınamadı (…successfully…)' gibi çelişki
+    yaratıyordu.
+    """
+    if had_non_ubl:
+        return "n11'in gönderdiği belge UBL e-Fatura değil."
+    desc = (_text(root, "ServiceResultDescription") if root is not None else "") or ""
+    status = (_text(root, "ServiceResult") if root is not None else "") or ""
+    low = f"{status} {desc}".lower()
+    if any(token in low for token in ("success", "successful", "retrieved successfully")):
+        return "n11 faturayı buldu ama UBL XML gövdesi boş döndü."
+    if desc.strip():
+        return desc.strip()[:200]
+    return "n11 bu fatura için XML döndürmedi."
+
+
+async def _fetch_invoice_xml(settings: dict, ticket: str, invoice_uuid: str) -> Tuple[Optional[bytes], str]:
+    """UUID ile UBL çeker.
+
+    GetInvoiceXML bazen faturayı 'alınmış' işaretleyip sonraki çağrıda
+    Successful + boş ReturnValue döndürüyor. GetInvoiceXMLWithOutFlag bayrağı
+    değiştirmeden gövdeyi yeniden verir; onu önce deneriz.
+    """
+    last_error = ""
+    for action in ("GetInvoiceXMLWithOutFlag", "GetInvoiceXML"):
+        inner = (
+            f'<{action} xmlns="{NS_SOAP}">'
+            f"<Ticket>{_esc(ticket)}</Ticket><UUID>{_esc(invoice_uuid)}</UUID>"
+            f"</{action}>"
+        )
+        try:
+            root = parse_soap_xml(await _post(soap_url(settings), action, inner))
+        except HTTPException as e:
+            last_error = str(e.detail)
+            logger.warning("n11 Faturam %s başarısız (%s): %s", action, invoice_uuid, last_error)
+            continue
+        xml_bytes = _extract_invoice_payload(root)
+        if xml_bytes:
+            return xml_bytes, ""
+        last_error = _xml_error_message(root)
+    return None, last_error or "n11 bu fatura için XML döndürmedi."
+
+
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     ticket = await get_ticket(settings, password)
     end = datetime.now(timezone.utc)
@@ -555,20 +643,9 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
         xml_bytes = _decode_xml(raw)
         error = "n11'in gönderdiği belge UBL e-Fatura değil." if raw and not xml_bytes else ""
         if not xml_bytes and inv.get("uuid"):
-            xml_inner = (
-                f'<GetInvoiceXML xmlns="{NS_SOAP}">'
-                f"<Ticket>{_esc(ticket)}</Ticket><UUID>{_esc(inv['uuid'])}</UUID>"
-                "</GetInvoiceXML>"
-            )
-            try:
-                xml_root = parse_soap_xml(await _post(soap_url(settings), "GetInvoiceXML", xml_inner))
-                xml_bytes = _decode_xml(_first(xml_root, "GetInvoiceXMLResult", "ReturnValue", "InvoiceRawData", "XmlData"))
-                if not xml_bytes:
-                    error = _text(xml_root, "ServiceResultDescription") or "n11 bu fatura için XML döndürmedi."
-            except HTTPException as e:
-                # Tek bir faturanın XML'i alınamıyorsa kalan faturalar yine de çekilsin.
-                error = str(e.detail)
-                logger.warning("n11 Faturam GetInvoiceXML başarısız (%s): %s", inv.get("uuid"), error)
+            xml_bytes, fetch_error = await _fetch_invoice_xml(settings, ticket, inv["uuid"])
+            if not xml_bytes:
+                error = fetch_error or error or "n11 bu fatura için XML döndürmedi."
         elif not xml_bytes:
             error = error or "Faturanın UUID'si yok, XML istenemedi."
         out.append({**inv, "xml": xml_bytes, "xml_error": "" if xml_bytes else error})
