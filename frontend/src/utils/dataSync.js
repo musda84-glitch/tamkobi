@@ -6,6 +6,8 @@ const DB_NAME = "tamkobi-sync-v1";
 const STORE = "collections";
 
 export const invoiceTypeFilter = (type) => (inv) => {
+  if (type === "export") return inv.trade_kind === "export" && inv.invoice_type !== "dispatch";
+  if (type === "import") return inv.trade_kind === "import" && inv.invoice_type !== "dispatch";
   if (!type || type === "all") return inv.invoice_type !== "dispatch";
   return inv.invoice_type === type;
 };

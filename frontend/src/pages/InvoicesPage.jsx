@@ -22,6 +22,7 @@ import { FxPicker } from "../components/FxPicker";
 import { fmtMoney } from "../utils/money";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 import {
   FileText,
@@ -92,6 +93,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const contactFilter = searchParams.get("contact_id") || "";
   const visibleInvoices = useMemo(() => applyInvoiceFilters(invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter), filters), [invoices, contactFilter, filters]);
   const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
+  const listResetKey = useMemo(() => `${filterType}|${contactFilter || ""}|${JSON.stringify(filters)}`, [filterType, contactFilter, filters]);
+  const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(visibleInvoices, { resetKey: listResetKey });
   const [printInv, setPrintInv] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
@@ -165,17 +168,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [invRes, cntRes, prodRes, bankRes, projRes] = await Promise.all([
-        axios.get(`${API_URL}/invoices?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=${filterType}`),
-        axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/projects?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const [invRows, cntRows, prodRows, bankRes, projRes] = await Promise.all([
+        cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
+        cachedList("contacts", cid, { onCached: setContacts }),
+        cachedList("products", cid, { onCached: setProducts }),
+        axios.get(`${API_URL}/banking/accounts?company_id=${cid}`),
+        axios.get(`${API_URL}/projects?company_id=${cid}`),
       ]);
-      setInvoices(invRes.data);
-      setContacts(cntRes.data);
+      setInvoices(invRows);
+      setContacts(cntRows);
+      setProducts(prodRows);
       setProjects(projRes.data);
-      setProducts(prodRes.data);
       setBankAccounts(bankRes.data);
       if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {
@@ -451,7 +455,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </td>
                 </tr>
               ) : (
-                visibleInvoices.map((inv) => (
+                pagedInvoices.map((inv) => (
                   <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => openCtx(e, inv)} className={`hover:bg-slate-50/70 transition cursor-context-menu ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={`invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
@@ -598,6 +602,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             </tbody>
           </table>
         </div>
+        {invoicesHasMore && (
+          <div ref={invoicesSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="invoices-load-more">
+            Daha fazla fatura yükleniyor…
+          </div>
+        )}
       </div>
 
       <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} />
