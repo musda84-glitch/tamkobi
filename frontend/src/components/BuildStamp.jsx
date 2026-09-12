@@ -85,7 +85,7 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
           <div className={`text-[11px] font-mono ${colors.ok}`}>…</div>
         ) : (
           <>
-            <div className={`font-mono text-[11px] leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-sha">
+            <div className={`font-mono text-[11px] leading-tight truncate ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-sha">
               {card.sha || "—"}
               {card.branch ? ` · ${card.branch}` : ""}
             </div>
