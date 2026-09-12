@@ -17,6 +17,7 @@ import { MigrationPanel } from "../components/MigrationPanel";
 import { MorningSummarySettings } from "../components/PricingCenter";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 import { MyStoragePanel } from "../components/saas/StorageManagerPanel";
+import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -52,6 +53,19 @@ const EInvoiceSettings = ({ companyId }) => {
   if (!s) return null;
   const fields = s.fields || [];
   const isN11 = s.provider === "n11faturam";
+  const isIsnet = s.provider === "isnet";
+  if (isIsnet) {
+    return (
+      <div className="space-y-3" data-testid="einvoice-settings-isnet">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs max-w-xl" data-testid="einvoice-assigned-provider">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
+          <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura"}</div>
+          {s.hint ? <p className="text-[11px] text-slate-500 mt-1">{s.hint}</p> : null}
+        </div>
+        <IsnetIntegrationPanel companyId={companyId} />
+      </div>
+    );
+  }
   const payload = () => ({
     company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias,
     corporate_code: s.corporate_code, password, api_key: apiKey,
