@@ -6617,6 +6617,12 @@ async def list_cargo_integrations(company_id: Optional[str] = "comp_nexus_main_0
 @api_router.put("/integrations/cargo/{carrier_id}")
 async def update_cargo_integration(carrier_id: str, data: Dict[str, Any]):
     allowed = {k: v for k, v in data.items() if k in {"api_key", "api_secret", "api_password", "api_username", "customer_number", "sender_address_id", "test_mode", "is_active", "status", "auto_create_barcode", "default_weight", "default_length", "default_width", "default_height", "default_desi", "default_package_count"}}
+    sid = str(allowed.get("sender_address_id") or "").strip().lower()
+    if sid and (".geliver." in sid or sid.endswith(".io") or "://" in sid or " " in sid):
+        raise HTTPException(
+            status_code=400,
+            detail="Gönderici Adres ID alanına mağaza domain'i (örn. firma.geliver.io) yazılamaz. «Bağlantıyı Test Et & Adresleri Getir» ile listeden gerçek adres ID'sini seçin.",
+        )
     upd = cargo_providers.encrypt_secrets(allowed)
     cur = await db.cargo_configs.find_one({"_id": carrier_id})
     if not cur:
