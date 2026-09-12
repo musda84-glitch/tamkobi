@@ -27,9 +27,9 @@ AI_PROVIDERS = {
         "label": "OpenAI",
         "hint": "Doğrudan OpenAI API anahtarı (sk-...). Danışman ve belge ayrıştırma aynı sağlayıcıyı kullanır.",
         "models": [
-            {"id": "gpt-5.4", "vendor": "openai", "label": "GPT-5.4"},
-            {"id": "gpt-4.1", "vendor": "openai", "label": "GPT-4.1"},
             {"id": "gpt-4o", "vendor": "openai", "label": "GPT-4o"},
+            {"id": "gpt-4.1", "vendor": "openai", "label": "GPT-4.1"},
+            {"id": "gpt-4o-mini", "vendor": "openai", "label": "GPT-4o Mini"},
         ],
     },
     "anthropic": {
@@ -325,8 +325,39 @@ async def load_ai_settings() -> dict:
     return cfg
 
 
-async def make_chat(session_id: str, system_message: str, purpose: str = "extract"):
+async def make_chat(
+    session_id: str,
+    system_message: str,
+    purpose: str = "extract",
+    *,
+    api_key: str | None = None,
+    provider: str | None = None,
+    advisor_model: str | None = None,
+    extract_model: str | None = None,
+    base_url: str | None = None,
+):
+    """Build a chat client. Optional overrides let the platform test form try a key before saving."""
     cfg = await load_ai_settings()
+    existing_key = cfg.get("api_key") or ""
+    if provider:
+        cfg = normalize_ai({
+            **cfg,
+            "provider": provider,
+            "advisor_model": advisor_model or cfg.get("advisor_model"),
+            "extract_model": extract_model or cfg.get("extract_model"),
+            "base_url": base_url if base_url is not None else cfg.get("base_url"),
+            "api_key_enc": cfg.get("api_key_enc") or "",
+        })
+        # normalize_ai api_key alanını düşürür; kayıtlı/override anahtarı geri koy.
+        cfg["api_key"] = (api_key or "").strip() or existing_key or env_key(cfg["provider"])
+    elif api_key is not None:
+        cfg["api_key"] = api_key.strip()
+    if base_url is not None and is_custom(cfg.get("provider") or ""):
+        cfg["base_url"] = normalize_base_url(base_url)
+    if advisor_model and not provider:
+        cfg["advisor_model"] = _clamp_model(cfg.get("provider") or "emergent", advisor_model, cfg.get("advisor_model") or "")
+    if extract_model and not provider:
+        cfg["extract_model"] = _clamp_model(cfg.get("provider") or "emergent", extract_model, cfg.get("extract_model") or "") or cfg["advisor_model"]
     if not cfg.get("enabled", True):
         raise RuntimeError("AI entegrasyonu platform panelinden kapatılmış.")
     key = cfg.get("api_key") or ""

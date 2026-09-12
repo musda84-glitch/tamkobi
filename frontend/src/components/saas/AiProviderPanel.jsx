@@ -6,6 +6,14 @@ import { Save, Loader2, Sparkles, PlugZap } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { Toggle, inputCls } from "./saasUi";
 
+const errText = (e, fallback) => {
+  const d = e?.response?.data?.detail;
+  if (typeof d === "string" && d.trim()) return d;
+  if (Array.isArray(d)) return d.map((x) => x?.msg || x?.detail || JSON.stringify(x)).filter(Boolean).join(" · ") || fallback;
+  if (d && typeof d === "object") return d.msg || d.message || fallback;
+  return fallback;
+};
+
 export const AiProviderPanel = () => {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ api_key: "" });
@@ -16,9 +24,15 @@ export const AiProviderPanel = () => {
   const current = useMemo(() => catalog.find((c) => c.id === d?.provider) || catalog[0], [catalog, d]);
   const models = current?.models || [];
   const custom = !!current?.custom;
+  const pendingKey = (f.api_key || "").trim();
+  const canTest = !!(d?.has_key || d?.has_env_key || pendingKey || (custom && (d?.base_url || "").trim()));
   if (!d) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
 
   const save = async () => {
+    if (!pendingKey && !d.has_key && !d.has_env_key && !(custom && (d.base_url || "").trim())) {
+      toast.error("API anahtarını girin, sonra Kaydet'e basın. (veya sunucuda ortam değişkeni tanımlayın)");
+      return;
+    }
     setBusy(true);
     try {
       const r = await axios.put(`${API_URL}/system/ai`, {
@@ -27,31 +41,41 @@ export const AiProviderPanel = () => {
         advisor_model: d.advisor_model,
         extract_model: d.extract_model,
         base_url: custom ? (d.base_url || "") : "",
-        api_key: f.api_key || undefined,
+        api_key: pendingKey || undefined,
       });
-      setD(r.data);
+      setD({ ...r.data, last_test: pendingKey ? null : r.data.last_test });
       setF({ api_key: "" });
-      toast.success("AI entegrasyonu kaydedildi. Tüm şirketler bu sağlayıcıyı kullanır.");
+      toast.success("AI entegrasyonu kaydedildi. Bağlantıyı Test Et ile doğrulayabilirsiniz.");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Kaydedilemedi.");
+      toast.error(errText(e, "Kaydedilemedi."));
     } finally { setBusy(false); }
   };
 
   const test = async () => {
+    if (!canTest) {
+      toast.error("Test için API anahtarı girin veya önce kaydedin.");
+      return;
+    }
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/system/ai/test`, {});
+      const r = await axios.post(`${API_URL}/system/ai/test`, {
+        api_key: pendingKey || undefined,
+        provider: d.provider,
+        advisor_model: d.advisor_model,
+        extract_model: d.extract_model,
+        base_url: custom ? (d.base_url || "") : "",
+      });
       setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason, model: r.data.model } }));
       (r.data.ok ? toast.success : toast.error)(r.data.message);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Test yapılamadı.");
+      toast.error(errText(e, "Test yapılamadı."));
     } finally { setBusy(false); }
   };
 
   const pickProvider = (id) => {
     const meta = catalog.find((c) => c.id === id);
     if (meta?.custom) {
-      setD({ ...d, provider: id, advisor_model: "", extract_model: "" });
+      setD({ ...d, provider: id, advisor_model: "", extract_model: "", last_test: null });
       return;
     }
     const ids = (meta?.models || []).map((m) => m.id);
@@ -60,6 +84,7 @@ export const AiProviderPanel = () => {
       provider: id,
       advisor_model: ids.includes(d.advisor_model) ? d.advisor_model : (ids[0] || d.advisor_model),
       extract_model: ids.includes(d.extract_model) ? d.extract_model : (ids[Math.min(1, ids.length - 1)] || ids[0] || d.extract_model),
+      last_test: null,
     });
   };
 
@@ -84,7 +109,7 @@ export const AiProviderPanel = () => {
           {custom && (
             <div className="sm:col-span-2">
               <label className="block font-semibold text-slate-700 mb-1">Uç nokta adresi</label>
-              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value })} placeholder="https://openrouter.ai/api/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
+              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value, last_test: null })} placeholder="https://openrouter.ai/api/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
               <p className="text-[10px] text-slate-500 mt-1">OpenAI uyumlu sohbet ucu. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
             </div>
           )}
@@ -110,14 +135,26 @@ export const AiProviderPanel = () => {
           </div>
           <div className="sm:col-span-2">
             <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : `(${d.env_var || "ortam değişkeni"})`}</span>}</label>
-            <input type="password" value={f.api_key} onChange={(e) => setF({ api_key: e.target.value })} placeholder={d.has_key ? "••••••••" : d.has_env_key ? `Boş bırakırsanız ${d.env_var} kullanılır` : `${current?.label || "Sağlayıcı"} API anahtarı`} className={inputCls} data-testid="ai-api-key" autoComplete="off" />
+            <input
+              type="password"
+              value={f.api_key}
+              onChange={(e) => {
+                setF({ api_key: e.target.value });
+                if (d.last_test) setD({ ...d, last_test: null });
+              }}
+              placeholder={d.has_key ? "••••••••" : d.has_env_key ? `Boş bırakırsanız ${d.env_var} kullanılır` : `${current?.label || "Sağlayıcı"} API anahtarı`}
+              className={inputCls}
+              data-testid="ai-api-key"
+              autoComplete="off"
+            />
+            <p className="text-[10px] text-slate-500 mt-1">Anahtarı yazdıktan sonra <b>Kaydet</b>, ardından <b>Bağlantıyı Test Et</b>. Kaydetmeden de test edebilirsiniz.</p>
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
           Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
         </div>
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={test} disabled={busy || !(d.has_key || d.has_env_key || (custom && d.base_url))} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
+          <button type="button" onClick={test} disabled={busy || !canTest} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
           <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="ai-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
         </div>
       </div>
