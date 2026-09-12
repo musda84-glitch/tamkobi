@@ -1,0 +1,20 @@
+[Unit]
+Description=TamKobi FastAPI (uvicorn)
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/tamkobi.com/backend
+EnvironmentFile=-/var/www/tamkobi.com/backend/.env
+EnvironmentFile=-/var/www/tamkobi.com/.env
+ExecStart=/var/www/tamkobi.com/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+# Logs: journalctl -u tamkobi-uvicorn -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
