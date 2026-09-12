@@ -2,13 +2,14 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
 import { ReceiptPrint } from "./ReceiptPrint";
 import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
+import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice } from "./InvoiceContextMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
@@ -64,6 +65,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   useEffect(() => { loadInsts(); }, [loadInsts]);
   useEffect(() => { if (tab === "installments" && contactCompanyId) { loadInsts(); axios.get(`${API_URL}/banking/accounts?company_id=${contactCompanyId}`).then((r) => setAccounts(r.data)).catch(() => {}); } }, [tab, contactCompanyId, loadInsts]);
   const [surveyDetail, setSurveyDetail] = useState(null);
+  const [trackingProject, setTrackingProject] = useState(null);
   const [editPay, setEditPay] = useState(null);
   const isLockedTx = (p) => p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || p.virtual;
   const lockedTxLabel = (p) => (p.source === "partner" ? "Ortak" : p.source === "cheque" || p.virtual ? "Çek" : "Banka");
@@ -299,15 +301,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           )}
           {tab === "projects" && (
             <table className="w-full text-left">
-              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Proje</th><th className="py-2">Ad</th><th className="py-2">Durum</th><th className="py-2 text-right">Bütçe</th></tr></thead>
+              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Proje</th><th className="py-2">Ad</th><th className="py-2">Durum</th><th className="py-2 text-right">Bütçe</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {(data.projects || []).length === 0 && <tr><td colSpan={4} className="py-6 text-center text-slate-400">Proje yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Proje oluştur</button></td></tr>}
+                {(data.projects || []).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Proje yok. <button onClick={() => navigate("/projects")} className="text-emerald-700 underline">Proje oluştur</button></td></tr>}
                 {[...(data.projects || [])].sort((a, b) => Number(b.status === "completed") - Number(a.status === "completed")).map((p) => (
                   <tr key={p.id} className={p.status === "completed" ? "bg-emerald-50/40" : ""} data-testid={`detail-project-${p.project_number}`}>
                     <td className="py-2 font-mono font-semibold">{p.project_number}</td>
                     <td className="py-2">{p.name}</td>
-                    <td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${p.status === "completed" ? "bg-emerald-50 text-emerald-700" : p.status === "active" ? "bg-blue-50 text-blue-700" : p.status === "on_hold" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`} data-testid={`detail-project-status-${p.project_number}`}>{statusTr(p.status)}</span></td>
+                    <td className="py-2"><div className="flex flex-col gap-0.5 items-start"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${p.status === "completed" ? "bg-emerald-50 text-emerald-700" : p.status === "active" ? "bg-blue-50 text-blue-700" : p.status === "on_hold" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`} data-testid={`detail-project-status-${p.project_number}`}>{statusTr(p.status)}</span><TrackingBadge project={p} /></div></td>
                     <td className="py-2 text-right font-bold">{fmt(p.budget)} ₺</td>
+                    <td className="py-2 text-right"><button onClick={() => setTrackingProject(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-md text-[10px] font-semibold" data-testid={`detail-project-track-${p.project_number}`}><Link2 className="w-3 h-3" /> Takip Linki</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -353,6 +356,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
         {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}
         {surveyDetail && <SurveyDetailModal survey={surveyDetail} onClose={() => setSurveyDetail(null)} onChanged={load} />}
+        {trackingProject && <ProjectTrackingModal project={trackingProject} contact={c} onClose={() => setTrackingProject(null)} onSent={load} />}
         {editPay && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditPay(null)}>
             <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">

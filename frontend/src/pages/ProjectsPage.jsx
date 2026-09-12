@@ -8,7 +8,8 @@ import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
-import { MapPin, LocateFixed } from "lucide-react";
+import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
+import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
@@ -87,6 +88,7 @@ export default function ProjectsPage({ section } = {}) {
   const [printDoc, setPrintDoc] = useState(null);
   const [planQuote, setPlanQuote] = useState(null);
   const [approvalQuote, setApprovalQuote] = useState(null);
+  const [trackingProject, setTrackingProject] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
@@ -155,7 +157,7 @@ export default function ProjectsPage({ section } = {}) {
   return (
     <div className="space-y-6" data-testid="projects-page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Teklif / Proje / Keşif</h1><p className="text-xs sm:text-sm text-slate-500">Tamamlanan aşama bir sonrakine geçebilir; her biri ayrıca da oluşturulabilir</p></div>
+        <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Teklif / Proje / Keşif</h1><p className="text-xs sm:text-sm text-slate-500">Tamamlanan aşama bir sonrakine geçebilir; proje aşamalarını müşteriye SMS / e-posta / WhatsApp linkiyle paylaşın</p></div>
         <button onClick={() => openForm(kind)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold" data-testid={`new-${kind}-btn`}><Plus className="w-4 h-4" /> {kind === "quote" ? "Yeni Teklif" : kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</button>
       </div>
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
@@ -227,8 +229,10 @@ export default function ProjectsPage({ section } = {}) {
               <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
               <ImageStrip entity="project" doc={p} onUpdated={load} />
+              <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
               <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t">
                 <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
+                <button onClick={() => setTrackingProject(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-lg font-semibold" data-testid={`project-track-${p.project_number}`} title="Müşteriye durum takip linki gönder"><Link2 className="w-3.5 h-3.5" /> Takip Linki</button>
                 <button onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif Oluştur <ArrowRight className="w-3 h-3" /></button>
                 <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
               </div>
@@ -318,6 +322,7 @@ export default function ProjectsPage({ section } = {}) {
         </div>
       )}
       {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
+      {trackingProject && <ProjectTrackingModal project={trackingProject} contact={contacts.find((c) => c.id === trackingProject.contact_id)} onClose={() => setTrackingProject(null)} onSent={load} />}
       {planQuote && <InstallmentPlanModal doc={planQuote} kind="quote" companyId={companyId} onClose={() => setPlanQuote(null)} onChanged={load} />}
       {printDoc && <PrintDocument docType={printDoc.type} doc={printDoc.doc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={companyId} docType="quote" onClose={() => setEditTpl(false)} />}
