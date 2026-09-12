@@ -96,7 +96,25 @@ if [ -d build ]; then
   chown -R www-data:www-data build
 fi
 
-echo "--- uvicorn systemd"
+echo "--- uvicorn systemd (tamkobi kullanıcısı, root değil)"
+APP_USER=tamkobi
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  useradd -r -M -d "$ROOT" -s /usr/sbin/nologin -c "TamKobi API" "$APP_USER"
+fi
+install -d -o "$APP_USER" -g "$APP_USER" -m 750 \
+  "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
+chown -R "$APP_USER:$APP_USER" "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
+for f in "$ROOT/backend/.env" "$ROOT/.env"; do
+  if [ -f "$f" ]; then
+    chgrp "$APP_USER" "$f"
+    chmod 640 "$f"
+  fi
+done
+# venv root ile kurulur; süreç tamkobi olarak çalışır.
+if [ -d "$ROOT/backend/venv" ]; then
+  chmod -R a+rX "$ROOT/backend/venv"
+fi
+
 UNIT_SRC="$ROOT/deploy/tamkobi-uvicorn.service"
 UNIT_DST=/etc/systemd/system/tamkobi-uvicorn.service
 if [ ! -f "$UNIT_SRC" ]; then

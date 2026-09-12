@@ -17,6 +17,7 @@ import comm_service
 import saas
 import saas_billing
 from auth_utils import get_jwt_secret, JWT_ALGORITHM, get_user_from_token
+from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("NexusERP")
@@ -222,8 +223,9 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     admin = await _db.users.find_one({"company_ids": cid, "role": "admin"}) or {}
     email = admin.get("email") or company.get("email") or "musteri@example.com"
     oid = "NX" + uuid.uuid4().hex[:24]
-    fwd = request.headers.get("x-forwarded-for", "")
-    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "0.0.0.0")
+    ip = request_ip(request)
+    if not ip or ip == "unknown":
+        ip = "0.0.0.0"
     minor = str(int(round(amount * 100)))
     basket = base64.b64encode(json.dumps([[item["label"], f"{amount:.2f}", 1]], ensure_ascii=False, separators=(",", ":")).encode()).decode()
     no_inst, max_inst, cur = "0", c["max_installment"], "TL"
