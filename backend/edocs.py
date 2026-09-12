@@ -483,21 +483,19 @@ async def process_edoc(doc_id: str, req: Dict[str, Any] = None):
     return await approve_inbox_document(doc_id, req)
 
 
-@router.post("/edocs/inbox/process-pending")
-async def process_pending_edocs(request: Request, company_id: Optional[str] = None, req: Dict[str, Any] = None):
-    """Bekleyen (okunabilir) belgeleri BizimHesap gibi toplu içeri alır."""
-    cid = await require_inbox_company(request, company_id)
+async def process_pending_for_company(company_id: str, req: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Bekleyen (okunabilir) XML/PDF belgelerini BizimHesap gibi toplu içeri alır (HTTP veya otomatik çekim)."""
     req = dict(req or {})
     req.setdefault("allow_unmatched", True)
     req.setdefault("update_stock", True)
     req.setdefault("update_cost", True)
     ok, failed = [], []
-    for d in await _db.incoming_edocs.find({"company_id": cid, "status": "pending"}).sort("received_at", -1).to_list(100):
+    for d in await _db.incoming_edocs.find({"company_id": company_id, "status": "pending"}).sort("received_at", -1).to_list(100):
         if is_blank(d):
             failed.append({"id": d["_id"], "number": d.get("number"), "reason": "Belge okunamamış"})
             continue
         try:
-            await _enrich(d, cid)
+            await _enrich(d, company_id)
             await _db.incoming_edocs.update_one({"_id": d["_id"]}, {"$set": {"lines": d["lines"], "matched_lines": d.get("matched_lines", 0), "contact_id": d.get("contact_id"), "contact_name": d.get("contact_name")}})
             await ensure_supplier(d)
             res = await approve_inbox_document(d["_id"], req)
@@ -508,6 +506,13 @@ async def process_pending_edocs(request: Request, company_id: Optional[str] = No
             failed.append({"id": d["_id"], "number": d.get("number"), "reason": str(e)[:200]})
     return {"status": "success", "processed": len(ok), "failed": failed, "items": ok,
             "message": f"{len(ok)} belge içeri alındı." + (f" {len(failed)} belge alınamadı." if failed else "")}
+
+
+@router.post("/edocs/inbox/process-pending")
+async def process_pending_edocs(request: Request, company_id: Optional[str] = None, req: Dict[str, Any] = None):
+    """Bekleyen (okunabilir) belgeleri BizimHesap gibi toplu içeri alır."""
+    cid = await require_inbox_company(request, company_id)
+    return await process_pending_for_company(cid, req)
 
 
 @router.post("/edocs/inbox/{doc_id}/reject")

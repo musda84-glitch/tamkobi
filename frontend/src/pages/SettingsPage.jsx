@@ -51,7 +51,11 @@ const EInvoiceSettings = ({ companyId }) => {
   if (!s) return null;
   const fields = s.fields || [];
   const isN11 = s.provider === "n11faturam";
-  const payload = () => ({ company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias, corporate_code: s.corporate_code, password, api_key: apiKey });
+  const payload = () => ({
+    company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias,
+    corporate_code: s.corporate_code, password, api_key: apiKey,
+    auto_pull: s.auto_pull !== false, auto_process: s.auto_process !== false,
+  });
   const save = async (e) => {
     e.preventDefault();
     try {
@@ -91,6 +95,25 @@ const EInvoiceSettings = ({ companyId }) => {
           {fields.includes("password") && <div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div>}
           {fields.includes("api_key") && <div><label className="block font-semibold mb-1">API anahtarı {s.has_api_key && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputCls} data-testid="einvoice-api-key" /></div>}
           <div><label className="block font-semibold mb-1">GİB Etiket / Alias</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} data-testid="einvoice-alias" /></div>
+          {isN11 && (
+            <div className="space-y-2 border border-slate-100 rounded-xl p-3 bg-slate-50/80" data-testid="einvoice-auto-inbox">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Gelen kutu otomasyonu</div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={s.auto_pull !== false} onChange={(e) => setS({ ...s, auto_pull: e.target.checked })} className="mt-0.5 rounded" data-testid="einvoice-auto-pull" />
+                <span><span className="block font-semibold text-slate-800">Otomatik çekim</span><span className="block text-[10px] text-slate-500">Yaklaşık 10 dakikada bir n11 Faturam gelen kutusundan XML faturaları alır.</span></span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={s.auto_process !== false} onChange={(e) => setS({ ...s, auto_process: e.target.checked })} className="mt-0.5 rounded" data-testid="einvoice-auto-process" />
+                <span><span className="block font-semibold text-slate-800">Otomatik içeri al</span><span className="block text-[10px] text-slate-500">Çekilen XML ve bekleyen PDF belgelerini alış faturasına dönüştürür (tedarikçi yoksa oluşturur).</span></span>
+              </label>
+              {s.last_inbox_sync_at && (
+                <p className="text-[10px] text-slate-500" data-testid="einvoice-last-inbox-sync">
+                  Son otomatik/manuel çekim: {new Date(s.last_inbox_sync_at).toLocaleString("tr-TR")}
+                  {s.last_inbox_sync_message ? ` — ${s.last_inbox_sync_message}` : ""}
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
             <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>

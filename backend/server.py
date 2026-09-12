@@ -197,6 +197,7 @@ async def startup_event():
     import asyncio as _asyncio
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
+    _asyncio.get_event_loop().create_task(_einvoice_inbox_auto_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
     _asyncio.get_event_loop().create_task(applog.rotation_loop())
     import perfmon
@@ -404,6 +405,11 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "has_password": bool(s.get("password_enc")),
         "has_api_key": bool(s.get("api_key_enc")),
         "status": s.get("status") or "simulated",
+        # n11 yapılandırıldığında varsayılan: gelen kutuyu periyodik çek + XML/PDF içeri al
+        "auto_pull": bool(s["auto_pull"]) if "auto_pull" in s else True,
+        "auto_process": bool(s["auto_process"]) if "auto_process" in s else True,
+        "last_inbox_sync_at": s.get("last_inbox_sync_at"),
+        "last_inbox_sync_message": s.get("last_inbox_sync_message") or "",
         "updated_at": s.get("updated_at"),
         "assigned_at": s.get("assigned_at"),
     }
@@ -436,6 +442,10 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         "corporate_code": (req.get("corporate_code") if "corporate_code" in req else existing.get("corporate_code") or "").strip(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if "auto_pull" in req:
+        update["auto_pull"] = bool(req.get("auto_pull"))
+    if "auto_process" in req:
+        update["auto_process"] = bool(req.get("auto_process"))
     if req.get("password"):
         update["password_enc"] = comm_service.encrypt(req["password"])
     if req.get("api_key"):
@@ -497,9 +507,9 @@ async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_
     return info
 
 
-@api_router.post("/einvoice/incoming/sync")
-async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14):
-    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Optional[dict] = None) -> Dict[str, Any]:
+    """n11 Faturam gelen kutusundan UBL XML çeker ve Gelen e-Belgeler'e yazar (HTTP veya otomatik döngü)."""
+    s = settings if settings is not None else (await db.einvoice_settings.find_one({"company_id": company_id}) or {})
     if s.get("provider") != "n11faturam":
         raise HTTPException(status_code=400, detail="Gelen kutu yalnızca n11 Faturam ile çekilir. Bu şirkete n11 Faturam atanmamış.")
     if s.get("status") != "configured":
@@ -538,8 +548,62 @@ async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01
         if failed:
             parts.append(f"{len(failed)} alınamadı ({failed[0]['reason'][:120]})")
         message = ", ".join(parts) + "."
-    return {"status": "success", "found": len(rows), "pulled": len(pulled), "already": already,
-            "skipped": already + len(failed), "failed": failed, "items": pulled, "message": message}
+    result = {"status": "success", "found": len(rows), "pulled": len(pulled), "already": already,
+              "skipped": already + len(failed), "failed": failed, "items": pulled, "message": message}
+    await db.einvoice_settings.update_one(
+        {"company_id": company_id},
+        {"$set": {
+            "last_inbox_sync_at": datetime.now(timezone.utc).isoformat(),
+            "last_inbox_sync_message": message[:500],
+        }},
+    )
+    return result
+
+
+@api_router.post("/einvoice/incoming/sync")
+async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14, auto_process: Optional[bool] = None):
+    """Manuel gelen kutu çekimi. auto_process=true ise çekilen/bekleyen XML-PDF belgelerini de içeri alır."""
+    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    result = await pull_einvoice_incoming(company_id, days=days, settings=s)
+    do_process = bool(auto_process) if auto_process is not None else bool(s.get("auto_process", True))
+    if do_process:
+        processed = await edocs.process_pending_for_company(company_id)
+        result["processed"] = processed.get("processed", 0)
+        result["process_failed"] = processed.get("failed") or []
+        result["process_message"] = processed.get("message")
+        if result["processed"]:
+            result["message"] = f"{result['message']} {processed.get('message')}"
+    return result
+
+
+async def _run_einvoice_inbox_auto_tick() -> None:
+    """Tek tur: auto_pull açık n11 Faturam şirketlerinde çek + (isteğe bağlı) içeri al."""
+    for s in await db.einvoice_settings.find({"provider": "n11faturam", "status": "configured"}).to_list(200):
+        if not s.get("auto_pull", True):
+            continue
+        cid = s.get("company_id")
+        if not cid:
+            continue
+        try:
+            await pull_einvoice_incoming(cid, days=14, settings=s)
+            if s.get("auto_process", True):
+                await edocs.process_pending_for_company(cid)
+        except HTTPException as e:
+            logger.warning("e-fatura otomatik gelen kutu atlandı %s: %s", cid, e.detail)
+        except Exception:
+            logger.exception("e-fatura otomatik gelen kutu hatası: %s", cid)
+
+
+async def _einvoice_inbox_auto_loop(interval_s: int = 600):
+    """Yapılandırılmış n11 Faturam şirketlerinde gelen kutuyu periyodik çeker ve XML/PDF belgelerini içeri alır."""
+    import asyncio as _a
+    await _a.sleep(45)
+    while True:
+        try:
+            await _run_einvoice_inbox_auto_tick()
+        except Exception:
+            logger.exception("e-fatura otomatik gelen kutu döngüsü")
+        await _a.sleep(interval_s)
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
                           "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True}
