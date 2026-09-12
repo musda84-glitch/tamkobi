@@ -228,8 +228,16 @@ class Invoice(BaseDocument):
     trade_file_id: Optional[str] = None
     trade_file_number: Optional[str] = None
     status: str = "draft"  # draft, sent_to_gib, approved, paid, cancelled, overdue
-    gib_status: Optional[str] = "Taslak"  # Taslak, GİB'e Gönderildi, Başarıyla İletildi, İptal Edildi
+    gib_status: Optional[str] = "Taslak"  # İnsan okunur GİB durumu
     gib_tracking_id: Optional[str] = None
+    gib_uuid: Optional[str] = None  # ETTN
+    gib_invoice_id: Optional[str] = None  # GİB fatura no
+    gib_scenario: Optional[str] = None  # TICARIFATURA | TEMELFATURA | EARSIVFATURA
+    einvoice_state: Optional[str] = "draft"  # draft | queued | sent | error | cancelled
+    gib_document_url: Optional[str] = None
+    gib_error: Optional[str] = None
+    gib_mode: Optional[str] = None  # test | live | simulated
+    integrator: Optional[str] = None
     gib_response: Optional[str] = None  # incoming e-invoice: accepted | rejected
     direction: Optional[str] = None  # incoming = GİB'den gelen alış e-faturası (kesilmez)
     source: Optional[str] = None  # edoc_inbox, manual, …
@@ -241,7 +249,9 @@ class Invoice(BaseDocument):
     project_id: Optional[str] = None
     project_number: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
+    issued_at: Optional[str] = None
+    queued_at: Optional[str] = None
+    buyer_tax_id: Optional[str] = None
 # Banka, Kasa, POS
 class BankAccount(BaseDocument):
     company_id: str
