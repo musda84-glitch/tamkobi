@@ -36,10 +36,30 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
     try {
       if (Object.values(form).some((v) => v !== "")) await save({ silent: true });
       const r = await axios.post(`${API_URL}/integrations/cargo/${id}/test`);
-      setAddresses(r.data.addresses || []);
+      const addrs = r.data.addresses || [];
+      setAddresses(addrs);
       toast[r.data.ok ? "success" : "error"](r.data.message);
-      if (r.data.addresses?.length === 1) setForm((f) => ({ ...f, sender_address_id: r.data.addresses[0].id }));
-    } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı testi başarısız."); } finally { setTesting(false); }
+      if (addrs.length === 1) {
+        const next = { ...form, sender_address_id: addrs[0].id };
+        setForm(next);
+        // Tek adres varsa kaydet — aksi halde gönderi "gönderici adresi yok" ile düşer.
+        setBusy(true);
+        try {
+          await axios.put(`${API_URL}/integrations/cargo/${id}`, { ...Object.fromEntries(Object.entries(next).filter(([, v]) => v !== "")), test_mode: testMode, is_active: true });
+          toast.success(`Gönderici adres kaydedildi: ${addrs[0].name || addrs[0].id}`);
+        } catch (err) {
+          toast.error(err.response?.data?.detail || "Gönderici adres kaydedilemedi.");
+        } finally {
+          setBusy(false);
+        }
+      } else if (addrs.length > 1) {
+        toast.message("Birden fazla gönderici adres var — listeden seçip Kaydet'e basın.");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Bağlantı testi başarısız.");
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
