@@ -173,6 +173,8 @@ def _geliver_friendly_error(msg: str, *, status_code: int = 0, path: str = "") -
             "4) Canlı moddaysanız önce Test modunu açıp deneyin. "
             "5) Geliver panelinde mağaza/anlaşma aktif mi?"
         )
+        if path.startswith("/addresses"):
+            hint += " (Bağlantı testi / adres listesi — token geçersiz, süresi dolmuş veya API Tokens sayfasından alınmamış olabilir.)"
         if path.startswith("/transactions"):
             hint += " (Etiket satın alma / teklif kabul adımında reddedildi — çoğu zaman bakiye veya canlı hesap kısıtı.)"
         return hint
