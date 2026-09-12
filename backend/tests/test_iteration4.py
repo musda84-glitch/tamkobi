@@ -229,6 +229,17 @@ class TestQuotes:
         assert url.startswith("/api/files/")
         assert url in client.get(f"{BASE}/quotes/{q['id']}", timeout=30).json()["images"]
 
+    def test_upload_octet_stream_sniffed_from_ext(self, client, quote):
+        """Mobile often sends empty / octet-stream; infer image type from filename."""
+        q = quote()
+        r = client.post(
+            f"{BASE}/files/upload?entity=quotes&entity_id={q['id']}",
+            files={"file": ("photo.png", io.BytesIO(PNG), "application/octet-stream")},
+            timeout=60,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["url"] in client.get(f"{BASE}/quotes/{q['id']}", timeout=30).json()["images"]
+
     def test_upload_pdf_allowed_txt_rejected(self, client):
         r = client.post(f"{BASE}/files/upload?entity=misc", files={"file": ("t.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf")}, timeout=60)
         assert r.status_code == 200, r.text
@@ -284,6 +295,7 @@ class TestProjects:
         assert p["budget"] == q["grand_total"] and p["quote_id"] == q["id"]
         q2 = client.get(f"{BASE}/quotes/{q['id']}", timeout=30).json()
         assert q2["project_id"] == p["id"] and q2["project_number"] == p["project_number"]
+        assert q2["status"] == "accepted"
         s2 = next(x for x in client.get(f"{BASE}/surveys", timeout=30).json() if x["id"] == s["id"])
         assert s2["project_id"] == p["id"]
         again_p = client.post(f"{BASE}/quotes/{q['id']}/convert-to-project", timeout=30)
