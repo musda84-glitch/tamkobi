@@ -6667,12 +6667,16 @@ async def cargo_auto_runs(company_id: Optional[str] = "comp_nexus_main_01"):
 
 @api_router.post("/cargo/create-shipment")
 async def create_cargo_shipment(req: Dict[str, Any]):
-    carrier_code = req.get("carrier_code", "yurtici")
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    carrier_code = req.get("carrier_code") or req.get("carrier")
+    if not carrier_code:
+        # Prefer connected Geliver when caller omits carrier (UI "Kargola" shortcut).
+        geliver_cfg = await db.cargo_configs.find_one({"company_id": company_id, "carrier_code": "geliver", "status": "connected", "is_active": {"$ne": False}})
+        carrier_code = "geliver" if geliver_cfg else "yurtici"
     order_id = req.get("order_id")
     customer_name = req.get("customer_name", "Müşteri")
-    address = req.get("address", "Adres")
+    address = req.get("address") or req.get("shipping_address") or "Adres"
     city = req.get("city", "İstanbul")
-    company_id = req.get("company_id", "comp_nexus_main_01")
 
     order = await db.orders.find_one({"_id": order_id}) if order_id else None
     if order and order.get("cargo_tracking_number") and not req.get("force"):
@@ -6682,13 +6686,21 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     live = bool(cfg) and carrier_code == "geliver" and cargo_providers.has_live_credentials(cfg)
     extra: Dict[str, Any] = {}
     if live:
-        src = {**(order or {}), "customer_name": customer_name, "shipping_address": address, "city": city, "customer_phone": req.get("customer_phone") or (order or {}).get("customer_phone"), "order_number": (order or {}).get("order_number") or req.get("order_number", ""), "total_amount": (order or {}).get("total_amount") or req.get("total_amount", 0), "items": (order or {}).get("items", [])}
+        src = {**(order or {}), "customer_name": customer_name, "shipping_address": address, "city": city,
+               "customer_phone": req.get("customer_phone") or (order or {}).get("customer_phone"),
+               "district": req.get("district") or (order or {}).get("district"),
+               "zip": req.get("zip") or (order or {}).get("zip") or (order or {}).get("postal_code"),
+               "order_number": (order or {}).get("order_number") or req.get("order_number", ""),
+               "total_amount": (order or {}).get("total_amount") or req.get("total_amount", 0),
+               "items": (order or {}).get("items", [])}
         g = await cargo_providers.geliver_create_shipment(cfg, src, req)
         tracking_num = g.get("tracking_number") or f"GLV-{(g.get('geliver_id') or uuid.uuid4().hex)[:10].upper()}"
         barcode = g.get("barcode") or tracking_num
         extra = {"is_live": True, "test_mode": g.get("test"), "provider_shipment_id": g.get("geliver_id"), "label_url": g.get("label_url"), "tracking_url": g.get("tracking_url"), "offer_accepted": g.get("accepted"), "provider_service": g.get("provider"), "price": g.get("price"), "provider_status": (g.get("raw") or {}).get("status")}
         status_ = "created"
     else:
+        if carrier_code == "geliver" and cfg and not cargo_providers.has_live_credentials(cfg):
+            raise HTTPException(status_code=400, detail="Geliver bağlı görünmüyor. Kargo → Geliver → token + gönderici adresi kaydedip 'Bağlantıyı Test Et' yapın.")
         tracking_num = f"{carrier_code.upper()[:2]}-{str(uuid.uuid4().int)[:10]}"
         barcode = f"869{str(uuid.uuid4().int)[:10]}"
         extra = {"is_live": False}

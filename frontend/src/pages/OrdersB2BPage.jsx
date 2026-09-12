@@ -74,7 +74,7 @@ export default function OrdersB2BPage() {
     for (const o of list) {
       try {
         if (action === "invoice") { if (o.is_invoiced || o.invoice_id) continue; await axios.post(`${API_URL}/e-invoice/create`, { order_id: o.id || o._id, e_type: "e_archive" }); }
-        else if (action === "approve") { if (o.order_status !== "pending") continue; await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "yurtici" }); }
+        else if (action === "approve") { if (o.order_status !== "pending") continue; await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" }); }
         ok++;
       } catch { fail++; }
     }
@@ -175,18 +175,28 @@ export default function OrdersB2BPage() {
 
   const handleCreateCargoForOrder = async (order) => {
     try {
+      const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      let carrier = order.cargo_carrier || "geliver";
+      try {
+        const cfg = await axios.get(`${API_URL}/integrations/cargo`, { params: { company_id: companyId } });
+        const list = Array.isArray(cfg.data) ? cfg.data : [];
+        const live = list.find((c) => c.carrier_code === "geliver" && (c.status === "connected" || c.is_live || c.live) && c.is_active !== false);
+        const connected = list.find((c) => c.status === "connected" && c.is_active !== false);
+        carrier = (live || connected || list[0])?.carrier_code || carrier;
+      } catch { /* geliver tercih; liste gelmezse devam */ }
       const res = await axios.post(`${API_URL}/cargo/create-shipment`, {
-        carrier_code: "yurtici",
+        carrier_code: carrier,
         order_id: order.id || order._id,
         customer_name: order.customer_name,
         address: order.shipping_address,
         city: order.city,
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"
+        customer_phone: order.customer_phone,
+        company_id: companyId,
       });
-      toast.success(`Kargo fişi oluşturuldu! Takip No: ${res.data.tracking_number}`);
+      toast.success(res.data.message || `Kargo fişi oluşturuldu! Takip No: ${res.data.tracking_number}`);
       loadData();
     } catch (err) {
-      toast.error("Kargo kaydı oluşturulamadı.");
+      toast.error(err.response?.data?.detail || "Kargo kaydı oluşturulamadı.");
     }
   };
 
