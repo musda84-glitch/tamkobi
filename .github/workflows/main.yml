@@ -35,9 +35,13 @@ jobs:
               echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
               exit 1
             fi
-            # Sunucuda leftover bir stub (Starting native update...) varsa onu
-            # çalıştırma — daima GitHub main'deki betiği kullan.
-            git show origin/main:deploy/update-native.sh > /tmp/tamkobi-update-native.sh
-            sh /tmp/tamkobi-update-native.sh
+            # Sunucuda leftover bir stub varsa onu çalıştırma — daima
+            # GitHub main'deki betiği kullan. /tmp world-writable olduğu için
+            # mktemp kök dizininde (700) oluşturulur.
+            umask 077
+            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
+            trap 'rm -f "$SCRIPT"' EXIT
+            git show origin/main:deploy/update-native.sh > "$SCRIPT"
+            sh "$SCRIPT"
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
