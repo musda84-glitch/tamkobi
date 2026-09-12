@@ -568,9 +568,15 @@ COLLECTIONS = {
     # --- Dosya / çöp / migrasyon ---
     "files": {
         "scope": SCOPE_TENANT,
-        "description": "Yüklenen dosya metadata (blob diskte).",
-        "keys": ("_id", "storage_path", "original_filename", "entity", "entity_id", "is_deleted"),
-        "refs": (),
+        "description": "Yüklenen dosya metadata (blob objstore'da).",
+        "keys": ("_id", "company_id", "storage_path", "original_filename", "entity", "entity_id", "area_key", "size", "is_deleted"),
+        "refs": ("companies._id",),
+    },
+    "storage_folders": {
+        "scope": SCOPE_TENANT,
+        "description": "Hesap bazlı depolama klasörleri (ürün, logo, gider, personel, e-belge vb.).",
+        "keys": ("_id", "company_id", "area_key", "label", "entity", "path", "is_system", "is_active", "created_at"),
+        "refs": ("companies._id",),
     },
     "trash": {
         "scope": SCOPE_TENANT,

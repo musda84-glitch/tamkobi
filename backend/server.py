@@ -636,19 +636,27 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     await saas.check_storage_limit(company_id, len(data))
-    await saas.check_storage_limit(company_id, len(data))
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
-    path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(company_id)
+        path = storage_manager.object_path(company_id, entity, ext)
+        area_key = storage_manager.area_for_entity(entity)
+    except Exception:
+        path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
+        area_key = entity
     try:
         result = put_object(path, data, content_type)
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
-    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": content_type, "size": len(data),
-                               "original_size": opt.original_size, "optimized": opt.optimized,
-                               "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
-    await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data),
-                               "company_id": company_id, "entity": entity, "entity_id": entity_id, "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    file_doc = {
+        "_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename,
+        "content_type": content_type, "size": len(data), "original_size": opt.original_size, "optimized": opt.optimized,
+        "company_id": company_id, "entity": entity, "entity_id": entity_id, "area_key": area_key,
+        "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.files.insert_one(file_doc)
     url = f"/api/files/{result['path']}"
     if entity in ("quote", "project", "survey", "company") and entity_id:
         coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies}[entity]
@@ -2690,10 +2698,17 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
     opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
-    await saas.check_storage_limit(product.get("company_id") or "comp_nexus_main_01", len(data))
-    await saas.check_storage_limit(product.get("company_id") or "comp_nexus_main_01", len(data))
+    company_id = product.get("company_id") or "comp_nexus_main_01"
+    await saas.check_storage_limit(company_id, len(data))
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
-    path = f"{APP_NAME}/products/{product.get('company_id')}/{uuid.uuid4()}.{ext}"
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(company_id)
+        path = storage_manager.object_path(company_id, "product", ext)
+        area_key = storage_manager.area_for_entity("product")
+    except Exception:
+        path = f"{APP_NAME}/products/{company_id}/{uuid.uuid4()}.{ext}"
+        area_key = "products"
     try:
         result = put_object(path, data, content_type)
     except Exception as e:
@@ -2707,9 +2722,10 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         "size": result.get("size", len(data)),
         "original_size": opt.original_size,
         "optimized": opt.optimized,
-        "company_id": product.get("company_id"),
+        "company_id": company_id,
         "entity": "product",
         "entity_id": product_id,
+        "area_key": area_key,
         "is_deleted": False,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
@@ -7517,10 +7533,22 @@ async def ai_invoice_extract(file: UploadFile = File(...), company_id: str = Que
         match = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": _re.escape(sup["name"][:25]), "$options": "i"}})
     file_url = None
     try:
-        path = f"{APP_NAME}/purchase_invoice/{company_id}/{uuid.uuid4()}.pdf"
+        try:
+            import storage_manager
+            await storage_manager.ensure_account_folders(company_id)
+            path = storage_manager.object_path(company_id, "purchase_invoice", "pdf")
+            area_key = storage_manager.area_for_entity("purchase_invoice")
+        except Exception:
+            path = f"{APP_NAME}/purchase_invoice/{company_id}/{uuid.uuid4()}.pdf"
+            area_key = "purchase_invoices"
         r = put_object(path, data, "application/pdf")
         file_url = f"/api/files/{r['path']}"
-        await db.files.insert_one({"_id": str(uuid.uuid4()), "storage_path": r["path"], "original_filename": file.filename, "content_type": file.content_type, "size": len(data), "entity": "purchase_invoice", "entity_id": "", "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat()})
+        await db.files.insert_one({
+            "_id": str(uuid.uuid4()), "storage_path": r["path"], "original_filename": file.filename,
+            "content_type": file.content_type, "size": len(data), "company_id": company_id,
+            "entity": "purchase_invoice", "entity_id": "", "area_key": area_key,
+            "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat(),
+        })
     except Exception as e:
         logger.error(f"PDF store failed: {e}")
     products = {p.get("name", "").lower(): p for p in await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "unit": 1}).to_list(2000)}
@@ -7630,6 +7658,8 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
+import storage_manager
+storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 addons.init(db)
 support_tickets.init(db, get_current_user)
@@ -7706,6 +7736,7 @@ app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
+app.include_router(storage_manager.router)
 app.include_router(addons.router)
 app.include_router(support_tickets.router)
 app.include_router(saas_billing.router)
