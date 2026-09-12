@@ -57,7 +57,20 @@ if [ ! -x "$ROOT/backend/venv/bin/python3" ]; then
   echo "HATA: $ROOT/backend/venv yok. venv oluşturup requirements.txt kurun." >&2
   exit 1
 fi
-"$ROOT/backend/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
+PY="$ROOT/backend/venv/bin/python3"
+PIP="$ROOT/backend/venv/bin/pip"
+REQ=/tmp/tamkobi-requirements.native.txt
+# PyPI'de yok (malware namesake). litellm tekerleği Emergent CDN; VPS erişemezse düş.
+grep -vE '^(#|$)' "$ROOT/backend/requirements.txt" \
+  | grep -vE '^(emergentintegrations==|litellm @)' > "$REQ"
+"$PIP" install -r "$REQ"
+STUB="$ROOT/backend/docker/stubs/emergentintegrations"
+SITE="$("$PY" -c "import sysconfig; print(sysconfig.get_path('purelib'))")"
+if [ -d "$STUB" ] && [ -n "$SITE" ]; then
+  rm -rf "$SITE/emergentintegrations"
+  cp -a "$STUB" "$SITE/emergentintegrations"
+  echo "emergentintegrations stub → $SITE/emergentintegrations"
+fi
 
 echo "--- Frontend üretim derlemesi"
 cd "$ROOT/frontend"
