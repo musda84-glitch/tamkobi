@@ -29,7 +29,7 @@ fi
 
 echo "--- Kod güncelleniyor ($ROOT)"
 if [ "$SKIP_GIT" -eq 0 ]; then
-  git fetch origin main
+  git fetch origin +refs/heads/main:refs/remotes/origin/main
   if ! git rev-parse --abbrev-ref HEAD | grep -qx main; then
     git checkout main
   fi
@@ -37,7 +37,7 @@ if [ "$SKIP_GIT" -eq 0 ]; then
     echo "HATA: sunucudaki kopya origin/main ile ileri sarılamıyor (ortak ata yok veya ayrışmış)." >&2
     echo "GitHub geçmişi yeniden yazıldı. Bir kez, yedekten sonra:" >&2
     echo "  git branch backup-pre-rewrite-\$(date +%Y%m%d-%H%M)" >&2
-    echo "  git fetch origin main" >&2
+    echo "  git fetch origin +refs/heads/main:refs/remotes/origin/main" >&2
     echo "  git reset --hard origin/main" >&2
     echo "  sh deploy/update-native.sh --skip-git" >&2
     exit 1
