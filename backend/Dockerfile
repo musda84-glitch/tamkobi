@@ -23,9 +23,11 @@ COPY docker/stubs/emergentintegrations /usr/local/lib/python3.12/site-packages/e
 COPY . /app
 ARG GIT_SHA=
 ARG GIT_BRANCH=
+ARG GIT_MESSAGE=
 ARG BUILD_TIME=
 ENV APP_GIT_SHA=$GIT_SHA \
     APP_GIT_BRANCH=$GIT_BRANCH \
+    APP_GIT_MESSAGE="$GIT_MESSAGE" \
     APP_BUILD_TIME=$BUILD_TIME
 RUN chmod +x /app/scripts/rotate-logs.sh /app/scripts/perf-monitor.sh /app/scripts/apply-mysql-tuning.sh /app/scripts/map_schema.py
 

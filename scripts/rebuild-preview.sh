@@ -15,8 +15,10 @@ cd "$ROOT"
 
 GIT_SHA="$(git rev-parse HEAD)"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+GIT_MESSAGE="$(git log -1 --pretty=%s)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Derlenen sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) @ $BUILD_TIME"
+export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME
+echo "Derlenen sürüm: ${GIT_SHA:0:7} ($GIT_BRANCH) — $GIT_MESSAGE @ $BUILD_TIME"
 
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose)
@@ -33,6 +35,7 @@ fi
 "${DC[@]}" build \
   --build-arg GIT_SHA="$GIT_SHA" \
   --build-arg GIT_BRANCH="$GIT_BRANCH" \
+  --build-arg GIT_MESSAGE="$GIT_MESSAGE" \
   --build-arg BUILD_TIME="$BUILD_TIME" \
   backend frontend
 "${DC[@]}" up -d --no-build backend frontend

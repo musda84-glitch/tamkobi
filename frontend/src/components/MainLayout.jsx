@@ -133,7 +133,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               </button>
             </div>
           </div>
-          <BuildStamp tone="dark" />
+          <BuildStamp tone="dark" layout="sidebar" />
         </div>
       </aside>
 
