@@ -11,6 +11,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice } from "./InvoiceContextMenu";
+import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
@@ -412,6 +413,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(orderDetail.subtotal ?? t.subtotal)} ₺</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(orderDetail.vat_total ?? t.vat)} ₺</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(orderDetail.grand_total ?? t.grandTotal ?? orderDetail.total_amount)} ₺</span></div></div>
               ); })()}
               <div className="flex justify-between text-slate-500"><span>Fatura: {orderDetail.is_invoiced ? "Kesildi" : "Kesilmedi"}</span></div>
+              <InvoiceActionPanel
+                orderId={orderDetail.id || orderDetail._id}
+                invoiceId={orderDetail.invoice_id || null}
+                companyId={activeCompany?.id || activeCompany?._id || orderDetail.company_id}
+                alreadyIssued={Boolean(orderDetail.is_invoiced && orderDetail.einvoice_state === "sent")}
+                defaultEType="e_invoice"
+                defaultScenario="TICARI"
+                onInvoiceCreated={() => { setOrderDetail(null); load(); }}
+              />
             </div>
           </div>
         )}

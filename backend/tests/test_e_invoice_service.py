@@ -116,3 +116,32 @@ class TestRefreshOutbound:
         assert res["checked"] == 1
         assert res["updated"] == 1
         fake_db.invoices.update_one.assert_awaited()
+
+
+class TestFinalizeAndTrack:
+    def test_create_request_and_record(self):
+        req = e_invoice.InvoiceCreateRequest(order_id="o1", company_id="c1", scenario="TEMEL")
+        assert req.scenario == "TEMEL"
+        assert e_invoice.scenario_short("TEMELFATURA") == "TEMEL"
+        assert e_invoice.state_to_track_status("sent") == "SENT"
+
+        fake_db = MagicMock()
+        inv = {"_id": "inv_x", "company_id": "c1", "invoice_number": "NX99", "grand_total": 120.5, "gib_scenario": "TICARIFATURA"}
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.e_invoices.find_one = AsyncMock(return_value=None)
+        fake_db.e_invoices.update_one = AsyncMock()
+        e_invoice.init(fake_db)
+
+        async def _run():
+            out = await e_invoice.finalize_create_result(
+                {"status": "success", "einvoice_state": "sent", "gib_uuid": "U-1"},
+                "inv_x",
+                order_id="ord1",
+                company_id="c1",
+            )
+            assert out["invoice_number"] == "NX99"
+            assert out["company_id"] == "c1"
+            fake_db.e_invoices.update_one.assert_awaited()
+            return out
+
+        asyncio.get_event_loop().run_until_complete(_run())

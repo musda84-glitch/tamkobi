@@ -201,6 +201,8 @@ Aşağıdaki listeler `schema_catalog.COLLECTIONS` ile aynıdır. Boş koleksiyo
 
 **Fatura:** `invoice_type` = `sales` | `purchase` | `proforma` | `return`; `e_type` = `e_invoice` | `e_archive` | `e_dispatch` | `paper`.
 
+**e_invoices** (docs koleksiyonu): giden e-fatura takip satırları — `company_id`, `order_id`, `invoice_id`, `invoice_number`, `scenario` (`TICARI`|`TEMEL`), `status` (`DRAFT`|`SENT`|`ACCEPTED`|`REJECTED`|`CANCELLED`), `total_amount`, `gib_uuid`, `pdf_url`, `created_at`. Ayrı fiziksel MySQL tablosu değil; `docs` içinde JSON satırı (şablondaki `CREATE TABLE e_invoices` alanlarıyla uyumlu).
+
 **Sipariş kanalı:** `manual`, `b2b`, pazaryerleri.
 
 ### Finans

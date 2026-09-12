@@ -226,6 +226,12 @@ COLLECTIONS = {
         "keys": ("_id", "invoice_id", "company_id", "xml", "scenario", "updated_at"),
         "refs": ("invoices._id",),
     },
+    "e_invoices": {
+        "scope": SCOPE_TENANT,
+        "description": "Giden e-fatura takip kayıtları (DRAFT/SENT/ACCEPTED/REJECTED/CANCELLED); sipariş ve GİB UUID bağları.",
+        "keys": ("_id", "company_id", "order_id", "invoice_id", "invoice_number", "scenario", "status", "total_amount", "gib_uuid", "pdf_url", "created_at"),
+        "refs": ("companies._id", "orders._id", "invoices._id"),
+    },
     "einvoice_settings": {
         "scope": SCOPE_TENANT,
         "description": "Firma e-fatura entegratör kimlik bilgileri (şifre şifreli); test/canlı mod; otomatik gelen kutu çekimi.",
