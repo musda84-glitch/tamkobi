@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -20,6 +20,7 @@ import { PlatformUsersPanel } from "./PlatformUsersPanel";
 import { WebsiteAdminPanel } from "./WebsiteAdminPanel";
 import { ModuleCatalogPanel } from "./ModuleCatalogPanel";
 import { QuotasPanel } from "./QuotasPanel";
+import { StorageManagerPanel } from "./StorageManagerPanel";
 import { PlatformMailPanel } from "./PlatformMailPanel";
 import { AddonsPanel } from "./AddonsPanel";
 import { SupportTicketsPanel } from "./SupportTicketsPanel";
@@ -36,6 +37,7 @@ export const SYSTEM_SECTIONS = [
   { key: "moduller", label: "Modül Kataloğu", icon: Boxes, render: (c) => <ModuleCatalogPanel catalog={c.catalog} plans={c.plans} onChanged={c.changed} /> },
   { key: "sirketler", label: "Şirketler & Lisanslar", icon: Building2, render: (c) => <CompaniesTable rows={c.companies} plans={c.plans} onOpen={c.openCompany} onCreated={(r) => { c.changed(); c.openCompany(r.id); }} /> },
   { key: "kotalar", label: "Kotalar", icon: Gauge, render: (c) => <QuotasPanel onOpenCompany={c.openCompany} /> },
+  { key: "depolama", label: "Depolama", icon: HardDrive, render: (c) => <StorageManagerPanel onOpenCompany={c.openCompany} /> },
   { key: "kullanicilar", label: "Panel Yöneticileri", icon: Users, render: () => <PlatformUsersPanel /> },
   { key: "destek", label: "Destek Talepleri", icon: Headset, badge: "open_tickets", render: (c) => <SupportTicketsPanel onOpenCompany={c.openCompany} /> },
   { key: "talepler", label: "Yükseltme Talepleri", icon: Inbox, badge: "pending_requests", render: (c) => <RequestsPanel requests={c.requests} onChanged={c.changed} onOpenCompany={c.openCompany} /> },

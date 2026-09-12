@@ -531,6 +531,11 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
     invalidate(lid)
     import demo as demo_pack
     await demo_pack.seed_for_new_company(cid)
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(cid)
+    except Exception:
+        pass
     return await _db.companies.find_one({"_id": cid})
 
 
@@ -848,6 +853,11 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     await rbac.ensure_roles(cid)
     import demo as demo_pack
     await demo_pack.seed_for_new_company(cid)
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(cid)
+    except Exception:
+        pass
     invalidate(cid)
     return await _company_row(await _db.companies.find_one({"_id": cid}))
 

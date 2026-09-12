@@ -76,7 +76,7 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "overview", label: null, paths: ["/sistem"] },
   { id: "web", label: "Web", paths: ["/sistem/web"] },
   { id: "paketler", label: "Paketler", paths: ["/sistem/paketler", "/sistem/moduller"] },
-  { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/kullanicilar"] },
+  { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/depolama", "/sistem/kullanicilar"] },
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar"] },
   { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/ai", "/sistem/araclar"] },
   { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
@@ -106,5 +106,5 @@ export const SETTINGS_TAB_GROUPS = [
   { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
   { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "fx", "channels", "whatsapp"] },
   { id: "kurallar", label: "Kurallar", tabs: ["units", "users"] },
-  { id: "veri", label: "Veri", tabs: ["migration", "summary"] },
+  { id: "veri", label: "Veri", tabs: ["migration", "storage", "summary"] },
 ];
