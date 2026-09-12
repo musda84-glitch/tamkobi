@@ -15,6 +15,9 @@ import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { ScanButton } from "../components/CameraScanner";
+import { SearchSelect } from "../components/SearchSelect";
+import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
+import { fmtMoney } from "../utils/documentLines";
 
 import {
   Package,
@@ -28,6 +31,8 @@ import {
   X,
   Scan,
   CheckCircle2,
+  Store,
+  Users,
   Tag,
   Images,
   Pencil,
@@ -68,6 +73,11 @@ export default function StockBarcodePage() {
   const [showScannerModal, setShowScannerModal] = useState(searchParams.get("scan") === "true");
   const [scannedBarcode, setScannedBarcode] = useState("");
   const [scanResultProduct, setScanResultProduct] = useState(null);
+  const [scanSaleMode, setScanSaleMode] = useState("retail"); // retail | account
+  const [scanContacts, setScanContacts] = useState([]);
+  const [scanContactId, setScanContactId] = useState("");
+  const [scanQty, setScanQty] = useState(1);
+  const [scanSelling, setScanSelling] = useState(false);
   const [detailProduct, setDetailProduct] = useState(null);
   const [produceProduct, setProduceProduct] = useState(null);
   const [reorder, setReorder] = useState(null);
@@ -200,15 +210,116 @@ export default function StockBarcodePage() {
     }
   };
 
+  const loadScanContacts = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_URL}/contacts?company_id=${companyId}`);
+      const rows = (r.data || []).filter((c) => c.type !== "supplier");
+      setScanContacts(rows);
+      return rows;
+    } catch {
+      setScanContacts([]);
+      return [];
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    if (showScannerModal) loadScanContacts();
+  }, [showScannerModal, loadScanContacts]);
+
   const handleScanBarcode = async (barcode) => {
     if (!barcode) return;
     try {
-      const res = await axios.get(`${API_URL}/products/barcode/${barcode}?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
-      setScanResultProduct(res.data);
-      toast.success(`Ürün Bulundu: ${res.data.name}`);
+      const res = await axios.get(`${API_URL}/products/barcode/${encodeURIComponent(barcode)}?company_id=${companyId}`);
+      const data = {
+        ...res.data,
+        matched_variant: res.data.matched_variant || res.data.matched_variant || null,
+      };
+      setScanResultProduct(data);
+      setScanQty(1);
+      toast.success(`Ürün Bulundu: ${data.name}`);
     } catch (err) {
       toast.error("Barkod ile eşleşen ürün bulunamadı.");
       setScanResultProduct(null);
+    }
+  };
+
+  const ensureRetailContact = async (contacts) => {
+    const existing = findRetailContact(contacts);
+    if (existing) return existing;
+    const r = await axios.post(`${API_URL}/contacts`, {
+      company_id: companyId,
+      type: "customer",
+      name: RETAIL_CONTACT_NAME,
+      tax_number_or_id: RETAIL_CONTACT_TAX,
+      tax_office: "Perakende",
+      category: "Perakende",
+      kvkk_accepted: true,
+      city: "İstanbul",
+    });
+    const created = r.data;
+    setScanContacts((prev) => [created, ...prev]);
+    return created;
+  };
+
+  const handleBarcodeSale = async () => {
+    if (!scanResultProduct) return;
+    if (scanSaleMode === "account" && !scanContactId) {
+      toast.error("Cari satış için müşteri seçin.");
+      return;
+    }
+    const qty = Number(scanQty) || 0;
+    if (qty <= 0) {
+      toast.error("Miktar 0'dan büyük olmalı.");
+      return;
+    }
+    setScanSelling(true);
+    try {
+      let contact;
+      if (scanSaleMode === "retail") {
+        const rows = scanContacts.length ? scanContacts : await loadScanContacts();
+        contact = await ensureRetailContact(rows);
+      } else {
+        contact = scanContacts.find((c) => c.id === scanContactId || c._id === scanContactId);
+        if (!contact) throw new Error("Cari bulunamadı.");
+      }
+      const payload = barcodeSalePayload({
+        companyId,
+        contact,
+        product: scanResultProduct,
+        quantity: qty,
+        mode: scanSaleMode,
+      });
+      const invRes = await axios.post(`${API_URL}/invoices`, payload);
+      const inv = invRes.data;
+      if (scanSaleMode === "retail") {
+        try {
+          const accRes = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
+          const cash = pickCashAccount(accRes.data || []);
+          if (cash && Number(inv.grand_total || payload.paid_amount || 0) > 0) {
+            await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/record-payment`, {
+              amount: Number(inv.grand_total || payload.paid_amount),
+              account_id: cash.id || cash._id,
+            });
+          }
+        } catch {
+          /* fatura oluştu; kasa tahsilatı opsiyonel */
+        }
+      }
+      const line = barcodeSaleLine(scanResultProduct, qty);
+      toast.success(
+        scanSaleMode === "retail"
+          ? `Perakende satış: ${inv.invoice_number || ""} · ${fmtMoney(line.total_incl)} ₺`
+          : `Cari satış: ${inv.invoice_number || ""} · ${contact.name} · ${fmtMoney(line.total_incl)} ₺`
+      );
+      setScanResultProduct(null);
+      setScannedBarcode("");
+      setScanQty(1);
+      loadProducts();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : err.message || "Satış kaydedilemedi.");
+    } finally {
+      setScanSelling(false);
     }
   };
 
@@ -515,31 +626,51 @@ export default function StockBarcodePage() {
                 <Scan className="w-5 h-5 text-indigo-600" />
                 <h3 className="text-base font-bold text-slate-900">Hızlı Barkod Okuyucu Terminali</h3>
               </div>
-              <button onClick={() => setShowScannerModal(false)} className="text-slate-400">
+              <button onClick={() => setShowScannerModal(false)} className="text-slate-400" data-testid="scanner-close-btn">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-4 text-xs">
-              <p className="text-slate-500">
-                El terminali veya barkod okuyucu cihazınızla barkodu okutabilir ya da aşağıdaki test barkodlarından birine tıklayabilirsiniz:
-              </p>
-
-              {/* Fast Test Barcode Buttons */}
-              <div className="flex flex-wrap gap-1.5">
-                {products.slice(0, 4).map(p => (
-                  <button
-                    key={p.barcode}
-                    onClick={() => {
-                      setScannedBarcode(p.barcode);
-                      handleScanBarcode(p.barcode);
-                    }}
-                    className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 rounded text-[11px] font-mono border border-slate-200"
-                  >
-                    {p.name.slice(0, 18)}... ({p.barcode})
-                  </button>
-                ))}
+              <div className="grid grid-cols-2 gap-2" data-testid="scanner-sale-mode">
+                <button
+                  type="button"
+                  onClick={() => setScanSaleMode("retail")}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-semibold border transition ${scanSaleMode === "retail" ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
+                  data-testid="scanner-mode-retail"
+                >
+                  <Store className="w-3.5 h-3.5" /> Perakende Satış
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanSaleMode("account")}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-semibold border transition ${scanSaleMode === "account" ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
+                  data-testid="scanner-mode-account"
+                >
+                  <Users className="w-3.5 h-3.5" /> Cari Satış
+                </button>
               </div>
+
+              {scanSaleMode === "account" && (
+                <div className="space-y-1" data-testid="scanner-contact-picker">
+                  <label className="font-semibold text-slate-600">Müşteri (cari)</label>
+                  <SearchSelect
+                    value={scanContactId}
+                    onChange={(id) => setScanContactId(id)}
+                    options={scanContacts}
+                    placeholder="Cari seçin..."
+                    getLabel={(c) => c.name}
+                    getSub={(c) => c.tax_number_or_id || c.phone || ""}
+                    testId="scanner-contact-select"
+                  />
+                </div>
+              )}
+
+              <p className="text-slate-500">
+                {scanSaleMode === "retail"
+                  ? "Barkodu okutun; peşin perakende satış faturası oluşturulur (stok düşer)."
+                  : "Barkodu okutun; seçilen cariye satış faturası işlenir (stok + bakiye)."}
+              </p>
 
               <div className="flex gap-2">
                 <input
@@ -547,7 +678,7 @@ export default function StockBarcodePage() {
                   placeholder="Barkod numarası girin veya okutun..."
                   value={scannedBarcode}
                   onChange={(e) => setScannedBarcode(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleScanBarcode(scannedBarcode)}
+                  onKeyDown={(e) => e.key === "Enter" && handleScanBarcode(scannedBarcode)}
                   className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono text-slate-900 text-sm font-bold"
                   data-testid="scanner-input"
                   autoFocus
@@ -562,16 +693,15 @@ export default function StockBarcodePage() {
                 <ScanButton onScan={(code) => { setScannedBarcode(code); handleScanBarcode(code); }} title="Kamera ile Barkod Okut" label="Kamera" />
               </div>
 
-              {/* Scanned Result */}
               {scanResultProduct && (
                 <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-3" data-testid="scanned-product-result">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-sm">{scanResultProduct.name}</h4>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-slate-900 text-sm truncate">{scanResultProduct.name}</h4>
                       <p className="text-indigo-700 font-mono text-xs">SKU: {scanResultProduct.sku} • {scanResultProduct.category}</p>
                     </div>
-                    <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border">
-                      {scanResultProduct.sale_price?.toLocaleString('tr-TR')} ₺
+                    <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border shrink-0">
+                      {scanResultProduct.sale_price?.toLocaleString("tr-TR")} ₺
                     </span>
                   </div>
 
@@ -584,24 +714,40 @@ export default function StockBarcodePage() {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between pt-2 border-t border-indigo-200/60">
-                    <span className="font-semibold text-slate-700">Toplam Stok: <strong className="text-emerald-700 font-bold">{scanResultProduct.stock_quantity} {scanResultProduct.unit}</strong></span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleStockAdjustment(scanResultProduct.id || scanResultProduct._id, 1, scanResultProduct.matched_variant?.variant_id)}
-                        className="px-3 py-1 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700"
-                        data-testid="scan-adjust-plus-btn"
-                      >
-                        +1 Ekle
-                      </button>
-                      <button
-                        onClick={() => handleStockAdjustment(scanResultProduct.id || scanResultProduct._id, -1, scanResultProduct.matched_variant?.variant_id)}
-                        className="px-3 py-1 bg-rose-600 text-white rounded font-bold hover:bg-rose-700"
-                        data-testid="scan-adjust-minus-btn"
-                      >
-                        -1 Satış Yap
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <label className="font-semibold text-slate-600">Miktar</label>
+                    <input
+                      type="number"
+                      min="0.001"
+                      step="1"
+                      value={scanQty}
+                      onChange={(e) => setScanQty(e.target.value)}
+                      className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-slate-900"
+                      data-testid="scanner-qty-input"
+                    />
+                    <span className="text-slate-500">{scanResultProduct.unit || "Adet"}</span>
+                    <span className="ml-auto text-slate-600">Stok: <strong className="text-emerald-700">{scanResultProduct.stock_quantity}</strong></span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-indigo-200/60">
+                    <button
+                      type="button"
+                      disabled={scanSelling}
+                      onClick={handleBarcodeSale}
+                      className={`flex-1 min-w-[9rem] px-3 py-2 rounded-lg font-bold text-white disabled:opacity-60 ${scanSaleMode === "retail" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                      data-testid="scanner-sale-btn"
+                    >
+                      {scanSelling ? "Kaydediliyor…" : (scanSaleMode === "retail" ? "Perakende Satış Yap" : "Cariye Satış Yap")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStockAdjustment(scanResultProduct.id || scanResultProduct._id, 1, scanResultProduct.matched_variant?.variant_id)}
+                      className="px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg font-semibold hover:bg-slate-50"
+                      data-testid="scan-adjust-plus-btn"
+                      title="Stok girişi (+1)"
+                    >
+                      +1 Stok
+                    </button>
                   </div>
                 </div>
               )}
