@@ -133,7 +133,7 @@ export default function EdocInboxPage() {
             <Inbox className="w-6 h-6 text-indigo-600" /> Gelen e-Belgeler
           </h1>
           <p className="text-xs text-slate-500">
-            BizimHesap gibi: n11 Faturam&apos;dan çekin veya UBL/PDF yükleyin → <b>İçeri Al</b> ile alış faturası ve stok girişi tek tıkta.
+            n11 Faturam gelen kutusu otomatik çekilir; XML/PDF belgeler <b>İçeri Al</b> ile alış faturasına dönüşür. Manuel çekim veya yükleme de aynı akışı kullanır.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

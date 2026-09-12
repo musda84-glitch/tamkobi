@@ -222,8 +222,8 @@ COLLECTIONS = {
     },
     "einvoice_settings": {
         "scope": SCOPE_TENANT,
-        "description": "Firma e-fatura entegratör kimlik bilgileri (şifre şifreli).",
-        "keys": ("_id", "company_id", "provider", "username", "password_enc", "alias", "mode"),
+        "description": "Firma e-fatura entegratör kimlik bilgileri (şifre şifreli); otomatik gelen kutu çekimi.",
+        "keys": ("_id", "company_id", "provider", "username", "password_enc", "alias", "mode", "auto_pull", "auto_process", "last_inbox_sync_at"),
         "refs": ("companies._id",),
     },
     "orders": {
