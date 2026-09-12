@@ -153,6 +153,7 @@ export default function CargoPage() {
                     <td className="px-4 py-2.5">
                       <div className="font-bold text-slate-900">{shp.carrier_name}</div>
                       <div className="font-mono text-indigo-600 text-[11px] font-semibold">{shp.tracking_url ? <a href={shp.tracking_url} target="_blank" rel="noreferrer" className="underline">{shp.tracking_number}</a> : shp.tracking_number}{shp.is_live && <span className={`ml-1 text-[9px] px-1 rounded ${shp.test_mode ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{shp.test_mode ? "TEST" : "CANLI"}</span>}</div>
+                      {(shp.package_count || shp.desi || shp.total_desi) && <div className="text-[10px] text-slate-500" data-testid={`shipment-pkg-${shp.tracking_number}`}>{shp.package_count || 1} paket{(shp.total_desi || shp.desi) != null ? ` · ${shp.total_desi ?? shp.desi} desi` : ""}{(shp.total_weight || shp.weight) != null ? ` · ${shp.total_weight ?? shp.weight} kg` : ""}</div>}
                     </td>
                     <td className="px-4 py-2.5 font-medium text-slate-800">{shp.customer_name}</td>
                     <td className="px-4 py-2.5 text-slate-600">{shp.city}</td>

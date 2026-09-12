@@ -6,6 +6,7 @@ import { X, Truck, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { channelTr } from "../utils/labels";
+import { ShipmentPackageFields, emptyPackageForm, packagePayload } from "./ShipmentPackageFields";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
@@ -15,6 +16,7 @@ export const AutoShipModal = ({ companyId, onClose, onDone }) => {
   const [carrier, setCarrier] = useState("geliver");
   const [channels, setChannels] = useState(["shopphp", "trendyol"]);
   const [allowSim, setAllowSim] = useState(false);
+  const [pkg, setPkg] = useState(() => emptyPackageForm());
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +28,7 @@ export const AutoShipModal = ({ companyId, onClose, onDone }) => {
   const run = async () => {
     if (!window.confirm(`${preview.results.filter((r) => r.status === "ready").length} sipariş için ${carrier} kargo kaydı oluşturulsun mu?`)) return;
     setBusy(true);
-    try { const r = await axios.post(`${API_URL}/cargo/auto-ship`, { company_id: companyId, carrier_code: carrier, channels, allow_simulated: allowSim }); setResult(r.data); toast.success(r.data.message); onDone(); }
+    try { const r = await axios.post(`${API_URL}/cargo/auto-ship`, { company_id: companyId, carrier_code: carrier, channels, allow_simulated: allowSim, default_desi: packagePayload(pkg).desi, default_package_count: packagePayload(pkg).package_count, default_weight: packagePayload(pkg).weight, default_length: packagePayload(pkg).length, default_width: packagePayload(pkg).width, default_height: packagePayload(pkg).height }); setResult(r.data); toast.success(r.data.message); onDone(); }
     catch (e) { toast.error(e.response?.data?.detail || "Toplu kargolama başarısız."); } finally { setBusy(false); }
   };
   const rows = (result || preview)?.results || [];
@@ -39,6 +41,7 @@ export const AutoShipModal = ({ companyId, onClose, onDone }) => {
           <label>Taşıyıcı <select value={carrier} onChange={(e) => setCarrier(e.target.value)} className="border rounded-lg p-1.5 ml-1" data-testid="auto-ship-carrier">{!carriers.some((c) => c.carrier_code === "geliver") && <option value="geliver">Geliver (kurulmadı)</option>}{carriers.map((c) => <option key={c.carrier_code} value={c.carrier_code}>{c.carrier_name || c.carrier_code}{c.is_live || c.live ? " (canlı)" : ""}</option>)}</select></label>
           {["shopphp", "trendyol", "hepsiburada", "manual", "b2b"].map((ch) => <label key={ch} className="flex items-center gap-1"><input type="checkbox" checked={channels.includes(ch)} onChange={(e) => setChannels(e.target.checked ? [...channels, ch] : channels.filter((x) => x !== ch))} data-testid={`auto-ship-ch-${ch}`} /> {channelTr(ch)}</label>)}
         </div>
+        <ShipmentPackageFields value={pkg} onChange={setPkg} idPrefix="auto-pkg" />
         {preview && !preview.live && <label className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl p-2 text-amber-800" data-testid="auto-ship-sim-warning"><AlertTriangle className="w-4 h-4 shrink-0" /><span>Bu taşıyıcı için canlı API yok. <input type="checkbox" checked={allowSim} onChange={(e) => setAllowSim(e.target.checked)} className="mx-1" data-testid="auto-ship-allow-sim" /> Simülasyon takip numarasıyla devam et (gerçek gönderi oluşmaz)</span></label>}
         <div className="border rounded-xl overflow-hidden">
           <table className="w-full"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 text-left">Sipariş</th><th className="px-3 py-2 text-left">Kanal</th><th className="px-3 py-2 text-left">Alıcı / İl</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-left">Durum</th></tr></thead>

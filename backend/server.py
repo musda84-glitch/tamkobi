@@ -6616,7 +6616,7 @@ async def list_cargo_integrations(company_id: Optional[str] = "comp_nexus_main_0
 
 @api_router.put("/integrations/cargo/{carrier_id}")
 async def update_cargo_integration(carrier_id: str, data: Dict[str, Any]):
-    allowed = {k: v for k, v in data.items() if k in {"api_key", "api_secret", "api_password", "api_username", "customer_number", "sender_address_id", "test_mode", "is_active", "status", "auto_create_barcode", "default_weight", "default_length", "default_width", "default_height"}}
+    allowed = {k: v for k, v in data.items() if k in {"api_key", "api_secret", "api_password", "api_username", "customer_number", "sender_address_id", "test_mode", "is_active", "status", "auto_create_barcode", "default_weight", "default_length", "default_width", "default_height", "default_desi", "default_package_count"}}
     upd = cargo_providers.encrypt_secrets(allowed)
     cur = await db.cargo_configs.find_one({"_id": carrier_id})
     if not cur:
@@ -6649,7 +6649,7 @@ async def cargo_auto_ship(req: Dict[str, Any]):
             row["status"] = "ready"; summary["results"].append(row); continue
         try:
             r = await create_cargo_shipment({"company_id": company_id, "carrier_code": carrier_code, "order_id": o["_id"], "customer_name": o["customer_name"], "address": o["shipping_address"], "city": o.get("city") or "İstanbul", "customer_phone": o.get("customer_phone"),
-                                             "desi": float(req.get("default_desi") or sum(float(i.get("desi") or 0) for i in o.get("items") or []) or 1), "payment_type": "sender_pays", "cod_amount": (o.get("total_amount") if str(o.get("payment_method") or "").lower().startswith("kapıda") else 0)})
+                                             "desi": float(req.get("default_desi") or sum(float(i.get("desi") or 0) for i in o.get("items") or []) or 1), "package_count": int(req.get("default_package_count") or 1), "weight": req.get("default_weight"), "length": req.get("default_length"), "width": req.get("default_width"), "height": req.get("default_height"), "payment_type": "sender_pays", "cod_amount": (o.get("total_amount") if str(o.get("payment_method") or "").lower().startswith("kapıda") else 0)})
             row.update({"status": "created", "tracking_number": r.get("tracking_number") or (r.get("shipment") or {}).get("tracking_number"), "label_url": (r.get("shipment") or {}).get("label_url") or r.get("label_url")}); summary["created"] += 1
         except HTTPException as e:
             row.update({"status": "failed", "reason": e.detail}); summary["failed"] += 1
@@ -6716,6 +6716,13 @@ async def create_cargo_shipment(req: Dict[str, Any]):
         barcode = f"869{str(uuid.uuid4().int)[:10]}"
         extra = {"is_live": False}
         status_ = "in_transit"
+
+    pkg = cargo_providers.normalize_package_opts(req, cfg or {}, order or {})
+    extra = {**extra, "package_count": pkg["package_count"], "desi": pkg["desi"], "weight": pkg["weight"],
+             "length": pkg["length"], "width": pkg["width"], "height": pkg["height"],
+             "total_desi": pkg["total_desi"], "total_weight": pkg["total_weight"]}
+    if live and isinstance(g.get("package"), dict):
+        extra.update({k: g["package"].get(k, extra.get(k)) for k in ("package_count", "desi", "weight", "length", "width", "height", "total_desi", "total_weight")})
 
     shipment = CargoShipment(id=f"shp_{uuid.uuid4().hex[:8]}", company_id=company_id, carrier_code=carrier_code, carrier_name=(cfg or {}).get("carrier_name") or cat.get("carrier_name", "Kargo"), tracking_number=tracking_num, barcode=barcode,
                              order_id=order_id, customer_name=customer_name, customer_phone=req.get("customer_phone") or (order or {}).get("customer_phone"), address=address, city=city, status=status_,

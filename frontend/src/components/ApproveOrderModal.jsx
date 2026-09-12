@@ -5,12 +5,14 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Truck, CheckCircle, Loader2, Plug } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { ShipmentPackageFields, packageDefaultsFromOrder, packagePayload } from "./ShipmentPackageFields";
 
 export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
   useEscape(onClose);
   const [carriers, setCarriers] = useState(null);
   const [carrier, setCarrier] = useState(order.cargo_carrier || "");
   const [createShipment, setCreateShipment] = useState(true);
+  const [pkg, setPkg] = useState(() => packageDefaultsFromOrder(order));
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     axios.get(`${API_URL}/integrations/cargo?company_id=${companyId}`).then((r) => {
@@ -26,7 +28,7 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
       await axios.post(`${API_URL}/orders/${order.id}/approve`, { cargo_carrier: carrier });
       let msg = "Sipariş onaylandı.";
       if (createShipment && !order.cargo_tracking_number) {
-        const r = await axios.post(`${API_URL}/cargo/create-shipment`, { carrier_code: carrier, order_id: order.id, customer_name: order.customer_name, address: order.shipping_address, city: order.city, company_id: companyId });
+        const r = await axios.post(`${API_URL}/cargo/create-shipment`, { carrier_code: carrier, order_id: order.id, customer_name: order.customer_name, address: order.shipping_address, city: order.city, company_id: companyId, customer_phone: order.customer_phone, ...packagePayload(pkg) });
         msg += ` ${r.data.message || `Kargo kaydı oluşturuldu — Takip No: ${r.data.tracking_number}`}`;
       }
       toast.success(msg); onDone?.(); onClose();
@@ -50,6 +52,7 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
           )}
         </div>
         {!order.cargo_tracking_number && <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={createShipment} onChange={(e) => setCreateShipment(e.target.checked)} className="rounded" data-testid="approve-create-shipment" /> Onayla ve kargo kaydı oluştur (takip numarası entegrasyondan alınır)</label>}
+        {createShipment && !order.cargo_tracking_number && <ShipmentPackageFields value={pkg} onChange={setPkg} idPrefix="approve-pkg" />}
         <div className="flex justify-end gap-2 border-t pt-2"><button onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={submit} disabled={busy || !carrier} className="flex items-center gap-1 px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="approve-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} Onayla</button></div>
       </div>
     </div>
