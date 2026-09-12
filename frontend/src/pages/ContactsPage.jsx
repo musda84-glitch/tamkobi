@@ -12,6 +12,7 @@ import { StatementShareBar, buildStatementRows } from "../components/StatementSh
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
 import { cachedList, contactTypeFilter } from "../utils/dataSync";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 import {
   Users,
@@ -89,6 +90,9 @@ export default function ContactsPage() {
     (c.company_title && c.company_title.toLowerCase().includes(searchTerm.toLowerCase())) ||
     c.tax_number_or_id.includes(searchTerm)
   );
+  const { visible: pagedContacts, hasMore: contactsHasMore, sentinelRef: contactsSentinelRef } = useInfiniteRows(filtered, {
+    resetKey: `${filterType}|${finFilter}|${searchTerm}`,
+  });
 
   return (
     <div className="space-y-6" data-testid="contacts-page">
@@ -157,9 +161,14 @@ export default function ContactsPage() {
       {/* Contacts List (horizontal rows) */}
       <div className="space-y-2" data-testid="contacts-list">
         {filtered.length === 0 && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
-        {filtered.map((contact) => (
+        {pagedContacts.map((contact) => (
           <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onEdit={() => setEditContact(contact)} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
         ))}
+        {contactsHasMore && (
+          <div ref={contactsSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="contacts-load-more">
+            Daha fazla cari yükleniyor…
+          </div>
+        )}
       </div>
 
       {detailContactId && (

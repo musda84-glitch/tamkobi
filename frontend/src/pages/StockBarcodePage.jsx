@@ -11,6 +11,7 @@ import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { cachedList, productFilter } from "../utils/dataSync";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { ScanButton } from "../components/CameraScanner";
@@ -239,6 +240,8 @@ export default function StockBarcodePage() {
     p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (p.barcode || "").includes(searchTerm)
   ), stockF), [products, searchTerm, stockF]);
+  const stockListResetKey = useMemo(() => `${filterCategory}|${searchTerm}|${JSON.stringify(stockF)}`, [filterCategory, searchTerm, stockF]);
+  const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(filtered, { resetKey: stockListResetKey });
   const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
   const criticalCount = useMemo(() => products.filter((p) => p.track_stock !== false && p.stock_quantity <= (p.min_stock_alert ?? 0)).length, [products]);
 
@@ -366,7 +369,7 @@ export default function StockBarcodePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((prod) => {
+              {pagedProducts.map((prod) => {
                 const isCritical = prod.stock_quantity <= prod.min_stock_alert;
                 return (
                   <tr key={prod.id || prod._id} className="hover:bg-slate-50/70 transition" data-testid={`prod-row-${prod.sku}`}>
@@ -496,6 +499,11 @@ export default function StockBarcodePage() {
             </tbody>
           </table>
         </div>
+        {productsHasMore && (
+          <div ref={productsSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="stock-load-more">
+            Daha fazla stok kartı yükleniyor…
+          </div>
+        )}
       </div>
 
       {/* BARCODE SCANNER / TERMINAL MODAL */}
