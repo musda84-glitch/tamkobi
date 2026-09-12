@@ -1,0 +1,28 @@
+[Unit]
+Description=TamKobi FastAPI (uvicorn)
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tamkobi
+Group=tamkobi
+WorkingDirectory=/var/www/tamkobi.com/backend
+EnvironmentFile=-/var/www/tamkobi.com/backend/.env
+EnvironmentFile=-/var/www/tamkobi.com/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/var/www/tamkobi.com/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/www/tamkobi.com/backend/data /var/www/tamkobi.com/logs /var/www/tamkobi.com/backups /var/log/tamkobi
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

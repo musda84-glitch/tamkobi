@@ -19,6 +19,7 @@ from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from mysql_store import MySQLClient
+from client_ip import request_ip
 import partner_pay
 
 from models import (
@@ -235,8 +236,7 @@ class RegisterRequest(BaseModel):
 @api_router.post("/auth/login")
 async def login(req: LoginRequest, request: Request, response: Response):
     email = req.email.strip().lower()
-    fwd = request.headers.get("x-forwarded-for", "")
-    client_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    client_ip = request_ip(request)
     identifier = f"{client_ip}:{email}"
 
     # Check brute force lockout
@@ -818,8 +818,7 @@ async def public_quote_respond(token: str, req: Dict[str, Any], request: Request
     if not name:
         raise HTTPException(status_code=400, detail="Ad soyad zorunludur.")
     now = datetime.now(timezone.utc).isoformat()
-    fwd = request.headers.get("x-forwarded-for", "")
-    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else None)
+    ip = request_ip(request)
     ap.update({"status": decision, "responded_at": now, "responder_name": name, "note": (req.get("note") or "").strip(), "ip": ip, "user_agent": request.headers.get("user-agent", "")[:200]})
     await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval": ap, "status": decision}})
     await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": q["company_id"], "type": "quote_response", "title": f"{q.get('quote_number')} {'ONAYLANDI' if decision == 'accepted' else 'REDDEDİLDİ'}",

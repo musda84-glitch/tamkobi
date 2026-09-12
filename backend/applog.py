@@ -142,16 +142,14 @@ def setup_logging() -> Path:
     return directory
 
 
+from client_ip import request_ip
+
+
 def client_ip(request) -> str:
     try:
-        fwd = request.headers.get("x-forwarded-for", "")
-        if fwd:
-            return fwd.split(",")[0].strip()
-        if request.client:
-            return request.client.host or "unknown"
+        return request_ip(request)
     except Exception:
-        pass
-    return "unknown"
+        return "unknown"
 
 
 def _emit(logger_name: str, level: int, event: str, message: str, **fields):

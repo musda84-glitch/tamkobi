@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import comm_service
 from auth_utils import hash_password, create_access_token, create_refresh_token, get_user_from_token
+from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -188,8 +189,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
         response = await call_next(request)
         if response.status_code < 400:
-            fwd = request.headers.get("x-forwarded-for", "")
-            ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else None)
+            ip = request_ip(request)
             u = user or {"id": "demo", "name": "Demo Yönetici", "active_company_id": request.query_params.get("company_id", "comp_nexus_main_01")}
             await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": u.get("active_company_id") or "comp_nexus_main_01", "user_id": u.get("id"), "user_name": u.get("name"),
                                                 "method": request.method, "path": path, "module": module, "ip": ip, "status": response.status_code, "created_at": _now()})
