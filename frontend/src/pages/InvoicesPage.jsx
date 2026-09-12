@@ -15,6 +15,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
+import InvoiceActionPanel from "../components/InvoiceActionPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { FxPicker } from "../components/FxPicker";
@@ -999,6 +1000,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   )}
                 </div>
               </div>
+              {!isIncomingPurchaseInvoice(previewInvoice) && previewInvoice.invoice_type !== "dispatch" && (
+                <InvoiceActionPanel
+                  className="mt-4"
+                  invoiceId={previewInvoice.id || previewInvoice._id}
+                  companyId={activeCompany?.id || activeCompany?._id || previewInvoice.company_id}
+                  alreadyIssued={isGibIssued(previewInvoice)}
+                  defaultEType={previewInvoice.e_type === "e_invoice" ? "e_invoice" : previewInvoice.e_type === "paper" ? "paper" : "e_archive"}
+                  defaultScenario={(previewInvoice.gib_scenario || "").includes("TEMEL") ? "TEMEL" : "TICARI"}
+                  onInvoiceCreated={() => { setPreviewInvoice(null); loadData(); }}
+                />
+              )}
             </div>
           </div>
         </div>

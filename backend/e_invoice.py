@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 import n11faturam
 import ubl_export
@@ -45,6 +46,94 @@ def _now() -> str:
 
 def digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
+
+
+
+class InvoiceCreateRequest(BaseModel):
+    order_id: Optional[str] = None
+    invoice_id: Optional[str] = None
+    company_id: Optional[str] = None
+    scenario: str = "TICARI"
+    e_type: Optional[str] = None
+
+
+def scenario_short(gib_scenario: Optional[str]) -> str:
+    s = (gib_scenario or "").upper()
+    if "TEMEL" in s:
+        return "TEMEL"
+    if "EARSIV" in s or "ARŞIV" in s or "ARSIV" in s:
+        return "EARSIV"
+    if "IHRACAT" in s:
+        return "IHRACAT"
+    return "TICARI"
+
+
+def state_to_track_status(einvoice_state: Optional[str]) -> str:
+    return {
+        "draft": "DRAFT",
+        "queued": "DRAFT",
+        "sent": "SENT",
+        "accepted": "ACCEPTED",
+        "rejected": "REJECTED",
+        "cancelled": "CANCELLED",
+        "error": "REJECTED",
+    }.get((einvoice_state or "draft").lower(), "DRAFT")
+
+
+async def record_e_invoice(
+    *,
+    company_id: Optional[str],
+    invoice_id: str,
+    order_id: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+) -> None:
+    """e_invoices takip belgesi (docs koleksiyonu; kullanıcı şablonundaki alanlarla uyumlu)."""
+    if not _db or not invoice_id:
+        return
+    inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
+    result = result or {}
+    doc_id = f"einv_{invoice_id}"
+    status = state_to_track_status(result.get("einvoice_state") or inv.get("einvoice_state"))
+    payload = {
+        "_id": doc_id,
+        "company_id": company_id or inv.get("company_id") or "",
+        "order_id": order_id or inv.get("order_id") or inv.get("source_order_id") or "",
+        "invoice_id": invoice_id,
+        "invoice_number": result.get("invoice_number") or inv.get("invoice_number"),
+        "scenario": scenario_short(result.get("scenario") or inv.get("gib_scenario")),
+        "status": status,
+        "total_amount": float(inv.get("grand_total") or 0),
+        "gib_uuid": result.get("gib_uuid") or inv.get("gib_uuid"),
+        "pdf_url": result.get("document_url") or inv.get("gib_document_url") or "",
+        "updated_at": _now(),
+    }
+    existing = await _db.e_invoices.find_one({"_id": doc_id})
+    if not existing:
+        payload["created_at"] = _now()
+    await _db.e_invoices.update_one({"_id": doc_id}, {"$set": payload}, upsert=True)
+
+
+async def finalize_create_result(
+    result: Dict[str, Any],
+    invoice_id: str,
+    *,
+    order_id: Optional[str] = None,
+    company_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
+    out = dict(result or {})
+    out.setdefault("invoice_id", invoice_id)
+    out.setdefault("invoice_number", inv.get("invoice_number"))
+    out.setdefault("company_id", company_id or inv.get("company_id"))
+    out.setdefault("message", out.get("message") or "Fatura GİB sistemine başarıyla iletildi.")
+    await record_e_invoice(
+        company_id=out.get("company_id"),
+        invoice_id=invoice_id,
+        order_id=order_id,
+        result=out,
+    )
+    logger.info("E-Fatura oluşturuldu: %s (sipariş=%s)", out.get("invoice_number"), order_id or "-")
+    return out
 
 
 def normalize_scenario(raw: Optional[str], e_type: str) -> str:
@@ -270,31 +359,52 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
     order = await _db.orders.find_one({"_id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    company_id = (req.get("company_id") or "").strip()
+    if company_id and order.get("company_id") and order.get("company_id") != company_id:
+        raise HTTPException(status_code=403, detail="Sipariş bu firmaya ait değil.")
     inv_id = order.get("invoice_id")
     if not inv_id:
         converted = await convert(order_id, {"e_type": req.get("e_type") or "e_archive"})
         inv_id = converted.get("invoice_id")
         if not inv_id:
             raise HTTPException(status_code=400, detail=converted.get("message") or "Sipariş faturaya dönüştürülemedi.")
-    return await issue_invoice(inv_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
+    result = await issue_invoice(inv_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
+    return await finalize_create_result(result, inv_id, order_id=order_id, company_id=company_id or order.get("company_id"))
 
 
 @router.post("/e-invoice/create")
-async def api_create_einvoice(req: Dict[str, Any]):
-    """Body: { invoice_id?, order_id?, e_type?, scenario?: TICARI|TEMEL }"""
-    invoice_id = (req.get("invoice_id") or "").strip()
-    order_id = (req.get("order_id") or "").strip()
+async def api_create_einvoice(payload: InvoiceCreateRequest):
+    """Body: { invoice_id?, order_id?, company_id?, e_type?, scenario?: TICARI|TEMEL }"""
+    invoice_id = (payload.invoice_id or "").strip()
+    order_id = (payload.order_id or "").strip()
+    company_id = (payload.company_id or "").strip()
     if not invoice_id and not order_id:
         raise HTTPException(status_code=400, detail="invoice_id veya order_id gerekli.")
+    req = {
+        "invoice_id": invoice_id,
+        "order_id": order_id,
+        "company_id": company_id,
+        "scenario": payload.scenario,
+        "e_type": payload.e_type,
+    }
     apply_effects = _deps.get("apply_effects")
-    if invoice_id and apply_effects:
-        inv = await _db.invoices.find_one({"_id": invoice_id})
-        if inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
-            await apply_effects(inv)
-            await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
-    if order_id and not invoice_id:
-        return await create_from_order(order_id, req)
-    return await issue_invoice(invoice_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
+    try:
+        if invoice_id:
+            inv = await _db.invoices.find_one({"_id": invoice_id})
+            if inv and company_id and inv.get("company_id") and inv.get("company_id") != company_id:
+                raise HTTPException(status_code=403, detail="Fatura bu firmaya ait değil.")
+            if apply_effects and inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
+                await apply_effects(inv)
+                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
+        if order_id and not invoice_id:
+            return await create_from_order(order_id, req)
+        result = await issue_invoice(invoice_id, e_type=payload.e_type, scenario=payload.scenario)
+        return await finalize_create_result(result, invoice_id, order_id=order_id or None, company_id=company_id or None)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("E-Fatura oluşturma hatası: %s", e)
+        raise HTTPException(status_code=400, detail=f"Fatura kesilemedi: {e}") from e
 
 
 @router.get("/e-invoice/{invoice_id}/status")
@@ -303,6 +413,7 @@ async def api_einvoice_status(invoice_id: str):
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     xml_doc = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id}, {"byte_len": 1, "scenario": 1, "updated_at": 1})
+    track = await _db.e_invoices.find_one({"_id": f"einv_{invoice_id}"})
     return {
         "invoice_id": invoice_id,
         "invoice_number": inv.get("invoice_number"),
@@ -318,6 +429,7 @@ async def api_einvoice_status(invoice_id: str):
         "mode": inv.get("gib_mode"),
         "has_xml": bool(xml_doc),
         "xml_meta": xml_doc,
+        "e_invoice_track": track,
     }
 
 
