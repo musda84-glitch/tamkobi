@@ -30,15 +30,14 @@ jobs:
           script: |
             set -eu
             cd "$DEPLOY_PATH"
-            if [ ! -f deploy/update-native.sh ]; then
-              echo "HATA: deploy/update-native.sh yok — sunucu hâlâ eski git geçmişinde." >&2
-              echo "Bu VPS Docker kullanmıyor (nginx + venv uvicorn). Bir kez, yedekten sonra:" >&2
-              echo "  git branch backup-pre-rewrite-\$(date +%Y%m%d-%H%M)" >&2
-              echo "  git fetch origin main" >&2
-              echo "  git reset --hard origin/main" >&2
-              echo "  sh deploy/update-native.sh --skip-git" >&2
+            git fetch origin main
+            if ! git cat-file -e origin/main:deploy/update-native.sh; then
+              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
               exit 1
             fi
-            sh deploy/update-native.sh
+            # Sunucuda leftover bir stub (Starting native update...) varsa onu
+            # çalıştırma — daima GitHub main'deki betiği kullan.
+            git show origin/main:deploy/update-native.sh > /tmp/tamkobi-update-native.sh
+            sh /tmp/tamkobi-update-native.sh
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
