@@ -31,6 +31,52 @@ def _bank_balance() -> float:
     return float(acc.get("current_balance") or 0)
 
 
+def test_cheque_appears_in_contact_payments():
+    """Alınan/verilen çek cari Ödemeler sekmesine düşer; kasa bakiyesine dokunmaz."""
+    due = (date.today() + timedelta(days=14)).isoformat()
+    bal0 = _contact_balance()
+    bank0 = _bank_balance()
+
+    r = requests.post(
+        f"{API}/cheques",
+        headers=_h(),
+        json={
+            "company_id": TEST_COMPANY_ID,
+            "instrument": "cheque",
+            "direction": "received",
+            "contact_id": CONTACT,
+            "amount": 175,
+            "due_date": due,
+            "serial_no": "CK-CARI-1",
+            "issue_date": date.today().isoformat(),
+        },
+        timeout=TIMEOUT,
+    )
+    assert r.status_code == 200, r.text
+    cid = r.json()["id"]
+    assert abs(_contact_balance() - (bal0 - 175)) < 0.02
+    assert abs(_bank_balance() - bank0) < 0.02
+
+    ov = requests.get(f"{API}/contacts/{CONTACT}/overview", headers=_h(), timeout=TIMEOUT)
+    assert ov.status_code == 200, ov.text
+    pays = ov.json().get("payments") or []
+    hit = next((p for p in pays if p.get("cheque_id") == cid or (p.get("source") == "cheque" and "CK" in (p.get("description") or "") and abs(float(p.get("amount") or 0) - 175) < 0.02)), None)
+    if not hit:
+        hit = next((p for p in pays if p.get("source") == "cheque" and abs(float(p.get("amount") or 0) - 175) < 0.02 and p.get("account_name") == "Çek Portföyü"), None)
+    assert hit, f"çek Ödemeler'de yok: {[ (p.get('source'), p.get('amount'), p.get('account_name'), p.get('cheque_id')) for p in pays[:15] ]}"
+    assert hit.get("type") == "inflow"
+    assert hit.get("category", "").startswith("Alınan")
+    assert hit.get("account_name") == "Çek Portföyü"
+
+    r = requests.post(f"{API}/cheques/{cid}/cancel", headers=_h(), json={"reason": "test"}, timeout=TIMEOUT)
+    assert r.status_code == 200, r.text
+    assert abs(_contact_balance() - bal0) < 0.02
+    ov2 = requests.get(f"{API}/contacts/{CONTACT}/overview", headers=_h(), timeout=TIMEOUT).json()
+    pays2 = ov2.get("payments") or []
+    assert not any(p.get("cheque_id") == cid for p in pays2)
+    requests.delete(f"{API}/cheques/{cid}", headers=_h(), timeout=TIMEOUT)
+
+
 def test_cheque_received_collect_and_bounce():
     due = (date.today() + timedelta(days=10)).isoformat()
     bal0 = _contact_balance()

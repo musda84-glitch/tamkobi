@@ -2395,6 +2395,34 @@ async def get_contact_overview(contact_id: str):
             "account_name": ptx.get("account_name") or "Ortaklar Hesabı",
             "source": "partner",
         })
+    # Eski çekler: portföy satırı yoksa Ödemeler'de görünmeleri için sanal satır ekle.
+    linked_cheque_ids = {p.get("cheque_id") for p in payments if p.get("cheque_id") and p.get("source") == "cheque"}
+    for ch in await db.cheques.find({"contact_id": contact_id, "status": {"$in": ["open", "collected", "paid", "endorsed"]}}).to_list(200):
+        if ch["_id"] in linked_cheque_ids:
+            continue
+        direction = ch.get("direction") or "received"
+        instrument = "Senet" if ch.get("instrument") == "promissory" else "Çek"
+        kind = "Alınan" if direction == "received" else "Verilen"
+        due = ch.get("due_date") or ""
+        payments.append({
+            "_id": f"cheque-virt-{ch['_id']}",
+            "company_id": ch.get("company_id"),
+            "account_id": None,
+            "account_name": "Çek Portföyü",
+            "type": "inflow" if direction == "received" else "outflow",
+            "category": f"{kind} {instrument}",
+            "amount": float(ch.get("amount") or 0),
+            "currency": ch.get("currency") or "TRY",
+            "description": f"{ch.get('number')} · vade {due}".strip(" ·"),
+            "contact_id": contact_id,
+            "contact_name": ch.get("contact_name"),
+            "source": "cheque",
+            "cheque_id": ch["_id"],
+            "cheque_kind": "portfolio",
+            "date": ch.get("issue_date") or ch.get("due_date") or "",
+            "created_at": ch.get("created_at"),
+            "virtual": True,
+        })
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
@@ -3815,8 +3843,8 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
 def _assert_editable_tx(tx: Dict[str, Any]):
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
-    if tx.get("source") in ("bank_sync", "partner", "bank_match"):
-        raise HTTPException(status_code=400, detail="Banka entegrasyonundan / ortaklar hesabından gelen hareketler düzenlenemez veya silinemez. Banka eşleşmesini geri almak için Eşleşenler listesini kullanın.")
+    if tx.get("source") in ("bank_sync", "partner", "bank_match", "cheque", "cheque_bank"):
+        raise HTTPException(status_code=400, detail="Banka entegrasyonu, ortaklar hesabı veya çek/senet kaynaklı hareketler buradan düzenlenemez veya silinemez. Çek için Çek/Senet modülünü kullanın.")
 
 @api_router.put("/banking/transactions/{tx_id}")
 async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):

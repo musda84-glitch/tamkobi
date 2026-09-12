@@ -89,6 +89,32 @@ def _instrument(req: Dict[str, Any]) -> str:
     return raw
 
 
+async def _post_cari_payment(doc: dict):
+    """Alınan/verilen çeki cari Ödemeler sekmesine düşür (kasa bakiyesine dokunmaz)."""
+    direction = doc.get("direction") or "received"
+    instrument = "Senet" if doc.get("instrument") == "promissory" else "Çek"
+    kind = "Alınan" if direction == "received" else "Verilen"
+    due = doc.get("due_date") or ""
+    await _db.bank_transactions.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": doc["company_id"],
+        "account_id": None,
+        "account_name": "Çek Portföyü",
+        "type": "inflow" if direction == "received" else "outflow",
+        "category": f"{kind} {instrument}",
+        "amount": float(doc.get("amount") or 0),
+        "currency": doc.get("currency") or "TRY",
+        "description": f"{doc.get('number')} · vade {due}".strip(" ·"),
+        "contact_id": doc.get("contact_id"),
+        "contact_name": doc.get("contact_name"),
+        "source": "cheque",
+        "cheque_id": doc["_id"],
+        "cheque_kind": "portfolio",
+        "date": doc.get("issue_date") or _today(),
+        "created_at": _now(),
+    })
+
+
 async def _bank_move(company_id: str, account_id: str, *, inflow: bool, amount: float, category: str, description: str, date: str, cheque_id: str, contact_name=None):
     acc = await _db.bank_accounts.find_one({"_id": account_id})
     if not acc:
@@ -96,23 +122,25 @@ async def _bank_move(company_id: str, account_id: str, *, inflow: bool, amount: 
     await assert_manual_allowed(_db, account_id)
     change = amount if inflow else -amount
     await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": change}})
+    # contact_id yok: tahsil/ödeme kasa hareketidir; cari zaten çek girişinde işlendi.
     await _db.bank_transactions.insert_one({
         "_id": str(uuid.uuid4()), "company_id": company_id, "account_id": account_id,
         "account_name": acc.get("account_name"), "type": "inflow" if inflow else "outflow",
         "category": category, "amount": amount, "currency": acc.get("currency", "TRY"),
         "description": description, "contact_name": contact_name,
-        "source": "cheque", "cheque_id": cheque_id, "date": date, "created_at": _now(),
+        "source": "cheque_bank", "cheque_id": cheque_id, "cheque_kind": "bank",
+        "date": date, "created_at": _now(),
     })
     return acc.get("account_name")
 
 
 async def _unwind_bank(cheque_id: str):
-    """Tahsil/ödeme banka hareketini geri al; cari etkisi çek kaydında kalır."""
+    """Çeke bağlı portföy (cari) ve tahsil/ödeme (kasa) hareketlerini geri al."""
     txs = await _db.bank_transactions.find({"cheque_id": cheque_id}).to_list(50)
     for tx in txs:
         amt = float(tx.get("amount") or 0)
-        change = -amt if tx.get("type") == "inflow" else amt
-        if tx.get("account_id") and amt:
+        if tx.get("account_id") and amt and tx.get("cheque_kind") != "portfolio":
+            change = -amt if tx.get("type") == "inflow" else amt
             await _db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
         await _db.bank_transactions.delete_one({"_id": tx["_id"]})
 
@@ -235,6 +263,7 @@ async def create_cheque(req: Dict[str, Any]):
     }
     await _db.cheques.insert_one(doc)
     await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
+    await _post_cari_payment(doc)
     await _refresh_contact_cheque(contact["_id"])
     return _annotate(await _db.cheques.find_one({"_id": doc["_id"]}), _today())
 
@@ -317,8 +346,8 @@ async def bounce_cheque(cheque_id: str, req: Dict[str, Any]):
     if st not in ("open", "collected", "paid", "endorsed"):
         raise HTTPException(status_code=400, detail=f"Bu kayıt {STATUS_TR.get(st, st)} durumunda; karşılıksız işlenemez.")
     amount = float(doc["amount"])
-    if st in ("collected", "paid"):
-        await _unwind_bank(cheque_id)
+    # Portföy (cari Ödemeler) + varsa tahsil/ödeme kasa hareketlerini geri al.
+    await _unwind_bank(cheque_id)
     if st == "endorsed" and doc.get("endorsed_to_contact_id"):
         await _apply_contact(doc["endorsed_to_contact_id"], -amount)
         await _refresh_contact_cheque(doc["endorsed_to_contact_id"])
@@ -335,6 +364,7 @@ async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None):
     doc = await _db.cheques.find_one({"_id": cheque_id})
     _open_only(doc)
     amount = float(doc["amount"])
+    await _unwind_bank(cheque_id)
     await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount))
     await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "cancelled", "updated_at": _now()}})
     await _append_event(cheque_id, "cancelled", (req or {}).get("reason") or "İptal")
@@ -363,4 +393,7 @@ async def delete_cheque(cheque_id: str):
 async def restore_cheque(doc: dict, _related):
     if doc.get("status") == "open":
         await _apply_contact(doc.get("contact_id"), _contact_delta_on_create(doc.get("direction"), float(doc.get("amount") or 0)))
+        # Eski silmelerde portföy satırı yoksa cari Ödemeler'e yeniden yaz.
+        if not await _db.bank_transactions.find_one({"cheque_id": doc["_id"], "cheque_kind": "portfolio"}):
+            await _post_cari_payment(doc)
     await _refresh_contact_cheque(doc.get("contact_id"))
