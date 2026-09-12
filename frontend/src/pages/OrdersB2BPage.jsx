@@ -73,7 +73,7 @@ export default function OrdersB2BPage() {
     let ok = 0, fail = 0;
     for (const o of list) {
       try {
-        if (action === "invoice") { if (o.is_invoiced || o.invoice_id) continue; await axios.post(`${API_URL}/orders/${o.id}/convert-to-invoice`); }
+        if (action === "invoice") { if (o.is_invoiced || o.invoice_id) continue; await axios.post(`${API_URL}/e-invoice/create`, { order_id: o.id || o._id, e_type: "e_archive" }); }
         else if (action === "approve") { if (o.order_status !== "pending") continue; await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "yurtici" }); }
         ok++;
       } catch { fail++; }
@@ -150,11 +150,16 @@ export default function OrdersB2BPage() {
   const [expandedItems, setExpandedItems] = useState(null);
   const handleConvertToInvoice = async (orderId, eType) => {
     try {
-      const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`, eType ? { e_type: eType } : {});
-      toast.success(res.data.message);
+      // Tek adım: sipariş → fatura → GİB (e_invoice servisi)
+      const res = await axios.post(`${API_URL}/e-invoice/create`, {
+        order_id: orderId,
+        e_type: eType || "e_archive",
+        scenario: eType === "e_invoice" ? "TICARI" : undefined,
+      });
+      toast.success(res.data.message || "E-belge kesildi.");
       loadData();
     } catch (err) {
-      toast.error("Faturaya dönüştürme başarısız.");
+      toast.error(err.response?.data?.detail || "Faturaya dönüştürme / e-belge kesimi başarısız.");
     }
   };
 

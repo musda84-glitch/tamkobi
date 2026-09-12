@@ -1,0 +1,118 @@
+"""e_invoice servisi: alıcı doğrulama, senaryo, UBL profili, create API birimleri."""
+import asyncio
+import os
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import e_invoice  # noqa: E402
+import ubl_export  # noqa: E402
+
+
+class TestScenarioAndBuyer:
+    def test_normalize_scenario(self):
+        assert e_invoice.normalize_scenario("TEMEL", "e_invoice") == "TEMELFATURA"
+        assert e_invoice.normalize_scenario("TICARI", "e_invoice") == "TICARIFATURA"
+        assert e_invoice.normalize_scenario(None, "e_archive") == "EARSIVFATURA"
+
+    def test_validate_buyer_requires_tax_for_einvoice(self):
+        with pytest.raises(HTTPException):
+            e_invoice.validate_buyer({"name": "A"}, {}, "e_invoice")
+        ok = e_invoice.validate_buyer({"name": "A", "tax_number_or_id": "1234567890"}, {}, "e_invoice")
+        assert ok["tax_id"] == "1234567890"
+
+    def test_validate_buyer_archive_allows_empty_tax(self):
+        ok = e_invoice.validate_buyer({"name": "Nihai"}, {}, "e_archive")
+        assert ok["tax_id"] == "11111111111"
+
+
+class TestUblProfileOverride:
+    def test_temel_profile(self):
+        inv = {
+            "_id": "inv1", "invoice_number": "NX202600000001", "e_type": "e_invoice",
+            "issue_date": "2026-09-12", "contact_name": "Alıcı", "contact_tax_id": "6320984412",
+            "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 10, "vat_rate": 20, "total": 10}],
+            "subtotal": 10, "vat_total": 2, "grand_total": 12, "_profile_override": "TEMELFATURA",
+        }
+        seller = {"name": "Satıcı", "tax_number": "1234567801", "city": "İstanbul", "address": "A"}
+        buyer = {"name": "Alıcı", "tax_number_or_id": "6320984412", "city": "Ankara"}
+        xml = ubl_export.build_invoice_ubl(inv, seller, buyer).decode()
+        assert "TEMELFATURA" in xml
+        assert "TICARIFATURA" not in xml
+
+
+class TestIssueInvoiceSimulated:
+    def test_issue_paper_and_simulated(self):
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_sim", "company_id": "c1", "invoice_type": "sales", "e_type": "e_archive",
+            "status": "draft", "contact_id": "cnt1", "contact_name": "Musteri", "contact_tax_id": "12345678901",
+            "invoice_number": "NX1", "items": [],
+        }
+        contact = {"_id": "cnt1", "name": "Musteri", "tax_number_or_id": "12345678901"}
+        company = {"_id": "c1", "name": "Firma", "tax_number": "1234567801"}
+
+        async def find_one(q):
+            if "_id" in q:
+                if q["_id"] == "inv_sim":
+                    return inv
+                if q["_id"] == "cnt1":
+                    return contact
+                if q["_id"] == "c1":
+                    return company
+            if "company_id" in q:
+                return {"company_id": "c1", "provider": "", "status": "simulated", "mode": "test"}
+            return None
+
+        fake_db.invoices.find_one = AsyncMock(side_effect=find_one)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value={"status": "simulated"})
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+
+        e_invoice.init(fake_db, {"consume_credits": AsyncMock(return_value=99)})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
+                paper = await e_invoice.issue_invoice("inv_sim", e_type="paper")
+                assert paper["einvoice_state"] == "sent"
+                inv["e_type"] = "e_archive"
+                sim = await e_invoice.issue_invoice("inv_sim", e_type="e_archive", scenario="TICARI")
+                assert sim["einvoice_state"] == "sent"
+                assert sim["tracking_id"]
+                assert sim["provider"] == "simulated"
+                return sim
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+
+class TestRefreshOutbound:
+    def test_timeout_queued(self):
+        fake_db = MagicMock()
+
+        class Cur:
+            def sort(self, *a, **k):
+                return self
+            def limit(self, n):
+                return self
+            def __aiter__(self):
+                async def gen():
+                    yield {
+                        "_id": "q1", "company_id": "c1", "einvoice_state": "queued",
+                        "queued_at": "2020-01-01T00:00:00+00:00", "gib_tracking_id": None,
+                    }
+                return gen()
+
+        fake_db.invoices.find = MagicMock(return_value=Cur())
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value={})
+        e_invoice.init(fake_db)
+
+        res = asyncio.get_event_loop().run_until_complete(e_invoice.refresh_outbound_statuses())
+        assert res["checked"] == 1
+        assert res["updated"] == 1
+        fake_db.invoices.update_one.assert_awaited()

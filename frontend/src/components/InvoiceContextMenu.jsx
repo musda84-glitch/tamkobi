@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, Globe, CheckCircle2, XCircle } from "lucide-react";
+import { FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock, Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink } from "lucide-react";
 
 export const E_TYPE_LABELS = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat" };
 
@@ -36,14 +36,15 @@ export const GIB_ISSUED_STATUSES = new Set([
   "n11 Faturam ile GİB'e iletildi",
   "e-İhracat GİB'e iletildi",
   "GİB'e Gönderildi",
+  "Kuyrukta",
 ]);
 
 export function isGibIssued(inv) {
   if (!inv) return false;
+  if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
   if (inv.gib_tracking_id) return true;
   const gs = String(inv.gib_status || "");
   if (GIB_ISSUED_STATUSES.has(gs)) return true;
-  // Eski / alternatif metinler
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
 }
 
@@ -54,7 +55,7 @@ const ISSUE_OPTIONS = [
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" }
 ];
 
-export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onAcceptIncoming, onRejectIncoming }) => {
+export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onAcceptIncoming, onRejectIncoming, apiBase = "" }) => {
   const ref = useRef(null);
   useEffect(() => {
     if (!menu) return;
@@ -106,6 +107,14 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
           {ISSUE_OPTIONS.map(o => (
             <Item key={o.key} icon={o.icon} color={o.color} label={o.label} sub={inv.e_type === o.key ? `${o.sub} • seçili tür` : o.sub} onClick={() => onIssue(inv, o.key)} testId={`ctx-issue-${o.key}`} />
           ))}
+        </div>
+      )}
+      {issued && (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
+          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="GİB UBL-TR arşiv kopyası" onClick={() => window.open(`${apiBase}/invoices/${inv.id||inv._id}/xml`, '_blank')} testId="ctx-download-xml" />
+          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Yazdırılabilir fatura PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id||inv._id}/pdf`, '_blank')} testId="ctx-download-pdf" />
+          {inv.gib_document_url && <Item icon={ExternalLink} color="text-emerald-600" label="Resmi GİB Belgesi" sub="Entegratör görüntüleme linki" onClick={() => window.open(inv.gib_document_url, '_blank')} testId="ctx-gib-doc-url" />}
         </div>
       )}
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />

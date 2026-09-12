@@ -74,6 +74,7 @@ import pricing
 from report_helpers import issue_q as _issue_q, report_insights as _report_insights
 import edocs
 import n11faturam
+import e_invoice
 import saas
 import saas_billing
 import saas_extras
@@ -198,6 +199,7 @@ async def startup_event():
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
     _asyncio.get_event_loop().create_task(_einvoice_inbox_auto_loop())
+    _asyncio.get_event_loop().create_task(e_invoice.outbound_status_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
     _asyncio.get_event_loop().create_task(applog.rotation_loop())
     import perfmon
@@ -3154,70 +3156,16 @@ async def delete_invoice(invoice_id: str):
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
+    """GİB'e e-belge gönderimi — e_invoice.issue_invoice üzerinden."""
     req = req or {}
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
-    effective_etype = req.get("e_type") or inv.get("e_type")
-    if _is_incoming_purchase_invoice(inv) or (inv.get("invoice_type") == "purchase" and effective_etype == "e_invoice"):
-        raise HTTPException(status_code=400, detail="GİB'den gelen alış e-faturası kesilmez. Ticari yanıt için Onayla veya Reddet kullanın.")
-    if req.get("e_type"):
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"e_type": req["e_type"]}})
-        inv = await db.invoices.find_one({"_id": invoice_id})
     if inv.get("status") == "draft" and not inv.get("effects_applied"):
         await _apply_invoice_effects(inv)
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
+    return await e_invoice.issue_invoice(invoice_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
 
-    if inv.get("e_type") == "paper":
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "gib_status": "Kağıt Fatura (Matbu)", "gib_tracking_id": None}})
-        return {"status": "success", "message": "Kağıt fatura olarak kesildi. Matbu belgeyi yazdırabilirsiniz.", "tracking_id": None}
-
-    settings = await db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
-    if settings.get("provider") == "n11faturam" and settings.get("status") == "configured" and inv.get("e_type") in ("e_invoice", "e_archive"):
-        pwd = _einvoice_password(settings)
-        contact = await db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
-        company = await db.companies.find_one({"_id": inv.get("company_id")}) or {}
-        sent = await n11faturam.send_document(settings, pwd, {**inv, "id": invoice_id}, contact, company)
-        remaining = await gib_credits.consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
-        tracking_id = sent.get("ettn") or sent.get("invoice_id")
-        patch = {
-            "status": "approved",
-            "gib_status": "n11 Faturam ile GİB'e iletildi",
-            "gib_tracking_id": tracking_id,
-            "gib_uuid": sent.get("ettn"),
-            "integrator": "n11faturam",
-            "gib_document_url": sent.get("document_url") or "",
-        }
-        if sent.get("invoice_id"):
-            patch["gib_invoice_id"] = sent["invoice_id"]
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
-        return {
-            "status": "success",
-            "message": f"Fatura n11 Faturam üzerinden GİB'e iletildi. ETTN: {tracking_id}",
-            "tracking_id": tracking_id,
-            "document_url": sent.get("document_url") or "",
-            "provider": "n11faturam",
-            "gib_credits_left": remaining,
-        }
-
-    remaining = await gib_credits.consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
-    tracking_id = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-    export = inv.get("e_type") == "e_export" or inv.get("trade_kind") == "export"
-    gib_status = "e-İhracat GİB'e iletildi" if export else "Başarıyla İletildi (GİB Onaylı)"
-    await db.invoices.update_one(
-        {"_id": invoice_id},
-        {"$set": {
-            "status": "approved",
-            "gib_status": gib_status,
-            "gib_tracking_id": tracking_id
-        }}
-    )
-    return {
-        "status": "success",
-        "message": (f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking_id}" if export else f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking_id}"),
-        "tracking_id": tracking_id,
-        "gib_credits_left": remaining,
-    }
 
 
 @api_router.post("/invoices/{invoice_id}/accept-incoming")
@@ -7692,6 +7640,7 @@ saas_docs.init(db)
 data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
 ubl_export.init(db)
+e_invoice.init(db, {"password_fn": _einvoice_password, "consume_credits": gib_credits.consume, "convert_order": convert_order_to_invoice, "apply_effects": _apply_invoice_effects})
 edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 data_sync.init(db)
 rbac.set_license_guard(saas.guard)
@@ -7770,6 +7719,7 @@ app.include_router(demo.router)
 app.include_router(data_export.router)
 app.include_router(legal_docs.router)
 app.include_router(ubl_export.router)
+app.include_router(e_invoice.router)
 app.include_router(edoc_backup.router)
 app.include_router(data_sync.router)
 

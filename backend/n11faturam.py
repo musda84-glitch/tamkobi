@@ -113,7 +113,9 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     ettn = ettn or str(uuid.uuid4()).upper()
     inv_id = gib_invoice_id(invoice.get("invoice_number") or "", invoice.get("issue_date") or "")
     e_type = invoice.get("e_type") or "e_archive"
-    profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
+    profile = invoice.get("_profile_override") or invoice.get("gib_scenario")
+    if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
+        profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     due = (invoice.get("due_date") or issue)[:10]
     currency = invoice.get("currency") or "TRY"

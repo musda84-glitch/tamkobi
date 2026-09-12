@@ -204,8 +204,8 @@ COLLECTIONS = {
     },
     "invoices": {
         "scope": SCOPE_TENANT,
-        "description": "Satış/alış/proforma/iade faturaları ve e-belge alanları.",
-        "keys": ("_id", "company_id", "invoice_type", "e_type", "invoice_number", "contact_id", "items", "grand_total", "status", "gib_status"),
+        "description": "Satış/alış/proforma/iade faturaları ve e-belge alanları (ETTN, senaryo, durum).",
+        "keys": ("_id", "company_id", "invoice_type", "e_type", "invoice_number", "contact_id", "items", "grand_total", "status", "gib_status", "gib_uuid", "gib_invoice_id", "gib_scenario", "einvoice_state", "gib_document_url"),
         "refs": ("contacts._id", "orders._id via source", "quotes._id"),
     },
     "incoming_edocs": {
@@ -220,9 +220,15 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "xml", "created_at"),
         "refs": ("incoming_edocs._id",),
     },
+    "outgoing_einvoice_xml": {
+        "scope": SCOPE_TENANT,
+        "description": "Giden e-Fatura/e-Arşiv UBL XML arşivi (invoice_id anahtar).",
+        "keys": ("_id", "invoice_id", "company_id", "xml", "scenario", "updated_at"),
+        "refs": ("invoices._id",),
+    },
     "einvoice_settings": {
         "scope": SCOPE_TENANT,
-        "description": "Firma e-fatura entegratör kimlik bilgileri (şifre şifreli); otomatik gelen kutu çekimi.",
+        "description": "Firma e-fatura entegratör kimlik bilgileri (şifre şifreli); test/canlı mod; otomatik gelen kutu çekimi.",
         "keys": ("_id", "company_id", "provider", "username", "password_enc", "alias", "mode", "auto_pull", "auto_process", "last_inbox_sync_at"),
         "refs": ("companies._id",),
     },

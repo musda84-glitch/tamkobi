@@ -128,7 +128,9 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
 def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[str, Any]) -> bytes:
     """UBL-TR Invoice XML (imzasız arşiv). parse_ubl ile okunabilir."""
     e_type = inv.get("e_type") or "e_archive"
-    profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
+    profile = inv.get("_profile_override") or inv.get("gib_scenario")
+    if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
+        profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     type_code = "IADE" if inv.get("invoice_type") == "return" else "SATIS"
     items = list(inv.get("items") or [])
     currency = (inv.get("currency") or "TRY").upper()
