@@ -2712,8 +2712,8 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     try:
         result = put_object(path, data, content_type)
     except Exception as e:
-        logger.error(f"Image upload failed: {e}")
-        raise HTTPException(status_code=502, detail="Görsel depolama servisine yüklenemedi.")
+        logger.exception("Image upload failed path=%s: %s", path, e)
+        raise HTTPException(status_code=502, detail=f"Görsel depolama servisine yüklenemedi: {e}")
     await db.files.insert_one({
         "_id": str(uuid.uuid4()),
         "storage_path": result["path"],
