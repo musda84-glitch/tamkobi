@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional
 _ENV_SHA = "APP_GIT_SHA"
 _ENV_BRANCH = "APP_GIT_BRANCH"
 _ENV_BUILT = "APP_BUILD_TIME"
+_ENV_MESSAGE = "APP_GIT_MESSAGE"
+_MESSAGE_MAX = 160
 
 
 def _env(name: str) -> str:
@@ -43,11 +45,24 @@ def short_sha(sha: Optional[str]) -> Optional[str]:
     return sha[:7]
 
 
+def clean_message(raw: Optional[str]) -> Optional[str]:
+    """Single-line commit subject for the sidebar (no control chars, bounded)."""
+    if not raw:
+        return None
+    text = " ".join(str(raw).split())
+    if not text:
+        return None
+    if len(text) > _MESSAGE_MAX:
+        return text[: _MESSAGE_MAX - 1].rstrip() + "…"
+    return text
+
+
 def read_stamp() -> Dict[str, Any]:
     env_sha = _env(_ENV_SHA)
     sha = env_sha or _git("rev-parse", "HEAD")
     branch = _env(_ENV_BRANCH) or _git("rev-parse", "--abbrev-ref", "HEAD")
     built_at = _env(_ENV_BUILT)
+    message = clean_message(_env(_ENV_MESSAGE) or _git("log", "-1", "--pretty=%s"))
     if env_sha:
         source = "env"
     elif sha:
@@ -59,6 +74,7 @@ def read_stamp() -> Dict[str, Any]:
         "git_sha": sha or None,
         "git_sha_short": short_sha(sha),
         "git_branch": branch or None,
+        "git_message": message,
         "built_at": built_at or None,
         "source": source,
     }

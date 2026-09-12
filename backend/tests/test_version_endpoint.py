@@ -13,6 +13,7 @@ def test_version_unauthenticated():
     assert body["service"] == "TamKobi API"
     assert "git_sha" in body
     assert "git_sha_short" in body
+    assert "git_message" in body
     assert "source" in body
     assert body["source"] in {"env", "git", "unknown"}
     assert r.headers.get("Cache-Control", "").startswith("no-store")

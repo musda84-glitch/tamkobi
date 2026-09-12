@@ -36,6 +36,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-}
         GIT_BRANCH: ${GIT_BRANCH:-}
+        GIT_MESSAGE: ${GIT_MESSAGE:-}
         BUILD_TIME: ${BUILD_TIME:-}
     container_name: tamkobi-backend
     restart: always
@@ -91,6 +92,7 @@ services:
         REACT_APP_BACKEND_URL: ""
         GIT_SHA: ${GIT_SHA:-}
         GIT_BRANCH: ${GIT_BRANCH:-}
+        GIT_MESSAGE: ${GIT_MESSAGE:-}
         BUILD_TIME: ${BUILD_TIME:-}
     container_name: tamkobi-frontend
     restart: always

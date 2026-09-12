@@ -49,8 +49,9 @@ fi
 GIT_SHA="$(git rev-parse HEAD)"
 GIT_SHA_SHORT="$(git rev-parse --short HEAD)"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+GIT_MESSAGE="$(git log -1 --pretty=%s)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Dağıtılan sürüm: $GIT_SHA_SHORT ($GIT_BRANCH) — $(git log -1 --pretty=%s)"
+echo "Dağıtılan sürüm: $GIT_SHA_SHORT ($GIT_BRANCH) — $GIT_MESSAGE"
 
 echo "--- Backend bağımlılıkları"
 if [ ! -x "$ROOT/backend/venv/bin/python3" ]; then
@@ -91,6 +92,7 @@ if command -v yarn >/dev/null 2>&1; then
   CI=false GENERATE_SOURCEMAP=false DISABLE_ESLINT_PLUGIN=true \
     REACT_APP_GIT_SHA="$GIT_SHA" \
     REACT_APP_GIT_BRANCH="$GIT_BRANCH" \
+    REACT_APP_GIT_MESSAGE="$GIT_MESSAGE" \
     REACT_APP_BUILD_TIME="$BUILD_TIME" \
     yarn build
 elif command -v npm >/dev/null 2>&1; then
@@ -98,6 +100,7 @@ elif command -v npm >/dev/null 2>&1; then
   CI=false GENERATE_SOURCEMAP=false DISABLE_ESLINT_PLUGIN=true \
     REACT_APP_GIT_SHA="$GIT_SHA" \
     REACT_APP_GIT_BRANCH="$GIT_BRANCH" \
+    REACT_APP_GIT_MESSAGE="$GIT_MESSAGE" \
     REACT_APP_BUILD_TIME="$BUILD_TIME" \
     npm run build
 else
@@ -142,12 +145,35 @@ else
 fi
 
 mkdir -p "/etc/systemd/system/${UNIT}.service.d"
-cat > "/etc/systemd/system/${UNIT}.service.d/stamp.conf" <<EOF
-[Service]
-Environment=APP_GIT_SHA=$GIT_SHA
-Environment=APP_GIT_BRANCH=$GIT_BRANCH
-Environment=APP_BUILD_TIME=$BUILD_TIME
-EOF
+# Commit konusu boşluk / tırnak içerir; systemd Environment= satırını
+# Python ile kaçırıyoruz (ham heredoc boşlukta kesilir).
+export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME UNIT
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+def esc(value: str) -> str:
+    return (
+        (value or "")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", " ")
+        .replace("\r", "")
+    )
+
+msg = " ".join((os.environ.get("GIT_MESSAGE") or "").split())[:160]
+dropin = Path("/etc/systemd/system") / f"{os.environ['UNIT']}.service.d"
+dropin.mkdir(parents=True, exist_ok=True)
+(dropin / "stamp.conf").write_text(
+    "[Service]\n"
+    f'Environment="APP_GIT_SHA={esc(os.environ.get("GIT_SHA", ""))}"\n'
+    f'Environment="APP_GIT_BRANCH={esc(os.environ.get("GIT_BRANCH", ""))}"\n'
+    f'Environment="APP_GIT_MESSAGE={esc(msg)}"\n'
+    f'Environment="APP_BUILD_TIME={esc(os.environ.get("BUILD_TIME", ""))}"\n',
+    encoding="utf-8",
+)
+print(f"stamp.conf → {dropin / 'stamp.conf'}")
+PY
 
 if ! systemctl is-active --quiet "$UNIT" 2>/dev/null; then
   pids=$(ss -ltnp 2>/dev/null | awk '/:8000/ {print}' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
