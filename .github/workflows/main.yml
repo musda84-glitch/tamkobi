@@ -30,7 +30,7 @@ jobs:
           script: |
             set -eu
             cd "$DEPLOY_PATH"
-            git fetch origin main
+            git fetch origin +refs/heads/main:refs/remotes/origin/main
             if ! git cat-file -e origin/main:deploy/update-native.sh; then
               echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
               exit 1
