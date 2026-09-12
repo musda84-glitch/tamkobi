@@ -1162,11 +1162,14 @@ async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
 
 @api_router.post("/projects")
 async def create_project(req: Dict[str, Any]):
+    track_token = uuid.uuid4().hex
     doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
            "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
            "start_date": req.get("start_date"), "end_date": req.get("end_date"), "description": req.get("description", ""), "address": req.get("address", ""),
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
-           "images": [], "tasks": req.get("tasks", []), "created_at": datetime.now(timezone.utc).isoformat()}
+           "images": [], "tasks": req.get("tasks", []),
+           "tracking": {"token": track_token, "link": f"/proje/{track_token}", "sent_count": 0, "view_count": 0},
+           "created_at": datetime.now(timezone.utc).isoformat()}
     if not doc["name"]:
         raise HTTPException(status_code=400, detail="Proje adı gerekli.")
     await db.projects.insert_one(doc)
