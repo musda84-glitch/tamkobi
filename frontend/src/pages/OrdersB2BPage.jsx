@@ -30,6 +30,7 @@ import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/Marke
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
+import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { channelTr, statusTr } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
@@ -55,6 +56,7 @@ export default function OrdersB2BPage() {
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
+  const [shipOrder, setShipOrder] = useState(null);
   const [selected, setSelected] = useState([]);
   const [bulkLabels, setBulkLabels] = useState(null);
   const toggleSel = (id) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
@@ -264,6 +266,7 @@ export default function OrdersB2BPage() {
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
+      {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setShipOrder(null)} onDone={loadData} />}
       {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
@@ -461,7 +464,7 @@ export default function OrdersB2BPage() {
 
                         {!ord.cargo_tracking_number ? (
                           <button
-                            onClick={() => setApproveOrder(ord)}
+                            onClick={() => setShipOrder(ord)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"
                             title="Kargo Fişi Oluştur"
                             data-testid={`create-cargo-btn-${ord.order_number}`}

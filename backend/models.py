@@ -135,6 +135,11 @@ class Product(BaseDocument):
     images: List[str] = []
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
+    desi: Optional[float] = None
+    weight: Optional[float] = None  # kg
+    length: Optional[float] = None  # cm
+    width: Optional[float] = None
+    height: Optional[float] = None
     show_in_b2b: bool = True
     track_stock: bool = True
     purchase_vat_rate: float = 20.0
@@ -413,7 +418,7 @@ class IntegrationConfig(BaseDocument):
 # Kargo Entegrasyonları
 class CargoConfig(BaseDocument):
     company_id: str
-    carrier_code: str  # yurtici, aras, mng, surat, ptt
+    carrier_code: str  # yurtici, aras, mng, surat, ptt, geliver
     carrier_name: str
     is_active: bool = False
     customer_number: Optional[str] = ""
@@ -421,6 +426,12 @@ class CargoConfig(BaseDocument):
     api_password: Optional[str] = ""
     auto_create_barcode: bool = True
     status: str = "disconnected"
+    default_package_count: int = 1
+    default_desi: Optional[float] = None
+    default_weight: Optional[float] = None
+    default_length: Optional[float] = None
+    default_width: Optional[float] = None
+    default_height: Optional[float] = None
 
 class CargoShipment(BaseDocument):
     company_id: str
@@ -436,6 +447,13 @@ class CargoShipment(BaseDocument):
     status: str = "created"  # created, picked_up, in_transit, out_for_delivery, delivered, returned
     shipment_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     estimated_delivery: Optional[str] = None
+    # Shared package info for all carriers (Geliver, Yurtiçi, …)
+    package_count: int = 1
+    desi: Optional[float] = None
+    weight: Optional[float] = None
+    length: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
 
 # Sipariş Modülü & B2B Portalı
 class OrderItem(BaseModel):
@@ -444,6 +462,8 @@ class OrderItem(BaseModel):
     sku: str = ""
     barcode: Optional[str] = ""
     quantity: float = 1
+    desi: Optional[float] = None
+    weight: Optional[float] = None
     unit: str = "Adet"
     unit_price: float = 0.0
     unit_price_incl: float = 0.0

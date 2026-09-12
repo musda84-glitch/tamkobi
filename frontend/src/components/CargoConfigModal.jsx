@@ -14,6 +14,7 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
   const fields = catalogItem?.fields || ["customer_number", "api_username", "api_password"];
   const [form, setForm] = useState(() => Object.fromEntries(fields.map((f) => [f, isSecret(f) ? "" : config[f] || ""])));
   const [testMode, setTestMode] = useState(config.test_mode !== false);
+  const [defaults, setDefaults] = useState({ default_package_count: config.default_package_count || 1, default_desi: config.default_desi || "", default_weight: config.default_weight || "", default_length: config.default_length || "", default_width: config.default_width || "", default_height: config.default_height || "" });
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [addresses, setAddresses] = useState(config.sender_addresses || []);
@@ -24,7 +25,7 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
     e?.preventDefault?.();
     setBusy(true);
     try {
-      const body = { ...Object.fromEntries(Object.entries(form).filter(([, v]) => v !== "")), test_mode: testMode, is_active: true };
+      const body = { ...Object.fromEntries(Object.entries(form).filter(([, v]) => v !== "")), test_mode: testMode, is_active: true, ...Object.fromEntries(Object.entries(defaults).filter(([, v]) => v !== "" && v != null)), default_package_count: Number(defaults.default_package_count) || 1 };
       const r = await axios.put(`${API_URL}/integrations/cargo/${id}`, body);
       toast.success(`${config.carrier_name} ayarları kaydedildi.`);
       if (!e?.silent) onSaved?.(r.data);
@@ -97,6 +98,17 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
               <FlaskConical className="w-3.5 h-3.5 text-amber-600" /><span><b>Test modu</b> (test:true) — gerçek kargo/ücret oluşmaz. Canlıya geçmek için kapatın.</span>
             </label>
           )}
+          
+          <div className="border-t pt-2 space-y-2" data-testid="cargo-cfg-package-defaults">
+            <div className="text-[11px] font-bold text-slate-700">Varsayılan paket (tüm gönderiler)</div>
+            <div className="grid grid-cols-3 gap-2">
+              {[["default_package_count","Paket"],["default_desi","Desi"],["default_weight","Kg"],["default_length","En cm"],["default_width","Boy cm"],["default_height","Yükseklik cm"]].map(([k,l]) => (
+                <div key={k}><label className="block text-[10px] font-semibold text-slate-600 mb-0.5">{l}</label>
+                  <input type="number" min={0} step={k==="default_package_count"?1:0.1} value={defaults[k]} onChange={(e) => setDefaults({ ...defaults, [k]: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5" data-testid={`cargo-cfg-${k}`} />
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="flex justify-between gap-2 pt-2 border-t">
             {isGeliver ? <button type="button" onClick={test} disabled={testing} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg font-semibold text-slate-700 hover:bg-slate-50" data-testid="cargo-cfg-test-btn">{testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plug className="w-3.5 h-3.5" />} Bağlantıyı Test Et & Adresleri Getir</button> : <span />}
             <div className="flex gap-2">

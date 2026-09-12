@@ -64,6 +64,90 @@ def decrypt_secret(value: Optional[str]) -> str:
         return value
 
 
+def normalize_package_opts(
+    opts: Optional[dict] = None,
+    config: Optional[dict] = None,
+    order: Optional[dict] = None,
+) -> Dict[str, Any]:
+    """Carrier-agnostic package fields: package_count, desi, weight, L×W×H (cm).
+
+    Used by Geliver and future carriers. Desi ≈ (L×W×H)/3000. Missing dims are
+    inferred from desi (cube); missing desi is inferred from dims. Multi-package
+    values are per-parcel; callers may multiply for totals.
+    """
+    opts = opts or {}
+    config = config or {}
+    order = order or {}
+
+    def _num(*keys: str, default: Optional[float] = None) -> Optional[float]:
+        for source in (opts, config):
+            for key in keys:
+                raw = source.get(key)
+                if raw is None or raw == "":
+                    continue
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    continue
+        return default
+
+    try:
+        package_count = int(opts.get("package_count") or opts.get("parcel_count") or config.get("default_package_count") or 1)
+    except (TypeError, ValueError):
+        package_count = 1
+    package_count = max(1, min(package_count, 50))
+
+    order_desi = 0.0
+    for it in order.get("items") or []:
+        try:
+            order_desi += float(it.get("desi") or 0) * float(it.get("quantity") or 1)
+        except (TypeError, ValueError):
+            pass
+
+    desi = _num("desi")
+    if desi is None and order_desi > 0:
+        desi = order_desi
+    if desi is None:
+        desi = _num("default_desi")
+
+    length = _num("length", "default_length")
+    width = _num("width", "default_width")
+    height = _num("height", "default_height")
+    weight = _num("weight", "default_weight")
+
+    if desi and not (length and width and height):
+        side = round((max(float(desi), 0.1) * 3000) ** (1 / 3), 1)
+        length = length or side
+        width = width or side
+        height = height or side
+    elif length and width and height and not desi:
+        desi = round((float(length) * float(width) * float(height)) / 3000.0, 2)
+
+    if weight is None and desi:
+        weight = float(desi)
+    if weight is None:
+        weight = 1.0
+    if length is None:
+        length = 10.0
+    if width is None:
+        width = 10.0
+    if height is None:
+        height = 10.0
+    if desi is None:
+        desi = round((float(length) * float(width) * float(height)) / 3000.0, 2)
+
+    return {
+        "package_count": package_count,
+        "desi": round(float(desi), 2),
+        "length": round(float(length), 1),
+        "width": round(float(width), 1),
+        "height": round(float(height), 1),
+        "weight": round(float(weight), 2),
+        "total_desi": round(float(desi) * package_count, 2),
+        "total_weight": round(float(weight) * package_count, 2),
+    }
+
+
 def geliver_token(config: dict) -> str:
     token = decrypt_secret(config.get("api_key"))
     if not token:
@@ -203,16 +287,18 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
     except (TypeError, ValueError):
         total_s = "0.00"
 
+    pkg = normalize_package_opts(opts, config, order)
     payload: Dict[str, Any] = {
         "test": test_mode,
         "senderAddressID": sender_id,
         "returnAddressID": sender_id,
-        "length": str(opts.get("length") or config.get("default_length") or "10.0"),
-        "width": str(opts.get("width") or config.get("default_width") or "10.0"),
-        "height": str(opts.get("height") or config.get("default_height") or "10.0"),
+        "length": str(pkg["length"]),
+        "width": str(pkg["width"]),
+        "height": str(pkg["height"]),
         "distanceUnit": "cm",
-        "weight": str(opts.get("weight") or config.get("default_weight") or "1.0"),
+        "weight": str(pkg["weight"]),
         "massUnit": "kg",
+        "desi": str(pkg["desi"]),
         "items": items,
         "recipientAddress": recipient,
         "productPaymentOnDelivery": bool(opts.get("cod") or order.get("payment_type") == "cod"),
@@ -224,6 +310,20 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
             "totalAmountCurrency": "TRY",
         },
     }
+    if pkg["package_count"] > 1:
+        # Additional identical parcels (per-package desi/weight/dims)
+        payload["extraParcels"] = [
+            {
+                "length": str(pkg["length"]),
+                "width": str(pkg["width"]),
+                "height": str(pkg["height"]),
+                "distanceUnit": "cm",
+                "weight": str(pkg["weight"]),
+                "massUnit": "kg",
+                "desi": str(pkg["desi"]),
+            }
+            for _ in range(pkg["package_count"] - 1)
+        ]
     if opts.get("provider_service_code"):
         payload["providerServiceCode"] = opts["provider_service_code"]
 
@@ -254,6 +354,7 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
 
     result: Dict[str, Any] = {
         "geliver_id": sid,
+        "package": pkg,
         "test": test_mode,
         "raw": shipment,
         "offer": offer,
