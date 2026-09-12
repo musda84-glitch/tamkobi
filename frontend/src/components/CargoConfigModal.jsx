@@ -69,7 +69,14 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
           <h3 className="text-base font-bold text-slate-900">{config.carrier_name} API Ayarları</h3>
           <button onClick={onClose} className="text-slate-400" data-testid="cargo-config-close"><X className="w-5 h-5" /></button>
         </div>
-        {isGeliver && <div className="text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-2 flex gap-1.5"><ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-0.5" /> Token <b>app.geliver.io → API Tokens</b> sayfasından alınır; sunucuda şifreli saklanır, tarayıcıya asla geri gönderilmez.</div>}
+        {isGeliver && (
+          <div className="space-y-2">
+            <div className="text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-2 flex gap-1.5"><ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-0.5" /> Token <b>app.geliver.io → API Tokens</b> sayfasından alınır; sunucuda şifreli saklanır, tarayıcıya asla geri gönderilmez.</div>
+            <div className="text-[11px] bg-slate-50 border border-slate-200 text-slate-700 rounded-lg p-2 leading-relaxed">
+              <b>«Yetkiniz yok»</b> hatası çoğu zaman Geliver hesabından gelir: Test modunu açık tutun, bakiyeyi kontrol edin, gönderici adresinin token hesabına ait olduğundan emin olun. TamKobi rolünde Sipariş veya Kargo düzenleme yetkisi de gerekir.
+            </div>
+          </div>
+        )}
         <form onSubmit={save} className="space-y-3 text-xs">
           {fields.map((f) => (
             <div key={f}>

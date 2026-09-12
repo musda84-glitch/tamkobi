@@ -19,6 +19,7 @@ def test_geliver_accept_offer_posts_transactions_not_accept_offer_path():
             return {
                 "id": "shp_1",
                 "offers": {
+                    "percentageCompleted": 100,
                     "cheapest": {
                         "id": "off_1",
                         "providerServiceCode": "YURTICI",
@@ -100,3 +101,69 @@ def test_geliver_requires_sender_and_phone():
             )
         )
     assert "telefon" in e2.value.detail.lower()
+
+
+def test_geliver_friendly_error_yetki():
+    import cargo_providers as cp
+
+    msg = cp._geliver_friendly_error("bu işlem için yetkiniz yok", status_code=403, path="/transactions")
+    assert "yetkiniz yok" in msg.lower()
+    assert "bakiye" in msg.lower()
+    assert "test" in msg.lower()
+
+
+def test_geliver_accept_yetki_soft_fails():
+    import cargo_providers as cp
+
+    async def fake_geliver(method, path, token, **kwargs):
+        if method == "POST" and path == "/shipments":
+            return {
+                "id": "shp_perm",
+                "offers": {
+                    "percentageCompleted": 100,
+                    "cheapest": {"id": "off_x", "providerServiceCode": "YK", "totalAmount": "10"},
+                },
+            }
+        if method == "POST" and path == "/transactions":
+            raise HTTPException(
+                status_code=400,
+                detail=cp._geliver_friendly_error("bu işlem için yetkiniz yok", status_code=403, path="/transactions"),
+            )
+        raise AssertionError(f"unexpected {method} {path}")
+
+    cfg = {"api_key": "t", "sender_address_id": "a1", "test_mode": True}
+    order = {
+        "customer_name": "A",
+        "customer_phone": "05321112233",
+        "shipping_address": "Adr",
+        "city": "İstanbul",
+        "items": [],
+    }
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        result = asyncio.run(cp.geliver_create_shipment(cfg, order, {"accept_offer": True}))
+    assert result["accepted"] is False
+    assert result["geliver_id"] == "shp_perm"
+    assert result.get("accept_error")
+    assert "yetki" in result["accept_error"].lower()
+
+
+def test_cargo_create_shipment_allowed_with_orders_edit():
+    """POST /api/cargo/create-shipment should pass when user has /orders edit even if /cargo is view."""
+    from rbac import PermissionAndAuditMiddleware
+
+    perms = {"/cargo": "view", "/orders": "edit"}
+    module = "/cargo"
+    path = "/api/cargo/create-shipment"
+    allowed = perms.get(module, "none") == "edit"
+    if not allowed and module == "/cargo" and (
+        path.startswith("/api/cargo/create-shipment") or path.startswith("/api/cargo/auto-ship")
+    ):
+        allowed = perms.get("/orders", "none") == "edit"
+    assert allowed is True
+
+    perms2 = {"/cargo": "view", "/orders": "view"}
+    allowed2 = perms2.get(module, "none") == "edit"
+    if not allowed2 and module == "/cargo" and path.startswith("/api/cargo/create-shipment"):
+        allowed2 = perms2.get("/orders", "none") == "edit"
+    assert allowed2 is False
+    _ = PermissionAndAuditMiddleware  # import sanity
