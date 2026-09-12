@@ -109,42 +109,47 @@ if [ -d build ]; then
   chown -R www-data:www-data build
 fi
 
-echo "--- uvicorn systemd (tamkobi kullanıcısı, root değil)"
-APP_USER=tamkobi
-if ! id "$APP_USER" >/dev/null 2>&1; then
-  useradd -r -M -d "$ROOT" -s /usr/sbin/nologin -c "TamKobi API" "$APP_USER"
-fi
-install -d -o "$APP_USER" -g "$APP_USER" -m 750 \
-  "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
-chown -R "$APP_USER:$APP_USER" "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
-for f in "$ROOT/backend/.env" "$ROOT/.env"; do
-  if [ -f "$f" ]; then
-    chgrp "$APP_USER" "$f"
-    chmod 640 "$f"
+echo "--- uvicorn systemd"
+# Canlı VPS tamkobi-backend.service kullanıyor. İkinci birim (tamkobi-uvicorn)
+# :8000'i kapışır. Varsa onu kullan; yoksa repo birimini kur.
+if systemctl list-unit-files tamkobi-backend.service 2>/dev/null | grep -q tamkobi-backend.service; then
+  UNIT=tamkobi-backend
+  systemctl disable --now tamkobi-uvicorn 2>/dev/null || true
+else
+  UNIT=tamkobi-uvicorn
+  APP_USER=tamkobi
+  if ! id "$APP_USER" >/dev/null 2>&1; then
+    useradd -r -M -d "$ROOT" -s /usr/sbin/nologin -c "TamKobi API" "$APP_USER"
   fi
-done
-# venv root ile kurulur; süreç tamkobi olarak çalışır.
-if [ -d "$ROOT/backend/venv" ]; then
-  chmod -R a+rX "$ROOT/backend/venv"
+  install -d -o "$APP_USER" -g "$APP_USER" -m 750 \
+    "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
+  chown -R "$APP_USER:$APP_USER" "$ROOT/backend/data" "$ROOT/logs" "$ROOT/backups" /var/log/tamkobi
+  for f in "$ROOT/backend/.env" "$ROOT/.env"; do
+    if [ -f "$f" ]; then
+      chgrp "$APP_USER" "$f"
+      chmod 640 "$f"
+    fi
+  done
+  if [ -d "$ROOT/backend/venv" ]; then
+    chmod -R a+rX "$ROOT/backend/venv"
+  fi
+  UNIT_SRC="$ROOT/deploy/tamkobi-uvicorn.service"
+  if [ ! -f "$UNIT_SRC" ]; then
+    echo "HATA: $UNIT_SRC yok ve tamkobi-backend.service bulunamadı." >&2
+    exit 1
+  fi
+  sed "s|/var/www/tamkobi.com|$ROOT|g" "$UNIT_SRC" > /etc/systemd/system/tamkobi-uvicorn.service
 fi
 
-UNIT_SRC="$ROOT/deploy/tamkobi-uvicorn.service"
-UNIT_DST=/etc/systemd/system/tamkobi-uvicorn.service
-if [ ! -f "$UNIT_SRC" ]; then
-  echo "HATA: $UNIT_SRC yok." >&2
-  exit 1
-fi
-sed "s|/var/www/tamkobi.com|$ROOT|g" "$UNIT_SRC" > "$UNIT_DST"
-mkdir -p /etc/systemd/system/tamkobi-uvicorn.service.d
-cat > /etc/systemd/system/tamkobi-uvicorn.service.d/stamp.conf <<EOF
+mkdir -p "/etc/systemd/system/${UNIT}.service.d"
+cat > "/etc/systemd/system/${UNIT}.service.d/stamp.conf" <<EOF
 [Service]
 Environment=APP_GIT_SHA=$GIT_SHA
 Environment=APP_GIT_BRANCH=$GIT_BRANCH
 Environment=APP_BUILD_TIME=$BUILD_TIME
 EOF
 
-# Port 8000'i systemd dışı eski süreç tutuyorsa bırak.
-if ! systemctl is-active --quiet tamkobi-uvicorn 2>/dev/null; then
+if ! systemctl is-active --quiet "$UNIT" 2>/dev/null; then
   pids=$(ss -ltnp 2>/dev/null | awk '/:8000/ {print}' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
   for p in $pids; do
     echo "Eski uvicorn durduruluyor (pid $p)"
@@ -154,8 +159,8 @@ if ! systemctl is-active --quiet tamkobi-uvicorn 2>/dev/null; then
 fi
 
 systemctl daemon-reload
-systemctl enable tamkobi-uvicorn >/dev/null
-systemctl restart tamkobi-uvicorn
+systemctl enable "$UNIT" >/dev/null
+systemctl restart "$UNIT"
 nginx -t
 systemctl reload nginx
 
@@ -172,8 +177,8 @@ while [ "$i" -lt 30 ]; do
 done
 if [ -z "$ok" ]; then
   echo "HATA: uvicorn /api/version yanıt vermedi." >&2
-  systemctl status tamkobi-uvicorn --no-pager -l || true
-  journalctl -u tamkobi-uvicorn -n 80 --no-pager || true
+  systemctl status "$UNIT" --no-pager -l || true
+  journalctl -u "$UNIT" -n 80 --no-pager || true
   exit 1
 fi
 cat /tmp/tamkobi-api-version.json
@@ -187,4 +192,4 @@ if ! curl -fsS -o /dev/null --max-time 5 -H "Host: tamkobi.com" http://127.0.0.1
   echo "HATA: nginx frontend/build sunmuyor." >&2
   exit 1
 fi
-echo "Dağıtım tamam."
+echo "Dağıtım tamam. ($UNIT)"
