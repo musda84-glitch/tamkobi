@@ -6696,8 +6696,19 @@ async def create_cargo_shipment(req: Dict[str, Any]):
         g = await cargo_providers.geliver_create_shipment(cfg, src, req)
         tracking_num = g.get("tracking_number") or f"GLV-{(g.get('geliver_id') or uuid.uuid4().hex)[:10].upper()}"
         barcode = g.get("barcode") or tracking_num
-        extra = {"is_live": True, "test_mode": g.get("test"), "provider_shipment_id": g.get("geliver_id"), "label_url": g.get("label_url"), "tracking_url": g.get("tracking_url"), "offer_accepted": g.get("accepted"), "provider_service": g.get("provider"), "price": g.get("price"), "provider_status": (g.get("raw") or {}).get("status")}
-        status_ = "created"
+        extra = {
+            "is_live": True,
+            "test_mode": g.get("test"),
+            "provider_shipment_id": g.get("geliver_id"),
+            "label_url": g.get("label_url"),
+            "tracking_url": g.get("tracking_url"),
+            "offer_accepted": g.get("accepted"),
+            "provider_service": g.get("provider"),
+            "price": g.get("price"),
+            "provider_status": (g.get("raw") or {}).get("status"),
+            "accept_error": g.get("accept_error"),
+        }
+        status_ = "created" if g.get("accepted") or g.get("geliver_id") else "failed"
     else:
         if carrier_code == "geliver" and cfg and not cargo_providers.has_live_credentials(cfg):
             raise HTTPException(status_code=400, detail="Geliver bağlı görünmüyor. Kargo → Geliver → token + gönderici adresi kaydedip 'Bağlantıyı Test Et' yapın.")
@@ -6714,7 +6725,18 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     if order_id:
         await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "shipped", "cargo_carrier": carrier_code, "cargo_tracking_number": tracking_num, "cargo_barcode": barcode, "cargo_label_url": extra.get("label_url"), "cargo_tracking_url": extra.get("tracking_url"), "cargo_shipment_id": doc["_id"]}})
         await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="cargo")
-    return {**clean_doc(doc), "message": ("Geliver üzerinden gönderi oluşturuldu" + (" (TEST modu)" if extra.get("test_mode") else "") + (f" — teklif kabul edildi, takip: {tracking_num}" if extra.get("offer_accepted") else " — teklif henüz hazır değil, 'Güncelle' ile takip numarasını çekin.")) if live else "Kargo kaydı oluşturuldu (SİMÜLE)."}
+    if live:
+        if g.get("message"):
+            msg = g["message"]
+        elif extra.get("offer_accepted"):
+            msg = "Geliver üzerinden gönderi oluşturuldu" + (" (TEST modu)" if extra.get("test_mode") else "") + f" — teklif kabul edildi, takip: {tracking_num}"
+        elif extra.get("accept_error"):
+            msg = extra["accept_error"]
+        else:
+            msg = "Geliver üzerinden gönderi oluşturuldu" + (" (TEST modu)" if extra.get("test_mode") else "") + " — teklif henüz hazır değil, 'Güncelle' ile takip numarasını çekin."
+    else:
+        msg = "Kargo kaydı oluşturuldu (SİMÜLE)."
+    return {**clean_doc(doc), "message": msg}
 
 @api_router.get("/cargo/shipments")
 async def list_cargo_shipments(company_id: Optional[str] = "comp_nexus_main_01"):

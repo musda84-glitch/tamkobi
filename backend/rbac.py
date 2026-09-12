@@ -187,7 +187,15 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             return response
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
-            if role.get("permissions", {}).get(module, "none") != "edit":
+            perms = role.get("permissions", {})
+            allowed = perms.get(module, "none") == "edit"
+            # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
+            if not allowed and module == "/cargo" and (
+                path.startswith("/api/cargo/create-shipment")
+                or path.startswith("/api/cargo/auto-ship")
+            ):
+                allowed = perms.get("/orders", "none") == "edit"
+            if not allowed:
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
         response = await call_next(request)

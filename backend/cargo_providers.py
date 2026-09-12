@@ -71,6 +71,32 @@ def geliver_token(config: dict) -> str:
     return token
 
 
+def _geliver_friendly_error(msg: str, *, status_code: int = 0, path: str = "") -> str:
+    """Map opaque Geliver messages to actionable Turkish guidance."""
+    low = (msg or "").lower()
+    if status_code == 401 or "401" in low or "unauthorized" in low or "token" in low and ("geçersiz" in low or "invalid" in low):
+        return (
+            "Geliver API token geçersiz veya yetkisiz. "
+            "app.geliver.io → API Tokens sayfasından yeni bir token alın; "
+            "kullanıcı oturum anahtarı değil, API token kullanın."
+        )
+    if "yetki" in low or "permission" in low or "forbidden" in low or status_code == 403:
+        hint = (
+            "Geliver: bu işlem için yetkiniz yok. Kontrol listesi: "
+            "1) app.geliver.io bakiyesi yeterli mi? "
+            "2) Token API Tokens sayfasından mı (tam yetkili)? "
+            "3) Gönderici adresi bu hesaba mı ait? "
+            "4) Canlı moddaysanız önce Test modunu açıp deneyin. "
+            "5) Geliver panelinde mağaza/anlaşma aktif mi?"
+        )
+        if path.startswith("/transactions"):
+            hint += " (Etiket satın alma / teklif kabul adımında reddedildi — çoğu zaman bakiye veya canlı hesap kısıtı.)"
+        return hint
+    if "bakiye" in low or "balance" in low or "insufficient" in low:
+        return f"Geliver bakiyesi yetersiz: {msg}. app.geliver.io üzerinden bakiye yükleyin veya Test modunu kullanın."
+    return f"Geliver hatası: {msg}"
+
+
 async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
     try:
@@ -87,9 +113,10 @@ async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
             (body.get("message") or body.get("error") or body.get("additionalMessage") or body.get("raw") or r.reason_phrase)
             if isinstance(body, dict) else str(body)[:200]
         )
-        if r.status_code == 401:
-            msg = "Geliver API token geçersiz veya yetkisiz (401)."
-        raise HTTPException(status_code=502 if r.status_code >= 500 else 400, detail=f"Geliver hatası: {msg}")
+        raise HTTPException(
+            status_code=502 if r.status_code >= 500 else 400,
+            detail=_geliver_friendly_error(str(msg), status_code=r.status_code, path=path),
+        )
     return body.get("data", body) if isinstance(body, dict) else body
 
 
@@ -111,7 +138,22 @@ async def geliver_test(config: dict) -> Dict[str, Any]:
         for a in (items or [])
         if isinstance(a, dict) and a.get("id")
     ]
-    return {"ok": True, "message": f"Geliver bağlantısı doğrulandı. {len(addresses)} adres bulundu.", "addresses": addresses}
+    balance = None
+    try:
+        bal = await _geliver("GET", "/prices/balance", token)
+        if isinstance(bal, dict):
+            balance = bal.get("balance") or bal.get("amount") or bal.get("totalBalance") or bal
+        else:
+            balance = bal
+    except HTTPException:
+        # Balance endpoint may be unavailable for some accounts; connection still OK.
+        pass
+    msg = f"Geliver bağlantısı doğrulandı. {len(addresses)} adres bulundu."
+    if balance is not None:
+        msg += f" Bakiye: {balance}"
+    if not bool(config.get("test_mode", True)):
+        msg += " · CANLI mod açık — etiket ücreti bakiyeden düşer."
+    return {"ok": True, "message": msg, "addresses": addresses, "balance": balance, "test_mode": bool(config.get("test_mode", True))}
 
 
 async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict] = None) -> Dict[str, Any]:
@@ -187,16 +229,28 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
 
     shipment = await _geliver("POST", "/shipments", token, json=payload)
     sid = shipment.get("id") if isinstance(shipment, dict) else None
-    offers = shipment.get("offers") if isinstance(shipment, dict) and isinstance(shipment.get("offers"), dict) else {}
-    offer = offers.get("cheapest") if offers else None
 
-    for _ in range(6):
-        if (offer and offer.get("id")) or not sid:
+    def _pick_offer(sh: Any) -> tuple[Optional[dict], float]:
+        if not isinstance(sh, dict):
+            return None, 0.0
+        offers = sh.get("offers") if isinstance(sh.get("offers"), dict) else {}
+        cheapest = offers.get("cheapest") if offers else None
+        pct = float(offers.get("percentageCompleted") or 0) if offers else 0.0
+        if isinstance(cheapest, dict) and cheapest.get("id"):
+            return cheapest, pct
+        return None, pct
+
+    offer, pct_done = _pick_offer(shipment)
+    # Wait until offers are ready (SDK polls percentageCompleted); short timeout for UX.
+    for _ in range(10):
+        if (offer and offer.get("id") and pct_done >= 80) or not sid:
             break
-        await asyncio.sleep(1.2)
+        if offer and offer.get("id") and pct_done >= 50:
+            # Cheapest already present — enough to accept for most accounts
+            break
+        await asyncio.sleep(1.0)
         shipment = await _geliver("GET", f"/shipments/{sid}", token)
-        offers = shipment.get("offers") if isinstance(shipment, dict) and isinstance(shipment.get("offers"), dict) else {}
-        offer = offers.get("cheapest") if offers else None
+        offer, pct_done = _pick_offer(shipment)
 
     result: Dict[str, Any] = {
         "geliver_id": sid,
@@ -212,7 +266,20 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
 
     if offer and offer.get("id") and opts.get("accept_offer", True):
         # Official SDK: client.accept_offer(id) → POST /transactions {"offerID": id}
-        tx = await _geliver("POST", "/transactions", token, json={"offerID": offer["id"]})
+        try:
+            tx = await _geliver("POST", "/transactions", token, json={"offerID": offer["id"]})
+        except HTTPException as exc:
+            detail = str(exc.detail or "")
+            low = detail.lower()
+            # Soft-fail: shipment exists; user can fund wallet / switch test mode and retry accept later
+            if any(x in low for x in ("yetki", "yetkiniz", "unauthorized", "forbidden", "bakiye", "balance")):
+                result["accept_error"] = detail
+                result["message"] = (
+                    f"Gönderi oluşturuldu ({sid}) fakat etiket alınamadı. {detail} "
+                    "Kargo listesinden durumu yenileyebilir veya Geliver panelinden etiketi tamamlayabilirsiniz."
+                )
+                return result
+            raise
         sh = (tx.get("shipment") if isinstance(tx, dict) else None) or {}
         result.update({
             "accepted": True,
@@ -228,8 +295,8 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
         raise HTTPException(
             status_code=502,
             detail=(
-                "Geliver teklifi henüz hazır değil. Gönderici adresini ve Geliver bakiyesini kontrol edin; "
-                "birkaç saniye sonra Kargo listesinden 'Güncelle' deneyin."
+                "Geliver teklifi henüz hazır değil. Gönderici adresini, API token hesabını ve Geliver bakiyesini "
+                "kontrol edin; Test modunu açık tutup tekrar deneyin."
             ),
         )
     return result
