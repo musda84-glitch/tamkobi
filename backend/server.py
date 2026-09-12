@@ -732,17 +732,31 @@ async def save_print_template(company_id: str, doc_type: str, req: Dict[str, Any
     await db.companies.update_one({"_id": company_id}, {"$set": {f"print_templates.{doc_type}": allowed}})
     return {**DEFAULT_PRINT_TEMPLATE, **allowed}
 
+def _sniff_upload_content_type(filename: str, content_type: Optional[str]) -> str:
+    """Mobile browsers often send empty or application/octet-stream; infer from extension."""
+    _ok = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in _ok:
+        return ct
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+    return {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp",
+        "gif": "image/gif", "pdf": "application/pdf",
+    }.get(ext, ct or "application/octet-stream")
+
+
 @api_router.post("/files/upload")
 async def upload_generic_file(file: UploadFile = File(...), entity: str = Query("misc"), entity_id: str = Query(""), company_id: str = Query("comp_nexus_main_01")):
-    if file.content_type not in ALLOWED_IMAGE_TYPES and file.content_type != "application/pdf":
+    entity = {"quotes": "quote", "projects": "project", "surveys": "survey"}.get(entity, entity)
+    content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
+    if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya PDF yükleyebilirsiniz.")
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
-    opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
+    opt = image_opt.optimize_upload(data, content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     await saas.check_storage_limit(company_id, len(data))
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     try:
         import storage_manager
         await storage_manager.ensure_account_folders(company_id)
@@ -766,11 +780,15 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     url = f"/api/files/{result['path']}"
     if entity in ("quote", "project", "survey", "company") and entity_id:
         coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies}[entity]
+        # Match by id or _id — clients may send either after clean_doc
+        q = {"$or": [{"_id": entity_id}, {"id": entity_id}]}
         if entity == "company":
-            await coll.update_one({"_id": entity_id}, {"$set": {"logo_url": url}})
+            await coll.update_one(q, {"$set": {"logo_url": url}})
         else:
-            await coll.update_one({"_id": entity_id}, {"$push": {"images": url}})
-    return {"url": url, "filename": file.filename, "content_type": content_type, "size": len(data), **opt.as_meta()}
+            upd = await coll.update_one(q, {"$push": {"images": url}})
+            if upd.matched_count == 0:
+                await coll.update_one({"_id": entity_id}, {"$push": {"images": url}})
+    return {"url": url, "filename": file.filename, "content_type": content_type, "size": len(data), "entity_id": entity_id, **opt.as_meta()}
 
 # ----------------- TEKLİF / PROJE / KEŞİF -----------------
 async def _next_number(prefix: str, coll=None, company_id: Optional[str] = None) -> str:
@@ -1099,11 +1117,11 @@ async def convert_quote_to_project(quote_id: str):
     if images:
         extra["images"] = images
     await db.projects.update_one({"_id": project["id"]}, {"$set": extra})
-    await db.quotes.update_one({"_id": quote_id}, {"$set": {"project_id": project["id"], "project_number": project["project_number"]}})
+    await db.quotes.update_one({"_id": quote_id}, {"$set": {"project_id": project["id"], "project_number": project["project_number"], "status": "accepted"}})
     if survey:
         await db.surveys.update_one({"_id": survey["_id"]}, {"$set": {"project_id": project["id"]}})
     project = clean_doc(await db.projects.find_one({"_id": project["id"]}))
-    return {"status": "success", "project": project, "message": f"{q['quote_number']} → {project['project_number']} proje oluşturuldu."}
+    return {"status": "success", "project": project, "message": f"{q['quote_number']} → {project['project_number']} proje oluşturuldu.", "advanced": True}
 
 def _group_by_project(rows):
     grouped = {}
@@ -1430,7 +1448,7 @@ async def convert_survey_to_quote(survey_id: str):
                                 "items": items, "notes": s.get("notes", ""), "project_id": s.get("project_id"), "survey_id": survey_id})
     await db.quotes.update_one({"_id": quote["id"]}, {"$set": {"images": s.get("images", [])}})
     await db.surveys.update_one({"_id": survey_id}, {"$set": {"status": "quoted", "quote_id": quote["id"]}})
-    return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu."}
+    return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu.", "advanced": True}
 
 @api_router.post("/auth/register")
 async def register(req: RegisterRequest, response: Response):
