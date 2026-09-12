@@ -27,6 +27,26 @@ export function isIncomingPurchasePending(inv) {
   return incomingPurchaseResponse(inv) === "pending";
 }
 
+/** Yalnızca GİB'e gerçekten iletilmiş / kağıt kesilmiş faturalar "kesildi" sayılır.
+ *  Yerel "Onaylandı" durumu sağ tıkta FATURAYI KES menüsünü kilitlememeli.
+ *  Metinler server.py send-to-gib / paper kesim yanıtlarıyla birebir. */
+export const GIB_ISSUED_STATUSES = new Set([
+  "Başarıyla İletildi (GİB Onaylı)",
+  "Kağıt Fatura (Matbu)",
+  "n11 Faturam ile GİB'e iletildi",
+  "e-İhracat GİB'e iletildi",
+  "GİB'e Gönderildi",
+]);
+
+export function isGibIssued(inv) {
+  if (!inv) return false;
+  if (inv.gib_tracking_id) return true;
+  const gs = String(inv.gib_status || "");
+  if (GIB_ISSUED_STATUSES.has(gs)) return true;
+  // Eski / alternatif metinler
+  return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
+}
+
 const ISSUE_OPTIONS = [
   { key: "e_invoice", label: "E-Fatura olarak kes", sub: "GİB Portal (mükellef alıcı)", icon: FileCheck2, color: "text-emerald-600" },
   { key: "e_archive", label: "E-Arşiv olarak kes", sub: "Nihai tüketici / mükellef olmayan", icon: Archive, color: "text-blue-600" },
@@ -50,7 +70,7 @@ export const InvoiceContextMenu = ({ menu, onClose, onIssue, onPreview, onPrint,
   const { inv } = menu;
   const incoming = isIncomingPurchaseInvoice(inv);
   const pending = isIncomingPurchasePending(inv);
-  const issued = inv.gib_status && inv.gib_status !== "Taslak";
+  const issued = isGibIssued(inv);
   const left = Math.min(menu.x, window.innerWidth - 280);
   const top = Math.min(menu.y, window.innerHeight - 340);
   const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (

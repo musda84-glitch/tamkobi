@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -41,7 +41,7 @@ import {
   MessageSquare,
   MoreVertical,
   MousePointerClick,
-  FileCheck2, Pencil, Trash2, CheckCircle } from "lucide-react";
+  FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
 
 const typeBadge = (inv) => {
   if (inv.trade_kind === "export" || inv.e_type === "e_export") return ["İhracat", "bg-sky-50 text-sky-800"];
@@ -552,8 +552,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <MessageSquare className="w-4 h-4" />
                         </button>
                         {incoming ? (
-                          <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
-                        ) : inv.gib_status !== 'Başarıyla İletildi (GİB Onaylı)' && inv.gib_status !== 'Kağıt Fatura (Matbu)' ? (
+                          isIncomingPurchasePending(inv) ? (
+                            <button
+                              onClick={() => handleAcceptIncoming(inv)}
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                              title="Gelen e-faturayı onayla (ticari kabul). Reddetmek için ⋮ menü."
+                              data-testid={`accept-incoming-btn-${inv.invoice_number}`}
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
+                          )
+                        ) : !isGibIssued(inv) ? (
                           <button
                             onClick={() => handleSendToGib(inv.id || inv._id)}
                             className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
