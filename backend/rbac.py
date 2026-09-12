@@ -112,10 +112,10 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
         p.setdefault("/dis-ticaret", p.get("/invoices", "none"))
         p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
-        p.setdefault("/sayim", p.get("/stock", "none"))
+        p.setdefault("/sayim", "none")
         p.setdefault("/saha", p.get("/orders", "none"))
-        p.setdefault("/sevk", p.get("/orders", "none"))
-        p.setdefault("/mesai", p.get("/personnel", "none"))
+        p.setdefault("/sevk", "none")
+        p.setdefault("/mesai", "none")
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 
@@ -157,6 +157,9 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": "Bu şirket hesabına erişiminiz yok."}, status_code=403)
         module = module_for_path(path)
+        # Mesaim self-service confirm/dispute is licensed under /mesai, not /personnel
+        if path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES):
+            module = "/mesai"
         if _license_guard and module:
             blocked = await _license_guard(request, user, module)
             if blocked is not None:
