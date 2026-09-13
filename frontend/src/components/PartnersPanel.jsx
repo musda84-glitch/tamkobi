@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Users, Plus, ArrowDownRight, ArrowUpRight, PieChart, X, Trash2 } from "lucide-react";
+import { Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
@@ -10,6 +10,16 @@ import { CashApprovalsBanner } from "./CashApprovalsBanner";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
+
+const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);
+const accId = (a) => a?.id || a?._id || "";
+const accLabel = (a) => {
+  const name = a?.account_name || a?.name || "Hesap";
+  const bank = a?.bank_name && a.bank_name !== name ? a.bank_name : "";
+  return `${bank ? `${bank} — ` : ""}${name} · ${fmt(bal(a))} ₺`;
+};
+const isCard = (a) => String(a?.type || "") === "credit_card";
+const isIntegrated = (a) => !!(a?.is_integrated);
 
 const Modal = ({ title, onClose, children, testId }) => (
   <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -29,10 +39,13 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [partners, setPartners] = useState([]);
   const [summary, setSummary] = useState(null);
   const [txs, setTxs] = useState([]);
-  const [modal, setModal] = useState(null); // add | tx | profit
+  const [modal, setModal] = useState(null); // add | tx | profit | virman
+  const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
+  const [accountsLoading, setAccountsLoading] = useState(false);
   const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "" });
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
+  const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)" });
 
   const load = useCallback(async () => {
     try {
@@ -45,8 +58,81 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     } catch { toast.error("Ortak verileri yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
 
-  const firstAcc = accounts[0]?.id || "";
+  const refreshAccounts = useCallback(async () => {
+    setAccountsLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
+      const list = Array.isArray(r.data) ? r.data : [];
+      setLiveAccounts(list);
+      return list;
+    } catch {
+      toast.error("Kasa / banka listesi yenilenemedi.");
+      return liveAccounts;
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, [companyId, liveAccounts]);
+
+  const cashAccounts = liveAccounts.filter((a) => !isCard(a));
+  const transferAccounts = liveAccounts.filter((a) => !isCard(a) && !isIntegrated(a));
+  const firstAcc = accId(cashAccounts[0]) || accId(liveAccounts[0]) || "";
+
+  const openTxModal = async () => {
+    const list = await refreshAccounts();
+    const cash = list.filter((a) => !isCard(a));
+    setTxForm({ partner_id: partners[0]?.id || "", type: "capital_in", amount: "", account_id: accId(cash[0]) || accId(list[0]) || "", description: "" });
+    setModal("tx");
+  };
+
+  const openProfitModal = async () => {
+    const list = await refreshAccounts();
+    const cash = list.filter((a) => !isCard(a));
+    setProfitForm({ total_profit: "", pay_now: true, account_id: accId(cash[0]) || accId(list[0]) || "", period: new Date().toISOString().slice(0, 7) });
+    setModal("profit");
+  };
+
+  const openVirmanModal = async () => {
+    const list = await refreshAccounts();
+    const eligible = list.filter((a) => !isCard(a) && !isIntegrated(a));
+    setVirmanForm({
+      source_account_id: accId(eligible[0]) || "",
+      target_account_id: accId(eligible[1]) || accId(eligible[0]) || "",
+      amount: "",
+      description: "Hesaplar arası transfer (Virman)",
+    });
+    setModal("virman");
+  };
+
+  const saveVirman = async (e) => {
+    e.preventDefault();
+    if (!virmanForm.amount || Number(virmanForm.amount) <= 0) {
+      toast.error("Geçerli bir tutar giriniz.");
+      return;
+    }
+    if (virmanForm.source_account_id === virmanForm.target_account_id) {
+      toast.error("Kaynak ve hedef hesap aynı olamaz.");
+      return;
+    }
+    try {
+      const res = await axios.post(`${API_URL}/banking/virman`, {
+        company_id: companyId,
+        source_account_id: virmanForm.source_account_id,
+        target_account_id: virmanForm.target_account_id,
+        amount: Number(virmanForm.amount),
+        description: virmanForm.description,
+      });
+      if (res.data?.status === "pending_approval") toast.success(res.data.message);
+      else toast.success(res.data?.message || "Virman tamamlandı.");
+      setModal(null);
+      setVirmanForm({ ...virmanForm, amount: "" });
+      await refreshAccounts();
+      onCashChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Virman işlemi gerçekleştirilemedi.");
+    }
+  };
 
   const savePartner = async (e) => {
     e.preventDefault();
@@ -94,8 +180,9 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => { setTxForm({ ...txForm, partner_id: partners[0]?.id || "", account_id: firstAcc }); setModal("tx"); }} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Koy / Çek</button>
-          <button onClick={() => { setProfitForm({ ...profitForm, account_id: firstAcc }); setModal("profit"); }} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
+          <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Koy / Çek</button>
+          <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
+          <button onClick={openProfitModal} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
           <button onClick={() => setModal("add")} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
         </div>
       </div>
@@ -140,7 +227,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">Ortak Hareketleri</div>
-        <PartnerTxTable txs={txs} accounts={accounts} companyId={companyId} onChanged={() => { load(); onCashChanged?.(); }} />
+        <PartnerTxTable txs={txs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); onCashChanged?.(); }} />
       </div>
 
       {modal === "add" && (
@@ -166,10 +253,34 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "capital_in" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "capital_in" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="partner-tx-type-in"><ArrowDownRight className="w-4 h-4" /> Para Koy</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "withdrawal" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "withdrawal" ? "bg-rose-600 text-white border-rose-600" : "bg-white"}`} data-testid="partner-tx-type-out"><ArrowUpRight className="w-4 h-4" /> Para Çek</button>
             </div>
-            <div><label className="block font-semibold mb-1">Kasa / Banka / Kart</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} className={inputCls} /></div>
+            <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={txForm.amount} onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })} required data-testid="partner-tx-amount-input" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="Örn: Sermaye artırımı" /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold" data-testid="save-partner-tx-btn">İşlemi Kaydet</button></div>
+          </form>
+        </Modal>
+      )}
+
+
+      {modal === "virman" && (
+        <Modal title="Hesaplar Arası Virman" onClose={() => setModal(null)} testId="partner-virman-modal">
+          <form onSubmit={saveVirman} className="space-y-3 text-xs">
+            <p className="text-[11px] text-slate-500">Kasa ve banka hesapları arasında para transferi. Entegre hesaplar ve kredi kartları listelenmez.</p>
+            <div>
+              <label className="block font-semibold mb-1">Kaynak Hesap (Çıkış)</label>
+              <select className={inputCls} value={virmanForm.source_account_id} onChange={(e) => setVirmanForm({ ...virmanForm, source_account_id: e.target.value })} disabled={accountsLoading} data-testid="partner-virman-source">
+                {accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : transferAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{accLabel(a)}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">Hedef Hesap (Giriş)</label>
+              <select className={inputCls} value={virmanForm.target_account_id} onChange={(e) => setVirmanForm({ ...virmanForm, target_account_id: e.target.value })} disabled={accountsLoading} data-testid="partner-virman-target">
+                {accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : transferAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{accLabel(a)}</option>)}
+              </select>
+            </div>
+            <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })} required data-testid="partner-virman-amount" /></div>
+            <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={virmanForm.description} onChange={(e) => setVirmanForm({ ...virmanForm, description: e.target.value })} data-testid="partner-virman-desc" /></div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || transferAccounts.length < 2} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
           </form>
         </Modal>
       )}
@@ -185,7 +296,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               {partners.map((p) => <div key={p.id} className="flex justify-between"><span>{p.name} (%{p.share_percent})</span><b>{fmt(Number(profitForm.total_profit || 0) * p.share_percent / (summary?.total_share_percent || 100))} ₺</b></div>)}
             </div>
             <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={profitForm.pay_now} onChange={(e) => setProfitForm({ ...profitForm, pay_now: e.target.checked })} data-testid="profit-pay-now-checkbox" /><span className="font-semibold">Hemen öde (kasadan/bankadan çık) — kapalıysa ortak alacağı olarak tahakkuk eder</span></label>
-            {profitForm.pay_now && <div><label className="block font-semibold mb-1">Kaynak Hesap</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={profitForm.account_id} onChange={(v) => setProfitForm({ ...profitForm, account_id: v })} testId="profit-account-select" includePartners={false} className={inputCls} /></div>}
+            {profitForm.pay_now && <div><label className="block font-semibold mb-1">Kaynak Hesap</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={profitForm.account_id} onChange={(v) => setProfitForm({ ...profitForm, account_id: v })} testId="profit-account-select" includePartners={false} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>}
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-500 text-white rounded-lg font-semibold" data-testid="confirm-distribute-btn">Dağıt</button></div>
           </form>
         </Modal>
