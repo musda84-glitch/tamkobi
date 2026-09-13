@@ -22,11 +22,29 @@ const range = (p) => { const d = new Date(); const iso = (x) => x.toISOString().
 
 const Stat = ({ label, value, sub, cls = "", testid }) => <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className={`text-lg font-bold ${cls}`} data-testid={testid}>{value}</div>{sub && <div className="text-[11px] text-slate-500">{sub}</div>}</div>;
 
-const ExpenseModal = ({ companyId, initial, categories, accounts, contacts, employees, onClose, onSaved }) => {
+const accountLabel = (a) => {
+  const name = a.account_name || a.bank_name || "Hesap";
+  const bank = a.bank_name && a.bank_name !== name ? a.bank_name : "";
+  return `${bank ? `${bank} — ` : ""}${name} · ${fmt(a.current_balance)} ₺`;
+};
+
+const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, contacts, employees, onClose, onSaved }) => {
   useEscape(onClose);
   const [f, setF] = useState(initial);
   const [newCat, setNewCat] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Modal açılışında taze çek — sayfa açıkken eklenen kasa/banka eski listede kalmasın.
+  const [accounts, setAccounts] = useState(accountsProp || []);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setAccountsLoading(true);
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
+      .then((r) => { if (!cancelled) setAccounts(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (!cancelled) toast.error("Kasa / banka listesi yenilenemedi."); })
+      .finally(() => { if (!cancelled) setAccountsLoading(false); });
+    return () => { cancelled = true; };
+  }, [companyId]);
   const isEdit = !!initial.id;
   const calc = useMemo(() => { const a = Number(f.amount) || 0, r = Number(f.vat_rate) || 0; const net = f.vat_included ? a / (1 + r / 100) : a; return { net, vat: net * r / 100, total: net * (1 + r / 100) }; }, [f.amount, f.vat_rate, f.vat_included]);
   const upload = async (file) => { if (!file) return; const fd = new FormData(); fd.append("file", file); try { const r = await axios.post(`${API_URL}/files/upload?entity=expense&entity_id=${f.id || "new"}&company_id=${companyId}`, fd); setF({ ...f, receipt_url: r.data.url }); toast.success("Fiş/fatura eklendi."); } catch (err) { toast.error(err.response?.data?.detail || "Yüklenemedi."); } };
@@ -54,7 +72,10 @@ const ExpenseModal = ({ companyId, initial, categories, accounts, contacts, empl
           <div className="col-span-2 md:col-span-3 bg-slate-50 rounded-xl p-3 flex justify-between text-slate-600"><span>Net: <b>{fmtMoney(calc.net, f.currency || "TRY")}</b></span><span>KDV: <b data-testid="exp-vat-amount">{fmtMoney(calc.vat, f.currency || "TRY")}</b></span><span className="text-slate-900">Toplam: <b className="text-rose-600" data-testid="exp-total">{fmtMoney(calc.total, f.currency || "TRY")}</b></span></div>
           {(f.currency || "TRY") !== "TRY" && Number(f.fx_rate) > 0 && <div className="col-span-2 md:col-span-3 text-[11px] text-slate-500" data-testid="exp-local-total">TL karşılığı: <b>{fmtMoney(calc.total * Number(f.fx_rate), "TRY")}</b> (kur {Number(f.fx_rate).toLocaleString("tr-TR")})</div>}
           <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Ödeme (Kasa / Banka) {isEdit && <span className="text-slate-400 font-normal">— ödeme durumu listeden değiştirilir</span>}</label>
-            <select value={f.account_id || ""} onChange={(e) => setF({ ...f, account_id: e.target.value })} className={inputCls} disabled={isEdit && f.payment_status !== "paid"} data-testid="exp-account"><option value="">Henüz ödenmedi (borç olarak kaydet)</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {fmt(a.current_balance)} ₺</option>)}</select></div>
+            <select value={f.account_id || ""} onChange={(e) => setF({ ...f, account_id: e.target.value })} className={inputCls} disabled={(isEdit && f.payment_status !== "paid") || accountsLoading} data-testid="exp-account">
+              <option value="">{accountsLoading ? "Hesaplar yükleniyor…" : "Henüz ödenmedi (borç olarak kaydet)"}</option>
+              {accounts.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountLabel(a)}</option>)}
+            </select></div>
           <div className="col-span-2 md:col-span-3 grid grid-cols-2 gap-3">
             <div><label className="block font-semibold mb-1">Tedarikçi (opsiyonel)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Cari ara…" onChange={(id) => setF({ ...f, contact_id: id })} testId="exp-contact" /></div>
             <div><label className="block font-semibold mb-1">Personel (masraf sahibi)</label><select value={f.employee_id || ""} onChange={(e) => setF({ ...f, employee_id: e.target.value })} className={inputCls} data-testid="exp-employee"><option value="">—</option>{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
@@ -137,7 +158,17 @@ export default function ExpensesPage() {
                 <td className="px-4 py-2.5 text-slate-600">{x.contact_name || "-"}{x.employee_name && <div className="text-[10px] text-indigo-600">{x.employee_name}</div>}</td>
                 <td className="px-4 py-2.5 text-right text-slate-500">{fmt(x.amount)} <span className="text-[10px]">/ {fmt(x.vat_amount)}</span></td>
                 <td className="px-4 py-2.5 text-right font-bold text-rose-600">{fmtMoney(x.total, x.currency || "TRY")}{(x.currency || "TRY") !== "TRY" && x.local_total != null && <div className="text-[10px] font-normal text-slate-400">{fmtMoney(x.local_total, "TRY")}</div>}</td>
-                <td className="px-4 py-2.5">{x.payment_status === "paid" ? <button onClick={() => unpay(x)} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title={`${x.account_name} · ${x.paid_date} — geri almak için tıkla`} data-testid={`exp-paid-${x.expense_number}`}><CheckCircle2 className="w-3 h-3" /> Ödendi</button> : <button onClick={() => { setPayFor(x); setPayAcc(accounts[0]?.id || ""); }} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 hover:bg-amber-100" data-testid={`exp-pay-${x.expense_number}`}><Clock className="w-3 h-3" /> Öde</button>}</td>
+                <td className="px-4 py-2.5">{x.payment_status === "paid" ? <button onClick={() => unpay(x)} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title={`${x.account_name} · ${x.paid_date} — geri almak için tıkla`} data-testid={`exp-paid-${x.expense_number}`}><CheckCircle2 className="w-3 h-3" /> Ödendi</button> : <button onClick={async () => {
+                  setPayFor(x);
+                  try {
+                    const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
+                    const list = Array.isArray(r.data) ? r.data : [];
+                    setAccounts(list);
+                    setPayAcc(list[0]?.id || list[0]?._id || "");
+                  } catch {
+                    setPayAcc(accounts[0]?.id || accounts[0]?._id || "");
+                  }
+                }} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 hover:bg-amber-100" data-testid={`exp-pay-${x.expense_number}`}><Clock className="w-3 h-3" /> Öde</button>}</td>
                 <td className="px-4 py-2.5 text-center whitespace-nowrap">
                   {x.receipt_url && <a href={resolveImageUrl(x.receipt_url)} target="_blank" rel="noreferrer" className="inline-block p-1.5 text-slate-500 hover:text-indigo-600" title="Fiş / belge"><Paperclip className="w-3.5 h-3.5" /></a>}
                   <button onClick={() => setModal({ ...EMPTY, ...x, account_id: x.account_id || "" })} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`exp-edit-${x.expense_number}`}><Pencil className="w-3.5 h-3.5" /></button>
@@ -154,7 +185,7 @@ export default function ExpensesPage() {
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">
             <div className="font-bold text-slate-900 text-sm flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-600" /> Masrafı Öde · {fmtMoney(payFor.total, payFor.currency || "TRY")}</div>
             <div className="text-slate-500">{payFor.expense_number} — {payFor.description}</div>
-            <select value={payAcc} onChange={(e) => setPayAcc(e.target.value)} className={inputCls} data-testid="exp-pay-account">{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {fmt(a.current_balance)} ₺</option>)}</select>
+            <select value={payAcc} onChange={(e) => setPayAcc(e.target.value)} className={inputCls} data-testid="exp-pay-account">{accounts.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountLabel(a)}</option>)}</select>
             <div className="flex justify-end gap-2 pt-2 border-t"><button onClick={() => setPayFor(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={pay} disabled={!payAcc} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="exp-pay-confirm">Öde</button></div>
           </div>
         </div>
