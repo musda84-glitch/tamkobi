@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { useDataRefresh } from "../utils/dataRefresh";
 import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
 
@@ -38,18 +39,21 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchStats = useCallback(async () => {
+    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const fetchStats = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      const res = await axios.get(`${API_URL}/dashboard/stats?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
+      if (!silent) setLoading(true);
+      const res = await axios.get(`${API_URL}/dashboard/stats?company_id=${companyId}`);
       setStats(res.data);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { fetchStats(); }, [fetchStats]);
+  const refreshStatsSilent = useCallback(() => fetchStats({ silent: true }), [fetchStats]);
+  useDataRefresh(refreshStatsSilent, { companyId, scopes: ["cash", "contacts", "invoices", "expenses"] });
 
   if (loading || !stats) {
     return (

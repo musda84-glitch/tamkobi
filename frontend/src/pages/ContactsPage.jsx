@@ -33,6 +33,7 @@ import {
   Navigation,
   Filter
 } from "lucide-react";
+import { useDataRefresh } from "../utils/dataRefresh";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -57,20 +58,22 @@ export default function ContactsPage() {
 
   const [editContact, setEditContact] = useState(null);
 
-  const loadContacts = useCallback(async () => {
+  const loadContacts = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const rows = await cachedList("contacts", cid, { filter: contactTypeFilter(filterType), onCached: setContacts });
       axios.get(`${API_URL}/contacts/flags?company_id=${cid}`).then((r) => setFlags(r.data)).catch(() => {});
       setContacts(rows);
     } catch (err) {
-      toast.error("Cari listesi yüklenemedi.");
+      if (!silent) toast.error("Cari listesi yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeCompany, filterType]);
   useEffect(() => { loadContacts(); }, [loadContacts]);
+  const refreshContactsSilent = useCallback(() => loadContacts({ silent: true }), [loadContacts]);
+  useDataRefresh(refreshContactsSilent, { companyId, scopes: ["cash", "contacts", "invoices"] });
 
 
   const openStatement = async (contact) => {

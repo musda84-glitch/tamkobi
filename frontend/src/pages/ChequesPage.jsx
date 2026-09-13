@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -222,15 +223,17 @@ export default function ChequesPage() {
   }, [companyId, tab, qLive]);
 
   useEffect(() => { load().catch(() => toast.error("Çek/senet listesi yüklenemedi.")); }, [load]);
+  const refreshSilent = useCallback(() => load(), [load]);
+  useDataRefresh(refreshSilent, { companyId, scopes: ["cash", "contacts"] });
 
   const cancel = async (row) => {
     if (!window.confirm(`${row.number} iptal edilsin mi? Cari bakiyesi geri alınır.`)) return;
-    try { await axios.post(`${API_URL}/cheques/${row.id}/cancel`, {}); toast.success("İptal edildi."); load(); }
+    try { await axios.post(`${API_URL}/cheques/${row.id}/cancel`, {}); toast.success("İptal edildi."); await notifyDataChanged({ companyId, scopes: ["cash", "contacts"] }); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
   };
   const del = async (row) => {
     if (!window.confirm(`${row.number} silinsin mi?`)) return;
-    try { await axios.delete(`${API_URL}/cheques/${row.id}`); toast.success("Çöp kutusuna taşındı."); load(); }
+    try { await axios.delete(`${API_URL}/cheques/${row.id}`); toast.success("Çöp kutusuna taşındı."); await notifyDataChanged({ companyId, scopes: ["cash", "contacts"] }); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
 

@@ -10,6 +10,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { BudgetPanel } from "../components/BudgetPanel";
 import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -54,7 +55,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
     try {
       const { account_id: _acc, ...rest } = f; const body = { ...rest, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), contact_id: f.contact_id || null, employee_id: f.employee_id || null, ...splitPaymentTarget(f.account_id) };
       if (isEdit) await axios.put(`${API_URL}/expenses/${f.id}`, body); else await axios.post(`${API_URL}/expenses`, body);
-      toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); onSaved(); onClose();
+      toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); if (f.account_id) await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); onSaved(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
@@ -110,17 +111,19 @@ export default function ExpensesPage() {
   const [modal, setModal] = useState(null);
   const [payFor, setPayFor] = useState(null);
   const [payAcc, setPayAcc] = useState("");
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     const p = new URLSearchParams({ company_id: companyId, category: filters.category, status: filters.status, ...(filters.from && { date_from: filters.from }), ...(filters.to && { date_to: filters.to }), ...(filters.q && { q: filters.q }) });
     const [e, c, a, ct, em] = await Promise.all([axios.get(`${API_URL}/expenses?${p}`), axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`)]);
     setData(e.data); setCategories(c.data); setAccounts(a.data); setContacts(ct.data.filter((x) => x.type !== "customer")); setEmployees(em.data);
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
+  const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
+  useDataRefresh(refreshLoadSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
   const rows = useMemo(() => { const c = { date_desc: (a, b) => b.date.localeCompare(a.date), date_asc: (a, b) => a.date.localeCompare(b.date), amount_desc: (a, b) => b.total - a.total, amount_asc: (a, b) => a.total - b.total, category: (a, b) => a.category.localeCompare(b.category, "tr") }[filters.sort]; return [...data.expenses].sort(c); }, [data.expenses, filters.sort]);
   const s = data.summary;
   const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
-  const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
-  const unpay = async (x) => { if (!window.confirm("Ödeme geri alınsın mı? Kasa/banka bakiyesi düzeltilir.")) return; try { await axios.post(`${API_URL}/expenses/${x.id}/unpay`); toast.success("Ödeme geri alındı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
+  const unpay = async (x) => { if (!window.confirm("Ödeme geri alınsın mı? Kasa/banka bakiyesi düzeltilir.")) return; try { await axios.post(`${API_URL}/expenses/${x.id}/unpay`); toast.success("Ödeme geri alındı."); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const runRecurring = async () => { try { const r = await axios.post(`${API_URL}/expenses/run-recurring`, { company_id: companyId }); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Çalıştırılamadı."); } };
   const maxCat = s?.by_category?.[0]?.total || 1;
   return (

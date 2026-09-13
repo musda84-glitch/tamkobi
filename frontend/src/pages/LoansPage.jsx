@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -64,7 +65,9 @@ export default function LoansPage() {
   const [open, setOpen] = useState(null);
   const load = useCallback(async () => { const [l, a] = await Promise.all([axios.get(`${API_URL}/loans?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)]); setData(l.data); setAccounts(a.data); }, [companyId]);
   useEffect(() => { load().catch(() => toast.error("Krediler yüklenemedi.")); }, [load]);
-  const pay = async (loan, ins) => { const acc = loan.partner_id ? `partner:${loan.partner_id}` : (loan.account_id || accounts[0]?.id); if (!acc) return toast.error("Kredi için ödeme hesabı tanımlı değil."); if (!window.confirm(`${ins.no}. taksit (${fmt(ins.amount)} ₺) ödensin mi?`)) return; try { await axios.post(`${API_URL}/loans/${loan.id}/installments/${ins.no}/pay`, { ...splitPaymentTarget(acc) }); toast.success("Taksit ödendi; faiz gideri Masraflar'a işlendi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
+  const refreshSilent = useCallback(() => load(), [load]);
+  useDataRefresh(refreshSilent, { companyId, scopes: ["cash", "expenses"] });
+  const pay = async (loan, ins) => { const acc = loan.partner_id ? `partner:${loan.partner_id}` : (loan.account_id || accounts[0]?.id); if (!acc) return toast.error("Kredi için ödeme hesabı tanımlı değil."); if (!window.confirm(`${ins.no}. taksit (${fmt(ins.amount)} ₺) ödensin mi?`)) return; try { await axios.post(`${API_URL}/loans/${loan.id}/installments/${ins.no}/pay`, { ...splitPaymentTarget(acc) }); toast.success("Taksit ödendi; faiz gideri Masraflar'a işlendi."); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
   const del = async (l) => { if (!window.confirm(`${l.name} silinsin mi?`)) return; await axios.delete(`${API_URL}/loans/${l.id}`); toast.success("Kredi silindi."); load(); };
   const s = data.summary;
   const today = new Date().toISOString().slice(0, 10);

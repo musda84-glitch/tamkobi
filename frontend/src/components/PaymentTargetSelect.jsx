@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
+import { useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
 const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", credit_card: "Kredi Kartı" };
@@ -44,23 +45,25 @@ export const PaymentTargetSelect = ({
   // Parent listesi stale olabilir; companyId varken her mount'ta taze çek.
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
-  useEffect(() => {
-    if (!companyId) return undefined;
-    let cancelled = false;
+  const reloadAccounts = useCallback(() => {
+    if (!companyId) return;
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
-      .then((r) => { if (!cancelled) setLiveAccounts(Array.isArray(r.data) ? r.data : []); })
+      .then((r) => setLiveAccounts(Array.isArray(r.data) ? r.data : []))
       .catch(() => {});
-    return () => { cancelled = true; };
   }, [companyId]);
-  useEffect(() => {
-    if (!includePartners) { setPartners([]); return undefined; }
-    if (!companyId) return undefined;
-    let cancelled = false;
+  const reloadPartners = useCallback(() => {
+    if (!includePartners || !companyId) { setPartners([]); return; }
     axios.get(`${API_URL}/banking/partners?company_id=${companyId}`)
-      .then((r) => { if (!cancelled) setPartners((r.data || []).filter((p) => p.is_active !== false)); })
-      .catch(() => { if (!cancelled) setPartners([]); });
-    return () => { cancelled = true; };
+      .then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false)))
+      .catch(() => setPartners([]));
   }, [companyId, includePartners]);
+  useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
+  useEffect(() => { reloadPartners(); }, [reloadPartners]);
+  const refreshLive = useCallback(() => {
+    reloadAccounts();
+    reloadPartners();
+  }, [reloadAccounts, reloadPartners]);
+  useDataRefresh(refreshLive, { companyId, scopes: ["cash"] });
 
   const typeOrder = collectableOnly
     ? COLLECT_TYPES

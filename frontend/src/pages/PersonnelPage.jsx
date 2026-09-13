@@ -26,6 +26,7 @@ import {
   CreditCard
   , CalendarDays, Gift
 } from "lucide-react";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -77,6 +78,8 @@ export default function PersonnelPage() {
     }
   }, [activeCompany]);
   useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
+  const refreshPersonnelSilent = useCallback(() => loadPersonnelData(), [loadPersonnelData]);
+  useDataRefresh(refreshPersonnelSilent, { companyId: activeCompany?.id || activeCompany?._id, scopes: ["cash", "expenses", "contacts"] });
 
   const handleSaveEmployee = async (e) => {
     e.preventDefault();
@@ -119,6 +122,7 @@ export default function PersonnelPage() {
         ...splitPaymentTarget(selectedBankId)
       });
       toast.success(res.data.message);
+      await notifyDataChanged({ companyId: activeCompany?.id || activeCompany?._id, scopes: ["cash", "expenses", "contacts"] });
       setPayPayrollItem(null);
       loadPersonnelData();
     } catch (err) {
