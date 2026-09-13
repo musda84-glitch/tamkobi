@@ -44,6 +44,7 @@ import {
   MoreVertical,
   MousePointerClick,
   FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
   if (inv.trade_kind === "export" || inv.e_type === "e_export") return ["İhracat", "bg-sky-50 text-sky-800"];
@@ -75,6 +76,7 @@ const purchaseCostText = (p) => {
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany, addonOn } = useAuth();
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -165,9 +167,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setSearchParams({}, { replace: true });
   }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const [invRows, cntRows, prodRows, bankRes, projRes] = await Promise.all([
         cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
@@ -185,10 +187,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     } catch (err) {
       toast.error("Veriler yüklenirken hata oluştu.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeCompany, filterType]);
   useEffect(() => { loadData(); }, [loadData]);
+  const refreshInvoicesSilent = useCallback(() => loadData({ silent: true }), [loadData]);
+  useDataRefresh(refreshInvoicesSilent, { companyId, scopes: ["cash", "invoices", "contacts"] });
 
   const handleScanAddItem = (code) => {
     const c = String(code || "").trim();
@@ -363,6 +367,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         ...splitPaymentTarget(paymentAccount)
       });
       toast.success("Tahsilat/Ödeme kaydı başarıyla işlendi.");
+      await notifyDataChanged({ companyId, scopes: ["cash", "invoices", "contacts"] });
       setPaymentModalInvoice(null);
       setPaymentAmount("");
       loadData();

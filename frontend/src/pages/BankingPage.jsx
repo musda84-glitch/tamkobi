@@ -5,6 +5,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { PartnersPanel } from "../components/PartnersPanel";
 import { cachedList } from "../utils/dataSync";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
@@ -105,9 +106,9 @@ export default function BankingPage() {
     description: "Hesaplar arası transfer (Virman)"
   });
 
-  const loadBankingData = useCallback(async () => {
+  const loadBankingData = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [accRes, transactions, contacts, psRes] = await Promise.all([
         axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
         cachedList("bank_transactions", companyId, { onCached: setTransactions }),
@@ -128,12 +129,21 @@ export default function BankingPage() {
         }));
       }
     } catch (err) {
-      toast.error("Banka verileri yüklenemedi.");
+      if (!silent) toast.error("Banka verileri yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [companyId]);
   useEffect(() => { loadBankingData(); }, [loadBankingData]);
+  const refreshCashSilent = useCallback(() => {
+    setCashTick((n) => n + 1);
+    return loadBankingData({ silent: true });
+  }, [loadBankingData]);
+  useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
+  const bumpCashData = useCallback(async () => {
+    setCashTick((n) => n + 1);
+    await notifyDataChanged({ companyId, scopes: ["cash"] });
+  }, [companyId]);
 
   const handleSaveAccount = async (e) => {
     e.preventDefault();
@@ -165,14 +175,14 @@ export default function BankingPage() {
         setShowAddAccountModal(false);
         setEditingAccount(null);
         setNewAccount(emptyAccountForm);
-        loadBankingData();
+        await bumpCashData();
       } else {
         const created = (await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload })).data;
         toast.success(isCard ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz." : "Banka/Kasa hesabı başarıyla eklendi.");
         setShowAddAccountModal(false);
         setEditingAccount(null);
         setNewAccount(emptyAccountForm);
-        await loadBankingData();
+        await bumpCashData();
         if (isCard) setStmtAccount({ ...created, id: created.id || created._id });
       }
     } catch (err) {
@@ -208,7 +218,7 @@ export default function BankingPage() {
       const r = await axios.delete(`${API_URL}/banking/accounts/${acc.id || acc._id}`);
       toast.success(r.data.message || "Hesap silindi.");
       if (selectedAccountId === (acc.id || acc._id)) setSelectedAccountId(null);
-      loadBankingData();
+      await bumpCashData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Hesap silinemedi.");
     }
@@ -235,10 +245,9 @@ export default function BankingPage() {
       toast.success(res.data.message);
       setShowVirmanModal(false);
       setVirmanForm({ ...virmanForm, amount: "" });
-      setCashTick((n) => n + 1);
-      loadBankingData();
+      await bumpCashData();
     } catch (err) {
-      toast.error("Virman işlemi gerçekleştirilemedi.");
+      toast.error(err.response?.data?.detail || "Virman işlemi gerçekleştirilemedi.");
     }
   };
 
@@ -312,11 +321,11 @@ export default function BankingPage() {
         ))}
       </div>
 
-      {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={loadBankingData} />}
-      {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={loadBankingData} />}
+      {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} />}
+      {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={bumpCashData} />}
 
       {tab === "accounts" && (<>
-      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={() => { setCashTick((n) => n + 1); loadBankingData(); }} />
+      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={bumpCashData} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
         {partnerSummary && partnerSummary.partner_count > 0 && (
           <button onClick={() => setTab("partners")} className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left" data-testid="partners-account-card">
@@ -491,7 +500,7 @@ export default function BankingPage() {
                       {tx.type === 'inflow' ? `+${tx.amount?.toLocaleString('tr-TR')} ₺` : tx.type === 'outflow' ? `-${tx.amount?.toLocaleString('tr-TR')} ₺` : `${tx.amount?.toLocaleString('tr-TR')} ₺`}
                     </td>
                     <td className="px-2 py-1.5 text-right">
-                      <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={loadBankingData} />
+                      <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />
                     </td>
                   </tr>
                 ))
@@ -767,7 +776,7 @@ export default function BankingPage() {
           contacts={contacts}
           initialFile={stmtFile}
           onClose={() => { setStmtAccount(null); setStmtFile(null); }}
-          onDone={loadBankingData}
+          onDone={bumpCashData}
         />
       )}
     </div>

@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
@@ -59,6 +60,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
+  useDataRefresh(load, { companyId, scopes: ["cash"] });
+
+  const bumpCash = useCallback(async () => {
+    await notifyDataChanged({ companyId, scopes: ["cash"] });
+  }, [companyId]);
 
   const refreshAccounts = useCallback(async () => {
     setAccountsLoading(true);
@@ -136,7 +142,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       setModal(null);
       setVirmanForm({ ...virmanForm, amount: "" });
       await refreshAccounts();
-      onCashChanged?.();
+      await bumpCash();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Virman işlemi gerçekleştirilemedi.");
     }
@@ -159,7 +165,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       } else {
         toast.success(txForm.type === "capital_in" ? "Sermaye girişi kaydedildi." : "Para çekişi kaydedildi.");
       }
-      setModal(null); setTxForm({ ...txForm, amount: "", description: "" }); load(); onCashChanged?.();
+      setModal(null); setTxForm({ ...txForm, amount: "", description: "" }); load(); await bumpCash();
     } catch (err) { toast.error(err.response?.data?.detail || "İşlem kaydedilemedi."); }
   };
 
@@ -167,7 +173,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     e.preventDefault();
     try {
       const res = await axios.post(`${API_URL}/banking/partners/distribute-profit`, { company_id: companyId, ...profitForm, total_profit: Number(profitForm.total_profit), account_id: profitForm.account_id || firstAcc });
-      toast.success(res.data.message); setModal(null); load(); onCashChanged?.();
+      toast.success(res.data.message); setModal(null); load(); await bumpCash();
     } catch (err) { toast.error(err.response?.data?.detail || "Kâr dağıtımı yapılamadı."); }
   };
 
@@ -178,7 +184,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   return (
     <div className="space-y-5" data-testid="partners-panel">
-      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${txs[0]?.id || ""}-${modal || ""}`} onChanged={() => { load(); onCashChanged?.(); }} />
+      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${txs[0]?.id || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
@@ -235,7 +241,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">Ortak Hareketleri</div>
-        <PartnerTxTable txs={txs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); onCashChanged?.(); }} />
+        <PartnerTxTable txs={txs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
       </div>
 
       {modal === "add" && (

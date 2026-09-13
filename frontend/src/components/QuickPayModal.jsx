@@ -5,6 +5,7 @@ import { Receipt, Wallet, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
+import { notifyDataChanged } from "../utils/dataRefresh";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -38,7 +39,7 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
         await axios.post(`${API_URL}/expenses`, { company_id: companyId, description: f.description || `${p.employee_name} masrafı`, category: f.category, amount: Number(f.amount), vat_rate: 0, employee_id: p.employee_id, notes: f.note, date: new Date().toISOString().slice(0, 10), ...splitPaymentTarget(f.account_id) });
         toast.success(`Masraf kaydı oluşturuldu${f.account_id ? " ve ödendi" : ""} — Masraflar modülünde görünür.`);
       }
-      onDone?.(); onClose();
+      await notifyDataChanged({ companyId: companyId, scopes: ["cash", "expenses", "contacts"] }); onDone?.(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (

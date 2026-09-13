@@ -21,6 +21,7 @@ import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, fmtMoney, hydrateLine } from "../utils/documentLines";
+import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -43,6 +44,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     catch { toast.error("Cari detayı yüklenemedi."); onCloseRef.current(); }
   }, [contactId]);
   useEffect(() => { load(); }, [load]);
+  useDataRefresh(load, { companyId: data?.contact?.company_id, scopes: ["cash", "contacts", "invoices"] });
 
   const convertQuote = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const convertQuoteToProject = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-project`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
@@ -72,11 +74,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const lockedTxTitle = (p) => (p.source === "cheque" || p.virtual ? "Çek/senet kaydından geldi — Çek/Senet modülünden yönetilir" : "Banka entegrasyonu / ortaklar hesabından geldi — düzenlenemez");
   const deletePay = async (p) => {
     if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${p.type === "inflow" ? "tahsilat" : "ödeme"} silinsin mi? Bakiyeler geri alınır.`)) return;
-    try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+    try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const savePayEdit = async (e) => {
     e.preventDefault();
-    try { await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id }); toast.success("Ödeme güncellendi."); setEditPay(null); load(); }
+    try { await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id }); toast.success("Ödeme güncellendi."); setEditPay(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
   const openEditPay = async (p) => { try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p }); } catch { toast.error("Hesaplar yüklenemedi."); } };
@@ -102,7 +104,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         const acc = accounts.find((a) => a.id === payForm.account_id);
         await axios.post(`${API_URL}/banking/transactions`, { company_id: c.company_id, account_id: payForm.account_id, account_name: acc?.account_name, type: payForm.type, category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme", amount: Number(payForm.amount), currency: "TRY", description: `${c.name}: ${payForm.description}`, contact_id: c.id, contact_name: c.name, source: "manual" });
       }
-      toast.success(payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi."); setPayForm(null); load();
+      toast.success(payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi."); setPayForm(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
   const [waMsg, setWaMsg] = useState("");
