@@ -35,6 +35,8 @@ export const PaymentTargetSelect = ({
   collectableOnly = false,
   includePartners = true,
   includeCreditCards = true,
+  /** Virman: entegre hesapları listeden tamamen çıkar (seçilemez gösterme). */
+  excludeIntegrated = false,
   emptyLabel,
   disabled = false,
 }) => {
@@ -63,9 +65,10 @@ export const PaymentTargetSelect = ({
   const typeOrder = collectableOnly
     ? COLLECT_TYPES
     : (includeCreditCards ? SPEND_TYPES : COLLECT_TYPES);
-  const pool = collectableOnly
+  let pool = collectableOnly
     ? collectableAccounts(liveAccounts)
     : (includeCreditCards ? (liveAccounts || []) : collectableAccounts(liveAccounts));
+  if (excludeIntegrated) pool = pool.filter((a) => !a.is_integrated);
   const groups = typeOrder.map((t) => [t, pool.filter((a) => normalizeType(a.type) === t)]).filter(([, l]) => l.length);
   const orphan = pool.filter((a) => !SPEND_TYPES.includes(normalizeType(a.type)));
 
@@ -84,7 +87,7 @@ export const PaymentTargetSelect = ({
       )}
       {includePartners && partners.length > 0 && (
         <optgroup label="Ortaklar Hesabı">
-          {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent ?? 0})</option>)}
+          {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent ?? 0} · {fmt(p.balance)} ₺)</option>)}
         </optgroup>
       )}
     </select>

@@ -3933,38 +3933,83 @@ async def delete_bank_transaction(tx_id: str):
     await trash.soft_delete("bank_transactions", tx, "bank_transaction", f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺", note=f"{tx.get('account_name')} · {tx.get('date')}")
     return {"status": "success", "message": "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."}
 
+def _virman_endpoint(value: Optional[str]) -> tuple:
+    """Parse virman source/target: ('partner', id) or ('account', id)."""
+    raw = str(value or "").strip()
+    if raw.startswith("partner:"):
+        return "partner", raw[8:]
+    return "account", raw
+
+
+def _virman_bank_account_ids(req: Dict[str, Any]) -> list:
+    """Cash-approval / bank_guard only care about real bank account ids (not partner:…)."""
+    out = []
+    for key in ("source_account_id", "target_account_id"):
+        kind, eid = _virman_endpoint(req.get(key))
+        if kind == "account" and eid:
+            out.append(eid)
+    return out
+
+
 async def _execute_virman(req: Dict[str, Any]):
-    source_id = req.get("source_account_id")
-    target_id = req.get("target_account_id")
+    source_raw = req.get("source_account_id")
+    target_raw = req.get("target_account_id")
     amount = float(req.get("amount", 0))
     description = req.get("description", "Hesaplar Arası Virman Transferi")
     company_id = req.get("company_id", "comp_nexus_main_01")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    if not source_raw or not target_raw:
+        raise HTTPException(status_code=400, detail="Kaynak ve hedef hesap seçilmelidir.")
+    if source_raw == target_raw:
+        raise HTTPException(status_code=400, detail="Kaynak ve hedef hesap aynı olamaz.")
 
-    source_acc = await db.bank_accounts.find_one({"_id": source_id})
-    target_acc = await db.bank_accounts.find_one({"_id": target_id})
+    s_kind, s_id = _virman_endpoint(source_raw)
+    t_kind, t_id = _virman_endpoint(target_raw)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    desc = description or "Hesaplar Arası Virman Transferi"
+
+    # Hesap → Ortak = para çek (kasadan ortağa); Ortak → Hesap = para koy (ortaktan kasaya).
+    if s_kind == "account" and t_kind == "partner":
+        ptx = await _execute_partner_tx({
+            "partner_id": t_id, "type": "withdrawal", "amount": amount,
+            "account_id": s_id, "description": desc, "date": today,
+        })
+        return {"status": "success", "message": f"{amount:,.2f} TL virman tamamlandı (hesap → ortak).", "partner_tx": ptx}
+    if s_kind == "partner" and t_kind == "account":
+        await bank_guard.assert_collection_allowed(db, t_id)
+        ptx = await _execute_partner_tx({
+            "partner_id": s_id, "type": "capital_in", "amount": amount,
+            "account_id": t_id, "description": desc, "date": today,
+        })
+        return {"status": "success", "message": f"{amount:,.2f} TL virman tamamlandı (ortak → hesap).", "partner_tx": ptx}
+    if s_kind == "partner" and t_kind == "partner":
+        src_name = await partner_pay.move(db, company_id, s_id, amount, "withdrawal", f"Virman → ortak: {desc}", today)
+        tgt_name = await partner_pay.move(db, company_id, t_id, amount, "capital_in", f"Virman ← ortak ({src_name}): {desc}", today)
+        return {"status": "success", "message": f"{amount:,.2f} TL ortaklar arası virman tamamlandı ({src_name} → {tgt_name})."}
+
+    source_acc = await db.bank_accounts.find_one({"_id": s_id})
+    target_acc = await db.bank_accounts.find_one({"_id": t_id})
 
     if not source_acc or not target_acc:
         raise HTTPException(status_code=404, detail="Kaynak veya hedef hesap bulunamadı.")
-    await bank_guard.assert_manual_allowed(db, source_id)
-    await bank_guard.assert_manual_allowed(db, target_id)
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    await bank_guard.assert_manual_allowed(db, s_id)
+    await bank_guard.assert_manual_allowed(db, t_id)
 
-    await db.bank_accounts.update_one({"_id": source_id}, {"$inc": {"current_balance": -amount}})
-    await db.bank_accounts.update_one({"_id": target_id}, {"$inc": {"current_balance": amount}})
+    await db.bank_accounts.update_one({"_id": s_id}, {"$inc": {"current_balance": -amount}})
+    await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": amount}})
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     await db.bank_transactions.insert_one({
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
-        "account_id": source_id,
+        "account_id": s_id,
         "account_name": source_acc.get("account_name"),
         "type": "transfer",
         "category": "Virman Çıkışı",
         "amount": amount,
         "currency": source_acc.get("currency", "TRY"),
-        "description": f"Virman -> {target_acc.get('account_name')}: {description}",
-        "target_account_id": target_id,
+        "description": f"Virman -> {target_acc.get('account_name')}: {desc}",
+        "target_account_id": t_id,
         "target_account_name": target_acc.get("account_name"),
         "date": today,
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -3981,7 +4026,7 @@ async def perform_virman(req: Dict[str, Any], request: Request):
     user = await get_current_user(request)
     pending = await cash_approval.maybe_queue(
         db, company_id=company_id, kind="virman", payload=req,
-        account_ids=[req.get("source_account_id"), req.get("target_account_id")],
+        account_ids=_virman_bank_account_ids(req),
         summary=f"Virman {float(req.get('amount') or 0):,.2f} ₺",
         user=user,
     )
