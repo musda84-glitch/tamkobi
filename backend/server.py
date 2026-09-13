@@ -2415,6 +2415,7 @@ async def create_contact_balance_installments(contact_id: str, req: Dict[str, An
     total = float(req.get("total") or abs(c.get("balance", 0)))
     if total <= 0:
         raise HTTPException(status_code=400, detail="Taksitlendirilecek bakiye yok.")
+    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
     await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
     rows = _build_plan(total, req)
     now = datetime.now(timezone.utc).isoformat()
@@ -2422,12 +2423,13 @@ async def create_contact_balance_installments(contact_id: str, req: Dict[str, An
     docs = [{"_id": str(uuid.uuid4()), "company_id": c["company_id"], "invoice_id": None, "invoice_number": "AÇIK BAKİYE", "invoice_type": "balance", "direction": direction,
              "contact_id": contact_id, "contact_name": c.get("name"), "no": r["no"], "label": r["label"], "total_count": len(rows), "due_date": r["due_date"], "amount": r["amount"], "paid_amount": 0, "status": "pending", "created_at": now} for r in rows]
     await db.installments.insert_many(docs)
-    return [_decorate_installment(d) for d in docs]
+    return await _attach_promissory(docs, req)
 
 @api_router.delete("/contacts/{contact_id}/installments")
 async def delete_contact_balance_installments(contact_id: str):
     if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
+    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
     await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
     return {"status": "success"}
 
@@ -3835,6 +3837,24 @@ def _add_interval(d: date, interval: str, n: int, interval_days: int = 30) -> da
     y, m = d.year + m // 12, m % 12 + 1
     return date(y, m, min(d.day, monthrange(y, m)[1]))
 
+
+async def _attach_promissory(docs: list, req: Dict[str, Any]):
+    """create_promissory=true ise senet üretir; aksi halde liste döner (geriye uyumlu)."""
+    if not req.get("create_promissory"):
+        return [_decorate_installment(d) for d in docs]
+    notes = await cheques.create_promissory_for_installments(
+        docs, include_down_payment=bool(req.get("promissory_include_down_payment")),
+    )
+    ids = [d["_id"] for d in docs]
+    refreshed = [_decorate_installment(r) for r in await db.installments.find({"_id": {"$in": ids}}).sort("no", 1).to_list(200)]
+    return {"installments": refreshed, "promissory_notes": notes}
+
+
+async def _cancel_promissory_for_query(query: Dict[str, Any]):
+    rows = await db.installments.find(query, {"_id": 1}).to_list(500)
+    await cheques.cancel_promissory_for_installments([r["_id"] for r in rows])
+
+
 def _build_plan(total: float, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     count = max(1, int(cfg.get("count", 1)))
     down = round(float(cfg.get("down_payment", 0) or 0), 2)
@@ -3887,13 +3907,17 @@ async def create_invoice_installments(invoice_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan yeniden oluşturulamaz.")
+    await _cancel_promissory_for_query({"invoice_id": invoice_id})
     await db.installments.delete_many({"invoice_id": invoice_id})
-    return await _create_invoice_installments(inv, req)
+    await _create_invoice_installments(inv, req)
+    raw = await db.installments.find({"invoice_id": invoice_id}).sort("no", 1).to_list(200)
+    return await _attach_promissory(raw, req)
 
 @api_router.delete("/invoices/{invoice_id}/installments")
 async def delete_invoice_installments(invoice_id: str):
     if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
+    await _cancel_promissory_for_query({"invoice_id": invoice_id})
     await db.installments.delete_many({"invoice_id": invoice_id})
     await db.invoices.update_one({"_id": invoice_id}, {"$unset": {"installment_plan": ""}})
     return {"status": "success"}

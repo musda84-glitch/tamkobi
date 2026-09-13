@@ -2,12 +2,13 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight, Printer } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { PromissoryPrint } from "../components/PromissoryPrint";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -200,6 +201,7 @@ export default function ChequesPage() {
   const [q, setQ] = useState("");
   const [qLive, setQLive] = useState("");
   const [modal, setModal] = useState(false);
+  const [printNotes, setPrintNotes] = useState(null);
   const [action, setAction] = useState(null);
 
   useEffect(() => {
@@ -314,6 +316,9 @@ export default function ChequesPage() {
                   <td className="px-3 py-2 text-right font-bold">{fmt(r.amount)} ₺</td>
                   <td className="px-3 py-2"><span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STATUS_CLS[r.status] || "bg-slate-100"}`}>{r.status_label}</span></td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
+                    {r.instrument === "promissory" && (
+                      <button onClick={() => setPrintNotes([r])} className="text-[10px] font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-md mr-1 inline-flex items-center gap-0.5" data-testid={`cheque-print-${r.id}`}><Printer className="w-3 h-3" /> Yazdır</button>
+                    )}
                     {r.status === "open" && r.direction === "received" && (
                       <>
                         <button onClick={() => setAction({ kind: "collect", row: r })} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md mr-1" data-testid={`cheque-collect-${r.id}`}>Tahsil</button>
@@ -342,6 +347,14 @@ export default function ChequesPage() {
       <p className="text-[11px] text-slate-400 flex items-center gap-1"><Landmark className="w-3 h-3" /> Tahsil alınan çekleri kasaya/bankaya yatırır; ödeme verilen çekin bedelini hesaptan düşer. Ciro, çeki başka bir cariye (tedarikçi ödemesi) devreder.</p>
       {modal && <ChequeModal companyId={companyId} contacts={contacts} onClose={() => setModal(false)} onSaved={load} />}
       {action && <ActionModal kind={action.kind} row={action.row} accounts={accounts} contacts={contacts} companyId={companyId} onClose={() => setAction(null)} onDone={load} />}
+      {printNotes && (
+        <PromissoryPrint
+          notes={printNotes}
+          contact={{ name: printNotes[0]?.contact_name }}
+          company={activeCompany}
+          onClose={() => setPrintNotes(null)}
+        />
+      )}
     </div>
   );
 }

@@ -234,6 +234,7 @@ async def create_cheque(req: Dict[str, Any]):
     if not contact:
         raise HTTPException(status_code=400, detail="Cari seçin.")
     due = req.get("due_date") or _today()
+    skip_ledger = bool(req.get("skip_ledger") or req.get("from_installment"))
     doc = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
@@ -254,17 +255,20 @@ async def create_cheque(req: Dict[str, Any]):
         "drawer_name": (req.get("drawer_name") or contact.get("name") or "").strip(),
         "notes": (req.get("notes") or "").strip(),
         "related_invoice_id": req.get("related_invoice_id"),
+        "installment_id": req.get("installment_id"),
+        "skip_ledger": skip_ledger,
         "endorsed_to_contact_id": None,
         "endorsed_to_name": None,
         "account_id": None,
         "account_name": None,
         "settled_at": None,
-        "events": [{"at": _now(), "action": "created", "note": "Giriş kaydı"}],
+        "events": [{"at": _now(), "action": "created", "note": "Taksitten senet" if skip_ledger else "Giriş kaydı"}],
         "created_at": _now(),
     }
     await _db.cheques.insert_one(doc)
-    await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
-    await _post_cari_payment(doc)
+    if not skip_ledger:
+        await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
+        await _post_cari_payment(doc)
     await _refresh_contact_cheque(contact["_id"])
     return _annotate(await _db.cheques.find_one({"_id": doc["_id"]}), _today())
 
@@ -387,7 +391,8 @@ async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None):
     _open_only(doc)
     amount = float(doc["amount"])
     await _unwind_bank(cheque_id)
-    await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount))
+    if not doc.get("skip_ledger"):
+        await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount))
     await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "cancelled", "updated_at": _now()}})
     await _append_event(cheque_id, "cancelled", (req or {}).get("reason") or "İptal")
     await _refresh_contact_cheque(doc.get("contact_id"))
@@ -401,7 +406,7 @@ async def delete_cheque(cheque_id: str):
         raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
     if doc.get("status") not in ("open", "cancelled", "bounced"):
         raise HTTPException(status_code=400, detail="Tahsil/ödeme/ciro edilmiş kayıt silinemez. Banka hareketinden geri alın.")
-    if doc.get("status") == "open":
+    if doc.get("status") == "open" and not doc.get("skip_ledger"):
         await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], float(doc["amount"])))
     related = []
     txs = await _db.bank_transactions.find({"cheque_id": cheque_id}).to_list(20)
@@ -413,9 +418,57 @@ async def delete_cheque(cheque_id: str):
 
 
 async def restore_cheque(doc: dict, _related):
-    if doc.get("status") == "open":
+    if doc.get("status") == "open" and not doc.get("skip_ledger"):
         await _apply_contact(doc.get("contact_id"), _contact_delta_on_create(doc.get("direction"), float(doc.get("amount") or 0)))
         # Eski silmelerde portföy satırı yoksa cari Ödemeler'e yeniden yaz.
         if not await _db.bank_transactions.find_one({"cheque_id": doc["_id"], "cheque_kind": "portfolio"}):
             await _post_cari_payment(doc)
     await _refresh_contact_cheque(doc.get("contact_id"))
+
+
+async def create_promissory_for_installments(installments: list, *, include_down_payment: bool = False) -> list:
+    """Taksit satırlarından senet portföy kaydı üretir; cari bakiyeye dokunmaz (skip_ledger)."""
+    notes = []
+    for inst in installments:
+        no = int(inst.get("no") or 0)
+        if no == 0 and not include_down_payment:
+            continue
+        amount = round(float(inst.get("amount") or 0), 2)
+        if amount <= 0:
+            continue
+        direction = "received" if inst.get("direction") == "receivable" else "issued"
+        inv_no = inst.get("invoice_number") or "Taksit"
+        label = inst.get("label") or f"{no}. Taksit"
+        note = await create_cheque({
+            "company_id": inst.get("company_id"),
+            "direction": direction,
+            "instrument": "promissory",
+            "contact_id": inst.get("contact_id"),
+            "amount": amount,
+            "due_date": inst.get("due_date"),
+            "issue_date": _today(),
+            "related_invoice_id": inst.get("invoice_id"),
+            "installment_id": inst.get("_id") or inst.get("id"),
+            "skip_ledger": True,
+            "notes": f"{inv_no} · {label}",
+            "drawer_name": inst.get("contact_name") or "",
+        })
+        iid = inst.get("_id") or inst.get("id")
+        if iid:
+            await _db.installments.update_one(
+                {"_id": iid},
+                {"$set": {"cheque_id": note.get("id"), "cheque_number": note.get("number")}},
+            )
+        notes.append(note)
+    return notes
+
+
+async def cancel_promissory_for_installments(installment_ids: list) -> int:
+    """Plan silinince bağlı açık senetleri iptal eder."""
+    if not installment_ids:
+        return 0
+    n = 0
+    async for ch in _db.cheques.find({"installment_id": {"$in": list(installment_ids)}, "status": "open", "instrument": "promissory"}):
+        await cancel_cheque(ch["_id"], {"reason": "Taksit planı kaldırıldı"})
+        n += 1
+    return n
