@@ -48,7 +48,6 @@ async def _next_number(company_id: str) -> str:
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
     if partner_id:
         name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, fx.try_amount(exp, exp.get("total")), f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
-        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, exp["total"], f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
         return f"{name} (Ortak)"
     if not account_id:
         raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")

@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
@@ -125,7 +126,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     if (!payItem) return;
     setBusyPay(true);
     try {
-      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { account_id: payAccountId });
+      const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
       toast.success(res.data.message);
       setPayItem(null);
       afterMoney();
@@ -190,9 +191,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               <p><strong>{payItem.employee_name || e.full_name}</strong> için <strong>{payItem.period}</strong> dönemi <strong>{fmt(payItem.final_payable ?? payItem.net_salary)} ₺</strong> maaş ödemesi yapılacaktır.</p>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
-                <select value={payAccountId} onChange={(ev) => setPayAccountId(ev.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="emp-card-salary-account">
-                  {accounts.map((b) => <option key={b.id || b._id} value={b.id || b._id}>{b.account_name || b.bank_name} ({fmt(b.current_balance)} ₺)</option>)}
-                </select>
+                <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAccountId} onChange={setPayAccountId} testId="emp-card-salary-account" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">

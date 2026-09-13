@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 
@@ -226,7 +227,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">Ortak Hareketleri</div>
-        <PartnerTxTable txs={txs} accounts={liveAccounts} onChanged={() => { load(); onCashChanged?.(); }} />
+        <PartnerTxTable txs={txs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); onCashChanged?.(); }} />
       </div>
 
       {modal === "add" && (
@@ -252,7 +253,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "capital_in" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "capital_in" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="partner-tx-type-in"><ArrowDownRight className="w-4 h-4" /> Para Koy</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "withdrawal" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "withdrawal" ? "bg-rose-600 text-white border-rose-600" : "bg-white"}`} data-testid="partner-tx-type-out"><ArrowUpRight className="w-4 h-4" /> Para Çek</button>
             </div>
-            <div><label className="block font-semibold mb-1">Kasa / Banka Hesabı</label><select className={inputCls} value={txForm.account_id} onChange={(e) => setTxForm({ ...txForm, account_id: e.target.value })} disabled={accountsLoading} data-testid="partner-tx-account-select">{accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : cashAccounts.length === 0 ? <option value="">Kasa / banka bulunamadı</option> : cashAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{accLabel(a)}</option>)}</select></div>
+            <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={txForm.amount} onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })} required data-testid="partner-tx-amount-input" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="Örn: Sermaye artırımı" /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold" data-testid="save-partner-tx-btn">İşlemi Kaydet</button></div>
@@ -295,7 +296,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               {partners.map((p) => <div key={p.id} className="flex justify-between"><span>{p.name} (%{p.share_percent})</span><b>{fmt(Number(profitForm.total_profit || 0) * p.share_percent / (summary?.total_share_percent || 100))} ₺</b></div>)}
             </div>
             <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={profitForm.pay_now} onChange={(e) => setProfitForm({ ...profitForm, pay_now: e.target.checked })} data-testid="profit-pay-now-checkbox" /><span className="font-semibold">Hemen öde (kasadan/bankadan çık) — kapalıysa ortak alacağı olarak tahakkuk eder</span></label>
-            {profitForm.pay_now && <div><label className="block font-semibold mb-1">Kaynak Hesap</label><select className={inputCls} value={profitForm.account_id} onChange={(e) => setProfitForm({ ...profitForm, account_id: e.target.value })} disabled={accountsLoading} data-testid="profit-account-select">{accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : cashAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{accLabel(a)}</option>)}</select></div>}
+            {profitForm.pay_now && <div><label className="block font-semibold mb-1">Kaynak Hesap</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={profitForm.account_id} onChange={(v) => setProfitForm({ ...profitForm, account_id: v })} testId="profit-account-select" includePartners={false} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>}
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-500 text-white rounded-lg font-semibold" data-testid="confirm-distribute-btn">Dağıt</button></div>
           </form>
         </Modal>

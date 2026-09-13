@@ -12,6 +12,7 @@ from emergentintegrations.llm.chat import UserMessage
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from card_match import match_statement_contact, sanitize_card_fields
 import expenses as expenses_mod
+import partner_pay
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -222,17 +223,25 @@ async def create_loan(req: Dict[str, Any]):
     ins = req.get("installments") or []
     if not ins:
         raise HTTPException(status_code=400, detail="Ödeme planı (taksitler) gerekli.")
+    account_id = req.get("account_id") or None
+    partner_id = req.get("partner_id") or None
+    if account_id and partner_id:
+        raise HTTPException(status_code=400, detail="Hesap veya ortak seçin, ikisi birden değil.")
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": (req.get("name") or f"{req.get('bank') or 'Banka'} Kredisi").strip(), "bank": req.get("bank"), "loan_type": req.get("loan_type") or "ticari", "principal": float(req.get("principal") or 0), "interest_rate": req.get("interest_rate"),
            "term_months": int(req.get("term_months") or len(ins)), "start_date": req.get("start_date") or ins[0].get("due_date"), "monthly_payment": req.get("monthly_payment"), "total_payment": float(req.get("total_payment") or sum(float(i.get("amount") or 0) for i in ins)),
-           "account_id": req.get("account_id"), "installments": [{**i, "amount": float(i.get("amount") or 0), "paid": bool(i.get("paid"))} for i in ins], "notes": req.get("notes") or "", "created_at": _now()}
+           "account_id": account_id, "partner_id": partner_id, "installments": [{**i, "amount": float(i.get("amount") or 0), "paid": bool(i.get("paid"))} for i in ins], "notes": req.get("notes") or "", "created_at": _now()}
     await _db.loans.insert_one(doc)
-    if req.get("account_id") and req.get("credit_to_account"):
-        acc = await _db.bank_accounts.find_one({"_id": req["account_id"]})
-        if acc:
-            await assert_manual_allowed(_db, acc["_id"])
-            await _db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": doc["principal"]}})
-            await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "source": "loan", "loan_id": doc["_id"], "date": doc["start_date"], "created_at": _now()})
+    if req.get("credit_to_account"):
+        if partner_id:
+            await partner_pay.move(_db, company_id, partner_id, doc["principal"], "capital_in", f"{doc['name']} anapara girişi", doc["start_date"], extra={"loan_id": doc["_id"]})
+        elif account_id:
+            acc = await _db.bank_accounts.find_one({"_id": account_id})
+            if acc:
+                await assert_manual_allowed(_db, acc["_id"])
+                await _db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": doc["principal"]}})
+                await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "source": "loan", "loan_id": doc["_id"], "date": doc["start_date"], "created_at": _now()})
     return _clean(doc)
+
 
 
 @router.post("/loans/{loan_id}/installments/{no}/pay")
@@ -243,21 +252,38 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any]):
     ins = next((i for i in loan["installments"] if int(i["no"]) == no), None)
     if not ins or ins.get("paid"):
         raise HTTPException(status_code=400, detail="Taksit bulunamadı veya zaten ödendi.")
+    partner_id = req.get("partner_id") or loan.get("partner_id")
     account_id = req.get("account_id") or loan.get("account_id")
-    if not account_id:
-        raise HTTPException(status_code=400, detail="Ödeme yapılacak kasa/banka seçin.")
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
-    if not acc:
-        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    if partner_id and account_id and not req.get("partner_id") and req.get("account_id"):
+        partner_id = None  # explicit account in request wins
+    if req.get("partner_id"):
+        account_id = None
+    if req.get("account_id") and not req.get("partner_id"):
+        partner_id = None
+    if partner_id and account_id:
+        raise HTTPException(status_code=400, detail="Hesap veya ortak seçin, ikisi birden değil.")
+    if not partner_id and not account_id:
+        raise HTTPException(status_code=400, detail="Ödeme yapılacak kasa/banka veya ortak seçin.")
     pay_date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    await assert_manual_allowed(_db, account_id)
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -ins["amount"]}})
-    await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "source": "loan", "loan_id": loan_id, "date": pay_date, "created_at": _now()})
-    await _db.loans.update_one({"_id": loan_id, "installments.no": ins["no"]}, {"$set": {"installments.$.paid": True, "installments.$.paid_date": pay_date, "installments.$.account_name": acc.get("account_name")}})
+    paid_name = None
+    if partner_id:
+        paid_name = await partner_pay.withdraw(_db, loan["company_id"], partner_id, ins["amount"], f"{loan['name']} {no}. taksit", pay_date, extra={"loan_id": loan_id, "installment_no": no})
+        paid_name = f"{paid_name} (Ortak)"
+        account_id = None
+    else:
+        acc = await _db.bank_accounts.find_one({"_id": account_id})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+        await assert_manual_allowed(_db, account_id)
+        await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -ins["amount"]}})
+        await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "source": "loan", "loan_id": loan_id, "date": pay_date, "created_at": _now()})
+        paid_name = acc.get("account_name")
+    await _db.loans.update_one({"_id": loan_id, "installments.no": ins["no"]}, {"$set": {"installments.$.paid": True, "installments.$.paid_date": pay_date, "installments.$.account_name": paid_name, "installments.$.partner_id": partner_id}})
     if ins.get("interest") or ins.get("kkdf_bsmv"):
         cost = round(float(ins.get("interest") or 0) + float(ins.get("kkdf_bsmv") or 0), 2)
-        await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "account_name": acc.get("account_name"), "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
+        await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": paid_name, "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
     return _clean(await _db.loans.find_one({"_id": loan_id}))
+
 
 
 @router.delete("/loans/{loan_id}")

@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 
@@ -126,7 +127,7 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
   );
 };
 
-const ActionModal = ({ kind, row, accounts, contacts, onClose, onDone }) => {
+const ActionModal = ({ kind, row, accounts, contacts, companyId, onClose, onDone }) => {
   useEscape(onClose);
   const [accountId, setAccountId] = useState(accounts[0]?.id || accounts[0]?._id || "");
   const [contactId, setContactId] = useState("");
@@ -138,8 +139,8 @@ const ActionModal = ({ kind, row, accounts, contacts, onClose, onDone }) => {
     setBusy(true);
     try {
       const id = row.id;
-      if (kind === "collect") await axios.post(`${API_URL}/cheques/${id}/collect`, { account_id: accountId });
-      if (kind === "pay") await axios.post(`${API_URL}/cheques/${id}/pay`, { account_id: accountId });
+      if (kind === "collect") await axios.post(`${API_URL}/cheques/${id}/collect`, { ...splitPaymentTarget(accountId) });
+      if (kind === "pay") await axios.post(`${API_URL}/cheques/${id}/pay`, { ...splitPaymentTarget(accountId) });
       if (kind === "endorse") await axios.post(`${API_URL}/cheques/${id}/endorse`, { contact_id: contactId });
       if (kind === "bounce") await axios.post(`${API_URL}/cheques/${id}/bounce`, { reason });
       toast.success("İşlem tamam.");
@@ -161,9 +162,7 @@ const ActionModal = ({ kind, row, accounts, contacts, onClose, onDone }) => {
         {(kind === "collect" || kind === "pay") && (
           <div className="text-xs">
             <label className="block font-semibold mb-1">Hesap</label>
-            <select required value={accountId} onChange={(e) => setAccountId(e.target.value)} className={inputCls} data-testid="cheque-action-account">
-              {accounts.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{a.bank_name} — {a.account_name}</option>)}
-            </select>
+            <PaymentTargetSelect companyId={companyId} accounts={accounts} value={accountId} onChange={setAccountId} testId="cheque-action-account" emptyLabel="Hesap seçin" collectableOnly={kind === "collect"} />
           </div>
         )}
         {kind === "endorse" && (
@@ -219,7 +218,7 @@ export default function ChequesPage() {
     ]);
     setData(c.data);
     setContacts(ct.data || []);
-    setAccounts((acc.data || []).filter((a) => a.type !== "credit_card"));
+    setAccounts((acc.data || []));
   }, [companyId, tab, qLive]);
 
   useEffect(() => { load().catch(() => toast.error("Çek/senet listesi yüklenemedi.")); }, [load]);
@@ -339,7 +338,7 @@ export default function ChequesPage() {
       </div>
       <p className="text-[11px] text-slate-400 flex items-center gap-1"><Landmark className="w-3 h-3" /> Tahsil alınan çekleri kasaya/bankaya yatırır; ödeme verilen çekin bedelini hesaptan düşer. Ciro, çeki başka bir cariye (tedarikçi ödemesi) devreder.</p>
       {modal && <ChequeModal companyId={companyId} contacts={contacts} onClose={() => setModal(false)} onSaved={load} />}
-      {action && <ActionModal kind={action.kind} row={action.row} accounts={accounts} contacts={contacts} onClose={() => setAction(null)} onDone={load} />}
+      {action && <ActionModal kind={action.kind} row={action.row} accounts={accounts} contacts={contacts} companyId={companyId} onClose={() => setAction(null)} onDone={load} />}
     </div>
   );
 }

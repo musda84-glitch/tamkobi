@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 import { toast } from "sonner";
 import { ProductMappingPanel } from "../components/ProductMappingPanel";
 import { ChannelCatalogModal, CHANNEL_FIELD_LABELS } from "../components/ChannelCatalogModal";
@@ -277,10 +278,7 @@ export default function EcommercePage() {
                 </div>)}
               <div className="pt-2 border-t">
                 <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
-                <select value={selectedConfig.settlement_account_id || ""} onChange={(e) => setSelectedConfig({ ...selectedConfig, settlement_account_id: e.target.value || null })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="ecom-settlement-select">
-                  <option value="">Hesap seçilmedi — fatura yalnızca "ödendi" işaretlenir</option>
-                  {accounts.filter((a) => a.type !== "credit_card").map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
-                </select>
+                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id} accounts={accounts.filter((a) => !a.is_integrated)} value={selectedConfig.settlement_account_id || ""} onChange={(v) => setSelectedConfig({ ...selectedConfig, settlement_account_id: v || null })} testId="ecom-settlement-select" emptyLabel="Hesap seçilmedi — fatura yalnızca ödendi işaretlenir" collectableOnly includePartners={false} />
                 <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; kesintiler "Pazaryeri Komisyonu" masrafına yazılır.</p>
               </div>
               <div className="space-y-2 pt-2 border-t">
