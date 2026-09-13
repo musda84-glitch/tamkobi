@@ -76,7 +76,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   }, [companyId, liveAccounts]);
 
   const cashAccounts = liveAccounts.filter((a) => !isCard(a));
-  // Virman: ortaklar dahil değil (hesap listesi); kredi kartları dahil, entegre hesaplar hariç.
+  // Virman: kredi kartları + ortaklar (UI); entegre hesaplar hariç.
   const transferAccounts = liveAccounts.filter((a) => !isIntegrated(a));
   const firstAcc = accId(cashAccounts[0]) || accId(liveAccounts[0]) || "";
 
@@ -97,9 +97,16 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const openVirmanModal = async () => {
     const list = await refreshAccounts();
     const eligible = list.filter((a) => !isIntegrated(a));
+    const activePartners = partners.filter((p) => p.is_active !== false);
+    const first = accId(eligible[0]) || (activePartners[0] ? `partner:${activePartners[0].id}` : "");
+    const second = accId(eligible[1])
+      || (activePartners[1] ? `partner:${activePartners[1].id}` : "")
+      || (activePartners[0] ? `partner:${activePartners[0].id}` : "")
+      || accId(eligible[0])
+      || first;
     setVirmanForm({
-      source_account_id: accId(eligible[0]) || "",
-      target_account_id: accId(eligible[1]) || accId(eligible[0]) || "",
+      source_account_id: first,
+      target_account_id: second !== first ? second : (accId(eligible[0]) || first),
       amount: "",
       description: "Hesaplar arası transfer (Virman)",
     });
@@ -266,22 +273,40 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {modal === "virman" && (
         <Modal title="Hesaplar Arası Virman" onClose={() => setModal(null)} testId="partner-virman-modal">
           <form onSubmit={saveVirman} className="space-y-3 text-xs">
-            <p className="text-[11px] text-slate-500">Kasa, banka ve kredi kartı hesapları arasında para transferi. Ortak hesapları ve entegre hesaplar listelenmez.</p>
+            <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir; entegre hesaplar listelenmez.</p>
             <div>
               <label className="block font-semibold mb-1">Kaynak Hesap (Çıkış)</label>
-              <select className={inputCls} value={virmanForm.source_account_id} onChange={(e) => setVirmanForm({ ...virmanForm, source_account_id: e.target.value })} disabled={accountsLoading} data-testid="partner-virman-source">
-                {accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : transferAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{isCard(a) ? "Kart · " : ""}{accLabel(a)}</option>)}
-              </select>
+              <PaymentTargetSelect
+                companyId={companyId}
+                accounts={liveAccounts}
+                value={virmanForm.source_account_id}
+                onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+                testId="partner-virman-source"
+                includePartners
+                excludeIntegrated
+                disabled={accountsLoading}
+                emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
+                className={inputCls}
+              />
             </div>
             <div>
               <label className="block font-semibold mb-1">Hedef Hesap (Giriş)</label>
-              <select className={inputCls} value={virmanForm.target_account_id} onChange={(e) => setVirmanForm({ ...virmanForm, target_account_id: e.target.value })} disabled={accountsLoading} data-testid="partner-virman-target">
-                {accountsLoading ? <option value="">Hesaplar yükleniyor…</option> : transferAccounts.map((a) => <option key={accId(a)} value={accId(a)}>{isCard(a) ? "Kart · " : ""}{accLabel(a)}</option>)}
-              </select>
+              <PaymentTargetSelect
+                companyId={companyId}
+                accounts={liveAccounts}
+                value={virmanForm.target_account_id}
+                onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+                testId="partner-virman-target"
+                includePartners
+                excludeIntegrated
+                disabled={accountsLoading}
+                emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
+                className={inputCls}
+              />
             </div>
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })} required data-testid="partner-virman-amount" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={virmanForm.description} onChange={(e) => setVirmanForm({ ...virmanForm, description: e.target.value })} data-testid="partner-virman-desc" /></div>
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || transferAccounts.length < 2} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || (transferAccounts.length + partners.filter((p) => p.is_active !== false).length) < 2 || virmanForm.source_account_id === virmanForm.target_account_id} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
           </form>
         </Modal>
       )}

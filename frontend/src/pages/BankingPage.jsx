@@ -10,6 +10,7 @@ import { CardStatementImport } from "../components/CardStatementImport";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
+import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 
 import {
   Landmark,
@@ -521,36 +522,31 @@ export default function BankingPage() {
               </button>
             </div>
             <form onSubmit={handleExecuteVirman} className="space-y-3 text-xs">
+              <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir.</p>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Kaynak Hesap (Çıkış)</label>
-                <select
+                <PaymentTargetSelect
+                  companyId={companyId}
+                  accounts={accounts}
                   value={virmanForm.source_account_id}
-                  onChange={(e) => setVirmanForm({ ...virmanForm, source_account_id: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  data-testid="virman-source-select"
-                >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
-                    <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.type === "credit_card" ? "Kart · " : ""}{a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+                  testId="virman-source-select"
+                  includePartners
+                  excludeIntegrated
+                />
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Hedef Hesap (Giriş)</label>
-                <select
+                <PaymentTargetSelect
+                  companyId={companyId}
+                  accounts={accounts}
                   value={virmanForm.target_account_id}
-                  onChange={(e) => setVirmanForm({ ...virmanForm, target_account_id: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
-                  data-testid="virman-target-select"
-                >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
-                    <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.type === "credit_card" ? "Kart · " : ""}{a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+                  testId="virman-target-select"
+                  includePartners
+                  excludeIntegrated
+                />
               </div>
 
               <div>
