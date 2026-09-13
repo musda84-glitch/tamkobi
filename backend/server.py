@@ -897,13 +897,22 @@ def _calc_items(items: List[Dict[str, Any]]):
     return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
 
 @api_router.get("/quotes")
-async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, status: Optional[str] = None):
+async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
+    """summary=1: liste için hafif payload (kalemler hariç) — Teklif/Proje/Keşif sayfası."""
     q = {"company_id": company_id}
     if contact_id:
         q["contact_id"] = contact_id
     if status:
         q["status"] = status
-    return clean_docs(await db.quotes.find(q).sort("created_at", -1).to_list(500))
+    proj = {"items": 0} if summary else None
+    rows = await db.quotes.find(q, proj).sort("created_at", -1).to_list(500)
+    if summary:
+        for d in rows:
+            imgs = d.get("images") or []
+            if len(imgs) > 6:
+                d["images"] = imgs[:6]
+                d["image_count"] = len(imgs)
+    return clean_docs(rows)
 
 @api_router.post("/quotes")
 async def create_quote(req: Dict[str, Any]):
@@ -1131,13 +1140,32 @@ def _group_by_project(rows):
 
 
 @api_router.get("/projects")
-async def list_projects(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_projects(company_id: Optional[str] = "comp_nexus_main_01", light: bool = False):
+    """light=1: kart listesi için — masraf/fatura tarama yok, sadece teklif özetleri."""
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
     pids = [p["_id"] for p in projects]
-    quotes = await db.quotes.find({"project_id": {"$in": pids}}).to_list(2000) if pids else []
+    quote_proj = {"grand_total": 1, "invoice_id": 1, "project_id": 1} if light else None
+    quotes = await db.quotes.find({"project_id": {"$in": pids}}, quote_proj).to_list(2000) if pids else []
+    qmap = _group_by_project(quotes)
+    if light:
+        out = []
+        for p in projects:
+            pid = p["_id"]
+            qs = qmap.get(pid) or []
+            p["quote_count"] = len(qs)
+            p["quoted_total"] = round(sum(float(q.get("grand_total") or 0) for q in qs), 2)
+            p["invoiced_total"] = round(sum(float(q.get("grand_total") or 0) for q in qs if q.get("invoice_id")), 2)
+            p["expense_total"] = 0
+            p["purchase_invoice_total"] = 0
+            p["cost_total"] = 0
+            p["can_invoice"] = p.get("status") == "completed" and not p.get("invoice_id") and (
+                any(not q.get("invoice_id") for q in qs) or (not qs and float(p.get("budget") or 0) > 0)
+            )
+            out.append(clean_doc(p))
+        return out
     expenses_rows = await db.expenses.find({"project_id": {"$in": pids}}).to_list(2000) if pids else []
     invoices_rows = await db.invoices.find({"project_id": {"$in": pids}, "invoice_type": {"$ne": "dispatch"}}).to_list(2000) if pids else []
-    qmap, emap, imap = _group_by_project(quotes), _group_by_project(expenses_rows), _group_by_project(invoices_rows)
+    emap, imap = _group_by_project(expenses_rows), _group_by_project(invoices_rows)
     out = []
     for p in projects:
         pid = p["_id"]
@@ -1742,11 +1770,13 @@ async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
 
 # ----------------- CARİLER (MÜŞTERİ & TEDARİKÇİ) -----------------
 @api_router.get("/contacts")
-async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None):
+async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, lite: bool = False):
+    """lite=1: form/select için — yalnızca kimlik ve iletişim alanları."""
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    contacts = await db.contacts.find(query).to_list(10000)
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1} if lite else None
+    contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     return clean_docs(contacts)
 
 @api_router.post("/contacts")
@@ -2599,7 +2629,8 @@ def _with_purchase_costs(product: dict, hist: list) -> dict:
 
 
 @api_router.get("/products")
-async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False):
+async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False, lite: bool = False):
+    """lite=1: teklif kalemi seçici — maliyet geçmişi hesaplanmaz."""
     query = {"company_id": company_id}
     if b2b_only:
         query["show_in_b2b"] = {"$ne": False}
@@ -2610,7 +2641,10 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
         query["category"] = category
     if type and type != "all":
         query["type"] = type
-    products = await db.products.find(query).to_list(10000)
+    proj = {"name": 1, "sku": 1, "sale_price": 1, "vat_rate": 1, "unit": 1, "image_url": 1, "company_id": 1, "type": 1, "is_active": 1} if lite else None
+    products = await db.products.find(query, proj).to_list(5000 if lite else 10000)
+    if lite:
+        return clean_docs(products)
     cost_map = await _purchase_costs_by_product(company_id) if products else {}
     return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
 
