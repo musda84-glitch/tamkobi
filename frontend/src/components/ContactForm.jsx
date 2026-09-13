@@ -1,5 +1,6 @@
 
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote } from "lucide-react";
@@ -30,12 +31,14 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
       onSaved?.(r.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" onClick={onClose}>
+  // Portal to body: header uses sticky + backdrop-blur, which traps position:fixed
+  // and clips the modal when opened from HeaderQuickActions ("Yeni Cari").
+  return createPortal(
+    <div className="fixed inset-0 z-[90] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" onClick={onClose} data-testid="contact-form-overlay">
       <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 max-h-[calc(100vh-2rem)] flex flex-col my-4 sm:my-6" data-testid="contact-form">
-        <div className="flex items-center justify-between px-6 py-4 border-b"><div><h2 className="text-base font-bold text-slate-900">{contact?.id ? "Cari Bilgilerini Güncelle" : "Gelişmiş Cari Kartı Oluştur"}</h2><p className="text-[11px] text-slate-500">{contact?.name || "Cariye tanımlanabilen tüm özellikler tek ekranda"}</p></div><button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="cf-close"><X className="w-5 h-5" /></button></div>
-        <div className="flex gap-1 px-6 pt-3 overflow-x-auto">{TABS.map(([k, l, Icon]) => <button type="button" key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`cf-tab-${k}`}><Icon className="w-3.5 h-3.5" />{l}</button>)}</div>
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0"><div><h2 className="text-base font-bold text-slate-900">{contact?.id ? "Cari Bilgilerini Güncelle" : "Gelişmiş Cari Kartı Oluştur"}</h2><p className="text-[11px] text-slate-500">{contact?.name || "Cariye tanımlanabilen tüm özellikler tek ekranda"}</p></div><button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="cf-close"><X className="w-5 h-5" /></button></div>
+        <div className="flex gap-1 px-6 pt-3 overflow-x-auto shrink-0">{TABS.map(([k, l, Icon]) => <button type="button" key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`cf-tab-${k}`}><Icon className="w-3.5 h-3.5" />{l}</button>)}</div>
         <div className="p-6 overflow-y-auto text-xs space-y-3 flex-1 min-h-0">
           {tab === "general" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {S("type", "Cari Türü", [["customer", "Müşteri"], ["supplier", "Tedarikçi"], ["both", "Müşteri & Tedarikçi"]])}{F("category", "Kategori / Grup", "text", { ph: "Genel Bayi, Toptan, Perakende…" })}
@@ -66,9 +69,10 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             <div><label className="block font-semibold text-slate-700 mb-1">Notlar</label><textarea rows={5} value={f.notes || ""} onChange={set("notes")} className={inp} data-testid="cf-notes" /></div>
           </div>}
         </div>
-        <div className="flex justify-end gap-2 px-6 py-4 border-t"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-xl text-slate-600">İptal</button><button type="submit" disabled={busy} className="px-5 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="cf-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {contact?.id ? "Güncelle" : "Kaydet"}</button></div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t shrink-0"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-xl text-slate-600">İptal</button><button type="submit" disabled={busy} className="px-5 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="cf-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {contact?.id ? "Güncelle" : "Kaydet"}</button></div>
       </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
