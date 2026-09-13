@@ -64,4 +64,4 @@ export async function readScaleOnce({ baudRate } = {}) {
 }
 
 /** Kg birimli ürün mü? */
-export const isWeighableUnit = (unit) => /^(kg|kilogram|gr|g|gram|lt|l|litre)$/i.test(String(unit || "").trim());
+export const isWeighableUnit = (unit) => /^(kg|kilo|kilogram|gr|g|gram|lt|l|litre|liter)$/i.test(String(unit || "").trim());

@@ -21,7 +21,8 @@ import {
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { CameraScanner } from "../components/CameraScanner";
-import { isWeighableUnit, readScaleOnce, scaleSupported } from "../utils/scaleBridge";
+import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
+import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
 
@@ -96,6 +97,7 @@ export default function QuickSalePage() {
   const [lastReceipt, setLastReceipt] = useState(null);
   const [showScanner, setShowScanner] = useState(false);
   const [manualKg, setManualKg] = useState("");
+  const [scalePrompt, setScalePrompt] = useState(null);
   const [lotPicker, setLotPicker] = useState(null);
   const [lotOptions, setLotOptions] = useState([]);
   const [tabletMode, setTabletMode] = useState(() => localStorage.getItem("pos_tablet") === "1");
@@ -222,22 +224,12 @@ export default function QuickSalePage() {
     let qty = qtyOverride;
     if (qty == null) {
       if (isWeighableUnit(product.unit)) {
-        const kg = Number(manualKg);
-        if (kg > 0) {
-          qty = kg;
-          setManualKg("");
-        } else {
-          try {
-            qty = await readScaleOnce({});
-            toast.success(`Tartı: ${qty} ${product.unit}`);
-          } catch (err) {
-            toast.error(err?.message || "Tartı okunamadı — kg girin");
-            return;
-          }
-        }
-      } else {
-        qty = 1;
+        const prefill = Number(String(manualKg).replace(",", "."));
+        setScalePrompt({ product, initialKg: prefill > 0 ? String(prefill) : "" });
+        if (prefill > 0) setManualKg("");
+        return;
       }
+      qty = 1;
     }
 
     if (product.track_lot || product.track_serial || product.track_expiry) {
@@ -260,6 +252,13 @@ export default function QuickSalePage() {
       }
       return [...prev, makeLine(product, qty)];
     });
+  };
+
+  const confirmScalePrompt = async (qty) => {
+    const product = scalePrompt?.product;
+    setScalePrompt(null);
+    if (!product) return;
+    await addProduct(product, qty);
   };
 
   const confirmLot = (lot) => {
@@ -554,6 +553,15 @@ export default function QuickSalePage() {
             await addProduct(product);
           }}
           onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {scalePrompt && (
+        <ScalePromptModal
+          product={scalePrompt.product}
+          initialKg={scalePrompt.initialKg}
+          onCancel={() => setScalePrompt(null)}
+          onConfirm={confirmScalePrompt}
         />
       )}
 
