@@ -96,8 +96,9 @@ export const InstallmentPlanModal = ({ doc, kind = "invoice", accounts = [], com
   };
   const total = (doc.grand_total || 0) - (doc.paid_amount || 0);
   return (
-    <div className="fixed inset-0 z-[75] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="installment-plan-modal">
+    <div className="fixed inset-0 z-[75] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" onClick={onClose}>
+      <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
+      <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[calc(100vh-2rem)] overflow-y-auto my-4" onClick={(e) => e.stopPropagation()} data-testid="installment-plan-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <div className="flex items-center gap-2"><CalendarClock className="w-5 h-5 text-emerald-600" /><div><h3 className="text-base font-bold text-slate-900">{isQuote ? "Teklif Ödeme Planı (Taksit)" : isBalance ? "Açık Bakiyeyi Taksitlendir" : "Taksitlendirme"}</h3><p className="text-xs text-slate-500">{doc.invoice_number || doc.quote_number} • {doc.contact_name} • {fmt(doc.grand_total)} ₺</p></div></div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="installment-close-btn"><X className="w-5 h-5" /></button>
@@ -114,6 +115,7 @@ export const InstallmentPlanModal = ({ doc, kind = "invoice", accounts = [], com
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   );
