@@ -196,6 +196,12 @@ COLLECTIONS = {
         "keys": ("_id", "product_id", "change", "new_stock", "reason", "variant_id"),
         "refs": ("products._id",),
     },
+    "stock_lots": {
+        "scope": SCOPE_TENANT,
+        "description": "Ürün lot/parti, seri no, üretim ve son kullanma (SKT) kayıtları.",
+        "keys": ("_id", "company_id", "product_id", "lot_number", "serial_number", "tracking_type", "production_date", "expiry_date", "quantity", "is_active"),
+        "refs": ("products._id", "warehouses._id"),
+    },
     "stock_counts": {
         "scope": SCOPE_TENANT,
         "description": "Sayım fişleri (kiosk dahil).",

@@ -10,7 +10,7 @@ const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
 
 export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
-  const [f, setF] = useState({ name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit, vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price, min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type, show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false, purchase_vat_rate: product.purchase_vat_rate ?? 20, price_includes_vat: product.price_includes_vat === true, vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [] });
+  const [f, setF] = useState({ name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit, vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price, min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type, show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false, track_lot: !!product.track_lot, track_serial: !!product.track_serial, track_expiry: !!product.track_expiry, purchase_vat_rate: product.purchase_vat_rate ?? 20, price_includes_vat: product.price_includes_vat === true, vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [] });
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
@@ -57,7 +57,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
       </F>
       {!product.has_variants && <F label="Mevcut Stok (düzeltme)"><input type="number" step="0.01" value={f.stock_quantity} onChange={(e) => set("stock_quantity", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-stock-input" /></F>}
       <div className="grid grid-cols-3 gap-2">
-        {[["show_in_b2b", "B2B'de göster"], ["track_stock", "Stok takibi"], ["is_active", "Aktif"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer"><input type="checkbox" checked={f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`edit-${k}-checkbox`} /><span className="font-semibold">{l}</span></label>)}
+        {[["show_in_b2b", "B2B'de göster"], ["track_stock", "Stok takibi"], ["is_active", "Aktif"], ["track_lot", "Lot / parti"], ["track_serial", "Seri no"], ["track_expiry", "SKT / üretim"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer"><input type="checkbox" checked={f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`edit-${k}-checkbox`} /><span className="font-semibold">{l}</span></label>)}
       </div>
       <div className="flex justify-end pt-2 border-t"><button type="submit" disabled={busy} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold disabled:opacity-60" data-testid="save-product-edit-btn">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>

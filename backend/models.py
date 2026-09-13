@@ -142,10 +142,29 @@ class Product(BaseDocument):
     height: Optional[float] = None
     show_in_b2b: bool = True
     track_stock: bool = True
+    track_lot: bool = False          # Parti / lot takibi
+    track_serial: bool = False       # Seri no takibi (adet bazlı)
+    track_expiry: bool = False       # SKT / üretim tarihi zorunlu
     purchase_vat_rate: float = 20.0
     price_includes_vat: bool = False
     vat_exemption_code: Optional[str] = None
     tags: List[str] = []
+    is_active: bool = True
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+# Stok lot / seri / SKT
+class StockLot(BaseDocument):
+    company_id: str
+    product_id: str
+    product_name: str = ""
+    lot_number: str = ""                 # parti no (lot) veya boş
+    serial_number: Optional[str] = None  # seri no (tekil)
+    tracking_type: str = "lot"           # lot | serial
+    production_date: Optional[str] = None  # YYYY-MM-DD
+    expiry_date: Optional[str] = None      # YYYY-MM-DD SKT
+    quantity: float = 0.0
+    warehouse_id: Optional[str] = None
+    notes: Optional[str] = None
     is_active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -193,6 +212,11 @@ class InvoiceItem(BaseModel):
     net_weight: Optional[float] = None
     landed_unit_try: Optional[float] = None
     note: Optional[str] = None
+    lot_id: Optional[str] = None
+    lot_number: Optional[str] = None
+    serial_number: Optional[str] = None
+    production_date: Optional[str] = None
+    expiry_date: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str

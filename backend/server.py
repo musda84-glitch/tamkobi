@@ -24,7 +24,7 @@ import partner_pay
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
-    Warehouse, WarehouseTransfer, Invoice, InvoiceItem, BankAccount,
+    Warehouse, WarehouseTransfer, StockLot, Invoice, InvoiceItem, BankAccount,
     BankTransaction, IntegrationConfig, CargoConfig, CargoShipment,
     Order, OrderItem, Recipe, ProductionOrder, Employee, Payroll, ChatMessage,
     Partner, PartnerTransaction, BankConnection,
@@ -2848,6 +2848,294 @@ async def get_product_by_barcode(barcode: str, company_id: Optional[str] = "comp
     result["matched_variant"] = matched_variant
     return result
 
+# ----------------- STOK LOT / SERİ / SKT -----------------
+@api_router.get("/stock-lots")
+async def list_stock_lots(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    product_id: Optional[str] = None,
+    include_empty: bool = False,
+    expiring_days: Optional[int] = None,
+):
+    q: Dict[str, Any] = {"company_id": company_id, "is_active": {"$ne": False}}
+    if product_id:
+        q["product_id"] = product_id
+    if not include_empty:
+        q["quantity"] = {"$gt": 0}
+    lots = await db.stock_lots.find(q).sort("expiry_date", 1).to_list(2000)
+    if expiring_days is not None:
+        today = datetime.now(timezone.utc).date()
+        limit = today + timedelta(days=int(expiring_days))
+        filtered = []
+        for lot in lots:
+            exp = lot.get("expiry_date")
+            if not exp:
+                continue
+            try:
+                d = datetime.strptime(str(exp)[:10], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if d <= limit:
+                filtered.append(lot)
+        lots = filtered
+    return clean_docs(lots)
+
+
+@api_router.post("/stock-lots")
+async def create_stock_lot(req: Dict[str, Any]):
+    product = await db.products.find_one({"_id": req.get("product_id")})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    tracking = req.get("tracking_type") or ("serial" if product.get("track_serial") else "lot")
+    qty = float(req.get("quantity") or (1 if tracking == "serial" else 0))
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalıdır.")
+    if product.get("track_expiry") and not req.get("expiry_date"):
+        raise HTTPException(status_code=400, detail="Bu ürün için son kullanma tarihi (SKT) zorunlu.")
+    if tracking == "serial" and not (req.get("serial_number") or "").strip():
+        raise HTTPException(status_code=400, detail="Seri numarası zorunlu.")
+    if tracking == "lot" and not (req.get("lot_number") or "").strip():
+        raise HTTPException(status_code=400, detail="Lot / parti numarası zorunlu.")
+    lot = StockLot(
+        company_id=product["company_id"],
+        product_id=product["_id"],
+        product_name=product.get("name") or "",
+        lot_number=(req.get("lot_number") or "").strip(),
+        serial_number=(req.get("serial_number") or None),
+        tracking_type=tracking,
+        production_date=req.get("production_date") or None,
+        expiry_date=req.get("expiry_date") or None,
+        quantity=qty,
+        warehouse_id=req.get("warehouse_id") or product.get("warehouse_id"),
+        notes=req.get("notes"),
+    )
+    doc = lot.to_mongo()
+    await db.stock_lots.insert_one(doc)
+    # Lot girişi ürün toplam stoğunu da artırır (seri/lot kartı üzerinden)
+    await db.products.update_one({"_id": product["_id"]}, {"$inc": {"stock_quantity": qty}})
+    await db.stock_movements.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": product["company_id"],
+        "product_id": product["_id"],
+        "product_name": product.get("name"),
+        "change": qty,
+        "reason": f"Lot/seri girişi: {doc.get('lot_number') or doc.get('serial_number')}",
+        "lot_id": doc["_id"],
+        "date": datetime.now(timezone.utc).isoformat(),
+    })
+    return clean_doc(doc)
+
+
+@api_router.put("/stock-lots/{lot_id}")
+async def update_stock_lot(lot_id: str, req: Dict[str, Any]):
+    lot = await db.stock_lots.find_one({"_id": lot_id})
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot bulunamadı.")
+    allowed = {k: v for k, v in req.items() if k in {
+        "lot_number", "serial_number", "production_date", "expiry_date", "quantity",
+        "warehouse_id", "notes", "is_active",
+    }}
+    if "quantity" in allowed:
+        new_qty = float(allowed["quantity"] or 0)
+        delta = new_qty - float(lot.get("quantity") or 0)
+        allowed["quantity"] = new_qty
+        if delta:
+            await db.products.update_one({"_id": lot["product_id"]}, {"$inc": {"stock_quantity": delta}})
+    allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.stock_lots.update_one({"_id": lot_id}, {"$set": allowed})
+    return clean_doc(await db.stock_lots.find_one({"_id": lot_id}))
+
+
+@api_router.delete("/stock-lots/{lot_id}")
+async def delete_stock_lot(lot_id: str):
+    lot = await db.stock_lots.find_one({"_id": lot_id})
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot bulunamadı.")
+    qty = float(lot.get("quantity") or 0)
+    if qty > 0:
+        await db.products.update_one({"_id": lot["product_id"]}, {"$inc": {"stock_quantity": -qty}})
+    await db.stock_lots.delete_one({"_id": lot_id})
+    return {"status": "success", "message": "Lot silindi."}
+
+
+@api_router.get("/products/{product_id}/lots")
+async def product_lots(product_id: str, include_empty: bool = False):
+    product = await db.products.find_one({"_id": product_id})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    return await list_stock_lots(company_id=product["company_id"], product_id=product_id, include_empty=include_empty)
+
+
+# ----------------- HIZLI SATIŞ (POS) -----------------
+@api_router.post("/pos/checkout")
+async def pos_checkout(req: Dict[str, Any], request: Request):
+    """Perakende hızlı satış: çok satırlı sepet → onaylı e-arşiv + kasa tahsilatı."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    items_in = req.get("items") or []
+    if not items_in:
+        raise HTTPException(status_code=400, detail="Sepet boş.")
+    payment_method = (req.get("payment_method") or "cash").lower()
+    sector = req.get("sector") or "market"
+
+    # Perakende cari
+    contact = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": "11111111111", "name": {"$regex": "perakende", "$options": "i"}})
+    if not contact:
+        contact = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": "^Perakende", "$options": "i"}})
+    if not contact:
+        contact = {
+            "_id": str(uuid.uuid4()), "company_id": company_id, "name": "Perakende Müşteri",
+            "type": "customer", "tax_number_or_id": "11111111111", "balance": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.contacts.insert_one(contact)
+
+    lines = []
+    for raw in items_in:
+        pid = raw.get("product_id")
+        product = await db.products.find_one({"_id": pid}) if pid else None
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Ürün bulunamadı: {raw.get('name') or pid}")
+        qty = float(raw.get("quantity") or 0)
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail=f"{product.get('name')}: miktar geçersiz.")
+        if product.get("track_lot") or product.get("track_serial") or product.get("track_expiry"):
+            lot_id = raw.get("lot_id")
+            if not lot_id:
+                raise HTTPException(status_code=400, detail=f"{product.get('name')}: lot/seri seçimi zorunlu.")
+            lot = await db.stock_lots.find_one({"_id": lot_id, "product_id": pid})
+            if not lot or float(lot.get("quantity") or 0) < qty:
+                raise HTTPException(status_code=400, detail=f"{product.get('name')}: lot stoğu yetersiz.")
+        unit_price = float(raw.get("unit_price") if raw.get("unit_price") is not None else product.get("sale_price") or 0)
+        vat_rate = int(raw.get("vat_rate") if raw.get("vat_rate") is not None else product.get("vat_rate") or 20)
+        excl = round(unit_price * qty, 4)
+        if product.get("price_includes_vat"):
+            excl = round(unit_price * qty / (1 + vat_rate / 100), 4)
+            unit_price = round(unit_price / (1 + vat_rate / 100), 4)
+        vat_amount = round(excl * vat_rate / 100, 4)
+        total_incl = round(excl + vat_amount, 2)
+        line = {
+            "product_id": pid,
+            "name": product.get("name"),
+            "product_name": product.get("name"),
+            "sku": product.get("sku") or "",
+            "barcode": product.get("barcode") or "",
+            "quantity": qty,
+            "unit": raw.get("unit") or product.get("unit") or "Adet",
+            "unit_price": unit_price,
+            "vat_rate": vat_rate,
+            "discount_rate": 0,
+            "total": excl,
+            "total_incl": total_incl,
+            "vat_amount": vat_amount,
+            "is_service": product.get("type") == "service",
+            "lot_id": raw.get("lot_id"),
+            "lot_number": raw.get("lot_number"),
+            "serial_number": raw.get("serial_number"),
+            "production_date": raw.get("production_date"),
+            "expiry_date": raw.get("expiry_date"),
+            "weighed": bool(raw.get("weighed")),
+        }
+        lines.append(line)
+
+    subtotal = round(sum(l["total"] for l in lines), 2)
+    vat_total = round(sum(l["vat_amount"] for l in lines), 2)
+    grand = round(sum(l["total_incl"] for l in lines), 2)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    inv_count = await db.invoices.count_documents({"company_id": company_id})
+    invoice = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "invoice_type": "sales",
+        "e_type": "e_archive",
+        "invoice_number": f"POS{datetime.now(timezone.utc).strftime('%Y%m%d')}{str(inv_count + 1).zfill(5)}",
+        "contact_id": contact["_id"],
+        "contact_name": contact.get("name"),
+        "contact_tax_id": contact.get("tax_number_or_id") or "",
+        "issue_date": today,
+        "due_date": today,
+        "currency": "TRY",
+        "fx_rate": 1,
+        "price_mode": "excl",
+        "items": lines,
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": 0,
+        "grand_total": grand,
+        "status": "approved",
+        "gib_status": "Onaylandı",
+        "payment_status": "paid",
+        "paid_amount": grand,
+        "source_channel": "pos_quick",
+        "pos_sector": sector,
+        "payment_method": payment_method,
+        "notes": f"Hızlı satış ({sector})",
+        "effects_applied": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await _apply_invoice_effects(invoice)
+    await db.invoices.insert_one(invoice)
+
+    # Kasa tahsilatı
+    accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(200)
+    cash = next((a for a in accounts if str(a.get("type") or "").lower() in ("cash", "cash_box", "kasa")), None)
+    cash = cash or next((a for a in accounts if re.search(r"kasa|nakit|cash", f"{a.get('account_name','')}{a.get('bank_name','')}", re.I)), None)
+    cash = cash or (accounts[0] if accounts else None)
+    if cash and payment_method in ("cash", "card", "mixed"):
+        try:
+            await bank_guard.assert_manual_allowed(db, cash["_id"])
+            await db.bank_accounts.update_one({"_id": cash["_id"]}, {"$inc": {"current_balance": grand}})
+            await db.bank_transactions.insert_one({
+                "_id": str(uuid.uuid4()),
+                "company_id": company_id,
+                "account_id": cash["_id"],
+                "account_name": cash.get("account_name") or cash.get("bank_name"),
+                "type": "inflow",
+                "category": "POS Tahsilat",
+                "amount": grand,
+                "currency": "TRY",
+                "description": f"Hızlı satış {invoice['invoice_number']} ({payment_method})",
+                "date": today,
+                "invoice_id": invoice["_id"],
+                "source": "pos_quick",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except HTTPException:
+            pass
+
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    return {
+        "status": "success",
+        "invoice": clean_doc(invoice),
+        "receipt": {
+            "invoice_number": invoice["invoice_number"],
+            "company_name": company.get("name") or "",
+            "company_address": company.get("address") or "",
+            "company_tax": company.get("tax_number") or "",
+            "date": today,
+            "time": datetime.now(timezone.utc).strftime("%H:%M"),
+            "sector": sector,
+            "payment_method": payment_method,
+            "items": [
+                {
+                    "name": l["name"],
+                    "quantity": l["quantity"],
+                    "unit": l["unit"],
+                    "unit_price": l["unit_price"],
+                    "total_incl": l["total_incl"],
+                    "lot_number": l.get("lot_number"),
+                    "serial_number": l.get("serial_number"),
+                    "expiry_date": l.get("expiry_date"),
+                }
+                for l in lines
+            ],
+            "subtotal": subtotal,
+            "vat_total": vat_total,
+            "grand_total": grand,
+        },
+        "message": f"Satış tamamlandı: {grand:,.2f} ₺",
+    }
+
+
 @api_router.get("/products/{product_id}/purchase-costs")
 async def product_purchase_costs(product_id: str, company_id: Optional[str] = None):
     product = await db.products.find_one({"_id": product_id})
@@ -3240,6 +3528,29 @@ def _incoming_purchase_response(inv: dict) -> str:
     return "pending"
 
 
+async def _apply_lot_delta(item: dict, sign: float):
+    """sign=-1 satış düşümü, sign=+1 iade/geri alma. Seri lotlarda miktar 0/1."""
+    lot_id = item.get("lot_id")
+    qty = float(item.get("quantity") or 0)
+    if not lot_id or qty <= 0:
+        return
+    lot = await db.stock_lots.find_one({"_id": lot_id})
+    if not lot:
+        return
+    delta = sign * qty
+    if lot.get("tracking_type") == "serial":
+        new_qty = 1.0 if sign > 0 else 0.0
+        await db.stock_lots.update_one(
+            {"_id": lot_id},
+            {"$set": {"quantity": new_qty, "is_active": new_qty > 0, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    else:
+        await db.stock_lots.update_one({"_id": lot_id}, {"$inc": {"quantity": delta}})
+        refreshed = await db.stock_lots.find_one({"_id": lot_id})
+        if refreshed and float(refreshed.get("quantity") or 0) <= 0:
+            await db.stock_lots.update_one({"_id": lot_id}, {"$set": {"is_active": False}})
+
+
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. Taslaklar için çağrılmaz."""
     if inv.get("contact_id"):
@@ -3250,6 +3561,7 @@ async def _apply_invoice_effects(inv: dict):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+            await _apply_lot_delta(item, -1.0)
 
 
 async def _reverse_invoice_effects(inv: dict):
@@ -3262,6 +3574,7 @@ async def _reverse_invoice_effects(inv: dict):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+            await _apply_lot_delta(item, +1.0)
     elif inv.get("invoice_type") == "purchase" and (inv.get("source") == "edoc_inbox" or inv.get("edoc_id")):
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)

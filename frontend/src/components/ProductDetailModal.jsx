@@ -1,8 +1,9 @@
 
 import React, { useState } from "react";
-import { X, Package, Images, Layers, Pencil, Printer, Factory } from "lucide-react";
+import { X, Package, Images, Layers, Pencil, Printer, Factory, Tags } from "lucide-react";
 import { ProductionOrderModal } from "./ProductionOrderModal";
 import { ProductEditForm } from "./ProductEditForm";
+import LotManager from "./LotManager";
 import { ProductImageGallery } from "./ProductImageGallery";
 import { VariantManager } from "./VariantManager";
 import { BarcodeLabelPrint } from "./BarcodeLabelPrint";
@@ -11,6 +12,7 @@ import { useAuth } from "../context/AuthContext";
 
 const TABS = [
   { key: "general", label: "Genel & Barkod", icon: Pencil },
+  { key: "lots", label: "Lot / Seri / SKT", icon: Tags },
   { key: "images", label: "Görseller", icon: Images },
   { key: "variants", label: "Varyantlar", icon: Layers }
 ];
@@ -60,6 +62,7 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
 
         <div className="p-6 overflow-y-auto">
           {tab === "general" && <ProductEditForm key={product.id} product={product} onUpdated={onUpdated} onSaved={onClose} />}
+          {tab === "lots" && <LotManager product={product} companyId={activeCompany?.id || activeCompany?._id} onChanged={() => onUpdated?.(product)} />}
           {tab === "images" && <ProductImageGallery product={product} onUpdated={onUpdated} />}
           {tab === "variants" && <VariantManager key={product.id} product={product} onUpdated={onUpdated} />}
         </div>

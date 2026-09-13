@@ -36,6 +36,7 @@ const PATH_GROUP = {
   "/quotes": "satis",
   "/surveys": "satis",
   "/orders": "satis",
+  "/hizli-satis": "satis",
   "/b2b-yonetim": "satis",
   "/saha": "satis",
   "/stock": "stok",

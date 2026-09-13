@@ -63,7 +63,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const ICONS = {
     "/": LayoutDashboard, "/panel": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt,
-    "/loans": Landmark, "/cheques": ScrollText, "/contacts": Users, "/banking": Landmark, "/stock": Package,
+    "/loans": Landmark, "/cheques": ScrollText, "/contacts": Users, "/banking": Landmark, "/stock": Package, "/hizli-satis": ShoppingCart,
     "/sayim": ClipboardList, "/quotes": FileSignature, "/projects": Briefcase, "/surveys": Ruler,
     "/ecommerce": ShoppingCart, "/cargo": Truck, "/orders": Boxes, "/saha": Smartphone, "/sevk": ScanLine,
     "/warehouses": Building2, "/production": Factory, "/personnel": UserCheck, "/mesai": CalendarClock,
@@ -193,7 +193,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>
         )}
-        <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/sevk", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
+        <main className={`flex-1 p-4 sm:p-6 lg:p-8 w-full mx-auto ${["/orders", "/stock", "/hizli-satis", "/sevk", "/saha"].some((p) => location.pathname.startsWith(p)) ? "max-w-[1680px]" : "max-w-7xl"}`}>
           {loading ? null : denied ? (
             <div className="bg-white border rounded-2xl p-10 text-center text-slate-600" data-testid="access-denied">
               <div className="text-lg font-bold text-slate-900 mb-1">Bu modüle erişim yetkiniz yok</div>
