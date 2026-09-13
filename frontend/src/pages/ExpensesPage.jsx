@@ -9,6 +9,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { ExportButtons } from "../components/ExportButtons";
 import { BudgetPanel } from "../components/BudgetPanel";
 import { FxPicker, fmtMoney } from "../components/FxPicker";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -51,7 +52,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const body = { ...f, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), account_id: f.account_id || null, contact_id: f.contact_id || null, employee_id: f.employee_id || null };
+      const { account_id: _acc, ...rest } = f; const body = { ...rest, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), contact_id: f.contact_id || null, employee_id: f.employee_id || null, ...splitPaymentTarget(f.account_id) };
       if (isEdit) await axios.put(`${API_URL}/expenses/${f.id}`, body); else await axios.post(`${API_URL}/expenses`, body);
       toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); onSaved(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -71,11 +72,17 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
           <div className="flex items-end"><label className="flex items-center gap-2 cursor-pointer bg-slate-50 border rounded-lg p-2 w-full"><input type="checkbox" checked={f.vat_included} onChange={(e) => setF({ ...f, vat_included: e.target.checked })} data-testid="exp-vat-included" /> Tutar KDV dahil</label></div>
           <div className="col-span-2 md:col-span-3 bg-slate-50 rounded-xl p-3 flex justify-between text-slate-600"><span>Net: <b>{fmtMoney(calc.net, f.currency || "TRY")}</b></span><span>KDV: <b data-testid="exp-vat-amount">{fmtMoney(calc.vat, f.currency || "TRY")}</b></span><span className="text-slate-900">Toplam: <b className="text-rose-600" data-testid="exp-total">{fmtMoney(calc.total, f.currency || "TRY")}</b></span></div>
           {(f.currency || "TRY") !== "TRY" && Number(f.fx_rate) > 0 && <div className="col-span-2 md:col-span-3 text-[11px] text-slate-500" data-testid="exp-local-total">TL karşılığı: <b>{fmtMoney(calc.total * Number(f.fx_rate), "TRY")}</b> (kur {Number(f.fx_rate).toLocaleString("tr-TR")})</div>}
-          <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Ödeme (Kasa / Banka) {isEdit && <span className="text-slate-400 font-normal">— ödeme durumu listeden değiştirilir</span>}</label>
-            <select value={f.account_id || ""} onChange={(e) => setF({ ...f, account_id: e.target.value })} className={inputCls} disabled={(isEdit && f.payment_status !== "paid") || accountsLoading} data-testid="exp-account">
-              <option value="">{accountsLoading ? "Hesaplar yükleniyor…" : "Henüz ödenmedi (borç olarak kaydet)"}</option>
-              {accounts.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountLabel(a)}</option>)}
-            </select></div>
+          <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Ödeme (Kasa / Banka / Kart / Ortak) {isEdit && <span className="text-slate-400 font-normal">— ödeme durumu listeden değiştirilir</span>}</label>
+            <PaymentTargetSelect
+              companyId={companyId}
+              accounts={accounts}
+              value={f.account_id || ""}
+              onChange={(v) => setF({ ...f, account_id: v })}
+              testId="exp-account"
+              emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : "Henüz ödenmedi (borç olarak kaydet)"}
+              className={inputCls}
+              disabled={(isEdit && f.payment_status !== "paid") || accountsLoading}
+            /></div>
           <div className="col-span-2 md:col-span-3 grid grid-cols-2 gap-3">
             <div><label className="block font-semibold mb-1">Tedarikçi (opsiyonel)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Cari ara…" onChange={(id) => setF({ ...f, contact_id: id })} testId="exp-contact" /></div>
             <div><label className="block font-semibold mb-1">Personel (masraf sahibi)</label><select value={f.employee_id || ""} onChange={(e) => setF({ ...f, employee_id: e.target.value })} className={inputCls} data-testid="exp-employee"><option value="">—</option>{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
@@ -112,7 +119,7 @@ export default function ExpensesPage() {
   const rows = useMemo(() => { const c = { date_desc: (a, b) => b.date.localeCompare(a.date), date_asc: (a, b) => a.date.localeCompare(b.date), amount_desc: (a, b) => b.total - a.total, amount_asc: (a, b) => a.total - b.total, category: (a, b) => a.category.localeCompare(b.category, "tr") }[filters.sort]; return [...data.expenses].sort(c); }, [data.expenses, filters.sort]);
   const s = data.summary;
   const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
-  const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { account_id: payAcc }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
+  const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
   const unpay = async (x) => { if (!window.confirm("Ödeme geri alınsın mı? Kasa/banka bakiyesi düzeltilir.")) return; try { await axios.post(`${API_URL}/expenses/${x.id}/unpay`); toast.success("Ödeme geri alındı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const runRecurring = async () => { try { const r = await axios.post(`${API_URL}/expenses/run-recurring`, { company_id: companyId }); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Çalıştırılamadı."); } };
   const maxCat = s?.by_category?.[0]?.total || 1;
@@ -185,7 +192,7 @@ export default function ExpensesPage() {
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">
             <div className="font-bold text-slate-900 text-sm flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-600" /> Masrafı Öde · {fmtMoney(payFor.total, payFor.currency || "TRY")}</div>
             <div className="text-slate-500">{payFor.expense_number} — {payFor.description}</div>
-            <select value={payAcc} onChange={(e) => setPayAcc(e.target.value)} className={inputCls} data-testid="exp-pay-account">{accounts.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountLabel(a)}</option>)}</select>
+            <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAcc} onChange={setPayAcc} testId="exp-pay-account" className={inputCls} />
             <div className="flex justify-end gap-2 pt-2 border-t"><button onClick={() => setPayFor(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={pay} disabled={!payAcc} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="exp-pay-confirm">Öde</button></div>
           </div>
         </div>

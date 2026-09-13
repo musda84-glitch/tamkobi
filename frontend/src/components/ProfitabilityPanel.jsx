@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { TrendingUp, Percent, Save, AlertTriangle, Loader2, Wallet } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { channelTr } from "../utils/labels";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
@@ -29,7 +30,7 @@ const FeeEditor = ({ ch, onSaved }) => {
   );
 };
 
-const SettlementAccount = ({ ch, accounts, onSaved }) => {
+const SettlementAccount = ({ ch, accounts, companyId, onSaved }) => {
   const [v, setV] = useState(ch.settlement_account_id || "");
   const [busy, setBusy] = useState(false);
   const save = async (val) => {
@@ -42,10 +43,7 @@ const SettlementAccount = ({ ch, accounts, onSaved }) => {
     <div className="border-t pt-2 space-y-1" data-testid={`settlement-${ch.channel}`}>
       <div className="flex items-center gap-1 text-[10px] text-slate-400"><Wallet className="w-3 h-3" /> Hakediş / Ödeme Hesabı — faturalanan sipariş net tutarı (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat, kesintiler "Pazaryeri Komisyonu" masrafı olur</div>
       <div className="flex items-center gap-2">
-        <select value={v} onChange={(e) => save(e.target.value)} disabled={busy} className="bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs flex-1" data-testid={`settlement-select-${ch.channel}`}>
-          <option value="">Hesap seçilmedi (yalnızca "ödendi" işaretle)</option>
-          {accounts.filter((a) => a.type !== "credit_card").map((a) => <option key={a.id} value={a.id} disabled={a.is_integrated}>{a.account_name}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
-        </select>
+        <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={v} onChange={save} disabled={busy} testId={`settlement-select-${ch.channel}`} emptyLabel="Hesap seçilmedi (yalnızca ödendi işaretle)" collectableOnly includePartners={false} className="flex-1 text-xs" />
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
         {ch.settlement_account_name && !busy && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded" data-testid={`settlement-active-${ch.channel}`}>Aktif</span>}
       </div>
@@ -82,7 +80,7 @@ export const ProfitabilityPanel = ({ companyId }) => {
             </div>
             <div className="border-t pt-2 flex items-center gap-1 text-[10px] text-slate-400"><Percent className="w-3 h-3" /> Kanal ücretleri (sipariş bazında hesaplanır)</div>
             <FeeEditor ch={ch} onSaved={load} />
-            <SettlementAccount ch={ch} accounts={accounts} onSaved={load} />
+            <SettlementAccount ch={ch} accounts={accounts} companyId={companyId} onSaved={load} />
           </div>))}
       </div>
       {d.settlement?.count > 0 && <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-xs flex flex-wrap gap-4" data-testid="settlement-summary"><b className="text-emerald-900 flex items-center gap-1.5"><Wallet className="w-4 h-4" /> Hakediş (son {days} gün): {d.settlement.count} sipariş</b><span>Brüt <b>{fmt(d.settlement.gross)} ₺</b></span><span>Kesinti <b className="text-rose-600">−{fmt(d.settlement.deductions)} ₺</b></span><span>Hesaba geçen net <b className="text-emerald-700">{fmt(d.settlement.net)} ₺</b></span></div>}

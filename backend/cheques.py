@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from bank_guard import assert_manual_allowed
+from bank_guard import assert_manual_allowed, assert_collection_allowed
+import partner_pay
 import trash
 
 router = APIRouter(prefix="/api")
@@ -278,19 +279,30 @@ async def collect_cheque(cheque_id: str, req: Dict[str, Any]):
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Tahsil yalnızca alınan çek/senet için.")
+    partner_id = req.get("partner_id")
     account_id = _account_id(req)
-    if not account_id:
-        raise HTTPException(status_code=400, detail="Tahsil hesabı seçin.")
+    if partner_id and account_id:
+        raise HTTPException(status_code=400, detail="Hesap veya ortak seçin, ikisi birden değil.")
+    if not partner_id and not account_id:
+        raise HTTPException(status_code=400, detail="Tahsil hesabı veya ortak seçin.")
     pay_date = req.get("date") or _today()
-    name = await _bank_move(
-        doc["company_id"], account_id, inflow=True, amount=float(doc["amount"]),
-        category="Çek/Senet Tahsilatı", description=f"{doc['number']} {doc.get('contact_name') or ''} tahsil",
-        date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
-    )
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "collected", "account_id": account_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
+    amount = float(doc["amount"])
+    if partner_id:
+        name = await partner_pay.move(_db, doc["company_id"], partner_id, amount, "withdrawal", f"{doc['number']} {doc.get('contact_name') or ''} tahsil", pay_date, extra={"cheque_id": cheque_id})
+        name = f"{name} (Ortak)"
+        account_id = None
+    else:
+        await assert_collection_allowed(_db, account_id)
+        name = await _bank_move(
+            doc["company_id"], account_id, inflow=True, amount=amount,
+            category="Çek/Senet Tahsilatı", description=f"{doc['number']} {doc.get('contact_name') or ''} tahsil",
+            date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
+        )
+    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "collected", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
     await _append_event(cheque_id, "collected", f"{name} · {pay_date}")
     await _refresh_contact_cheque(doc.get("contact_id"))
     return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+
 
 
 @router.post("/cheques/{cheque_id}/pay")
@@ -299,19 +311,29 @@ async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any]):
     _open_only(doc)
     if doc.get("direction") != "issued":
         raise HTTPException(status_code=400, detail="Ödeme yalnızca verilen çek/senet için.")
+    partner_id = req.get("partner_id")
     account_id = _account_id(req)
-    if not account_id:
-        raise HTTPException(status_code=400, detail="Ödeme hesabı seçin.")
+    if partner_id and account_id:
+        raise HTTPException(status_code=400, detail="Hesap veya ortak seçin, ikisi birden değil.")
+    if not partner_id and not account_id:
+        raise HTTPException(status_code=400, detail="Ödeme hesabı veya ortak seçin.")
     pay_date = req.get("date") or _today()
-    name = await _bank_move(
-        doc["company_id"], account_id, inflow=False, amount=float(doc["amount"]),
-        category="Çek/Senet Ödemesi", description=f"{doc['number']} {doc.get('contact_name') or ''} ödeme",
-        date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
-    )
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "paid", "account_id": account_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
+    amount = float(doc["amount"])
+    if partner_id:
+        name = await partner_pay.withdraw(_db, doc["company_id"], partner_id, amount, f"{doc['number']} {doc.get('contact_name') or ''} ödeme", pay_date, extra={"cheque_id": cheque_id})
+        name = f"{name} (Ortak)"
+        account_id = None
+    else:
+        name = await _bank_move(
+            doc["company_id"], account_id, inflow=False, amount=amount,
+            category="Çek/Senet Ödemesi", description=f"{doc['number']} {doc.get('contact_name') or ''} ödeme",
+            date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
+        )
+    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
     await _append_event(cheque_id, "paid", f"{name} · {pay_date}")
     await _refresh_contact_cheque(doc.get("contact_id"))
     return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+
 
 
 @router.post("/cheques/{cheque_id}/endorse")

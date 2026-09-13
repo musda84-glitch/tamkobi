@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Landmark, Plus, Sparkles, Upload, Loader2, Trash2, CheckCircle2, X, ChevronDown, ChevronUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 
@@ -23,7 +24,7 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
     catch (err) { toast.error(err.response?.data?.detail || "PDF işlenemedi."); } finally { setBusy(null); }
   };
   const genPlan = () => { const n = Number(d.term_months) || 0, p = Number(d.principal) || 0, r = (Number(d.interest_rate) || 0) / 100; if (!n || !p) return toast.error("Anapara ve vade girin."); const pay = r ? p * r / (1 - Math.pow(1 + r, -n)) : p / n; let rem = p; const start = new Date(d.start_date); const ins = Array.from({ length: n }, (_, i) => { const interest = rem * r; const principal = pay - interest; rem -= principal; const due = new Date(start.getFullYear(), start.getMonth() + i + 1, Math.min(start.getDate(), 28)); return { no: i + 1, due_date: due.toISOString().slice(0, 10), principal: +principal.toFixed(2), interest: +interest.toFixed(2), kkdf_bsmv: 0, amount: +pay.toFixed(2), remaining_principal: +Math.max(0, rem).toFixed(2), paid: false }; }); setD({ ...d, installments: ins, monthly_payment: +pay.toFixed(2) }); };
-  const save = async (e) => { e.preventDefault(); setBusy("save"); try { await axios.post(`${API_URL}/loans`, { ...d, company_id: companyId, principal: Number(d.principal), term_months: Number(d.term_months) }); toast.success("Kredi kaydedildi."); onSaved(); onClose(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(null); } };
+  const save = async (e) => { e.preventDefault(); setBusy("save"); try { const { account_id: _a, ...rest } = d; await axios.post(`${API_URL}/loans`, { ...rest, company_id: companyId, principal: Number(d.principal), term_months: Number(d.term_months), ...splitPaymentTarget(d.account_id) }); toast.success("Kredi kaydedildi."); onSaved(); onClose(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(null); } };
   const total = d.installments.reduce((t, i) => t + (Number(i.amount) || 0), 0);
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
@@ -43,7 +44,7 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
           <div><label className="block font-semibold mb-1">Aylık Faiz %</label><input type="number" step="0.01" value={d.interest_rate ?? ""} onChange={(e) => setD({ ...d, interest_rate: e.target.value })} className={inputCls} /></div>
           <div><label className="block font-semibold mb-1">Vade (ay)</label><input type="number" min="1" value={d.term_months} onChange={(e) => setD({ ...d, term_months: e.target.value })} className={inputCls} /></div>
           <div><label className="block font-semibold mb-1">Kullandırım Tarihi</label><input type="date" value={d.start_date || ""} onChange={(e) => setD({ ...d, start_date: e.target.value })} className={inputCls} /></div>
-          <div className="col-span-2"><label className="block font-semibold mb-1">Taksitlerin ödeneceği hesap</label><select value={d.account_id} onChange={(e) => setD({ ...d, account_id: e.target.value })} className={inputCls} data-testid="loan-account"><option value="">Seçilmedi</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}</select></div>
+          <div className="col-span-2"><label className="block font-semibold mb-1">Taksitlerin ödeneceği hesap</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={d.account_id} onChange={(v) => setD({ ...d, account_id: v })} testId="loan-account" emptyLabel="Seçilmedi" /></div>
           <label className="col-span-2 flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2 cursor-pointer"><input type="checkbox" checked={d.credit_to_account} onChange={(e) => setD({ ...d, credit_to_account: e.target.checked })} /> Anaparayı bu hesaba giriş olarak işle (kredi kullanıldı)</label>
         </div>
         <div className="flex items-center justify-between"><div className="text-xs font-bold">Ödeme Planı {d.installments.length > 0 && <span className="text-slate-500 font-normal">· {d.installments.length} taksit · toplam {fmt(total)} ₺</span>}</div><button type="button" onClick={genPlan} className="px-3 py-1.5 border rounded-lg text-xs font-semibold" data-testid="loan-gen-plan">Plan Oluştur (eşit taksit)</button></div>
@@ -61,9 +62,9 @@ export default function LoansPage() {
   const [accounts, setAccounts] = useState([]);
   const [modal, setModal] = useState(false);
   const [open, setOpen] = useState(null);
-  const load = useCallback(async () => { const [l, a] = await Promise.all([axios.get(`${API_URL}/loans?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)]); setData(l.data); setAccounts(a.data.filter((x) => x.type !== "credit_card")); }, [companyId]);
+  const load = useCallback(async () => { const [l, a] = await Promise.all([axios.get(`${API_URL}/loans?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)]); setData(l.data); setAccounts(a.data); }, [companyId]);
   useEffect(() => { load().catch(() => toast.error("Krediler yüklenemedi.")); }, [load]);
-  const pay = async (loan, ins) => { const acc = loan.account_id || accounts[0]?.id; if (!acc) return toast.error("Kredi için ödeme hesabı tanımlı değil."); if (!window.confirm(`${ins.no}. taksit (${fmt(ins.amount)} ₺) ödensin mi?`)) return; try { await axios.post(`${API_URL}/loans/${loan.id}/installments/${ins.no}/pay`, { account_id: acc }); toast.success("Taksit ödendi; faiz gideri Masraflar'a işlendi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
+  const pay = async (loan, ins) => { const acc = loan.partner_id ? `partner:${loan.partner_id}` : (loan.account_id || accounts[0]?.id); if (!acc) return toast.error("Kredi için ödeme hesabı tanımlı değil."); if (!window.confirm(`${ins.no}. taksit (${fmt(ins.amount)} ₺) ödensin mi?`)) return; try { await axios.post(`${API_URL}/loans/${loan.id}/installments/${ins.no}/pay`, { ...splitPaymentTarget(acc) }); toast.success("Taksit ödendi; faiz gideri Masraflar'a işlendi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
   const del = async (l) => { if (!window.confirm(`${l.name} silinsin mi?`)) return; await axios.delete(`${API_URL}/loans/${l.id}`); toast.success("Kredi silindi."); load(); };
   const s = data.summary;
   const today = new Date().toISOString().slice(0, 10);

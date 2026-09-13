@@ -304,8 +304,7 @@ export default function PersonnelPage() {
                   accounts={bankAccounts}
                   value={selectedBankId}
                   onChange={setSelectedBankId}
-                  includePartners={false}
-                  testId="salary-pay-account"
+                                    testId="salary-pay-account"
                 />
               </div>
             </div>
