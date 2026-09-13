@@ -35,7 +35,7 @@ CATEGORIES = {
     "/reports": "Raporlama", "/accountant": "Raporlama",
     "/stock": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo",
     "/production": "Üretim", "/atolye": "Üretim",
-    "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış",
+    "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/hizli-satis": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış",
     "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret",
     "/personnel": "İK", "/mesai": "İK",
     "/communication": "İletişim",
@@ -65,6 +65,7 @@ DESCRIPTIONS = {
     "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı",
     "/surveys": "Keşif, ölçü ve teklife dönüştürme",
     "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi",
+    "/hizli-satis": "Perakende hızlı satış (POS), tartı ve termal fiş",
     "/saha": "Tablet saha sipariş ve müşteri ziyareti",
     "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu",
     "/cargo": "Geliver ve kargo firmaları entegrasyonu",
@@ -75,13 +76,13 @@ DESCRIPTIONS = {
 }
 
 _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/sayim", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/saha", "/sevk", "/communication", "/accountant"]
+_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/hizli-satis", "/saha", "/sevk", "/communication", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_MODULE_PRICES = {
     "/invoices": 249, "/dispatches": 99, "/contacts": 129, "/installments": 79, "/reports": 99,
     "/banking": 129, "/expenses": 79, "/loans": 79, "/stock": 129, "/projects": 129,
-    "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/warehouses": 99, "/production": 199,
+    "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/hizli-satis": 99, "/warehouses": 99, "/production": 199,
     "/atolye": 99, "/personnel": 159, "/communication": 99, "/ai-advisor": 129, "/accountant": 99,
 }
 CUSTOM_PLAN_ID = "plan_custom"

@@ -34,6 +34,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Raporlar", path: "/reports", badge: "Excel" },
     { label: "Banka & Kasa & POS", path: "/banking" },
     { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
+    { label: "Hızlı Satış", path: "/hizli-satis", badge: "POS" },
     { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
     { label: "Teklifler", path: "/quotes" },
     { label: "Projeler", path: "/projects" },

@@ -11,6 +11,7 @@ import InvoicesPage from "./pages/InvoicesPage";
 import ContactsPage from "./pages/ContactsPage";
 import BankingPage from "./pages/BankingPage";
 import StockBarcodePage from "./pages/StockBarcodePage";
+import QuickSalePage from "./pages/QuickSalePage";
 import EcommercePage from "./pages/EcommercePage";
 import CargoPage from "./pages/CargoPage";
 import OrdersB2BPage from "./pages/OrdersB2BPage";
@@ -75,6 +76,7 @@ export default function App() {
             <Route path="/contacts" element={<ContactsPage />} />
             <Route path="/banking" element={<BankingPage />} />
             <Route path="/stock" element={<StockBarcodePage />} />
+            <Route path="/hizli-satis" element={<QuickSalePage />} />
             <Route path="/ecommerce" element={<EcommercePage />} />
             <Route path="/cargo" element={<CargoPage />} />
             <Route path="/orders" element={<OrdersB2BPage />} />
