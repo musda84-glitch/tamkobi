@@ -117,7 +117,7 @@ export default function BankingPage() {
       setTransactions(transactions);
       setContacts(contacts);
       setPartnerSummary(psRes.data);
-      const manual = accRes.data.filter((a) => !a.is_integrated);
+      const manual = accRes.data.filter((a) => !a.is_integrated && a.type !== "credit_card");
       if (manual.length >= 2) {
         setVirmanForm(prev => ({
           ...prev,
@@ -268,7 +268,22 @@ export default function BankingPage() {
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
-            onClick={() => setShowVirmanModal(true)}
+            onClick={async () => {
+              try {
+                const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
+                const list = Array.isArray(r.data) ? r.data : [];
+                setAccounts(list);
+                const manual = list.filter((a) => !a.is_integrated && a.type !== "credit_card");
+                if (manual.length >= 2) {
+                  setVirmanForm((prev) => ({
+                    ...prev,
+                    source_account_id: manual[0].id || manual[0]._id,
+                    target_account_id: manual[1].id || manual[1]._id,
+                  }));
+                }
+              } catch { /* stale list ile devam */ }
+              setShowVirmanModal(true);
+            }}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-indigo-600/20 transition"
             data-testid="virman-modal-btn"
           >
@@ -515,7 +530,7 @@ export default function BankingPage() {
                 >
                   {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
+                      {a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
                     </option>
                   ))}
                 </select>
@@ -529,9 +544,9 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-target-select"
                 >
-                  {accounts.filter(a => !a.is_integrated).map(a => (
+                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.bank_name} - {a.account_name} ({a.current_balance?.toLocaleString('tr-TR')} ₺)
+                      {a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
                     </option>
                   ))}
                 </select>
