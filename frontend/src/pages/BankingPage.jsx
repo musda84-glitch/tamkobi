@@ -117,7 +117,8 @@ export default function BankingPage() {
       setTransactions(transactions);
       setContacts(contacts);
       setPartnerSummary(psRes.data);
-      const manual = accRes.data.filter((a) => !a.is_integrated && a.type !== "credit_card");
+      // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Ortaklar hesap değil, listede yok.
+      const manual = accRes.data.filter((a) => !a.is_integrated);
       if (manual.length >= 2) {
         setVirmanForm(prev => ({
           ...prev,
@@ -273,7 +274,7 @@ export default function BankingPage() {
                 const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
                 const list = Array.isArray(r.data) ? r.data : [];
                 setAccounts(list);
-                const manual = list.filter((a) => !a.is_integrated && a.type !== "credit_card");
+                const manual = list.filter((a) => !a.is_integrated);
                 if (manual.length >= 2) {
                   setVirmanForm((prev) => ({
                     ...prev,
@@ -528,9 +529,9 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-source-select"
                 >
-                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
+                  {accounts.filter(a => !a.is_integrated).map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
+                      {a.type === "credit_card" ? "Kart · " : ""}{a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
                     </option>
                   ))}
                 </select>
@@ -544,9 +545,9 @@ export default function BankingPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
                   data-testid="virman-target-select"
                 >
-                  {accounts.filter(a => !a.is_integrated && a.type !== "credit_card").map(a => (
+                  {accounts.filter(a => !a.is_integrated).map(a => (
                     <option key={a.id || a._id} value={a.id || a._id}>
-                      {a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
+                      {a.type === "credit_card" ? "Kart · " : ""}{a.bank_name} - {a.account_name} ({Number(a.current_balance ?? 0).toLocaleString('tr-TR')} ₺)
                     </option>
                   ))}
                 </select>
