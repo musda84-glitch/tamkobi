@@ -1,4 +1,4 @@
-import { computeLine, lineFromProduct } from "./documentLines";
+import { lineFromProduct } from "./documentLines";
 
 export const RETAIL_CONTACT_NAME = "Perakende Müşteri";
 export const RETAIL_CONTACT_TAX = "11111111111";
@@ -19,7 +19,7 @@ export function barcodeSaleLine(product, quantity = 1) {
     },
     { invoiceType: "sales", quantity: qty },
   );
-  return computeLine(line, "unit_price");
+  return line;
 }
 
 export function barcodeSalePayload({ companyId, contact, product, quantity, mode }) {

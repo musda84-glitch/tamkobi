@@ -208,15 +208,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
     const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name && !it.product_name);
     const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
+    const price = v?.price || v?.sale_price || buyPrice(prod, formData.invoice_type);
+    const priceIncl = formData.invoice_type !== "purchase" && !!prod.price_includes_vat;
     const line = computeLine({
       ...lineFromProduct(prod, { invoiceType: formData.invoice_type }),
       name: v ? `${prod.name} - ${v.name}` : prod.name,
       product_name: v ? `${prod.name} - ${v.name}` : prod.name,
-      unit_price: v?.price || v?.sale_price || buyPrice(prod, formData.invoice_type),
+      unit_price: priceIncl ? 0 : price,
+      unit_price_incl: priceIncl ? price : 0,
       sku: v?.sku || prod.sku || "",
       barcode: v?.barcode || prod.barcode || "",
       vat_rate: formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : (prod.vat_rate || 20),
-    }, "unit_price");
+    }, priceIncl ? "unit_price_incl" : "unit_price");
     if (emptyIdx >= 0) {
       setFormData({ ...formData, items: formData.items.map((it, i) => (i === emptyIdx ? line : it)) });
     } else {

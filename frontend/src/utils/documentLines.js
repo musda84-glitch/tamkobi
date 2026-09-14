@@ -40,16 +40,17 @@ export function computeLine(item, editedField) {
     incl = excl * (1 + vat / 100);
   }
   const factor = 1 - disc / 100;
-  const total = qty * excl * factor;
-  const vatAmount = total * vat / 100;
+  // Backend enrich_line ile aynı: satır tutarları 2 haneye yuvarlanır.
+  const total = Math.round(qty * excl * factor * 100) / 100;
+  const vatAmount = Math.round(total * vat / 100 * 100) / 100;
   return {
     ...item,
     discount_rate: disc,
     vat_rate: vat,
-    unit_price: excl,
-    unit_price_incl: incl,
+    unit_price: Math.round(excl * 10000) / 10000,
+    unit_price_incl: Math.round(incl * 10000) / 10000,
     total,
-    total_incl: total + vatAmount,
+    total_incl: Math.round((total + vatAmount) * 100) / 100,
     vat_amount: vatAmount,
     name: item.name || item.product_name || "",
     product_name: item.product_name || item.name || "",
@@ -76,7 +77,11 @@ export function hydrateLine(item) {
 
 export function lineFromProduct(prod, { invoiceType = "sales", quantity = 1 } = {}) {
   if (!prod) return computeLine(emptyLine({ quantity }));
-  const price = invoiceType === "purchase" ? num(prod.purchase_price) : num(prod.sale_price);
+  const vatRate = prod.vat_rate ?? 20;
+  let price = invoiceType === "purchase" ? num(prod.purchase_price) : num(prod.sale_price);
+  // Satış fiyatı KDV dahil ise net birim fiyata indir; computeLine tekrar KDV eklemesin.
+  const includesVat = invoiceType !== "purchase" && !!prod.price_includes_vat;
+  const editedField = includesVat ? "unit_price_incl" : "unit_price";
   return computeLine({
     ...emptyLine(),
     product_id: prod.id || prod._id || "",
@@ -85,22 +90,23 @@ export function lineFromProduct(prod, { invoiceType = "sales", quantity = 1 } = 
     sku: prod.sku || "",
     unit: prod.unit || "Adet",
     quantity,
-    unit_price: price,
-    vat_rate: prod.vat_rate ?? 20,
+    unit_price: includesVat ? 0 : price,
+    unit_price_incl: includesVat ? price : 0,
+    vat_rate: vatRate,
     is_service: prod.type === "service",
     gtip: prod.gtip || "",
     origin_country: prod.origin_country || "",
     barcode: prod.barcode || "",
-  }, "unit_price");
+  }, editedField);
 }
 
 export function documentLineTotals(items = []) {
   const rows = items.map((it) => computeLine(it));
-  const subtotal = rows.reduce((s, it) => s + num(it.total), 0);
-  const vat = rows.reduce((s, it) => s + num(it.vat_amount), 0);
-  const lineDiscount = rows.reduce(
+  const subtotal = Math.round(rows.reduce((s, it) => s + num(it.total), 0) * 100) / 100;
+  const vat = Math.round(rows.reduce((s, it) => s + num(it.vat_amount), 0) * 100) / 100;
+  const lineDiscount = Math.round(rows.reduce(
     (s, it) => s + num(it.quantity) * num(it.unit_price) * num(it.discount_rate) / 100,
     0
-  );
-  return { rows, subtotal, vat, lineDiscount, grandTotal: subtotal + vat };
+  ) * 100) / 100;
+  return { rows, subtotal, vat, lineDiscount, grandTotal: Math.round((subtotal + vat) * 100) / 100 };
 }
