@@ -9,7 +9,8 @@ export const LEGAL_DOCS = [
 
 export const emptyLegalConsent = () => ({ mss: false, obf: false, kvkk: false });
 
-export const allLegalAccepted = (v) => !!(v?.mss && v?.obf && v?.kvkk);
+/** Onay zorunluluğu kaldırıldı — her zaman true (geriye dönük uyumluluk). */
+export const allLegalAccepted = (_v) => true;
 
 export const legalPayload = (v) => ({ accept_mss: !!v?.mss, accept_obf: !!v?.obf, accept_kvkk: !!v?.kvkk });
 
@@ -32,7 +33,7 @@ export function LegalConsent({ value, onChange, hrefExtra = "", prefix = "", cla
           />
           <span>
             <a href={legalHref(d.slug, hrefExtra)} target="_blank" rel="noreferrer" className="font-semibold underline decoration-dotted text-emerald-800 hover:text-emerald-600" data-testid={`${prefix}legal-link-${d.key}`}>{d.label}</a>
-            {" "}metnini okudum, anladım ve kabul ediyorum. Onaylamadan devam edilemez.
+            {" "}metnini okudum ve kabul ediyorum (isteğe bağlı).
           </span>
         </label>
       ))}
