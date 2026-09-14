@@ -168,5 +168,3 @@ export const InvoiceContextMenu = (props) => {
     </div>
   );
 };
-
-export { isGibIssued as isGibIssued };
