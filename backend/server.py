@@ -6130,6 +6130,84 @@ async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None):
         return {"status": "success", "message": "İptal talebi reddedildi."}
     raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
 
+
+async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
+    """Sipariş onayında cari Faturalar sekmesinde görünen taslak satış faturası.
+
+    Stok / cari bakiyesine dokunmaz. Siparişte fatura varsa yeniden oluşturmaz.
+    """
+    if not order or not order.get("_id") or order.get("is_invoiced"):
+        return None
+    existing_id = order.get("invoice_id")
+    if existing_id:
+        existing = await db.invoices.find_one({"_id": existing_id})
+        if existing:
+            return existing
+    contact = await _ensure_order_contact(order)
+    if not contact:
+        return None
+    rows = order_items_to_invoice_items(order.get("items", []))
+    if not rows:
+        return None
+    await _fill_stock_codes(order.get("company_id"), rows)
+    inv_items = [it.model_dump() for it in _invoice_item_models(rows)]
+    inv_totals = invoice_document_totals(inv_items)
+    inv_id = f"inv_{uuid.uuid4().hex[:8]}"
+    year = datetime.now(timezone.utc).strftime("%Y")
+    count = await db.invoices.count_documents({"company_id": order.get("company_id")}) + 1
+    invoice_number = f"NX{year}{str(count).zfill(8)}"
+    e_type = "e_invoice" if contact.get("is_e_invoice_user") else "e_archive"
+    now = datetime.now(timezone.utc)
+    subtotal = float(inv_totals.get("subtotal") or 0)
+    vat_total = float(inv_totals.get("vat_total") or 0)
+    discount_total = float(inv_totals.get("discount_total") or 0)
+    grand_total = float(inv_totals.get("grand_total") or 0)
+    term_days = int(contact.get("payment_term_days") or 14)
+    doc = {
+        "_id": inv_id,
+        "company_id": order.get("company_id"),
+        "invoice_type": "sales",
+        "invoice_number": invoice_number,
+        "contact_id": contact["_id"],
+        "contact_name": contact.get("name") or order.get("customer_name") or "",
+        "contact_tax_id": contact.get("tax_number_or_id") or "11111111111",
+        "e_type": e_type,
+        "issue_date": now.strftime("%Y-%m-%d"),
+        "due_date": (now + timedelta(days=term_days)).strftime("%Y-%m-%d"),
+        "items": inv_items,
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "price_mode": "excl",
+        "currency": order.get("currency") or "TRY",
+        "status": "draft",
+        "gib_status": "Taslak",
+        "payment_status": "unpaid",
+        "paid_amount": 0.0,
+        "notes": f"Sipariş No: {order.get('order_number')} onayında oluşturuldu (taslak).",
+        "source_channel": order.get("channel") or "b2b",
+        "order_id": order["_id"],
+        "order_number": order.get("order_number"),
+        "created_at": now.isoformat(),
+    }
+    await db.invoices.insert_one(doc)
+    await db.orders.update_one(
+        {"_id": order["_id"]},
+        {"$set": {
+            "invoice_id": inv_id,
+            "invoice_number": invoice_number,
+            "contact_id": contact["_id"],
+            "contact_name": contact.get("name"),
+            "is_invoiced": False,
+        }},
+    )
+    order["invoice_id"] = inv_id
+    order["invoice_number"] = invoice_number
+    order["contact_id"] = contact["_id"]
+    return doc
+
+
 @api_router.post("/orders/{order_id}/approve")
 async def approve_order(order_id: str, req: Dict[str, Any] = None):
     o = await db.orders.find_one({"_id": order_id})
@@ -6141,6 +6219,14 @@ async def approve_order(order_id: str, req: Dict[str, Any] = None):
         update["cargo_carrier"] = req["cargo_carrier"]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
+    try:
+        draft = await _create_draft_invoice_for_order(updated)
+        if draft:
+            updated = await db.orders.find_one({"_id": order_id}) or updated
+            updated["draft_invoice_id"] = draft.get("_id")
+            updated["draft_invoice_number"] = draft.get("invoice_number")
+    except Exception:
+        logging.getLogger(__name__).exception("Sipariş onayında taslak fatura oluşturulamadı: %s", order_id)
     await _push_order_to_shopphp(updated, reason="approve")
     return clean_doc(updated)
 
@@ -7615,8 +7701,13 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
     if not order:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
 
-    if order.get("is_invoiced") or order.get("invoice_id"):
+    if order.get("is_invoiced"):
         return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
+    draft_inv = None
+    if order.get("invoice_id"):
+        draft_inv = await db.invoices.find_one({"_id": order["invoice_id"]})
+        if draft_inv and draft_inv.get("status") != "draft":
+            return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
     _oc = await _ensure_order_contact(order)
     if not _oc:
         _oc = {"_id": str(uuid.uuid4()), "company_id": order.get("company_id"), "type": "customer", "name": order.get("customer_name") or "Pazaryeri Müşterisi", "tax_number_or_id": "11111111111", "phone": order.get("customer_phone"), "email": order.get("customer_email"), "address": order.get("shipping_address"), "city": order.get("city"), "balance": 0.0, "is_e_invoice_user": False, "created_at": datetime.now(timezone.utc).isoformat()}
@@ -7656,13 +7747,22 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         "paid_amount": inv_totals["grand_total"],
         "notes": f"Sipariş No: {order.get('order_number')} üzerinden otomatik faturaya dönüştürüldü.",
         "source_channel": order.get("channel", "b2b"),
+        "order_id": order_id,
+        "order_number": order.get("order_number"),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    await db.invoices.insert_one(new_invoice)
+    if draft_inv and draft_inv.get("status") == "draft":
+        inv_id = draft_inv["_id"]
+        invoice_number = draft_inv.get("invoice_number") or invoice_number
+        new_invoice["_id"] = inv_id
+        new_invoice["invoice_number"] = invoice_number
+        await db.invoices.replace_one({"_id": inv_id}, new_invoice)
+    else:
+        await db.invoices.insert_one(new_invoice)
 
     await db.orders.update_one(
         {"_id": order_id},
-        {"$set": {"is_invoiced": True, "invoice_id": inv_id}}
+        {"$set": {"is_invoiced": True, "invoice_id": inv_id, "invoice_number": invoice_number}}
     )
     settlement = await _post_marketplace_settlement(order, new_invoice, _oc)
     await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="invoice")
