@@ -1,4 +1,3 @@
-import user_numbers
 """Platform faturalama & yaşam döngüsü: Stripe abonelik ödemesi (paket aktivasyonu), lisans hatırlatmaları (e-posta/WhatsApp/bildirim), herkese açık paketler & kayıt, platform ayarları."""
 import asyncio
 import logging
@@ -13,6 +12,7 @@ from emergentintegrations.payments.stripe.checkout import StripeCheckout, Checko
 import rbac
 import gib_credits
 import saas
+import user_numbers
 from auth_utils import hash_password, create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/api")

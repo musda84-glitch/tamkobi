@@ -1,4 +1,3 @@
-import user_numbers
 """WordPress-style first-run installer: database, site name, admin account."""
 from __future__ import annotations
 
@@ -13,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import db_ssl
+import user_numbers
 from auth_utils import hash_password
 from mysql_store import MySQLDatabase
 from setup_state import (
