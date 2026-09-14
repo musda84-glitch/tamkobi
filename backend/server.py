@@ -2296,7 +2296,7 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
             if not parsed_items:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Sipariş listesi okunamadı. Excel/CSV’de Ürün + Adet sütunları kullanın veya AI anahtarını kontrol edin. ({ai_error})",
+                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod + Adet (veya Stok Miktarı/Talep) sütunları kullanın; adet yoksa her satır 1 adet sayılır. AI anahtarını da kontrol edin. ({ai_error})",
                 )
     items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
     return {
