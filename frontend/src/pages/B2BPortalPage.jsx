@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { ShoppingCart, Package, FileText, Truck, CalendarClock, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { fmt, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
+import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
 
@@ -34,8 +34,8 @@ export default function B2BPortalPage() {
   const cats = ["all", ...Array.from(new Set(d.products.map((p) => p.category).filter(Boolean)))];
   const prods = d.products.filter((p) => (cat === "all" || p.category === cat) && (p.name.toLowerCase().includes(q.toLowerCase()) || (p.sku || "").toLowerCase().includes(q.toLowerCase())));
   const lines = Object.entries(cart).map(([key, row]) => ({ key, p: d.products.find((x) => x.id === row.productId), qty: row.qty, note: row.note || "" })).filter((l) => l.p && l.qty > 0);
-  const sub = lines.reduce((s, l) => s + l.p.price * l.qty, 0);
-  const vat = lines.reduce((s, l) => s + l.p.price * l.qty * (l.p.vat_rate || 20) / 100, 0);
+  const sub = lines.reduce((s, l) => s + b2bNet(l.p) * l.qty, 0);
+  const vat = lines.reduce((s, l) => s + (b2bGross(l.p) - b2bNet(l.p)) * l.qty, 0);
   const setQty = (key, qty) => setCart((c) => setCartLineQty(c, key, qty));
   const addWithQty = (p) => {
     const qty = Math.max(1, parseInt(String(draftQty[p.id] ?? "1"), 10) || 1);
@@ -80,7 +80,7 @@ export default function B2BPortalPage() {
                 <div key={p.id} className="bg-white rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 min-w-0" data-testid={`b2b-product-${p.sku}`}>
                   <div className="relative aspect-[3/2] bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden" data-testid={`b2b-image-${p.sku}`}>{p.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" className="absolute inset-0 h-full w-full object-contain" /> : <Package className="w-8 h-8 text-slate-300" />}</div>
                   <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
-                  <div className="flex items-end justify-between gap-1"><div className="min-w-0"><div className="text-base font-black text-slate-900 whitespace-nowrap">{fmt(p.price)} ₺</div>{p.price < p.list_price && <div className="text-[10px] text-slate-400 line-through">{fmt(p.list_price)} ₺</div>}<div className="text-[10px] text-slate-400">+KDV %{p.vat_rate} • {p.unit}</div></div><span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span></div>
+                  <div className="flex items-end justify-between gap-1"><div className="min-w-0"><div className="text-base font-black text-slate-900 whitespace-nowrap" data-testid={`b2b-price-${p.sku}`}>{fmt(b2bGross(p))} ₺</div>{b2bGross(p) < b2bGross(p, "list_price") && <div className="text-[10px] text-slate-400 line-through">{fmt(b2bGross(p, "list_price"))} ₺</div>}<div className="text-[10px] text-slate-400">{Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz"} • {p.unit}</div></div><span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span></div>
                   <label className="block">
                     <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
                     <textarea
