@@ -44,7 +44,23 @@ export const HeaderFxRates = ({ companyId }) => {
     }
   }, [companyId, masked]);
 
-  useEffect(() => { load(true); }, [load]);
+  useEffect(() => {
+    // İlk boyamada TCMB'ye gitme — önbellek / son bilinen kur; ağ çağrısını idle'a bırak
+    load(false);
+    let idleId;
+    let timeoutId;
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(() => load(true), { timeout: 4000 });
+    } else {
+      timeoutId = setTimeout(() => load(true), 1500);
+    }
+    return () => {
+      if (idleId != null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) clearTimeout(timeoutId);
+    };
+  }, [load]);
   useEffect(() => {
     const t = setInterval(() => load(true), 15 * 60 * 1000);
     return () => clearInterval(t);

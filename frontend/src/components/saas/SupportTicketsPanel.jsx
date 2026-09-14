@@ -3,9 +3,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Inbox, Loader2, Paperclip, Send, X } from "lucide-react";
-import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
-import { compressImageFile } from "../utils/compressImage";
+import { API_URL } from "../../context/AuthContext";
+import { resolveImageUrl } from "../../utils/imageUrl";
+import { compressImageFile } from "../../utils/compressImage";
 import { StatusFlow } from "../../pages/SupportPage";
 import { fmtDate } from "./saasUi";
 
