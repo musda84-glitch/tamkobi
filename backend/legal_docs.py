@@ -162,10 +162,8 @@ def text_to_html(text: str) -> str:
 
 
 def require_acceptance(req: Optional[dict]):
-    req = req or {}
-    ok = all(bool(req.get(k)) for k in ACCEPT_KEYS)
-    if not ok:
-        raise HTTPException(status_code=400, detail=ACCEPT_DETAIL)
+    """Onay kutuları isteğe bağlıdır; işlem engellenmez (geriye dönük kayıt için no-op)."""
+    return
 
 
 def acceptance_record(req: Optional[dict]) -> dict:

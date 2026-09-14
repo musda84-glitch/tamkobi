@@ -104,7 +104,7 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   );
 };
 
-export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", customerOrderNo, setCustomerOrderNo, consent, setConsent, hrefExtra = "", legalOk }) => (
+export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", customerOrderNo, setCustomerOrderNo, consent, setConsent, hrefExtra = "" }) => (
   <>
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
     <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l, i) => (
@@ -127,7 +127,7 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu (teslimat, adres…)" className="w-full border rounded-xl p-2.5 text-sm sm:text-xs" data-testid={`b2b-note${suffix}`} />
       {setCustomerOrderNo && <input value={customerOrderNo || ""} onChange={(e) => setCustomerOrderNo(e.target.value)} placeholder="Sizin sipariş numaranız (isteğe bağlı)" maxLength={80} className="w-full border rounded-xl p-2.5 text-sm sm:text-xs font-mono" data-testid={`b2b-customer-order-no${suffix}`} />}
       {setConsent && <LegalConsent value={consent} onChange={setConsent} hrefExtra={hrefExtra} prefix={`b2b${suffix}-`} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5" />}
-      <button onClick={submit} disabled={busy || (setConsent && !legalOk)} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
+      <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
     </>}
   </>
 );

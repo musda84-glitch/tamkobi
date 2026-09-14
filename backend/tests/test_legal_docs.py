@@ -13,10 +13,10 @@ from legal_docs import require_acceptance, SLUGS, TITLES, text_to_html
 
 
 class TestLegalDocsUnit:
-    def test_require_acceptance_rejects_partial(self):
-        with pytest.raises(HTTPException) as ex:
-            require_acceptance({"accept_mss": True, "accept_obf": True})
-        assert ex.value.status_code == 400
+    def test_require_acceptance_optional(self):
+        # Onay kutuları artık zorunlu değil
+        require_acceptance({})
+        require_acceptance({"accept_mss": True})
         require_acceptance(LEGAL_ACCEPT)
 
     def test_html_renders_headings(self):
@@ -42,28 +42,20 @@ class TestLegalDocsApi:
         r = requests.get(f"{API}/public/legal/yok-boyle-metin", timeout=20)
         assert r.status_code == 404
 
-    def test_b2b_order_requires_checkboxes(self):
+    def test_b2b_order_without_checkboxes(self):
         token = resolve_b2b_token()
         portal = requests.get(f"{API}/public/b2b/{token}", timeout=20)
         assert portal.status_code == 200, portal.text
-        assert portal.json().get("legal")
         prod = next(p for p in portal.json()["products"] if p.get("id"))
-        blocked = requests.post(
-            f"{API}/public/b2b/{token}/orders",
-            json={"items": [{"product_id": prod["id"], "quantity": 1}], "note": "TEST_legal_no"},
-            timeout=20,
-        )
-        assert blocked.status_code == 400, blocked.text
-        assert "onay" in (blocked.json().get("detail") or "").lower() or "KVKK" in (blocked.json().get("detail") or "")
         ok = requests.post(
             f"{API}/public/b2b/{token}/orders",
-            json={"items": [{"product_id": prod["id"], "quantity": 1}], "note": "TEST_legal_yes", **LEGAL_ACCEPT},
+            json={"items": [{"product_id": prod["id"], "quantity": 1}], "note": "TEST_legal_optional"},
             timeout=20,
         )
         assert ok.status_code == 200, ok.text
-        assert ok.json()["order"].get("legal_accept", {}).get("accept_kvkk") is True
+        assert "order" in ok.json()
 
-    def test_signup_requires_checkboxes(self):
+    def test_signup_without_checkboxes(self):
         import uuid
         email = f"legal_{uuid.uuid4().hex[:8]}@test.com"
         r = requests.post(
@@ -71,5 +63,4 @@ class TestLegalDocsApi:
             json={"company_name": "Legal Co", "name": "Ali", "email": email, "password": "abc12345"},
             timeout=20,
         )
-        assert r.status_code == 400, r.text
-        assert "onay" in (r.json().get("detail") or "").lower() or "KVKK" in (r.json().get("detail") or "")
+        assert r.status_code == 200, r.text

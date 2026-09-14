@@ -9,7 +9,7 @@ import { PLAN_COLORS } from "../components/saas/saasUi";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { parseModuleKeys, packQuote } from "../utils/modulePack";
-import { LegalConsent, LegalFooterLinks, allLegalAccepted, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
+import { LegalConsent, LegalFooterLinks, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -26,7 +26,6 @@ export default function SignupPage() {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const submit = async (e) => {
     e.preventDefault();
-    if (!allLegalAccepted(consent)) { toast.error("Yasal metinleri onaylamadan kayıt olamazsınız."); return; }
     setBusy(true);
     const payload = { ...f, ...legalPayload(consent) };
     if (picked.length) { payload.modules = picked; delete payload.plan_id; }
@@ -64,7 +63,7 @@ export default function SignupPage() {
             <div><label className="block font-semibold text-slate-300 mb-2 text-xs">Denemek istediğiniz paket</label><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(d?.plans || []).map((p) => <button type="button" key={p.id} onClick={() => setF({ ...f, plan_id: p.id })} className={`rounded-xl p-3 text-left border transition ${f.plan_id === p.id ? "bg-white text-slate-900 border-white" : "bg-white/5 border-white/10 hover:bg-white/10"}`} data-testid={`signup-plan-${p.id}`}><div className="text-xs font-bold">{p.name}</div><div className={`text-[10px] ${f.plan_id === p.id ? "text-slate-500" : "text-slate-400"}`}>{p.modules.length} modül</div></button>)}</div></div>
           )}
           <LegalConsent value={consent} onChange={setConsent} prefix="signup-" className="bg-white/5 border border-white/10 rounded-xl p-3 text-slate-300 [&_a]:text-emerald-300" />
-          <button disabled={busy || (customMode && !picked.length) || !allLegalAccepted(consent)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
+          <button disabled={busy || (customMode && !picked.length)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
           <LegalFooterLinks className="text-slate-500 justify-start" prefix="signup-footer" />
         </form>
         {customMode ? (
