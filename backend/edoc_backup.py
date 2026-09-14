@@ -13,7 +13,7 @@ from fastapi.responses import Response
 import ubl_export
 
 router = APIRouter(prefix="/api")
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 _db = None
 _deps: Dict[str, Any] = {}
 

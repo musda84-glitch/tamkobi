@@ -384,7 +384,7 @@ async def get_financial_ai_advice(company_context: dict, prompt: str, history: l
 
     system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
 Kullanıcının şirketine dair güncel veriler:
-- Şirket Adı: {company_context.get('company_name', 'Nexus Teknoloji A.Ş.')}
+- Şirket Adı: {company_context.get('company_name', 'TamKobi A.Ş.')}
 - Toplam Kasa/Banka Varlığı: {company_context.get('total_bank_balance', 0):,.2f} TRY
 - Müşterilerden Toplam Alacak: {company_context.get('total_receivables', 0):,.2f} TRY
 - Tedarikçilere Toplam Borç: {company_context.get('total_payables', 0):,.2f} TRY
@@ -415,7 +415,7 @@ Görevin:
     except Exception as e:
         logger.error(f"Error invoking emergentintegrations: {e}")
         # Fallback intelligent local response if network/quota temporary issue
-        return f"""**Nexus AI Finansal Değerlendirme Raporu:**
+        return f"""**TamKobi AI Finansal Değerlendirme Raporu:**
 
 1. **Nakit Pozisyonu & Likidite:** Mevcut hazır değerleriniz ({company_context.get('total_bank_balance', 0):,.2f} TL) operasyonel giderleri 30 gün boyunca karşılamak için yeterli seviyededir.
 2. **Tahsilat Yönetimi:** Bekleyen {company_context.get('total_receivables', 0):,.2f} TL alacağınız için vadesi geçmiş müşterilere otomatik SMS/E-posta bakiye hatırlatması göndermeniz tavsiye edilir.

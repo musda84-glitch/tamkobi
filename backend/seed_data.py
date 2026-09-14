@@ -21,7 +21,7 @@ async def seed_partners(db):
 
 async def seed_all_data(db):
     # Skip when any user exists so a wizard-created admin is not overwritten
-    # by the Nexus demo dataset on the next boot.
+    # by the TamKobi demo dataset on the next boot.
     if await db.users.find_one({}):
         return
 
@@ -31,7 +31,7 @@ async def seed_all_data(db):
     # Seed Companies
     company1 = {
         "_id": company_id,
-        "name": "Nexus Teknoloji ve E-Ticaret A.Ş.",
+        "name": "TamKobi Teknoloji ve E-Ticaret A.Ş.",
         "tax_number": "6320984412",
         "tax_office": "Kadıköy V.D.",
         "address": "Atatürk Mah. Ataşehir Bulvarı No:42/A",
@@ -45,7 +45,7 @@ async def seed_all_data(db):
     }
     company2 = {
         "_id": company_id_2,
-        "name": "Nexus Global Toptan ve B2B Dağıtım Ltd. Şti.",
+        "name": "TamKobi Global Toptan ve B2B Dağıtım Ltd. Şti.",
         "tax_number": "7820193845",
         "tax_office": "Zincirlikuyu V.D.",
         "address": "Büyükdere Cad. No:190 Levent",
@@ -229,7 +229,7 @@ async def seed_all_data(db):
         {
             "_id": "prod_01",
             "company_id": company_id,
-            "name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)",
+            "name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)",
             "sku": "NX-BT-PRO",
             "barcode": "8680001234011",
             "type": "finished_good",
@@ -256,7 +256,7 @@ async def seed_all_data(db):
         {
             "_id": "prod_02",
             "company_id": company_id,
-            "name": "Nexus RGB Mekanik Gaming Klavye (Blue Switch)",
+            "name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)",
             "sku": "NX-KB-RGB",
             "barcode": "8680001234028",
             "type": "product",
@@ -369,10 +369,10 @@ async def seed_all_data(db):
         {
             "_id": "rec_01",
             "company_id": company_id,
-            "name": "Nexus BT Pro Max Kulaklık Standart Montaj Reçetesi",
+            "name": "TamKobi BT Pro Max Kulaklık Standart Montaj Reçetesi",
             "code": "BOM-NX-01",
             "finished_product_id": "prod_01",
-            "finished_product_name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)",
+            "finished_product_name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)",
             "target_quantity": 1.0,
             "unit": "Adet",
             "materials": [
@@ -461,8 +461,8 @@ async def seed_all_data(db):
             "issue_date": today_str,
             "due_date": (datetime.now(timezone.utc) + timedelta(days=15)).strftime("%Y-%m-%d"),
             "items": [
-                {"product_id": "prod_01", "name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "quantity": 25, "unit": "Adet", "unit_price": 1899.0, "vat_rate": 20, "discount_percent": 5.0, "total": 45101.25},
-                {"product_id": "prod_02", "name": "Nexus RGB Mekanik Gaming Klavye (Blue Switch)", "quantity": 10, "unit": "Adet", "unit_price": 1450.0, "vat_rate": 20, "discount_percent": 0.0, "total": 14500.0}
+                {"product_id": "prod_01", "name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)", "quantity": 25, "unit": "Adet", "unit_price": 1899.0, "vat_rate": 20, "discount_percent": 5.0, "total": 45101.25},
+                {"product_id": "prod_02", "name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)", "quantity": 10, "unit": "Adet", "unit_price": 1450.0, "vat_rate": 20, "discount_percent": 0.0, "total": 14500.0}
             ],
             "subtotal": 59601.25,
             "vat_total": 11920.25,
@@ -737,7 +737,7 @@ async def seed_all_data(db):
             "shipping_address": "Barbaros Mah. Mor Sümbül Sok. Varyap Meridian C Blok D:94",
             "city": "İstanbul",
             "items": [
-                {"product_id": "prod_01", "product_name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}
+                {"product_id": "prod_01", "product_name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}
             ],
             "total_amount": 1899.0,
             "currency": "TRY",
@@ -760,7 +760,7 @@ async def seed_all_data(db):
             "shipping_address": "Göztepe Cad. Gül Apt. No:14 D:6 Kadıköy",
             "city": "İstanbul",
             "items": [
-                {"product_id": "prod_02", "product_name": "Nexus RGB Mekanik Gaming Klavye (Blue Switch)", "sku": "NX-KB-RGB", "quantity": 1, "unit_price": 1450.0, "total": 1450.0}
+                {"product_id": "prod_02", "product_name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)", "sku": "NX-KB-RGB", "quantity": 1, "unit_price": 1450.0, "total": 1450.0}
             ],
             "total_amount": 1450.0,
             "currency": "TRY",
@@ -783,7 +783,7 @@ async def seed_all_data(db):
             "shipping_address": "Nispetiye Cad. No:88 Akmerkez Şube Deposu",
             "city": "İstanbul",
             "items": [
-                {"product_id": "prod_01", "product_name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 20, "unit_price": 1650.0, "total": 33000.0},
+                {"product_id": "prod_01", "product_name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 20, "unit_price": 1650.0, "total": 33000.0},
                 {"product_id": "prod_03", "product_name": "Kablosuz Hızlı Şarj Standı 15W MagSafe Uyumlu", "sku": "NX-CHG-15W", "quantity": 15, "unit_price": 420.0, "total": 6300.0}
             ],
             "total_amount": 39300.0,
@@ -893,7 +893,6 @@ async def seed_all_data(db):
     await db.payrolls.insert_many(payrolls)
 
     print("Successfully seeded TamKobi full demo data.")
-    print("Successfully seeded NexusHesap full demo data.")
 
 
 DEMO_SHOPFLOOR_PIN = "1234"

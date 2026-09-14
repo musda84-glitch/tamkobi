@@ -28,7 +28,7 @@ const AccountSetup = ({ companyId, account, onSaved, onClose }) => {
           <div><label className="block font-semibold mb-1">Sağlayıcı</label><select value={form.provider} onChange={(e) => applyPreset(e.target.value)} className={inputCls} data-testid="mail-provider-select">{presets.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select></div>
           <div className="grid grid-cols-2 gap-2">
             <div><label className="block font-semibold mb-1">E-posta Adresi</label><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} required data-testid="mail-email-input" /></div>
-            <div><label className="block font-semibold mb-1">Görünen Ad</label><input value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className={inputCls} placeholder="Nexus Muhasebe" /></div>
+            <div><label className="block font-semibold mb-1">Görünen Ad</label><input value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className={inputCls} placeholder="TamKobi Muhasebe" /></div>
           </div>
           <div><label className="block font-semibold mb-1">Uygulama Şifresi {account?.has_password && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için girin)</span>}</label><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} required={!account} data-testid="mail-password-input" />
             <p className="text-[10px] text-slate-400 mt-1">Outlook/Gmail için hesabınızda 2 adımlı doğrulamayı açıp "Uygulama şifresi" oluşturun; normal şifrenizi kullanmayın.</p></div>
@@ -38,7 +38,7 @@ const AccountSetup = ({ companyId, account, onSaved, onClose }) => {
             <div className="col-span-2"><label className="block font-semibold mb-1">SMTP Sunucu</label><input value={form.smtp_host} onChange={(e) => setForm({ ...form, smtp_host: e.target.value })} className={`${inputCls} font-mono`} required data-testid="mail-smtp-host-input" /></div>
             <div><label className="block font-semibold mb-1">Port</label><input type="number" value={form.smtp_port} onChange={(e) => setForm({ ...form, smtp_port: e.target.value })} className={inputCls} /></div>
           </div>
-          <div><label className="block font-semibold mb-1">İmza</label><textarea value={form.signature} onChange={(e) => setForm({ ...form, signature: e.target.value })} rows={2} className={inputCls} placeholder="Saygılarımızla, Nexus Teknoloji A.Ş." /></div>
+          <div><label className="block font-semibold mb-1">İmza</label><textarea value={form.signature} onChange={(e) => setForm({ ...form, signature: e.target.value })} rows={2} className={inputCls} placeholder="Saygılarımızla, TamKobi A.Ş." /></div>
           <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={busy} className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-60" data-testid="save-mail-account-btn">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Bağla & Test Et</button></div>
         </form>
       </div>

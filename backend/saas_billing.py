@@ -16,7 +16,7 @@ import user_numbers
 from auth_utils import hash_password, create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/api")
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PERIOD_DAYS = {"monthly": 30, "yearly": 365}
