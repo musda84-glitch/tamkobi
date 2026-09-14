@@ -22,6 +22,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     client_code: "",
     gib_alias: "",
     company_tax_id: "",
+    company_vendor_number: "",
   });
 
   const load = useCallback(async () => {
@@ -36,6 +37,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
         client_code: d.corporate_code || "",
         gib_alias: d.alias || "",
         company_tax_id: d.company_tax_id || "",
+        company_vendor_number: d.company_vendor_number || "",
       });
       setTestMode((d.mode || "test") !== "live");
       setHasPassword(Boolean(d.has_password));
@@ -61,6 +63,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     client_code: formData.client_code,
     gib_alias: formData.gib_alias,
     company_tax_id: formData.company_tax_id,
+    company_vendor_number: formData.company_vendor_number,
   });
 
   const handleTestConnection = async () => {
@@ -129,7 +132,23 @@ export default function IsnetIntegrationPanel({ companyId }) {
         </button>
       </div>
       <p className="text-[10px] text-slate-500">
-        Test: <span className="font-mono">einvoiceapitest.isnet.net.tr</span> · Canlı: <span className="font-mono">einvoiceapi.isnet.net.tr</span>
+        SOAP:{" "}
+        <span className="font-mono">
+          {testMode ? "einvoiceservicetest.isnet.net.tr" : "einvoiceservice.isnet.net.tr"}
+        </span>
+        {" · "}Portal API:{" "}
+        <span className="font-mono">
+          {testMode ? "einvoiceapitest.isnet.net.tr" : "einvoiceapi.isnet.net.tr"}
+        </span>
+        {" · "}
+        <a
+          href="https://github.com/EfeSorogluu/NetteFatura-API"
+          target="_blank"
+          rel="noreferrer"
+          className="underline text-slate-600"
+        >
+          NetteFatura-API
+        </a>
       </p>
 
       <form onSubmit={handleSave} className="space-y-3">
@@ -190,7 +209,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
         <div>
           <label className="block font-semibold mb-1">
             Şirket VKN / TCKN
-            <span className="text-slate-400 font-normal"> (SOAP GİB / bakiye — OvoCRM uyumu)</span>
+            <span className="text-slate-400 font-normal"> (SOAP CompanyTaxCode — NetteFatura-API IP–VKN)</span>
           </label>
           <input
             type="text"
@@ -204,6 +223,22 @@ export default function IsnetIntegrationPanel({ companyId }) {
             data-testid="isnet-company-tax-id"
           />
         </div>
+        <div>
+          <label className="block font-semibold mb-1">
+            Şube / Vendor No
+            <span className="text-slate-400 font-normal"> (opsiyonel — CompanyVendorNumber)</span>
+          </label>
+          <input
+            type="text"
+            name="company_vendor_number"
+            value={formData.company_vendor_number}
+            onChange={handleChange}
+            placeholder="Varsa İşNet şube/vendor numarası"
+            className={`${inputCls} font-mono`}
+            data-testid="isnet-company-vendor-number"
+          />
+        </div>
+
 
         <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
           <button

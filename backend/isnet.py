@@ -1,11 +1,12 @@
-"""İşNet Net-e Fatura (NetteFatura / eInvoice API) istemcisi — OvoCRM uyumlu.
+"""İşNet NetteFatura SOAP/REST istemcisi.
+
+Resmi sözleşme: https://github.com/EfeSorogluu/NetteFatura-API
+  (InvoiceService + AddressBookService, IP–VKN / CompanyTaxCode)
 
 İki kanal:
-1) Portal REST — Login + GetHealthCheck (kimlik / şirket listesi).
-2) NetteFatura SOAP — GİB mükellef, UBL gönderim, gelen kutu, bakiye
-   (InvoiceService + AddressBookService; CompanyTaxCode / IP-VKN).
-
-Kimlik bilgileri firma `einvoice_settings` kaydında tutulur.
+1) Portal REST — Account/Login + GetHealthCheck (kullanıcı/şifre).
+2) NetteFatura SOAP — HealthCheck, GetCompanyBalance, GetTaxPayer,
+   SendInvoiceXml / SendArchiveInvoiceXml, SearchInvoice.
 """
 from __future__ import annotations
 
@@ -22,10 +23,9 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+# --- Endpoints: nettefatura-api NETTEFATURA_ENDPOINTS ile birebir ---
 LIVE_API = "https://einvoiceapi.isnet.net.tr"
 TEST_API = "https://einvoiceapitest.isnet.net.tr"
-
-# Resmi NetteFatura SOAP (OvoCRM / nettefatura-api ile aynı hostlar)
 LIVE_SOAP = "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
 TEST_SOAP = "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
 LIVE_ADDRESS_BOOK = (
@@ -34,10 +34,23 @@ LIVE_ADDRESS_BOOK = (
 TEST_ADDRESS_BOOK = (
     "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
 )
+LIVE_PORTAL = "https://nettefatura.isnet.net.tr"
+TEST_PORTAL = "https://efatura.isnet.net.tr"
 
 SOAP_NS = "http://tempuri.org/"
 EIN_NS = "http://schemas.datacontract.org/2004/07/EInvoice.Service.Model"
 ARR_NS = "http://schemas.microsoft.com/2003/10/Serialization/Arrays"
+
+# WCF DataContract dizi eleman adları (NetteFatura-API ARRAY_ITEM_NAME_MAP)
+_ARRAY_ITEM = {
+    "Invoices": "Invoice",
+    "ArchiveInvoices": "ArchiveInvoice",
+    "TaxPayers": "TaxPayer",
+    "InboxTagList": "string",
+    "OutboxTagList": "string",
+    "Aliases": "Alias",
+    "Notes": "string",
+}
 
 
 def is_test_mode(settings: dict) -> bool:
@@ -60,6 +73,10 @@ def address_book_url(settings: dict) -> str:
     return TEST_ADDRESS_BOOK if is_test_mode(settings) else LIVE_ADDRESS_BOOK
 
 
+def portal_url(settings: dict) -> str:
+    return TEST_PORTAL if is_test_mode(settings) else LIVE_PORTAL
+
+
 def company_tax_code(settings: dict, company: Optional[dict] = None) -> str:
     for src in (settings or {}, company or {}):
         for key in (
@@ -76,6 +93,29 @@ def company_tax_code(settings: dict, company: Optional[dict] = None) -> str:
     return ""
 
 
+def company_vendor_number(settings: dict) -> str:
+    return str(
+        settings.get("company_vendor_number")
+        or settings.get("vendor_number")
+        or settings.get("branch_code")
+        or ""
+    ).strip()
+
+
+def _company_request(settings: dict, tax: Optional[str] = None) -> Dict[str, str]:
+    """SOAP isteklerinde CompanyTaxCode (+ opsiyonel CompanyVendorNumber)."""
+    code = re.sub(r"\D", "", str(tax or company_tax_code(settings) or ""))
+    req: Dict[str, str] = {"CompanyTaxCode": code}
+    vendor = company_vendor_number(settings)
+    if vendor:
+        req["CompanyVendorNumber"] = vendor
+    return req
+
+
+# ---------------------------------------------------------------------------
+# Portal REST
+# ---------------------------------------------------------------------------
+
 async def health_check(settings: dict) -> bool:
     url = f"{api_base(settings)}/api/Account/GetHealthCheck"
     try:
@@ -86,12 +126,12 @@ async def health_check(settings: dict) -> bool:
         text = (r.text or "").strip().lower()
         return text in ("true", '"true"', "ok", '"ok"') or r.status_code == 200
     except Exception:
-        logger.exception("İşNet health check failed")
+        logger.exception("İşNet portal health check failed")
         return False
 
 
 async def login(settings: dict, password: str) -> Dict[str, Any]:
-    """Portal / API kullanıcısı ile oturum açar; Token döner."""
+    """Portal API kullanıcısı ile oturum — Token döner."""
     username = (settings.get("username") or "").strip()
     if not username or not password:
         raise HTTPException(status_code=400, detail="İşNet kullanıcı adı ve şifre gerekli.")
@@ -147,13 +187,16 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
                 ],
                 "endpoint": url,
                 "mode": "test" if is_test_mode(settings) else "live",
-                "message": "İşNet Net-e Fatura bağlantı testi başarılı.",
+                "message": "İşNet portal bağlantı testi başarılı.",
             }
     raise HTTPException(status_code=400, detail=last_detail)
 
 
 async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
-    """Sağlık kontrolü + Login; VKN varsa SOAP bakiye (OvoCRM/NetteFatura)."""
+    """Portal login + (VKN varsa) NetteFatura SOAP HealthCheck / bakiye.
+
+    SOAP tarafı NetteFatura-API gibi IP–VKN ile çalışır; company_tax_id zorunlu önerilir.
+    """
     client_code = (settings.get("corporate_code") or settings.get("client_code") or "").strip()
     if not client_code:
         raise HTTPException(status_code=400, detail="İşNet müşteri / firma kodu gerekli.")
@@ -169,7 +212,9 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
     info["alias"] = alias
     info["soap_endpoint"] = soap_url(settings)
     info["address_book_endpoint"] = address_book_url(settings)
+    info["portal"] = portal_url(settings)
     info["mode"] = "test" if is_test_mode(settings) else "live"
+    info["sdk"] = "https://github.com/EfeSorogluu/NetteFatura-API"
     if not healthy:
         info["warning"] = "Login başarılı ancak GetHealthCheck yanıt vermedi; servis kısmen erişilebilir olabilir."
 
@@ -177,24 +222,28 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
     info["company_tax_id"] = tax
     if tax:
         try:
+            soap_health = await soap_health_check(settings)
+            info["soap_health"] = soap_health
             bal = await get_company_balance(settings)
             info["soap_ok"] = True
             info["balance"] = bal.get("balance")
             info["remaining_credit"] = bal.get("remaining_credit")
             shown = bal.get("balance") if bal.get("balance") not in (None, "") else bal.get("remaining_credit")
-            info["message"] = (info.get("message") or "Bağlantı OK") + f" · SOAP bakiye: {shown or '?'}"
+            info["message"] = (info.get("message") or "Bağlantı OK") + f" · SOAP HealthCheck OK · bakiye: {shown or '?'}"
         except HTTPException as e:
             info["soap_ok"] = False
             info["soap_warning"] = str(e.detail)
             info["message"] = (info.get("message") or "Portal OK") + f" · SOAP: {e.detail}"
     else:
         info["soap_ok"] = None
-        info["soap_hint"] = "Şirket VKN (company_tax_id) girilirse SOAP bakiye / GİB doğrulanır."
+        info["soap_hint"] = (
+            "Şirket VKN (company_tax_id) girin — NetteFatura SOAP (IP–VKN) bakiye / GİB için zorunlu."
+        )
     return info
 
 
 # ---------------------------------------------------------------------------
-# SOAP yardımcılar
+# SOAP (NetteFatura-API SoapClient / serializeToSoapXml uyumu)
 # ---------------------------------------------------------------------------
 
 def _local(tag: str) -> str:
@@ -225,7 +274,7 @@ def _find_all(root: Optional[ET.Element], *names: str) -> List[ET.Element]:
 
 
 def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
-    """WCF DataContract uyumlu SOAP gövdesi (anahtarlar alfabetik)."""
+    """WCF DataContract SOAP gövdesi — NetteFatura-API serializeToSoapXml (alfabetik anahtar)."""
     if obj is None:
         return ""
     if isinstance(obj, bool):
@@ -235,14 +284,7 @@ def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
     if isinstance(obj, str):
         return xml_esc(obj)
     if isinstance(obj, list):
-        item_name = {
-            "Invoices": "InvoiceXml",
-            "ArchiveInvoices": "ArchiveInvoiceXml",
-            "TaxPayers": "TaxPayer",
-            "InboxTagList": "string",
-            "OutboxTagList": "string",
-            "Aliases": "Alias",
-        }.get(parent or "", "Item")
+        item_name = _ARRAY_ITEM.get(parent or "", "Item")
         chunks = []
         for item in obj:
             if isinstance(item, dict):
@@ -289,6 +331,7 @@ async def _soap_call(
         "</soapenv:Body>"
         "</soapenv:Envelope>"
     )
+    # NetteFatura-API: SOAPAction = http://tempuri.org/IInvoiceService/{Action}
     headers = {
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": f'"{SOAP_NS}{service_interface}/{action}"',
@@ -322,9 +365,23 @@ async def _soap_call(
     return body
 
 
+async def soap_health_check(settings: dict) -> str:
+    """InvoiceService.HealthCheck — NetteFatura-API invoice.healthCheck()."""
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action="HealthCheck",
+        service_interface="IInvoiceService",
+        request=None,
+        timeout=20.0,
+    )
+    return _find_text(body, "HealthCheckResult", "Result") or "OK"
+
+
 async def get_company_balance(settings: dict, tax_code: Optional[str] = None) -> Dict[str, Any]:
-    tax = re.sub(r"\D", "", str(tax_code or company_tax_code(settings) or ""))
-    if len(tax) not in (10, 11):
+    """GetCompanyBalance — NetteFatura-API invoice.getCompanyBalance()."""
+    req = _company_request(settings, tax_code)
+    if len(req["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
             status_code=400, detail="SOAP bakiye için şirket VKN/TCKN (company_tax_id) gerekli."
         )
@@ -333,20 +390,20 @@ async def get_company_balance(settings: dict, tax_code: Optional[str] = None) ->
         endpoint=soap_url(settings),
         action="GetCompanyBalance",
         service_interface="IInvoiceService",
-        request={"CompanyTaxCode": tax},
+        request=req,
         timeout=25.0,
     )
     return {
-        "balance": _find_text(body, "Balance", "RemainingCredit", "TotalCredit"),
-        "remaining_credit": _find_text(body, "RemainingCredit"),
-        "used_credit": _find_text(body, "UsedCredit"),
-        "total_credit": _find_text(body, "TotalCredit"),
+        "balance": _find_text(body, "Balance", "RemainingCredit", "TotalCredit", "RemainingCredit"),
+        "remaining_credit": _find_text(body, "RemainingCredit", "RemainingCredit"),
+        "used_credit": _find_text(body, "UsedCredit", "UsedCredit"),
+        "total_credit": _find_text(body, "TotalCredit", "TotalCredit"),
         "message": _find_text(body, "Message") or "OK",
     }
 
 
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
-    """GİB e-Fatura mükellef sorgu (GetTaxPayer) — n11faturam.lookup_user sözleşmesi."""
+    """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user."""
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
     if len(tax) not in (10, 11):
@@ -415,8 +472,9 @@ async def send_invoice_xml(
     receiver_alias: str = "",
     is_earchive: bool = False,
 ) -> Dict[str, Any]:
-    tax = company_tax_code(settings)
-    if len(tax) not in (10, 11):
+    """SendInvoiceXml / SendArchiveInvoiceXml — NetteFatura-API invoice.sendInvoiceXml()."""
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
             status_code=400, detail="İşNet SOAP gönderimi için şirket VKN (company_tax_id) gerekli."
         )
@@ -428,15 +486,15 @@ async def send_invoice_xml(
     if is_earchive:
         action = "SendArchiveInvoiceXml"
         request: Dict[str, Any] = {
+            **req_base,
             "ArchiveInvoices": [{"ArchiveInvoiceContent": content}],
-            "CompanyTaxCode": tax,
         }
     else:
         action = "SendInvoiceXml"
         item: Dict[str, Any] = {"InvoiceContent": content}
         if alias:
             item["ReceiverTag"] = alias
-        request = {"CompanyTaxCode": tax, "Invoices": [item]}
+        request = {**req_base, "Invoices": [item]}
 
     body = await _soap_call(
         settings,
@@ -518,10 +576,10 @@ def _decode_xml_payload(payload: str) -> Optional[bytes]:
 
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
-    """Gelen e-Faturalar — n11faturam.list_incoming sözleşmesi."""
+    """SearchInvoice (Incoming) — NetteFatura-API invoice.searchInvoice()."""
     _ = password
-    tax = company_tax_code(settings)
-    if len(tax) not in (10, 11):
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
             status_code=400, detail="İşNet gelen kutu için şirket VKN (company_tax_id) gerekli."
         )
@@ -533,7 +591,7 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
         action="SearchInvoice",
         service_interface="IInvoiceService",
         request={
-            "CompanyTaxCode": tax,
+            **req_base,
             "InvoiceDirection": "Incoming",
             "MaxInvoiceDate": end.strftime("%Y-%m-%d"),
             "MinInvoiceDate": start.strftime("%Y-%m-%d"),
