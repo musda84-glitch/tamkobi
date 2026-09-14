@@ -1948,6 +1948,12 @@ async def b2b_login(req: Dict[str, Any], request: Request):
     if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
         applog.log_auth("b2b_login_failed", ident, email=ident, ip=applog.client_ip(request), user_email=ident)
         raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
+    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    bs = {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}
+    if not bs.get("enabled", True):
+        raise HTTPException(status_code=403, detail="B2B portalı şu an kapalı.")
+    if bs.get("login_method") == "link":
+        raise HTTPException(status_code=403, detail="Bu portal yalnızca kişiye özel link ile açılır.")
     if not c.get("b2b_token"):
         await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
         c = await db.contacts.find_one({"_id": c["_id"]})
@@ -2567,6 +2573,8 @@ async def b2b_portal(token: str):
     products = [_b2b_catalog_product(p, disc) for p in prods]
     if not bs.get("show_prices", True):
         products = [{**p, "price": None, "list_price": None, "price_gross": None, "list_price_gross": None} for p in products]
+    if not bs.get("show_stock", True):
+        products = [{**p, "stock_quantity": None} for p in products]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
     shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
     pidx = {p["id"]: p for p in products}
@@ -4263,8 +4271,20 @@ def _build_plan(total: float, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _decorate_installment(d: Dict[str, Any]) -> Dict[str, Any]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     d = clean_doc(d)
-    d["is_overdue"] = d.get("status") != "paid" and d.get("due_date", "") < today
-    d["days_left"] = (date.fromisoformat(d["due_date"]) - date.fromisoformat(today)).days if d.get("due_date") else None
+    due = d.get("due_date") or ""
+    if hasattr(due, "strftime"):
+        due = due.strftime("%Y-%m-%d")
+    elif isinstance(due, str) and len(due) >= 10:
+        due = due[:10]
+    else:
+        due = str(due)[:10] if due else ""
+    d["due_date"] = due
+    try:
+        d["is_overdue"] = d.get("status") != "paid" and bool(due) and due < today
+        d["days_left"] = (date.fromisoformat(due) - date.fromisoformat(today)).days if due else None
+    except (TypeError, ValueError):
+        d["is_overdue"] = False
+        d["days_left"] = None
     return d
 
 async def _create_invoice_installments(inv: Dict[str, Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
