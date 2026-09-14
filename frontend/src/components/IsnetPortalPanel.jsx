@@ -13,7 +13,8 @@ const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 export default function IsnetPortalPanel({ companyId }) {
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
-  const [testMode, setTestMode] = useState(true);
+  // Gerçek NetteFatura hesapları canlıda; Test yalnızca İşNet deneme hesabı
+  const [testMode, setTestMode] = useState(false);
   const [hasPassword, setHasPassword] = useState(false);
   const [status, setStatus] = useState("simulated");
   const [formData, setFormData] = useState({
@@ -33,7 +34,7 @@ export default function IsnetPortalPanel({ companyId }) {
         password: "",
         corporate_code: d.corporate_code || "",
       });
-      setTestMode((d.mode || "test") !== "live");
+      setTestMode((d.mode || "live") === "test");
       setHasPassword(Boolean(d.has_password));
       setStatus(d.status || "simulated");
     } catch (err) {
@@ -62,6 +63,9 @@ export default function IsnetPortalPanel({ companyId }) {
     setLoading(true);
     try {
       const r = await axios.post(`${API_URL}/integrations/isnet-portal/test`, body());
+      if (r.data?.suggested_mode) {
+        setTestMode(r.data.suggested_mode === "test");
+      }
       toast.success(r.data?.message || "İşNet Web Portal bağlantı testi başarılı!");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Portal bağlantısı kurulamadı.");
@@ -110,6 +114,10 @@ export default function IsnetPortalPanel({ companyId }) {
             Bağlantıyı kaydetmek yetmez. Gelen faturaları görmek için{" "}
             <span className="font-semibold">Muhasebe → Gelen e-Belgeler → Entegratörden çek</span> kullanın.
           </p>
+          <p className="text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 mt-2" data-testid="isnet-portal-mode-hint">
+            Gerçek NetteFatura hesabınız varsa <span className="font-semibold">Canlı Ortam</span> seçin.
+            Login HTTP 401 çoğu zaman Test seçiliyken canlı şifre kullanıldığından çıkar.
+          </p>
         </div>
         <span
           className={`text-[10px] font-bold px-2 py-0.5 rounded border ${status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
@@ -137,8 +145,13 @@ export default function IsnetPortalPanel({ companyId }) {
           Canlı Ortam
         </button>
       </div>
-      <p className="text-[10px] text-slate-500 font-mono">
-        {testMode ? "efatura.isnet.net.tr" : "nettefatura.isnet.net.tr"}
+      <p className="text-[10px] text-slate-500 font-mono space-y-0.5" data-testid="isnet-portal-hosts">
+        <span className="block">
+          Portal: {testMode ? "efatura.isnet.net.tr" : "nettefatura.isnet.net.tr"}
+        </span>
+        <span className="block">
+          Mobile API: {testMode ? "einvoiceapitest.isnet.net.tr" : "einvoiceapi.isnet.net.tr"}
+        </span>
       </p>
 
       <form onSubmit={handleSave} className="space-y-3">
@@ -164,7 +177,7 @@ export default function IsnetPortalPanel({ companyId }) {
             name="password"
             value={formData.password}
             onChange={handleChange}
-            placeholder="••••••••"
+            placeholder="nettefatura.isnet.net.tr ile aynı şifre"
             className={inputCls}
             required={!hasPassword}
             data-testid="isnet-portal-password"

@@ -126,7 +126,8 @@ class IsnetPortalClient:
             data={
                 "VknTckn": vkn,
                 "Password": self.password,
-                "RememberMe": "true",
+                # NetteFatura-Portal: RememberMe=on
+                "RememberMe": "on",
                 "__RequestVerificationToken": token,
             },
             headers={
@@ -137,9 +138,13 @@ class IsnetPortalClient:
             },
         )
         cookie_names = set(self._client.cookies.keys())
-        authed = any("AUTH" in n.upper() for n in cookie_names)
+        # .ASPXFORMSAUTH / .AspNet.ApplicationCookie vb.
+        authed = any(
+            ("AUTH" in n.upper()) or n.upper().endswith("FORMSAUTH") or "APPLICATIONCOOKIE" in n.upper()
+            for n in cookie_names
+        )
         body = r.text or ""
-        if (not authed) and "__RequestVerificationToken" in body and "VknTckn" in body:
+        if r.status_code in (401, 403) or ((not authed) and "__RequestVerificationToken" in body and "VknTckn" in body):
             err = ""
             m = re.search(
                 r'class=["\'][^"\']*(?:validation-summary-errors|field-validation-error|alert-danger)[^"\']*["\'][^>]*>(.*?)</',
@@ -148,9 +153,18 @@ class IsnetPortalClient:
             )
             if m:
                 err = re.sub(r"<[^>]+>", " ", m.group(1)).strip()
+            mode_hint = (
+                " Test ortamı seçili — gerçek NetteFatura hesabınız varsa «Canlı Ortam»ı deneyin."
+                if is_test_mode(self.settings)
+                else " Canlı ortam seçili — İşNet test hesabı kullanıyorsanız «Test Ortamı»nı seçin."
+            )
             raise HTTPException(
                 status_code=400,
-                detail=f"İşNet portal girişi başarısız. {err or 'VKN/TCKN veya şifre hatalı olabilir.'}",
+                detail=(
+                    f"İşNet portal girişi başarısız (HTTP {r.status_code}). "
+                    f"{err or 'VKN/TCKN veya portal şifresi hatalı olabilir.'}"
+                    f"{mode_hint}"
+                ),
             )
         companies = await self.list_companies()
         if companies and not self.company_id:
@@ -224,18 +238,54 @@ def _auth_header_sets(token: str) -> List[Dict[str, str]]:
     ]
 
 
-async def _mobile_login(settings: dict, password: str) -> Dict[str, Any]:
-    vkn = _vkn(settings)
-    if not vkn or not password:
-        raise HTTPException(status_code=400, detail="Portal gelen kutu için VKN/TCKN ve şifre zorunludur.")
-    url = f"{mobile_api_base(settings)}/api/Account/Login"
-    payloads = [
+def _mobile_login_payloads(vkn: str, password: str, corporate_code: str = "") -> List[dict]:
+    """Mobile Login gövdeleri — Help sayfası IdentificationNumber; bazı tenant'larda ek alanlar."""
+    base = [
         {"IdentificationNumber": vkn, "Password": password},
         {"IdentificationNo": vkn, "Password": password},
+        {"VknTckn": vkn, "Password": password},
+        {"TaxNumber": vkn, "Password": password},
         {"UserName": vkn, "Password": password},
         {"Username": vkn, "Password": password},
     ]
+    code = (corporate_code or "").strip()
+    if code:
+        extras = []
+        for body in list(base):
+            for key in ("CorporateCode", "CompanyCode", "CompanyId", "IdFirma"):
+                extras.append({**body, key: code})
+        base.extend(extras)
+    return base
+
+
+def _format_mobile_login_error(status: int, body_text: str, settings: dict) -> str:
+    snippet = (body_text or "").strip().replace("\n", " ")[:160]
+    env = "test (einvoiceapitest.isnet.net.tr)" if is_test_mode(settings) else "canlı (einvoiceapi.isnet.net.tr)"
+    if status in (401, 403):
+        tip = (
+            "Gerçek NetteFatura portal şifrenizi kullanıyorsanız ortamı «Canlı» yapın; "
+            "yalnızca İşNet test hesabı için «Test» seçin."
+            if is_test_mode(settings)
+            else "VKN/TCKN ve portal şifresini nettefatura.isnet.net.tr ile aynı girin."
+        )
+        return f"Login HTTP {status} [{env}]: kimlik doğrulama reddedildi. {tip}" + (f" ({snippet})" if snippet else "")
+    return f"Login HTTP {status} [{env}]: {snippet or 'İşNet Mobile API girişi başarısız.'}"
+
+
+async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool = False) -> Dict[str, Any]:
+    vkn = _vkn(settings)
+    if not vkn or not password:
+        raise HTTPException(status_code=400, detail="Portal gelen kutu için VKN/TCKN ve şifre zorunludur.")
+    corp = str(
+        settings.get("corporate_code")
+        or settings.get("company_id")
+        or settings.get("portal_company_id")
+        or ""
+    ).strip()
+    url = f"{mobile_api_base(settings)}/api/Account/Login"
+    payloads = _mobile_login_payloads(vkn, password, corp)
     last = "İşNet Mobile API girişi başarısız."
+    saw_401 = False
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
         for body in payloads:
             try:
@@ -243,7 +293,9 @@ async def _mobile_login(settings: dict, password: str) -> Dict[str, Any]:
             except httpx.RequestError as e:
                 raise HTTPException(status_code=502, detail=f"İşNet Mobile API'ye ulaşılamadı: {e}") from e
             if r.status_code >= 400:
-                last = f"Login HTTP {r.status_code}: {(r.text or '')[:160]}"
+                if r.status_code in (401, 403):
+                    saw_401 = True
+                last = _format_mobile_login_error(r.status_code, r.text or "", settings)
                 continue
             try:
                 data = r.json() if r.content else {}
@@ -251,9 +303,21 @@ async def _mobile_login(settings: dict, password: str) -> Dict[str, Any]:
                 data = {}
             if not isinstance(data, dict):
                 data = {}
-            token = str(data.get("Token") or "").strip()
-            err = str(data.get("ErrorMessage") or "").strip()
-            result = data.get("Result")
+            token = str(
+                data.get("Token")
+                or data.get("token")
+                or data.get("AccessToken")
+                or data.get("access_token")
+                or ""
+            ).strip()
+            err = str(
+                data.get("ErrorMessage")
+                or data.get("errorMessage")
+                or data.get("Message")
+                or data.get("message")
+                or ""
+            ).strip()
+            result = data.get("Result") if "Result" in data else data.get("result")
             ok = bool(token) or result in (0, "0", "Success", "success", True, "True")
             if err and not ok:
                 last = err
@@ -261,22 +325,36 @@ async def _mobile_login(settings: dict, password: str) -> Dict[str, Any]:
             if not token:
                 last = err or "Mobile Login yanıtında Token yok."
                 continue
-            companies = data.get("CompanyList") or []
+            companies = data.get("CompanyList") or data.get("companyList") or data.get("Companies") or []
             if not isinstance(companies, list):
                 companies = []
             return {
                 "token": token,
                 "companies": [
                     {
-                        "id": c.get("IdFirma") or c.get("CompanyId") or c.get("Id"),
-                        "name": c.get("FirmaAdi") or c.get("CompanyName") or "",
-                        "schema": c.get("SchemaName") or "",
+                        "id": c.get("IdFirma") or c.get("CompanyId") or c.get("Id") or c.get("id"),
+                        "name": c.get("FirmaAdi") or c.get("CompanyName") or c.get("name") or "",
+                        "schema": c.get("SchemaName") or c.get("schema") or "",
                     }
                     for c in companies
                     if isinstance(c, dict)
                 ],
                 "vkn": vkn,
+                "mode": "test" if is_test_mode(settings) else "live",
             }
+
+    # Test↔canlı otomatik deneme: 401'de sıkça ortam uyuşmazlığı olur
+    if saw_401 and not _tried_alt_env and not (settings.get("mobile_api_url") or "").strip():
+        alt_mode = "live" if is_test_mode(settings) else "test"
+        alt = {**settings, "mode": alt_mode}
+        try:
+            session = await _mobile_login(alt, password, _tried_alt_env=True)
+            session["mode_switched"] = True
+            session["suggested_mode"] = alt_mode
+            return session
+        except HTTPException:
+            pass
+
     raise HTTPException(status_code=400, detail=last)
 
 
@@ -398,30 +476,96 @@ async def _fetch_invoice_xml(
     return None, err or "İşNet Portal XML döndürmedi."
 
 
+async def _portal_login_with_fallback(
+    settings: dict, password: str
+) -> Tuple[dict, dict, Dict[str, Any], Dict[str, Any]]:
+    """HTML portal girişi; 401/yanlış ortamda test↔canlı otomatik dener.
+
+    Returns: (effective_settings, info, kontor, meta)
+    """
+    custom = bool((settings.get("api_url") or settings.get("portal_url") or "").strip())
+    last_err: Optional[HTTPException] = None
+    modes = [settings]
+    if not custom:
+        alt_mode = "live" if is_test_mode(settings) else "test"
+        modes.append({**settings, "mode": alt_mode})
+
+    for idx, cfg in enumerate(modes):
+        try:
+            async with IsnetPortalClient(cfg, password) as client:
+                info = await client.login()
+                kontor = await client.get_kontor()
+                info["company_id"] = info.get("company_id") or client.company_id
+            meta = {
+                "mode_switched": idx > 0,
+                "suggested_mode": "test" if is_test_mode(cfg) else "live",
+            }
+            return cfg, info, kontor, meta
+        except HTTPException as e:
+            last_err = e
+            if idx == 0 and e.status_code == 400:
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
+
+
 async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
-    async with IsnetPortalClient(settings, password) as client:
-        info = await client.login()
-        kontor = await client.get_kontor()
-        company_id = info.get("company_id") or client.company_id
+    """HTML portal + Mobile API birlikte doğrular (gelen kutu Mobile'a bağlı)."""
+    used, info, kontor, portal_meta = await _portal_login_with_fallback(settings, password)
+    company_id = info.get("company_id")
+    mode = portal_meta.get("suggested_mode") or ("test" if is_test_mode(used) else "live")
+    mode_switched = bool(portal_meta.get("mode_switched"))
+
+    mobile_ok = False
+    mobile_detail = ""
+    try:
+        session = await _mobile_login(used, password)
+        mobile_ok = True
+        if session.get("mode_switched") and session.get("suggested_mode"):
+            mode = session["suggested_mode"]
+            mode_switched = True
+            used = {**used, "mode": mode}
+        elif session.get("mode"):
+            mode = session["mode"]
+    except HTTPException as e:
+        mobile_detail = str(e.detail or "")
+
+    parts = ["İşNet Web Portal girişi başarılı"]
+    if kontor.get("remaining_credits") is not None:
+        parts[0] += f" · kalan kontör: {kontor.get('remaining_credits')}"
+    if mode_switched:
+        parts.append(
+            f"Ortam otomatik «{'Test' if mode == 'test' else 'Canlı'}» olarak düzeltildi — kaydederken bunu seçin."
+        )
+    if mobile_ok:
+        parts.append("Mobile API (gelen kutu) girişi de başarılı.")
+    else:
+        parts.append(
+            "Portal HTML girişi OK; ancak gelen kutu için Mobile API reddetti"
+            + (f": {mobile_detail}" if mobile_detail else ".")
+        )
+    parts.append("Gelen faturalar: Muhasebe → Gelen e-Belgeler → «Entegratörden çek».")
+
     return {
-        "ok": True,
+        "ok": True if mobile_ok else False,
         "provider": "isnet_portal",
-        "mode": "test" if is_test_mode(settings) else "live",
-        "portal": portal_base(settings),
+        "mode": mode,
+        "mode_switched": mode_switched,
+        "suggested_mode": mode if mode_switched else None,
+        "portal": portal_base(used),
+        "mobile_api": mobile_api_base(used),
+        "mobile_ok": mobile_ok,
         "vkn": info.get("vkn"),
         "company_id": company_id,
         "companies": info.get("companies") or [],
         "remaining_credits": kontor.get("remaining_credits"),
-        "message": (
-            "İşNet Web Portal girişi başarılı"
-            + (
-                f" · kalan kontör: {kontor.get('remaining_credits')}"
-                if kontor.get("remaining_credits") is not None
-                else ""
-            )
-            + ". Gelen faturalar için Muhasebe → Gelen e-Belgeler → «Entegratörden çek»."
+        "message": " ".join(parts),
+        "hint": (
+            "Bağlantıyı kaydetmek yetmez; Gelen e-Belgeler ekranından senkronize edin."
+            if mobile_ok
+            else "Canlı/Test ortamını ve portal şifresini kontrol edin; sonra yeniden deneyin."
         ),
-        "hint": "Bağlantıyı kaydetmek yetmez; Gelen e-Belgeler ekranından senkronize edin.",
     }
 
 
@@ -454,6 +598,12 @@ async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, A
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """Gelen e-faturaları Mobile REST ile listeler ve UBL XML indirir."""
     session = await _mobile_login(settings, password)
+    # Ortam otomatik değiştiyse sonraki çağrılar doğru API host'unu kullanmalı
+    if session.get("mode_switched") and session.get("suggested_mode"):
+        settings["mode"] = session["suggested_mode"]
+        settings["_mode_switched"] = True
+    elif session.get("mode"):
+        settings["mode"] = session["mode"]
     company_id = _pick_company_id(settings, session.get("companies") or [])
     if not company_id:
         raise HTTPException(
