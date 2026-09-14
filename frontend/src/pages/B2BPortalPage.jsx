@@ -54,18 +54,33 @@ export default function B2BPortalPage() {
         <div className="grid grid-cols-4 sm:flex gap-1 bg-white rounded-xl p-1 border" data-testid="b2b-tabs">{TABS.map(([k, l, Icon]) => <button key={k} onClick={() => setTab(k)} className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`b2b-tab-${k}`}><Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" /><span className="text-center">{l}{k === "orders" && d.orders.length > 0 && ` (${d.orders.length})`}</span></button>)}</div>
         {done && <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs sm:text-sm text-emerald-800 flex items-start gap-2" data-testid="b2b-order-success"><CheckCircle2 className="w-5 h-5 shrink-0" /><span>Siparişiniz alındı: <b>{done.order_number}</b>{done.customer_order_number ? <> · sizin no <b>{done.customer_order_number}</b></> : null} — {fmt(done.total_amount)} ₺. Onaylandığında kargo takip numarası burada görünecek.</span></div>}
         {tab === "catalog" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 space-y-3">
-              {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c)); }} />}
-              <div className="space-y-2">
-                <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
-                <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap" data-testid="b2b-categories">{cats.map((c) => <button key={c} onClick={() => setCat(c)} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === c ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600"}`}>{c === "all" ? "Tümü" : c}</button>)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+            <aside className="md:col-span-3 lg:col-span-2 order-1" data-testid="b2b-categories">
+              <div className="bg-white rounded-2xl border p-2 sm:p-2.5 md:sticky md:top-4">
+                <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Kategoriler</div>
+                <nav className="flex flex-col gap-1">
+                  {cats.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCat(c)}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold border transition ${cat === c ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-slate-50 text-slate-700 border-transparent hover:bg-slate-100"}`}
+                      data-testid={`b2b-cat-${c === "all" ? "all" : c}`}
+                    >
+                      {c === "all" ? "Tümü" : c}
+                    </button>
+                  ))}
+                </nav>
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">{prods.map((p) => (
-                <div key={p.id} className="bg-white rounded-2xl border p-2 flex flex-col gap-1.5 min-w-0" data-testid={`b2b-product-${p.sku}`}>
-                  <div className="relative aspect-[3/2] bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden" data-testid={`b2b-image-${p.sku}`}>{p.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" className="absolute inset-0 h-full w-full object-contain" /> : <Package className="w-7 h-7 text-slate-300" />}</div>
-                  <div className="min-w-0"><div className="text-[11px] font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
-                  <div className="flex items-end justify-between gap-1"><div className="min-w-0"><div className="text-sm font-black text-slate-900 whitespace-nowrap">{fmt(p.price)} ₺</div>{p.price < p.list_price && <div className="text-[10px] text-slate-400 line-through">{fmt(p.list_price)} ₺</div>}<div className="text-[10px] text-slate-400">+KDV %{p.vat_rate} • {p.unit}</div></div><span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span></div>
+            </aside>
+            <div className="md:col-span-9 lg:col-span-7 space-y-3 order-2">
+              {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c)); }} />}
+              <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">{prods.map((p) => (
+                <div key={p.id} className="bg-white rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 min-w-0" data-testid={`b2b-product-${p.sku}`}>
+                  <div className="relative aspect-[3/2] bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden" data-testid={`b2b-image-${p.sku}`}>{p.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" className="absolute inset-0 h-full w-full object-contain" /> : <Package className="w-8 h-8 text-slate-300" />}</div>
+                  <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
+                  <div className="flex items-end justify-between gap-1"><div className="min-w-0"><div className="text-base font-black text-slate-900 whitespace-nowrap">{fmt(p.price)} ₺</div>{p.price < p.list_price && <div className="text-[10px] text-slate-400 line-through">{fmt(p.list_price)} ₺</div>}<div className="text-[10px] text-slate-400">+KDV %{p.vat_rate} • {p.unit}</div></div><span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span></div>
                   <label className="block">
                     <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
                     <textarea
@@ -77,7 +92,7 @@ export default function B2BPortalPage() {
                       data-testid={`b2b-item-note-${p.sku}`}
                     />
                   </label>
-                  <div className="flex items-stretch gap-1 mt-auto">
+                  <div className="flex items-stretch gap-1.5 mt-auto">
                     <label className="flex flex-col items-stretch justify-center w-12 shrink-0 rounded-xl border-2 border-slate-300 bg-slate-50 px-0.5">
                       <span className="text-[8px] font-semibold text-slate-400 text-center leading-none pt-0.5">Adet</span>
                       <input
@@ -99,7 +114,7 @@ export default function B2BPortalPage() {
                 {prods.length === 0 && <div className="col-span-full p-8 text-center text-xs text-slate-400">Ürün bulunamadı.</div>}
               </div>
             </div>
-            <div className="hidden lg:block bg-white rounded-2xl border p-4 space-y-3 h-fit lg:sticky lg:top-4" data-testid="b2b-cart">
+            <div className="hidden lg:block lg:col-span-3 order-3 bg-white rounded-2xl border p-4 space-y-3 h-fit lg:sticky lg:top-4" data-testid="b2b-cart">
               <div className="font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})</div>
               <CartBody {...cartProps} />
             </div>
