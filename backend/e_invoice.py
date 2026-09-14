@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 import n11faturam
 import isnet
+import isnet_portal
 import ubl_export
 
 logger = logging.getLogger("tamkobi.e_invoice")
@@ -255,12 +256,16 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     consume = _deps.get("consume_credits")
 
     provider = settings.get("provider") or ""
-    if provider in ("n11faturam", "isnet") and settings.get("status") == "configured" and et in ("e_invoice", "e_archive"):
+    if provider in ("n11faturam", "isnet", "isnet_portal") and settings.get("status") == "configured" and et in ("e_invoice", "e_archive"):
         if not password_fn:
             raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
         pwd = password_fn(settings)
-        sender = n11faturam if provider == "n11faturam" else isnet
-        label = "n11 Faturam" if provider == "n11faturam" else "İşNet Net-e Fatura"
+        if provider == "n11faturam":
+            sender, label = n11faturam, "n11 Faturam"
+        elif provider == "isnet_portal":
+            sender, label = isnet_portal, "İşNet Web Portal"
+        else:
+            sender, label = isnet, "İşNet SOAP API"
         try:
             sent = await sender.send_document(
                 settings, pwd, {**inv, "id": invoice_id, "e_type": et, "gib_scenario": scen}, contact, company
