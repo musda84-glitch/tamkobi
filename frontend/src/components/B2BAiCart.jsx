@@ -69,7 +69,7 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
           disabled={busy}
         />
         {busy ? <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" /> : <Sparkles className="w-5 h-5 text-indigo-600" />}
-        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod + adet içeren dosya (xlsx, csv, pdf)</div></div>
+        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod / EAN barkod + adet (xlsx, csv, pdf)</div></div>
       </label>
       {res && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRes(null)}>

@@ -92,6 +92,22 @@ class TestB2bCartTableParse:
         assert len(lines) >= 1
         assert lines[0]["quantity"] >= 1
 
+    def test_ean_code_column_and_excel_float(self):
+        # Excel often stores EAN as float (…6789.0); header may be "EAN CODE" / "EANCODE"
+        data = _xlsx(["EAN CODE", "Adet"], [[8690123456789.0, 2], ["869 0123 4567 89", 1]])
+        lines = server._b2b_parse_cart_table("ean.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["barcode"] == "8690123456789"
+        assert lines[0]["quantity"] == 2
+        assert lines[1]["barcode"] == "8690123456789"
+
+        data2 = _xlsx(["EANCODE", "Qty"], [[8680001234567, 3]])
+        lines2 = server._b2b_parse_cart_table("e.xlsx", data2)
+        assert lines2 == [{"product_name": "8680001234567", "sku": None, "barcode": "8680001234567", "quantity": 3}]
+
+        assert server._b2b_norm_code(8690123456789.0) == "8690123456789"
+        assert server._b2b_norm_code("8690-1234-5678-9") == "8690123456789"
+
     def test_api_raflar_without_ai(self):
         token = os.environ.get("TEST_B2B_TOKEN") or "9a89e4fd1a0e451c8461f1bccd9f5028"
         data = _xlsx(
