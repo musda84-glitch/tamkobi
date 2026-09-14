@@ -60,4 +60,23 @@ class TestProductBulkFlags:
                 d = next(x for x in rows if x.get("id") == pid)
             assert d.get("show_in_b2b") is False
             assert d.get("track_stock") is False
+
+        opened = requests.post(
+            f"{API}/products/bulk-flags",
+            json={"ids": ids, "company_id": COMPANY, "show_in_b2b": True, "track_stock": True},
+            timeout=20,
+        )
+        assert opened.status_code == 200, opened.text
+        assert opened.json().get("show_in_b2b") is True
+        assert opened.json().get("track_stock") is True
+        for pid in ids:
+            g = requests.get(f"{API}/products/{pid}", timeout=20)
+            if g.status_code == 200:
+                d = g.json()
+            else:
+                listed = requests.get(f"{API}/products?company_id={COMPANY}", timeout=20).json()
+                rows = listed if isinstance(listed, list) else listed.get("items") or []
+                d = next(x for x in rows if x.get("id") == pid)
+            assert d.get("show_in_b2b") is True
+            assert d.get("track_stock") is True
             requests.delete(f"{API}/products/{pid}", timeout=20)
