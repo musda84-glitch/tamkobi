@@ -85,6 +85,13 @@ class TestB2bCartTableParse:
         assert len(lines) >= 3
         assert lines[0]["quantity"] == 3
 
+    def test_magic_bytes_without_xlsx_extension(self):
+        path = os.path.join(os.path.dirname(__file__), "Raflar.xlsx")
+        data = open(path, "rb").read()
+        lines = server._b2b_parse_cart_table("siparis.bin", data)
+        assert len(lines) >= 1
+        assert lines[0]["quantity"] >= 1
+
     def test_api_raflar_without_ai(self):
         token = os.environ.get("TEST_B2B_TOKEN") or "9a89e4fd1a0e451c8461f1bccd9f5028"
         data = _xlsx(
@@ -101,3 +108,21 @@ class TestB2bCartTableParse:
         assert body.get("parse_mode") == "table"
         assert body["total_lines"] >= 1
         assert body["items"] or body["unmatched"]
+
+        # Uzantı yanlış olsa bile xlsx içeriği okunmalı
+        r2 = requests.post(
+            f"{API}/public/b2b/{token}/ai-cart",
+            files={"file": ("liste.bin", open(path := os.path.join(os.path.dirname(__file__), "Raflar.xlsx"), "rb").read(), "application/octet-stream")},
+            timeout=60,
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("parse_mode") == "table"
+        assert r2.json()["total_lines"] >= 1
+
+        r3 = requests.post(
+            f"{API}/public/b2b/{token}/ai-cart",
+            files={"file": ("eski.xls", b"\xd0\xcf\x11\xe0", "application/vnd.ms-excel")},
+            timeout=30,
+        )
+        assert r3.status_code == 400
+        assert "xlsx" in (r3.json().get("detail") or "").lower()

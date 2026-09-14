@@ -2182,15 +2182,42 @@ def _b2b_lines_from_table(header: list, body: list) -> list:
     return lines
 
 
+def _b2b_guess_table_name(filename: str, data: bytes) -> str:
+    """Uzantı yoksa/yanlışsa içerikten tablo dosya adı türet (xlsx=ZIP/PK)."""
+    name = (filename or "").strip()
+    low = name.lower()
+    if low.endswith((".xlsx", ".xlsm", ".csv", ".txt", ".xls")):
+        return name
+    head = data[:8] if data else b""
+    if head.startswith(b"PK"):
+        return (name or "siparis") + ("" if low.endswith(".xlsx") else ".xlsx")
+    # UTF-8 / UTF-16LE BOM veya düz metin → csv dene
+    if head.startswith(b"\xff\xfe") or head.startswith(b"\xfe\xff") or head.startswith(b"\xef\xbb\xbf"):
+        return (name or "siparis") + ".csv"
+    sample = data[:2048] if data else b""
+    if sample and (b"," in sample or b";" in sample or b"\t" in sample):
+        try:
+            sample.decode("utf-8")
+            return (name or "siparis") + ".csv"
+        except Exception:
+            pass
+    return name or "siparis.xlsx"
+
+
 def _b2b_parse_cart_table(filename: str, data: bytes) -> list:
     """Excel/CSV sipariş listesini AI olmadan satır satır oku (ürün/kod + adet)."""
-    name = (filename or "").lower()
+    name = _b2b_guess_table_name(filename, data).lower()
+    if name.endswith(".xls") and not name.endswith((".xlsx", ".xlsm")):
+        return []  # eski .xls → üst katmanda anlaşılır hata
     if not name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
-        return []
+        # İçerik xlsx ise yine dene
+        if not (data or b"").startswith(b"PK"):
+            return []
+        name = "siparis.xlsx"
     best: list = []
     best_score = (-1, -1, -1)
     skip = set(_B2B_SKIP_HEADERS)
-    for header, body in _b2b_iter_tables(filename, data):
+    for header, body in _b2b_iter_tables(name, data):
         lines = _b2b_lines_from_table(header, body)
         norms = [_alias_key(h) for h in header]
         named_qty = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip) is not None
@@ -2268,18 +2295,23 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
     fname = (file.filename or "").lower()
+    if fname.endswith(".xls") and not fname.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(
+            status_code=400,
+            detail="Eski .xls formatı desteklenmiyor. Excel’de Dosya → Farklı Kaydet → .xlsx seçip yeniden yükleyin.",
+        )
     parsed_items: list = []
     parse_mode = "table"
     ai_error = None
     # Excel/CSV: önce AI’sız tablo okuma (ürün/kod + adet). AI anahtarı kırık olsa bile çalışır.
-    if fname.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
-        try:
-            parsed_items = _b2b_parse_cart_table(file.filename, data)
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("B2B cart table parse failed: %s", e)
-            parsed_items = []
+    # Uzantı boş/yanlış olsa da ZIP(PK) içeriği xlsx olarak denenir.
+    try:
+        parsed_items = _b2b_parse_cart_table(file.filename, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("B2B cart table parse failed: %s", e)
+        parsed_items = []
     if not parsed_items:
         text = await _file_to_text(file, data)
         if len(text.strip()) < 10:
