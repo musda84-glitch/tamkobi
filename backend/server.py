@@ -77,6 +77,7 @@ import n11faturam
 import isnet
 import e_invoice
 import saas
+import user_numbers
 import saas_billing
 import saas_extras
 import saas_docs
@@ -184,6 +185,13 @@ async def startup_event():
             await db.invoices.create_index("invoice_number")
             await db.orders.create_index("order_number")
             await db.login_attempts.create_index("identifier")
+            try:
+                await db.users.create_index("user_number", unique=True, sparse=True)
+            except Exception:
+                pass
+            filled = await user_numbers.backfill_missing_user_numbers(db)
+            if filled:
+                logger.info("Assigned user_number to %s existing users", filled)
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
@@ -293,6 +301,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "id": user_id,
             "email": user["email"],
             "name": user["name"],
+            "user_number": await user_numbers.ensure_user_number(db, user),
             "role": user.get("role", "admin"),
             "company_ids": user.get("company_ids", []),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
@@ -1513,7 +1522,9 @@ async def register(req: RegisterRequest, response: Response):
         company_ids=[company_id],
         active_company_id=company_id
     )
-    await db.users.insert_one(new_user.to_mongo())
+    mongo_user = new_user.to_mongo()
+    mongo_user["user_number"] = await user_numbers.next_user_number(db)
+    await db.users.insert_one(mongo_user)
     await saas.start_trial(company_id)
 
     token = create_access_token(user_id, email, "admin")
@@ -1523,6 +1534,7 @@ async def register(req: RegisterRequest, response: Response):
             "id": user_id,
             "email": email,
             "name": req.name,
+            "user_number": mongo_user.get("user_number"),
             "role": "admin",
             "company_ids": [company_id],
             "active_company_id": company_id
@@ -1546,6 +1558,7 @@ async def get_me(request: Request):
             "id": user_id,
             "email": user["email"],
             "name": user["name"],
+            "user_number": await user_numbers.ensure_user_number(db, user),
             "role": user.get("role", "admin"),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
@@ -7792,7 +7805,7 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
         user_id = f"usr_{uuid.uuid4().hex[:8]}"
         await db.users.insert_one({"_id": user_id, "email": email, "password_hash": hash_password(req["password"]), "name": emp["full_name"], "role": role, "company_ids": [emp["company_id"]], "active_company_id": emp["company_id"],
-                                   "is_active": True, "employee_id": emp_id, "phone": emp.get("phone"), "preferences": {}, "created_at": datetime.now(timezone.utc).isoformat()})
+                                   "is_active": True, "employee_id": emp_id, "phone": emp.get("phone"), "preferences": {}, "user_number": await user_numbers.next_user_number(db), "created_at": datetime.now(timezone.utc).isoformat()})
         await db.employees.update_one({"_id": emp_id}, {"$set": {"user_id": user_id, "email": email}})
         return {"status": "success", "mode": "password", "user_id": user_id, "message": f"{emp['full_name']} için sistem kullanıcısı oluşturuldu ({email})."}
     inv = await rbac.invite_user({"company_id": emp["company_id"], "email": email, "name": emp["full_name"], "role": role, "employee_id": emp_id, "base_url": req.get("base_url"), "invited_by": req.get("invited_by")}, request)

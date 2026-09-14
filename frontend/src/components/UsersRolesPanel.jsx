@@ -66,10 +66,11 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
         </div>
       )}
       <table className="w-full text-xs" data-testid="users-table">
-        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">Kullanıcı</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
+        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
         <tbody className="divide-y">
           {data.users.map((u) => (
             <tr key={u.id} data-testid={`user-row-${u.email}`}>
+              <td className="py-2 font-mono text-[11px] font-semibold text-slate-700" data-testid={`user-number-${u.email}`}>{u.user_number || "—"}</td>
               <td className="py-2"><div className="font-semibold text-slate-900">{u.name}</div><div className="text-slate-500">{u.email}</div></td>
               <td><select value={u.role} onChange={(e) => patch(u, { role: e.target.value }, "Rol güncellendi.")} className="border rounded-lg p-1.5 bg-white" data-testid={`user-role-${u.email}`}>{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></td>
               <td><button onClick={() => patch(u, { is_active: !u.is_active }, u.is_active ? "Kullanıcı pasife alındı." : "Kullanıcı aktif.")} className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`} data-testid={`user-active-${u.email}`}>{u.is_active ? "Aktif" : "Pasif"}</button></td>

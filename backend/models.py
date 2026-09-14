@@ -30,6 +30,7 @@ class User(BaseDocument):
     role: str = "admin"  # admin, accountant, sales, warehouse
     company_ids: List[str] = []
     active_company_id: Optional[str] = None
+    user_number: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class UserResponse(BaseModel):
@@ -39,6 +40,7 @@ class UserResponse(BaseModel):
     role: str
     company_ids: List[str] = []
     active_company_id: Optional[str] = None
+    user_number: Optional[str] = None
 
 class Company(BaseDocument):
     name: str

@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Callable, Awaitable
 
+import user_numbers
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -290,7 +291,10 @@ async def delete_role(role_id: str):
 async def list_users(company_id: str = "comp_nexus_main_01"):
     await ensure_roles(company_id)
     names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
-    users = [_clean(u) for u in await _db.users.find({"$and": [{"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}, {"is_super_admin": {"$ne": True}}]}).sort("name", 1).to_list(500)]
+    raw_users = await _db.users.find({"$and": [{"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}, {"is_super_admin": {"$ne": True}}]}).sort("name", 1).to_list(500)
+    for u in raw_users:
+        await user_numbers.ensure_user_number(_db, u)
+    users = [_clean(u) for u in raw_users]
     invites = [_clean(i) for i in await _db.user_invites.find({"company_id": company_id, "accepted_at": None}).sort("created_at", -1).to_list(100)]
     return {"users": [{**u, "role_name": names.get(u.get("role"), u.get("role")), "is_active": u.get("is_active", True)} for u in users], "invites": invites}
 
@@ -337,7 +341,8 @@ async def create_company_user(req: Dict[str, Any]):
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     doc = {"_id": user_id, "email": email, "password_hash": hash_password(pwd), "name": name, "role": role,
            "company_ids": [company_id], "active_company_id": company_id, "is_active": True,
-           "employee_id": req.get("employee_id"), "phone": req.get("phone") or "", "preferences": {}, "created_at": _now()}
+           "employee_id": req.get("employee_id"), "phone": req.get("phone") or "", "preferences": {},
+           "user_number": await user_numbers.next_user_number(_db), "created_at": _now()}
     await _db.users.insert_one(doc)
     await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})
     if req.get("employee_id"):
@@ -428,7 +433,8 @@ async def accept_invite(token: str, req: Dict[str, Any], response: Response):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     doc = {"_id": user_id, "email": inv["email"], "password_hash": hash_password(pwd), "name": (req.get("name") or inv.get("name") or inv["email"].split("@")[0]).strip(), "role": inv["role"],
-           "company_ids": [inv["company_id"]], "active_company_id": inv["company_id"], "is_active": True, "employee_id": inv.get("employee_id"), "preferences": {}, "created_at": _now()}
+           "company_ids": [inv["company_id"]], "active_company_id": inv["company_id"], "is_active": True, "employee_id": inv.get("employee_id"), "preferences": {},
+           "user_number": await user_numbers.next_user_number(_db), "created_at": _now()}
     await _db.users.insert_one(doc)
     await _db.user_invites.update_one({"_id": token}, {"$set": {"accepted_at": _now(), "user_id": user_id}})
     if inv.get("employee_id"):

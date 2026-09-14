@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import db_ssl
+import user_numbers
 from auth_utils import hash_password
 from mysql_store import MySQLDatabase
 from setup_state import (
@@ -243,6 +244,7 @@ async def perform_install(req: InstallRequest) -> dict:
                 "company_ids": [company_id],
                 "active_company_id": company_id,
                 "preferences": {},
+                "user_number": await user_numbers.next_user_number(local),
                 "created_at": _now(),
             }
         )

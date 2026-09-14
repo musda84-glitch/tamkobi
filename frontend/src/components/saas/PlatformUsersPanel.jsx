@@ -21,7 +21,7 @@ export const PlatformUsersPanel = () => {
   useEffect(() => { load(); }, [load]);
   if (!data) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
   const ql = q.trim().toLowerCase();
-  const users = (data.users || []).filter((u) => !ql || (u.name || "").toLowerCase().includes(ql) || (u.email || "").toLowerCase().includes(ql));
+  const users = (data.users || []).filter((u) => !ql || (u.name || "").toLowerCase().includes(ql) || (u.email || "").toLowerCase().includes(ql) || (u.user_number || "").toLowerCase().includes(ql));
   const create = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -72,11 +72,12 @@ export const PlatformUsersPanel = () => {
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
         <table className="w-full min-w-[680px]" data-testid="sys-users-table">
-          <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">Yönetici</th><th className="px-3 py-2.5 text-left">Durum</th><th className="px-3 py-2.5 text-left">Son giriş</th><th className="px-3 py-2.5 text-right">İşlem</th></tr></thead>
+          <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-2.5 text-left">ID</th><th className="px-3 py-2.5 text-left">Yönetici</th><th className="px-3 py-2.5 text-left">Durum</th><th className="px-3 py-2.5 text-left">Son giriş</th><th className="px-3 py-2.5 text-right">İşlem</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {users.length === 0 && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-400">Panel yöneticisi yok.</td></tr>}
+            {users.length === 0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Panel yöneticisi yok.</td></tr>}
             {users.map((u) => (
               <tr key={u.id} data-testid={`sys-user-row-${u.id}`}>
+                <td className="px-3 py-2 font-mono text-[11px] font-semibold text-slate-700" data-testid={`sys-user-number-${u.id}`}>{u.user_number || "—"}</td>
                 <td className="px-3 py-2">
                   <div className="font-semibold text-slate-800">{u.name}</div>
                   <div className="text-[10px] text-slate-500">{u.email}</div>

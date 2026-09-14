@@ -123,7 +123,10 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
-                <p className="text-[10px] text-emerald-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
+                {user?.user_number ? (
+                  <p className="text-[10px] text-emerald-400 truncate font-mono" data-testid="sidebar-user-number">{user.user_number}</p>
+                ) : null}
+                <p className="text-[10px] text-slate-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
               </div>
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
