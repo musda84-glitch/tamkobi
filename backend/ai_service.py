@@ -291,7 +291,7 @@ def public_ai_status(cfg: dict) -> dict:
     extract = cfg.get("extract_model") or ""
     return {
         "enabled": bool(cfg.get("enabled", True)),
-        "configured": bool(cfg.get("api_key")),
+        "configured": bool(cfg.get("has_key") or cfg.get("api_key") or cfg.get("api_key_enc")),
         "provider": provider,
         "provider_label": meta["label"],
         "advisor_model": advisor,
@@ -310,18 +310,22 @@ async def load_ai_settings() -> dict:
     except Exception:
         cfg = normalize_ai({})
     key = ""
-    if cfg.get("api_key_enc"):
+    has_enc = bool(cfg.get("api_key_enc"))
+    if has_enc:
         try:
             key = comm_service.decrypt(cfg["api_key_enc"])
         except Exception:
+            logger.warning("Stored AI API key could not be decrypted — CREDENTIAL_ENCRYPTION_KEY may have changed.")
             key = ""
     provider = cfg.get("provider") or "emergent"
     # Ortam değişkeni sağlayıcıya özeldir: Gemini'ye Emergent anahtarı göndermeyelim.
     fallback = env_key(provider)
     cfg["api_key"] = key or fallback
-    cfg["has_key"] = bool(key)
+    # Kayıtlı blob varsa UI'da "kayıtlı" göster (şifre alanı boş görünse bile).
+    cfg["has_key"] = has_enc
     cfg["has_env_key"] = bool(fallback)
     cfg["env_var"] = env_var_name(provider)
+    cfg["key_hint"] = (key[-4:] if len(key) >= 4 else ("****" if has_enc else ""))
     return cfg
 
 

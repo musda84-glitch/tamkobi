@@ -274,11 +274,24 @@ def _ai_public(cfg: dict, include_secrets_meta: bool = True) -> dict:
             "has_key": bool(cfg.get("has_key")),
             "has_env_key": bool(cfg.get("has_env_key")),
             "env_var": cfg.get("env_var") or "",
+            "key_hint": cfg.get("key_hint") or "",
             "base_url": cfg.get("base_url") or "",
             "last_test": cfg.get("last_test"),
             "catalog": [{"id": k, **v} for k, v in AI_PROVIDERS.items()],
         })
     return body
+
+
+def _ai_key_payload(raw) -> str:
+    """Boş / maskeli / tarayıcı autofill placeholder anahtarlarını yok say."""
+    key = str(raw or "").strip()
+    if not key:
+        return ""
+    if key.startswith("•") or set(key) <= {"•", "*", "·", " "}:
+        return ""
+    if key.lower() in {"null", "undefined", "********", "password"}:
+        return ""
+    return key
 
 
 @router.get("/system/ai")
@@ -307,26 +320,30 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     for field in ("advisor_model", "extract_model", "base_url"):
         if field in req:
             cur[field] = str(req.get(field) or "").strip()
-    key_updated = False
-    if req.get("api_key"):
-        cur["api_key_enc"] = comm_service.encrypt(str(req["api_key"]).strip())
-        key_updated = True
-        # Yeni anahtar girildiğinde eski başarısız test sonucu kullanıcıyı yanıltmasın.
+    incoming_key = _ai_key_payload(req.get("api_key"))
+    if incoming_key:
+        cur["api_key_enc"] = comm_service.encrypt(incoming_key)
         cur.pop("last_test", None)
     if req.get("clear_key"):
         cur.pop("api_key_enc", None)
         cur.pop("last_test", None)
-        key_updated = True
     norm = ai_service.normalize_ai(cur)
     if ai_service.is_custom(norm["provider"]):
         if not norm["base_url"]:
             raise HTTPException(status_code=400, detail="Özel sağlayıcı için OpenAI uyumlu uç nokta adresi gerekli (ör. https://openrouter.ai/api/v1).")
         if not norm["advisor_model"]:
             raise HTTPException(status_code=400, detail="Özel sağlayıcı için model adı gerekli (ör. openai/gpt-4o-mini).")
-    stored = {k: norm[k] for k in ("enabled", "provider", "advisor_model", "extract_model", "base_url") if norm.get(k) or k == "enabled"}
-    if norm.get("api_key_enc"):
-        stored["api_key_enc"] = norm["api_key_enc"]
-    if not key_updated and cur.get("last_test"):
+    # cur kaynağıdır; boş api_key / maske gönderimi mevcut anahtarı silmez.
+    stored = {
+        "enabled": bool(norm.get("enabled", True)),
+        "provider": norm["provider"],
+        "advisor_model": norm.get("advisor_model") or "",
+        "extract_model": norm.get("extract_model") or "",
+        "base_url": norm.get("base_url") or "",
+    }
+    if cur.get("api_key_enc"):
+        stored["api_key_enc"] = cur["api_key_enc"]
+    if cur.get("last_test"):
         stored["last_test"] = cur["last_test"]
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"ai": stored, "updated_at": _now()}}, upsert=True)
     return await get_system_ai(_)
