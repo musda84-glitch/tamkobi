@@ -192,7 +192,7 @@ async def seed_for_new_company(company_id: str) -> None:
 
 
 async def tag_legacy_seed() -> int:
-    """Mark the original Nexus seed rows so the overview delete button can remove them."""
+    """Mark the original TamKobi seed rows so the overview delete button can remove them."""
     tagged = 0
     for name in COLLECTIONS:
         r = await _db[name].update_many({"_id": {"$in": LEGACY_IDS}, "is_demo": {"$ne": True}}, {"$set": {"is_demo": True}})

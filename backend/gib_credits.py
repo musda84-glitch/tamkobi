@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 import saas
 
 router = APIRouter(prefix="/api")
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 _db = None
 
 DEFAULT_PACKS = [

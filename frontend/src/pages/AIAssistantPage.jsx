@@ -31,7 +31,7 @@ export default function AIAssistantPage() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: `Merhaba! Ben **Nexus AI Finansal ve Mali Danışmanınızım**.
+      content: `Merhaba! Ben **TamKobi AI Finansal ve Mali Danışmanınızım**.
 
 Şirketinizin güncel faturaları, tahsilatları, kritik stok seviyeleri ve banka bakiyeleri entegre edilmiş durumdadır.
 Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finansal danışmanlık sorunuzu yazabilirsiniz.`
@@ -106,7 +106,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
             <span>{aiBadge} Destekli</span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Nexus AI Finansal Danışman</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">TamKobi AI Finansal Danışman</h1>
           <p className="text-xs sm:text-sm text-slate-500">Mali Müşavir Seviyesinde Nakit Akış Analizi, Vergi ve Büyüme Öngörüleri</p>
         </div>
       </div>
@@ -190,7 +190,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
                 <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce"></span>
                 <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce [animation-delay:0.2s]"></span>
                 <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce [animation-delay:0.4s]"></span>
-                <span className="text-[11px] font-medium ml-1">Nexus AI şirketinizi analiz ediyor...</span>
+                <span className="text-[11px] font-medium ml-1">TamKobi AI şirketinizi analiz ediyor...</span>
               </div>
             </div>
           )}

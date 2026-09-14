@@ -33,7 +33,7 @@ APP_LOGGER = "tamkobi.app"
 AUTH_LOGGER = "tamkobi.auth"
 ERROR_LOGGER = "tamkobi.error"
 SQL_LOGGER = "tamkobi.sql"
-ROOT_APP = "NexusERP"
+ROOT_APP = "TamKobiERP"
 
 _SENSITIVE = {
     "password", "password_hash", "current_password", "new_password", "token",

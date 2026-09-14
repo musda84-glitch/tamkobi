@@ -14,7 +14,7 @@ import db_ssl
 import saas
 
 router = APIRouter(prefix="/api")
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 
 _move_lock = asyncio.Lock()
 

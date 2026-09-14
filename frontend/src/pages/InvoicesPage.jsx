@@ -927,7 +927,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             <div className="p-6 border border-slate-300 rounded-xl space-y-6 text-slate-800 bg-white">
               <div className="flex justify-between items-start border-b pb-4">
                 <div>
-                  <div className="text-xl font-bold text-slate-900">{activeCompany?.name || "Nexus Teknoloji A.Ş."}</div>
+                  <div className="text-xl font-bold text-slate-900">{activeCompany?.name || "TamKobi A.Ş."}</div>
                   <div className="text-xs text-slate-500 max-w-sm mt-1">{activeCompany?.address || "İstanbul, Türkiye"}</div>
                   <div className="text-xs text-slate-600 mt-1">Vergi Dairesi: {activeCompany?.tax_office || "Kadıköy"} • VKN: {activeCompany?.tax_number || "6320984412"}</div>
                 </div>

@@ -104,7 +104,7 @@ import setup_install
 import db_admin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 
 # MySQL connection (JSON document store; Motor-compatible API)
 from mysql_store import mysql_settings_from_env
@@ -193,7 +193,6 @@ async def startup_event():
             if filled:
                 logger.info("Assigned user_number to %s existing users", filled)
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
-            logger.info("NexusHesap backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
         logger.error(f"Startup error: {e}")
@@ -8352,7 +8351,7 @@ async def ask_financial_ai(req: AIChatRequest):
 
     context = {
         "company_id": req.company_id,
-        "company_name": company.get("name", "Nexus Teknoloji") if company else "Nexus Teknoloji",
+        "company_name": company.get("name", "TamKobi") if company else "TamKobi",
         "total_bank_balance": total_bank,
         "total_receivables": total_rec,
         "total_payables": total_pay,

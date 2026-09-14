@@ -132,7 +132,7 @@ def _ms(v) -> Optional[str]:
 
 
 def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
-    """Trendyol shipment package → Nexus sipariş belgesi."""
+    """Trendyol shipment package → TamKobi sipariş belgesi."""
     addr = pkg.get("shipmentAddress") or {}
     inv = pkg.get("invoiceAddress") or {}
     lines = pkg.get("lines") or []
@@ -174,7 +174,7 @@ def simulated_orders(company_id: str, channel: str) -> List[dict]:
     """Kimlik bilgisi yoksa örnek veri (açıkça SİMÜLE işaretli)."""
     now = datetime.now(timezone.utc)
     return [{"company_id": company_id, "channel": channel, "order_number": f"{channel.upper()[:2]}-SIM-{uuid.uuid4().hex[:6].upper()}", "external_id": None, "customer_name": "Ayşe Gökmen", "customer_phone": "0533 888 77 66",
-             "shipping_address": "Çankaya Mah. Atatürk Bulvarı No:105 D:12", "city": "Ankara", "items": [{"product_id": "prod_01", "product_name": "Nexus Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}],
+             "shipping_address": "Çankaya Mah. Atatürk Bulvarı No:105 D:12", "city": "Ankara", "items": [{"product_id": "prod_01", "product_name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}],
              "total_amount": 1899.0, "currency": "TRY", "order_status": "approved", "marketplace_status": "Picking", "cargo_carrier": "yurtici", "cargo_carrier_name": "Yurtiçi Kargo", "cargo_tracking_number": f"YK-{str(uuid.uuid4().int)[:10]}",
              "cargo_barcode": f"8690{str(uuid.uuid4().int)[:9]}", "is_invoiced": False, "order_date": now.isoformat(), "estimated_delivery": (now + timedelta(days=3)).isoformat(), "is_simulated": True, "source": "marketplace_sync"}]
 

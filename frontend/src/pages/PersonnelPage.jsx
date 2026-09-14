@@ -410,7 +410,7 @@ export default function PersonnelPage() {
                   <label className="block font-semibold text-slate-700 mb-1">E-Posta</label>
                   <input
                     type="email"
-                    placeholder="ornek@nexus.com"
+                    placeholder="ornek@tamkobi.com"
                     value={newEmployee.email}
                     onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"

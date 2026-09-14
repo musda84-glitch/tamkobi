@@ -20,7 +20,7 @@ from auth_utils import get_jwt_secret, JWT_ALGORITHM, get_user_from_token
 from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PAYTR_TOKEN_URL = "https://www.paytr.com/odeme/api/get-token"

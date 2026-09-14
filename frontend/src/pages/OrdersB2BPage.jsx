@@ -243,7 +243,7 @@ export default function OrdersB2BPage() {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         channel: "b2b",
         customer_name: selectedContact?.name || "B2B Bayi",
-        customer_email: selectedContact?.email || "bayi@nexus.com",
+        customer_email: selectedContact?.email || "bayi@tamkobi.com",
         customer_phone: selectedContact?.phone || "0555 111 22 33",
         shipping_address: selectedContact?.address || "Bayi Deposu",
         city: selectedContact?.city || "İstanbul",

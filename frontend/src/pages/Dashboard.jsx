@@ -125,11 +125,11 @@ export default function Dashboard() {
             {addonOn("ai.advisor") && (
             <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider border border-indigo-500/30">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              Nexus AI Finans Danışmanı
+              TamKobi AI Finans Danışmanı
             </div>
             )}
             <h1 className="text-xl md:text-2xl font-bold tracking-tight">
-              {activeCompany?.name || "Nexus Teknoloji"} Finansal Özeti
+              {activeCompany?.name || "TamKobi"} Finansal Özeti
             </h1>
             <p className="text-slate-300 text-xs md:text-sm max-w-2xl">
               Tüm pazaryeri siparişleriniz senkronize edildi. Bekleyen {stats.pending_orders_count} sipariş ve {stats.low_stock_count} kritik stok uyarısı bulunuyor.

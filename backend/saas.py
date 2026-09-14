@@ -342,10 +342,19 @@ async def seed():
         url = (st.get("public_url") or "").strip()
         if not url or "takibi.com" in url.lower():
             patch["public_url"] = site["public_url"]
-        if (st.get("brand_name") or "") in ("", "NexusHesap", "Takibi"):
+        if (st.get("brand_name") or "") in ("", "NexusHesap", "Nexus", "Nexus ERP", "Takibi", "Takip"):
             patch["brand_name"] = "TamKobi"
         if patch:
             await _db.platform_settings.update_one({"_id": "platform"}, {"$set": patch})
+    # Visible brand copy: Nexus* → TamKobi* on company / product display names
+    async for c in _db.companies.find({"name": {"$regex": r"^Nexus"}}):
+        new_name = (c.get("name") or "").replace("Nexus", "TamKobi", 1)
+        if new_name and new_name != c.get("name"):
+            await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"name": new_name}})
+    async for p in _db.products.find({"name": {"$regex": r"^Nexus"}}):
+        new_name = (p.get("name") or "").replace("Nexus", "TamKobi", 1)
+        if new_name and new_name != p.get("name"):
+            await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
 
 
 # ---------------- Effective license ----------------

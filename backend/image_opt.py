@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, asdict
 from typing import Optional, Tuple
 
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 
 IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/bmp"}
 EXT_FOR_TYPE = {

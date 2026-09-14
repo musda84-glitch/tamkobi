@@ -13,7 +13,7 @@ import comm_service
 router = APIRouter(prefix="/api")
 _db = None
 _deps: Dict[str, Any] = {}
-logger = logging.getLogger("NexusERP")
+logger = logging.getLogger("TamKobiERP")
 TR_TZ = timezone(timedelta(hours=3))
 
 DEFAULT_RULE = {"margin_pct": 30.0, "margin_base": "cost", "include_cargo": True, "include_service_fee": True, "rounding": "0.90", "min_price": 0.0, "max_price": 0.0, "list_price_markup_pct": 0.0}
