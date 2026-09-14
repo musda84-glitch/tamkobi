@@ -822,7 +822,7 @@ async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01
 
 
 async def _run_einvoice_inbox_auto_tick() -> None:
-    """Tek tur: auto_pull açık n11 / İşNet şirketlerinde çek + (isteğe bağlı) içeri al."""
+    """Tek tur: auto_pull açık n11 / İşNet (SOAP+Portal) şirketlerinde çek + (isteğe bağlı) içeri al."""
     for s in await db.einvoice_settings.find({"provider": {"$in": ["n11faturam", "isnet", "isnet_portal"]}, "status": "configured"}).to_list(200):
         if not s.get("auto_pull", True):
             continue
@@ -840,7 +840,7 @@ async def _run_einvoice_inbox_auto_tick() -> None:
 
 
 async def _einvoice_inbox_auto_loop(interval_s: int = 600):
-    """Yapılandırılmış n11 Faturam şirketlerinde gelen kutuyu periyodik çeker ve XML/PDF belgelerini içeri alır."""
+    """Yapılandırılmış n11 / İşNet şirketlerinde gelen kutuyu periyodik çeker ve XML/PDF belgelerini içeri alır."""
     import asyncio as _a
     await _a.sleep(45)
     while True:

@@ -15,6 +15,26 @@ const STATUS = {
   rejected: ["Reddedildi", "bg-rose-50 text-rose-700"],
 };
 
+const PROVIDER_SHORT = {
+  n11faturam: "n11 Faturam",
+  isnet: "İşNet",
+  isnet_portal: "İşNet Portal",
+};
+
+function providerLabel(code, name) {
+  if (PROVIDER_SHORT[code]) return PROVIDER_SHORT[code];
+  if (name) return name;
+  return "Entegratör";
+}
+
+function sourceLabel(source, integratorLabel) {
+  if (source === "ubl_xml") return "UBL XML";
+  if (source === "ai_pdf") return "PDF (AI)";
+  if (source === "n11faturam") return "n11 Faturam";
+  if (source === "isnet" || source === "isnet_portal") return PROVIDER_SHORT[source] || "İşNet";
+  return integratorLabel || source || "Belge";
+}
+
 function isProcessable(doc) {
   if (!doc || doc.status !== "pending") return false;
   const blank = !(doc.lines || []).length && !doc.supplier?.name && !doc.supplier?.tax_id && !Number(doc.grand_total);
@@ -33,6 +53,9 @@ export default function EdocInboxPage() {
   const [opts, setOpts] = useState({ update_stock: true, update_cost: true, allow_unmatched: true });
   const [pullNote, setPullNote] = useState(null);
   const [xml, setXml] = useState(null);
+  const [einvoice, setEinvoice] = useState(null);
+
+  const integrator = providerLabel(einvoice?.provider, einvoice?.provider_name);
 
   const load = useCallback(() => axios
     .get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId, status: status || undefined } })
@@ -51,6 +74,9 @@ export default function EdocInboxPage() {
     axios.get(`${API_URL}/products`, { params: { company_id: companyId } })
       .then((r) => setProducts(Array.isArray(r.data) ? r.data : r.data?.items || []))
       .catch(() => {});
+    axios.get(`${API_URL}/einvoice/settings`, { params: { company_id: companyId } })
+      .then((r) => setEinvoice(r.data || null))
+      .catch(() => setEinvoice(null));
   }, [companyId]);
 
   const act = async (fn, okMsg) => {
@@ -79,13 +105,13 @@ export default function EdocInboxPage() {
     }), "Belge alındı.");
   };
 
-  const pullN11 = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, {
+  const pullInbox = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, {
     params: { company_id: companyId, days: 14 },
   }).then((r) => {
     setStatus("pending");
     setPullNote(r.data);
     return r;
-  }), "n11 Faturam gelen kutusu çekildi.");
+  }), `${integrator} gelen kutusu çekildi.`);
 
   const cleanup = () => {
     if (!window.confirm("Tedarikçisi, kalemi ve tutarı okunamamış bekleyen kayıtlar silinecek. Faturaları entegratörden yeniden çekebilirsiniz. Devam edilsin mi?")) return;
@@ -133,12 +159,12 @@ export default function EdocInboxPage() {
             <Inbox className="w-6 h-6 text-indigo-600" /> Gelen e-Belgeler
           </h1>
           <p className="text-xs text-slate-500">
-            n11 Faturam gelen kutusu otomatik çekilir; XML/PDF belgeler <b>İçeri Al</b> ile alış faturasına dönüşür. Manuel çekim veya yükleme de aynı akışı kullanır.
+            {integrator} gelen kutusu otomatik çekilir; XML/PDF belgeler <b>İçeri Al</b> ile alış faturasına dönüşür. Manuel çekim veya yükleme de aynı akışı kullanır.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={pullN11} disabled={busy === "act"} className="px-4 py-2 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-n11-pull">
-            <RefreshCw className={`w-4 h-4 ${busy === "act" ? "animate-spin" : ""}`} /> n11 Faturam gelen kutusu
+          <button type="button" onClick={pullInbox} disabled={busy === "act"} className="px-4 py-2 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-inbox-pull">
+            <RefreshCw className={`w-4 h-4 ${busy === "act" ? "animate-spin" : ""}`} /> {integrator} gelen kutusu
           </button>
           {status === "pending" && (data?.counts?.pending || 0) > 0 && (
             <button type="button" onClick={processPending} disabled={busy === "act"} className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-process-pending">
@@ -158,7 +184,7 @@ export default function EdocInboxPage() {
             <div className="flex-1">
               <b>{pullNote.message}</b>
               <div className="text-[10px] opacity-80">
-                n11 Faturam {pullNote.found ?? pullNote.listed ?? "—"} belge listeledi · {pullNote.pulled ?? pullNote.imported ?? 0} yeni · {pullNote.already ?? pullNote.skipped ?? 0} zaten kayıtlı · {pullNote.failed?.length || 0} alınamadı
+                {integrator} {pullNote.found ?? pullNote.listed ?? "—"} belge listeledi · {pullNote.pulled ?? pullNote.imported ?? 0} yeni · {pullNote.already ?? pullNote.skipped ?? 0} zaten kayıtlı · {pullNote.failed?.length || 0} alınamadı
               </div>
               {!!pullNote.failed?.length && (
                 <ul className="mt-2 space-y-0.5 max-h-32 overflow-y-auto" data-testid="edoc-pull-failed">
@@ -202,7 +228,7 @@ export default function EdocInboxPage() {
           {!data ? (
             <div className="p-6 text-slate-400">Yükleniyor…</div>
           ) : data.items.length === 0 ? (
-            <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. n11 Faturam&apos;dan çekin veya UBL XML / PDF yükleyin.</div>
+            <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. {integrator} üzerinden çekin veya UBL XML / PDF yükleyin.</div>
           ) : data.items.map((d) => (
             <div key={d.id} className={`flex items-stretch ${sel?.id === d.id ? "bg-indigo-50/60" : "hover:bg-slate-50"}`}>
               <button type="button" onClick={() => { setSel(d); setXml(null); }} className="flex-1 text-left p-3" data-testid={`edoc-item-${d.id}`}>
@@ -232,7 +258,7 @@ export default function EdocInboxPage() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <div className="text-sm font-bold text-slate-900">{sel.kind === "dispatch" ? "Gelen e-İrsaliye" : "Gelen e-Fatura"} {sel.number}</div>
-                  <div className="text-slate-500">{sel.issue_date} · {sel.source === "ubl_xml" ? "UBL XML" : sel.source === "n11faturam" ? "n11 Faturam" : "PDF (AI)"} · {sel.profile || ""} {sel.type_code || ""}</div>
+                  <div className="text-slate-500">{sel.issue_date} · {sourceLabel(sel.source, integrator)} · {sel.profile || ""} {sel.type_code || ""}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div>
