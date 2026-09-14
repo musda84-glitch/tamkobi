@@ -48,7 +48,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_products_from_text as ai_service_extract_products
+from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import image_opt
 import bank_providers
@@ -2065,7 +2065,7 @@ def _alias_key(s: str) -> str:
 
 
 _B2B_QTY_HEADERS = (
-    "adet", "adedi", "ad", "miktar", "miktari", "qty", "quantity", "amount",
+    "adet", "adedi", "ad", "miktar", "miktari", "qty", "quantity",
     "siparis adedi", "siparis miktari", "siparis", "order qty", "talep", "talep adedi",
     "stok miktari", "mevcut", "mevcut stok", "sayi", "adet sayisi", "order quantity",
 )
@@ -2081,6 +2081,14 @@ _B2B_BARCODE_HEADERS = (
     "gtin 13", "gtin13", "gtin 14", "gtin14",
     "barkod no", "barkod numarasi", "barcode no", "product ean", "product barcode",
 )
+# Dosyadaki fiyat/tutar sütunları adet sanılmasın; B2B katalog fiyatı geçerli
+_B2B_PRICE_HEADERS = (
+    "fiyat", "birim fiyat", "birim fiyati", "liste fiyati", "liste fiyat", "satis fiyati", "satis",
+    "alis", "alis fiyati", "tutar", "toplam", "genel toplam", "ara toplam", "kdv", "kdv tutari",
+    "kdv dahil", "kdv haric", "net", "brut", "net tutar", "brut tutar", "iskonto", "iskonto tutari",
+    "price", "unit price", "sale price", "list price", "amount", "total", "subtotal", "vat", "tax",
+)
+_B2B_PRICE_TOKENS = ("fiyat", "tutar", "toplam", "price", "amount", "total", "kdv", "iskonto", "vat", "tax")
 # Raf/konum sütunları ürün adı veya adet sanılmasın
 _B2B_SKIP_HEADERS = ("raf", "raf no", "raf kodu", "lokasyon", "konum", "depo", "depo adi", "sira", "no", "satir")
 _B2B_BARCODE_TOKENS = ("barkod", "barcode", "ean", "gtin", "upc")
@@ -2164,24 +2172,40 @@ def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None
     return None
 
 
+def _b2b_is_price_header(n: str) -> bool:
+    if not n:
+        return False
+    if n in _B2B_PRICE_HEADERS:
+        return True
+    parts = set(n.split())
+    glued = n.replace(" ", "")
+    return any(t in parts or glued == t or glued.startswith(t) or glued.endswith(t) or t in n.split() for t in _B2B_PRICE_TOKENS)
+
+
 def _b2b_qty_col_index(norms: list, body: list) -> Optional[int]:
-    """Adet sütununu başlıktan veya sayısal yoğunluktan bul."""
-    skip = set(_B2B_SKIP_HEADERS) | set(_B2B_SKU_HEADERS) | set(_B2B_BARCODE_HEADERS) | set(_B2B_NAME_HEADERS)
+    """Adet sütununu başlıktan veya sayısal yoğunluktan bul (fiyat sütunları hariç)."""
+    skip = (
+        set(_B2B_SKIP_HEADERS)
+        | set(_B2B_SKU_HEADERS)
+        | set(_B2B_BARCODE_HEADERS)
+        | set(_B2B_NAME_HEADERS)
+        | set(_B2B_PRICE_HEADERS)
+    )
     qi = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip)
     if qi is not None:
         return qi
     for i, n in enumerate(norms):
-        if not n or n in skip or n in ("fiyat", "tutar", "birim fiyat", "sale price", "alis", "satis"):
+        if not n or n in skip or _b2b_is_price_header(n):
             continue
         if any(tok in n.split() or n.endswith(tok) or n.startswith(tok) for tok in _B2B_QTY_TOKENS):
             # "stok kodu" / "urun kodu" gibi kod sütunlarını ele
             if "kod" in n or "barkod" in n:
                 continue
             return i
-    # Sayısal değer oranı en yüksek sütun (ürün kodu hariç)
+    # Sayısal değer oranı en yüksek sütun (ürün kodu / fiyat hariç)
     best_i, best_score = None, 0.0
     for i, n in enumerate(norms):
-        if n in skip or (n and ("kod" in n or "barkod" in n or "fiyat" in n or "tutar" in n)):
+        if n in skip or _b2b_is_price_header(n) or (n and ("kod" in n or "barkod" in n)):
             continue
         if not body:
             continue
@@ -2222,7 +2246,7 @@ def _b2b_iter_tables(filename: str, data: bytes):
 
 def _b2b_lines_from_table(header: list, body: list) -> list:
     norms = [_alias_key(h) for h in header]
-    skip = set(_B2B_SKIP_HEADERS)
+    skip = set(_B2B_SKIP_HEADERS) | set(_B2B_PRICE_HEADERS)
     qi = _b2b_qty_col_index(norms, body)
     ni = _b2b_col_index(norms, _B2B_NAME_HEADERS, skip=skip)
     bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS, skip=skip, token_hints=_B2B_BARCODE_TOKENS)
@@ -2232,7 +2256,7 @@ def _b2b_lines_from_table(header: list, body: list) -> list:
     default_qty = qi is None
     if ni is None and si is None and bi is None and header:
         for i, n in enumerate(norms):
-            if n not in skip and n not in set(_B2B_QTY_HEADERS):
+            if n not in skip and n not in set(_B2B_QTY_HEADERS) and not _b2b_is_price_header(n):
                 ni = i
                 break
         if ni is None:
@@ -2332,8 +2356,35 @@ def _b2b_parse_cart_text_lines(text: str) -> list:
     return lines[:400]
 
 
+def _b2b_sanitize_cart_lines(lines: list) -> list:
+    """Yüklenen dosyadaki fiyat/tutar alanlarını at; yalnız kimlik + adet kalsın (B2B katalog fiyatı kullanılır)."""
+    out = []
+    for it in lines or []:
+        if not isinstance(it, dict):
+            continue
+        qty = _b2b_parse_qty(it.get("quantity"))
+        if qty <= 0:
+            try:
+                qty = max(1, int(round(float(it.get("quantity") or 1))))
+            except (TypeError, ValueError):
+                qty = 1
+        name = str(it.get("product_name") or "").strip()[:200]
+        sku = _b2b_norm_code(it.get("sku")) if it.get("sku") not in (None, "") else None
+        barcode = _b2b_norm_code(it.get("barcode")) if it.get("barcode") not in (None, "") else None
+        if not name and not sku and not barcode:
+            continue
+        out.append({
+            "product_name": name or sku or barcode,
+            "sku": sku,
+            "barcode": barcode,
+            "quantity": qty,
+        })
+    return out
+
+
 async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     import difflib
+    lines = _b2b_sanitize_cart_lines(lines)
     prods = await db.products.find({"company_id": company_id, "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
     idx = {}
     for p in prods:
@@ -2346,7 +2397,7 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     aliases = {r["alias"]: r["product_id"] for r in await db.b2b_product_aliases.find({"company_id": company_id}).to_list(5000) if r.get("alias") and r.get("product_id")}
     items, unmatched = [], []
     used_aliases = []
-    for it in lines or []:
+    for it in lines:
         qty = max(1, int(float(it.get("quantity") or 1)))
         requested = it.get("product_name") or it.get("sku") or it.get("barcode") or "?"
         codes = []
@@ -2414,8 +2465,9 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
         if len(text.strip()) < 10:
             raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
         try:
-            parsed = await ai_service_extract_orders(text)
-            parsed_items = [it for o in (parsed.get("orders") or []) for it in (o.get("items") or [])]
+            # B2B: fiyat/tutar okunmaz; yalnız ürün kimliği + adet. Katalog fiyatı geçerli.
+            parsed = await ai_service_extract_b2b_cart(text)
+            parsed_items = list(parsed.get("items") or [])
             parse_mode = "ai"
         except Exception as e:
             ai_error = str(e)[:140]
@@ -2424,8 +2476,9 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
             if not parsed_items:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod + Adet (veya Stok Miktarı/Talep) sütunları kullanın; adet yoksa her satır 1 adet sayılır. AI anahtarını da kontrol edin. ({ai_error})",
+                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, B2B katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
                 )
+    parsed_items = _b2b_sanitize_cart_lines(parsed_items)
     items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
     return {
         "filename": file.filename,

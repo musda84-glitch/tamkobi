@@ -69,12 +69,12 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
           disabled={busy}
         />
         {busy ? <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" /> : <Sparkles className="w-5 h-5 text-indigo-600" />}
-        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod / EAN barkod + adet (xlsx, csv, pdf)</div></div>
+        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod / EAN + adet (xlsx, csv, pdf) · dosya fiyatı yok sayılır, B2B fiyatı geçerli</div></div>
       </label>
       {res && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRes(null)}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl" data-testid="b2b-ai-cart-modal">
-            <div className="flex items-center justify-between px-5 py-3 border-b"><div><div className="font-bold text-slate-900 text-sm">AI Sepet Önerisi</div><div className="text-[11px] text-slate-500">{res.filename} · {res.items.length} eşleşen, {res.unmatched.length} eşleşmeyen satır</div></div><button onClick={() => setRes(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+            <div className="flex items-center justify-between px-5 py-3 border-b"><div><div className="font-bold text-slate-900 text-sm">AI Sepet Önerisi</div><div className="text-[11px] text-slate-500">{res.filename} · {res.items.length} eşleşen, {res.unmatched.length} eşleşmeyen satır · fiyatlar B2B kataloğundan</div></div><button onClick={() => setRes(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             <div className="p-4 overflow-y-auto text-xs space-y-1.5 flex-1">
               {res.items.map((it, i) => (
                 <label key={i} className={`flex items-center gap-3 p-2 rounded-lg border ${it.on ? "bg-emerald-50/50 border-emerald-200" : "bg-slate-50 border-slate-200 opacity-60"}`} data-testid={`b2b-ai-item-${i}`}>
