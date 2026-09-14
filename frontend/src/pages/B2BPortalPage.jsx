@@ -74,7 +74,7 @@ export default function B2BPortalPage() {
               </div>
             </aside>
             <div className="md:col-span-9 lg:col-span-7 space-y-3 order-2">
-              {d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c)); }} />}
+              {(d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false) && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c)); }} />}
               <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">{prods.map((p) => (
                 <div key={p.id} className="bg-white rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 min-w-0" data-testid={`b2b-product-${p.sku}`}>
