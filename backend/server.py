@@ -3122,6 +3122,7 @@ async def create_product(product: Product):
 
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, updated: Dict[str, Any]):
+    updated = {**updated, "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.products.update_one({"_id": product_id}, {"$set": updated})
     if updated.get("category"):
         cur = await db.products.find_one({"_id": product_id}, {"company_id": 1})
@@ -3149,6 +3150,7 @@ async def bulk_product_flags(req: Dict[str, Any]):
     q: Dict[str, Any] = {"_id": {"$in": ids}}
     if company_id:
         q["company_id"] = company_id
+    patch = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
     result = await db.products.update_many(q, {"$set": patch})
     return {"status": "success", "matched": result.matched_count, "modified": result.modified_count, "ids": ids, **patch}
 
