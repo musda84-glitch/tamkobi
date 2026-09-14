@@ -12,10 +12,18 @@ import server
 
 
 class _Resp:
-    def __init__(self, text: str, status: int = 200, data=None):
+    def __init__(self, text: str = "", status: int = 200, data=None, content: bytes | None = None):
         self.text = text
         self.status_code = status
         self._json = data if data is not None else {}
+        if content is not None:
+            self.content = content
+        elif data is not None:
+            import json as _json
+
+            self.content = _json.dumps(data).encode("utf-8")
+        else:
+            self.content = (text or "").encode("utf-8")
 
     def json(self):
         return self._json
@@ -95,3 +103,58 @@ def test_portal_payload_maps_vkn():
     assert mapped["mode"] == "test"
     assert mapped["username"] == "1234567890"
     assert mapped["corporate_code"] == "77"
+
+
+def test_list_incoming_fetches_xml():
+    settings = {"username": "1234567890", "mode": "test", "corporate_code": "9"}
+    login_json = {
+        "Token": "tok-abc",
+        "Result": 0,
+        "CompanyList": [{"IdFirma": 9, "FirmaAdi": "Demo A.Ş."}],
+    }
+    list_json = {
+        "Result": 0,
+        "Invoices": [
+            {
+                "Ettn": "11111111-2222-3333-4444-555555555555",
+                "InvoiceNumber": "ABC2026000000001",
+                "InvoiceDate": "01.09.2026",
+                "RecipientCompanyName": "Satıcı Ltd.",
+                "InvoiceTotalLineAmount": 1200.0,
+                "CurrencyCode": "TRY",
+                "Status": "Approved",
+            }
+        ],
+    }
+    xml_url_json = {"Result": 0, "ExternalLink": "https://files.example/inv.xml"}
+    ubl = b'<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>'
+
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+
+    async def _post(url, json=None, headers=None):
+        u = str(url)
+        if u.endswith("/api/Account/Login"):
+            return _Resp(data=login_json)
+        if "GetIncomingEInvoiceList" in u:
+            return _Resp(data=list_json)
+        if "GetInvoiceExternalXmlUrl" in u:
+            return _Resp(data=xml_url_json)
+        return _Resp(status=404, data={"ErrorMessage": u})
+
+    async def _get(url, params=None, headers=None, follow_redirects=True):
+        if "inv.xml" in str(url):
+            return _Resp(content=ubl, text=ubl.decode("utf-8"))
+        return _Resp(status=404)
+
+    mock.post = AsyncMock(side_effect=_post)
+    mock.get = AsyncMock(side_effect=_get)
+
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        rows = asyncio.get_event_loop().run_until_complete(isnet_portal.list_incoming(settings, "secret", days=14))
+    assert len(rows) == 1
+    assert rows[0]["invoice_id"] == "ABC2026000000001"
+    assert rows[0]["uuid"] == "11111111-2222-3333-4444-555555555555"
+    assert rows[0]["xml"] and b"<Invoice" in rows[0]["xml"]
+    assert rows[0]["xml_error"] == ""

@@ -106,6 +106,10 @@ export default function IsnetPortalPanel({ companyId }) {
               NetteFatura-Portal
             </a>
           </p>
+          <p className="text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2" data-testid="isnet-portal-inbox-hint">
+            Bağlantıyı kaydetmek yetmez. Gelen faturaları görmek için{" "}
+            <span className="font-semibold">Muhasebe → Gelen e-Belgeler → Entegratörden çek</span> kullanın.
+          </p>
         </div>
         <span
           className={`text-[10px] font-bold px-2 py-0.5 rounded border ${status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
