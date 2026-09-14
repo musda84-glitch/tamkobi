@@ -66,7 +66,12 @@ export default function IsnetPortalPanel({ companyId }) {
       if (r.data?.suggested_mode) {
         setTestMode(r.data.suggested_mode === "test");
       }
-      toast.success(r.data?.message || "İşNet Web Portal bağlantı testi başarılı!");
+      const msg = r.data?.message || "İşNet Web Portal bağlantı testi başarılı!";
+      if (r.data?.mobile_ok === false) {
+        toast.warning(msg);
+      } else {
+        toast.success(msg);
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Portal bağlantısı kurulamadı.");
     } finally {
@@ -116,7 +121,7 @@ export default function IsnetPortalPanel({ companyId }) {
           </p>
           <p className="text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 mt-2" data-testid="isnet-portal-mode-hint">
             Gerçek NetteFatura hesabınız varsa <span className="font-semibold">Canlı Ortam</span> seçin.
-            Login HTTP 401 çoğu zaman Test seçiliyken canlı şifre kullanıldığından çıkar.
+            Portal açılıp Mobile API 401 verirse gelen faturalar Web Portal oturumuyla çekilir.
           </p>
         </div>
         <span

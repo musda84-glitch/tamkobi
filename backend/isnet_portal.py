@@ -228,6 +228,261 @@ class IsnetPortalClient:
         return data if isinstance(data, dict) else {"data": data}
 
 
+    async def list_inbox(self, days: int = 14) -> List[Dict[str, Any]]:
+        """Gelen kutuyu HTML portal oturumuyla çeker (Mobile API 401 yedek yolu)."""
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=max(1, min(int(days or 14), 90)))
+        first = start.strftime("%d.%m.%Y")
+        last = end.strftime("%d.%m.%Y")
+
+        page_html = ""
+        for path in ("/Inbox", "/Inbox/Index", "/IncomingInvoice", "/IncomingInvoice/Index"):
+            try:
+                r = await self._client.get(path, headers={"Accept": "text/html"})
+            except httpx.RequestError:
+                continue
+            text = r.text or ""
+            if r.status_code >= 400:
+                continue
+            if "VknTckn" in text and "__RequestVerificationToken" in text and "login" in str(r.url).lower():
+                continue
+            page_html = text
+            if len(text) > 500:
+                break
+        if not page_html:
+            try:
+                home = await self._client.get("/", headers={"Accept": "text/html"})
+                page_html = home.text or ""
+            except httpx.RequestError:
+                page_html = ""
+
+        ajax_urls: List[str] = []
+        for m in re.finditer(r"(?:ajax\s*:\s*\{|url\s*:)\s*['\"]([^'\"]+)['\"]", page_html, re.I):
+            u = m.group(1).strip()
+            if u.startswith("/") and any(k in u.lower() for k in ("inbox", "incoming", "gelen")):
+                ajax_urls.append(u)
+        for m in re.finditer(r"['\"](/(?:Inbox|IncomingInvoice|Incoming)[^'\"]+)['\"]", page_html, re.I):
+            ajax_urls.append(m.group(1))
+        for cand in (
+            "/Inbox/GetList",
+            "/Inbox/List",
+            "/Inbox/GetIncomingList",
+            "/Inbox/GetIncomingInvoices",
+            "/Inbox/DataHandler",
+            "/IncomingInvoice/GetList",
+            "/IncomingInvoice/List",
+            "/IncomingInvoice/GetIncomingList",
+            "/IncomingEInvoice/GetList",
+        ):
+            ajax_urls.append(cand)
+        seen: set = set()
+        urls: List[str] = []
+        for u in ajax_urls:
+            if u not in seen:
+                seen.add(u)
+                urls.append(u)
+
+        token = ""
+        try:
+            if page_html:
+                token = _token_from_html(page_html)
+        except HTTPException:
+            token = ""
+
+        rows: List[Dict[str, Any]] = []
+        for url in urls:
+            payloads = [
+                {
+                    "draw": 1,
+                    "start": 0,
+                    "length": 100,
+                    "FirstInvoiceDate": first,
+                    "LastInvoiceDate": last,
+                    "StartDate": first,
+                    "EndDate": last,
+                    "BaslangicTarihi": first,
+                    "BitisTarihi": last,
+                },
+                {
+                    "draw": "1",
+                    "start": "0",
+                    "length": "100",
+                    "search[value]": "",
+                    "FirstInvoiceDate": first,
+                    "LastInvoiceDate": last,
+                },
+            ]
+            for body in payloads:
+                data = dict(body)
+                if token:
+                    data["__RequestVerificationToken"] = token
+                if self.company_id:
+                    data["CompanyId"] = self.company_id
+                    data["companyId"] = self.company_id
+                try:
+                    r = await self._client.post(
+                        url,
+                        data=data,
+                        headers={
+                            "Accept": "application/json, text/javascript, */*; q=0.01",
+                            "X-Requested-With": "XMLHttpRequest",
+                            "Referer": urljoin(self.base + "/", "Inbox"),
+                        },
+                    )
+                except httpx.RequestError:
+                    continue
+                if r.status_code >= 400:
+                    continue
+                try:
+                    parsed = r.json()
+                except Exception:
+                    parsed = None
+                items: List[Any] = []
+                if isinstance(parsed, dict):
+                    for key in ("data", "Data", "Invoices", "items", "Items", "aaData"):
+                        val = parsed.get(key)
+                        if isinstance(val, list):
+                            items = val
+                            break
+                elif isinstance(parsed, list):
+                    items = parsed
+                if not items:
+                    continue
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    ettn = str(
+                        it.get("Ettn")
+                        or it.get("ETTN")
+                        or it.get("Uuid")
+                        or it.get("UUID")
+                        or it.get("EttnNo")
+                        or ""
+                    ).strip()
+                    inv_no = str(
+                        it.get("InvoiceNumber")
+                        or it.get("FaturaNo")
+                        or it.get("InvoiceId")
+                        or it.get("DocumentNumber")
+                        or ""
+                    ).strip()
+                    xml_url = str(
+                        it.get("XmlUrl")
+                        or it.get("DownloadUrl")
+                        or it.get("ExternalLink")
+                        or it.get("XmlDownloadUrl")
+                        or ""
+                    ).strip()
+                    rows.append(
+                        {
+                            "uuid": ettn or None,
+                            "invoice_id": inv_no or ettn or None,
+                            "sender_title": it.get("SenderTitle")
+                            or it.get("GonderenUnvan")
+                            or it.get("RecipientCompanyName")
+                            or it.get("SenderCompanyName")
+                            or "",
+                            "issue_date": it.get("InvoiceDate") or it.get("FaturaTarihi") or it.get("IssueDate") or "",
+                            "payable_amount": it.get("PayableAmount")
+                            or it.get("InvoiceTotalLineAmount")
+                            or it.get("OdenecekTutar"),
+                            "currency": it.get("CurrencyCode") or it.get("ParaBirimi") or "TRY",
+                            "status": it.get("Status") or it.get("Durum") or "",
+                            "xml_url": xml_url,
+                        }
+                    )
+                if rows:
+                    break
+            if rows:
+                break
+
+        if not rows and page_html:
+            found = []
+            for m in re.finditer(
+                r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+                page_html,
+            ):
+                ettn = m.group(1)
+                found.append(
+                    {
+                        "uuid": ettn,
+                        "invoice_id": ettn,
+                        "sender_title": "",
+                        "issue_date": "",
+                        "payable_amount": None,
+                        "currency": "TRY",
+                        "status": "",
+                        "xml_url": "",
+                    }
+                )
+            uniq = {r.get("uuid"): r for r in found}
+            rows = list(uniq.values())
+
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            xml_bytes = None
+            xml_err = ""
+            xml_url = (row.get("xml_url") or "").strip()
+            ettn = (row.get("uuid") or "").strip()
+            candidates: List[str] = []
+            if xml_url:
+                candidates.append(xml_url)
+            if ettn:
+                candidates.extend(
+                    [
+                        f"/Inbox/DownloadXml?ettn={ettn}",
+                        f"/Inbox/GetXml?ettn={ettn}",
+                        f"/Inbox/Download?ettn={ettn}",
+                        f"/IncomingInvoice/DownloadXml?ettn={ettn}",
+                        f"/IncomingInvoice/GetXml?uuid={ettn}",
+                        f"/Invoice/DownloadIncomingXml?ettn={ettn}",
+                        f"/Invoice/GetIncomingXml?ettn={ettn}",
+                    ]
+                )
+            for href in re.findall(
+                r'href=["\']([^"\']*(?:xml|ubl|download)[^"\']*)["\']', page_html or "", re.I
+            ):
+                if ettn and ettn.lower() in href.lower():
+                    candidates.append(href)
+            for cand in candidates:
+                try:
+                    r = await self._client.get(cand, headers={"Accept": "application/xml,text/xml,*/*"})
+                except httpx.RequestError:
+                    continue
+                if r.status_code >= 400 or not r.content:
+                    continue
+                raw = r.content
+                head = raw[:200].decode("utf-8", errors="ignore").lstrip()
+                if head.startswith("<") or b"Invoice" in raw[:800]:
+                    xml_bytes = raw
+                    break
+            if not xml_bytes:
+                xml_err = "Portal HTML üzerinden XML indirilemedi."
+            out.append(
+                {
+                    "uuid": row.get("uuid"),
+                    "invoice_id": row.get("invoice_id"),
+                    "sender_title": row.get("sender_title") or "",
+                    "issue_date": row.get("issue_date") or "",
+                    "payable_amount": row.get("payable_amount"),
+                    "currency": row.get("currency") or "TRY",
+                    "status": row.get("status") or "",
+                    "xml": xml_bytes,
+                    "xml_error": "" if xml_bytes else xml_err,
+                    "source": "isnet_portal_html",
+                }
+            )
+        logger.info(
+            "isnet_portal list_inbox html: company=%s days=%s count=%s",
+            self.company_id,
+            days,
+            len(out),
+        )
+        return out
+
+
+
+
 def _auth_header_sets(token: str) -> List[Dict[str, str]]:
     t = (token or "").strip()
     return [
@@ -266,7 +521,11 @@ def _format_mobile_login_error(status: int, body_text: str, settings: dict) -> s
             "Gerçek NetteFatura portal şifrenizi kullanıyorsanız ortamı «Canlı» yapın; "
             "yalnızca İşNet test hesabı için «Test» seçin."
             if is_test_mode(settings)
-            else "VKN/TCKN ve portal şifresini nettefatura.isnet.net.tr ile aynı girin."
+            else (
+                "VKN/TCKN ve portal şifresini nettefatura.isnet.net.tr ile aynı girin. "
+                "Portal açılıp Mobile 401 ise gelen kutu Web Portal üzerinden çekilir; "
+                "gerekirse Mobile kullanıcı TCKN deneyin."
+            )
         )
         return f"Login HTTP {status} [{env}]: kimlik doğrulama reddedildi. {tip}" + (f" ({snippet})" if snippet else "")
     return f"Login HTTP {status} [{env}]: {snippet or 'İşNet Mobile API girişi başarısız.'}"
@@ -283,7 +542,20 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
         or ""
     ).strip()
     url = f"{mobile_api_base(settings)}/api/Account/Login"
-    payloads = _mobile_login_payloads(vkn, password, corp)
+    # Bazı hesaplarda portal VKN ile açılır; Mobile API kullanıcı TCKN ister.
+    mobile_user = _digits(
+        settings.get("mobile_username")
+        or settings.get("user_tckn")
+        or settings.get("mobile_tckn")
+        or ""
+    )
+    id_candidates = []
+    for cand in (mobile_user, vkn):
+        if cand and cand not in id_candidates:
+            id_candidates.append(cand)
+    payloads: List[dict] = []
+    for ident in id_candidates:
+        payloads.extend(_mobile_login_payloads(ident, password, corp))
     last = "İşNet Mobile API girişi başarısız."
     saw_401 = False
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
@@ -540,15 +812,19 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
         )
     if mobile_ok:
         parts.append("Mobile API (gelen kutu) girişi de başarılı.")
+        inbox_channel = "mobile"
     else:
         parts.append(
-            "Portal HTML girişi OK; ancak gelen kutu için Mobile API reddetti"
+            "Portal HTML girişi OK; Mobile API reddetti"
             + (f": {mobile_detail}" if mobile_detail else ".")
+            + " Gelen kutu Web Portal oturumuyla çekilecek."
         )
+        inbox_channel = "portal_html"
     parts.append("Gelen faturalar: Muhasebe → Gelen e-Belgeler → «Entegratörden çek».")
 
     return {
-        "ok": True if mobile_ok else False,
+        # Portal HTML başarılıysa bağlantı kullanılabilir; Mobile 401 tek başına engel değil.
+        "ok": True,
         "provider": "isnet_portal",
         "mode": mode,
         "mode_switched": mode_switched,
@@ -556,6 +832,7 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
         "portal": portal_base(used),
         "mobile_api": mobile_api_base(used),
         "mobile_ok": mobile_ok,
+        "inbox_channel": inbox_channel,
         "vkn": info.get("vkn"),
         "company_id": company_id,
         "companies": info.get("companies") or [],
@@ -564,7 +841,10 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
         "hint": (
             "Bağlantıyı kaydetmek yetmez; Gelen e-Belgeler ekranından senkronize edin."
             if mobile_ok
-            else "Canlı/Test ortamını ve portal şifresini kontrol edin; sonra yeniden deneyin."
+            else (
+                "Mobile API bu hesapta kapalı/uyumsuz olabilir. Kaydedin; gelen faturalar "
+                "Web Portal oturumuyla çekilir. İsteğe bağlı: Mobile kullanıcı TCKN deneyin."
+            )
         ),
     }
 
@@ -595,9 +875,49 @@ async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, A
         }
 
 
+
+async def _list_incoming_via_portal(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
+    """Mobile API olmadan HTML portal oturumuyla gelen kutuyu çeker."""
+    used, info, _kontor, meta = await _portal_login_with_fallback(settings, password)
+    if meta.get("mode_switched") and meta.get("suggested_mode"):
+        settings["mode"] = meta["suggested_mode"]
+        settings["_mode_switched"] = True
+    async with IsnetPortalClient(used, password) as client:
+        # Zaten login fallback içinde yapıldı; yeniden login (cookie taze)
+        await client.login()
+        if info.get("company_id") and not client.company_id:
+            client.company_id = str(info.get("company_id") or "")
+        rows = await client.list_inbox(days=days)
+    # Sunucu ingest alan adlarıyla uyumlu tut
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "uuid": row.get("uuid"),
+                "invoice_id": row.get("invoice_id"),
+                "sender_title": row.get("sender_title") or "",
+                "issue_date": row.get("issue_date") or "",
+                "payable_amount": row.get("payable_amount"),
+                "currency": row.get("currency") or "TRY",
+                "status": row.get("status") or "",
+                "xml": row.get("xml"),
+                "xml_error": row.get("xml_error") or "",
+                "source": row.get("source") or "isnet_portal_html",
+            }
+        )
+    return out
+
+
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
-    """Gelen e-faturaları Mobile REST ile listeler ve UBL XML indirir."""
-    session = await _mobile_login(settings, password)
+    """Gelen e-faturaları Mobile REST ile listeler; 401'de Web Portal HTML yedek yolu."""
+    try:
+        session = await _mobile_login(settings, password)
+    except HTTPException as e:
+        detail = str(e.detail or "")
+        if e.status_code in (400, 401, 403) and ("401" in detail or "kimlik" in detail.lower() or "Login HTTP" in detail):
+            logger.warning("isnet_portal mobile login failed; falling back to portal HTML inbox: %s", detail[:200])
+            return await _list_incoming_via_portal(settings, password, days=days)
+        raise
     # Ortam otomatik değiştiyse sonraki çağrılar doğru API host'unu kullanmalı
     if session.get("mode_switched") and session.get("suggested_mode"):
         settings["mode"] = session["suggested_mode"]
