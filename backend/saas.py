@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import rbac
+import user_numbers
 import applog
 import perfmon
 from auth_utils import get_user_from_token, hash_password, session_token, verify_password
@@ -330,7 +331,7 @@ async def seed():
                 upd["password_hash"] = hash_password(pwd)
             await _db.users.update_one({"_id": u["_id"]}, {"$set": upd})
         elif pwd:
-            await _db.users.insert_one({"_id": f"usr_{uuid.uuid4().hex[:8]}", "email": email, "password_hash": hash_password(pwd), "name": name, "role": "admin", "is_super_admin": True, "company_ids": ["comp_nexus_main_01"], "active_company_id": "comp_nexus_main_01", "is_active": True, "preferences": {}, "created_at": _now()})
+            await _db.users.insert_one({"_id": f"usr_{uuid.uuid4().hex[:8]}", "email": email, "password_hash": hash_password(pwd), "name": name, "role": "admin", "is_super_admin": True, "company_ids": ["comp_nexus_main_01"], "active_company_id": "comp_nexus_main_01", "is_active": True, "preferences": {}, "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
     await _db.login_attempts.delete_many({"identifier": {"$regex": f":{os.environ.get('SUPER_ADMIN_EMAIL', 'x@x').strip().lower()}$"}})
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
     site = {"brand_name": "TamKobi", "public_url": "https://tamkobi.com"}
@@ -844,7 +845,7 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     cid = f"comp_{uuid.uuid4().hex[:8]}"
     await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now()})
     uid = f"usr_{uuid.uuid4().hex[:8]}"
-    await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": (req.get("admin_name") or name).strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "created_at": _now()})
+    await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": (req.get("admin_name") or name).strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
     trial_days = int(req.get("trial_days") or 0)
     lic = {"plan_id": plan_id, "status": "trial" if trial_days else "active", "started_at": _now(), "trial_ends_at": (datetime.now(timezone.utc) + timedelta(days=trial_days)).isoformat() if trial_days else None, "expires_at": req.get("expires_at") or None, "module_overrides": {}, "user_limit": None, "billing_period": req.get("billing_period", "monthly"), "notes": req.get("notes") or "", "created_at": _now()}
     await _db.company_licenses.insert_one({"_id": cid, **lic})
@@ -972,6 +973,7 @@ def _user_row(u: dict, companies_by_id: Dict[str, dict]) -> Dict[str, Any]:
         "id": u.get("_id") or u.get("id"),
         "name": u.get("name"),
         "email": u.get("email"),
+        "user_number": u.get("user_number"),
         "role": u.get("role") or "admin",
         "is_super_admin": bool(u.get("is_super_admin")),
         "is_active": u.get("is_active", True),
@@ -994,10 +996,13 @@ async def _super_admin_count() -> int:
 @router.get("/system/users")
 async def system_list_users(q: Optional[str] = None, _: dict = Depends(require_super_admin)):
     comps = await _companies_map()
-    rows = [_user_row(u, comps) for u in await _db.users.find({"is_super_admin": True}).sort("name", 1).to_list(2000)]
+    raw = await _db.users.find({"is_super_admin": True}).sort("name", 1).to_list(2000)
+    for u in raw:
+        await user_numbers.ensure_user_number(_db, u)
+    rows = [_user_row(u, comps) for u in raw]
     if q:
         ql = q.strip().lower()
-        rows = [u for u in rows if ql in (u.get("name") or "").lower() or ql in (u.get("email") or "").lower()]
+        rows = [u for u in rows if ql in (u.get("name") or "").lower() or ql in (u.get("email") or "").lower() or ql in (u.get("user_number") or "").lower()]
     return {"users": rows, "companies": [{"id": cid, "name": c.get("name")} for cid, c in comps.items()], "roles": [{"code": r["code"], "name": r["name"]} for r in rbac.DEFAULT_ROLES]}
 
 
@@ -1025,6 +1030,7 @@ async def system_create_user(req: Dict[str, Any], _: dict = Depends(require_supe
         "is_active": req.get("is_active", True) is not False,
         "is_super_admin": True,
         "preferences": {},
+        "user_number": await user_numbers.next_user_number(_db),
         "created_at": _now(),
     }
     await _db.users.insert_one(doc)

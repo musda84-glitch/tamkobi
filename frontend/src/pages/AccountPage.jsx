@@ -76,7 +76,13 @@ const ProfileTab = ({ user }) => {
         <div>
           <div className="font-bold text-slate-900 text-sm" data-testid="account-profile-name">{user?.name || "Kullanıcı"}</div>
           <div className="text-slate-500" data-testid="account-profile-email">{user?.email}</div>
-          <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">{user?.role_name || ROLE_LABELS[user?.role] || user?.role || "Üye"}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[11px] font-semibold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded" data-testid="account-profile-user-number">
+              ID: {user?.user_number || "—"}
+            </span>
+            <span className="text-[10px] text-emerald-700 font-semibold">{user?.role_name || ROLE_LABELS[user?.role] || user?.role || "Üye"}</span>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Destek ve bildirimlerde bu kullanıcı ID’sini kullanabilirsiniz.</p>
         </div>
       </div>
       <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-change-password">

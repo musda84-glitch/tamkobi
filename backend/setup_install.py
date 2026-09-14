@@ -1,3 +1,4 @@
+import user_numbers
 """WordPress-style first-run installer: database, site name, admin account."""
 from __future__ import annotations
 
@@ -243,6 +244,7 @@ async def perform_install(req: InstallRequest) -> dict:
                 "company_ids": [company_id],
                 "active_company_id": company_id,
                 "preferences": {},
+                "user_number": await user_numbers.next_user_number(local),
                 "created_at": _now(),
             }
         )
