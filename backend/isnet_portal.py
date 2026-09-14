@@ -8,8 +8,11 @@ Gelen kutu: portal şifresi ile Mobile REST API
 """
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import re
+import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
@@ -29,6 +32,248 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
+
+UBL_ROOTS = ("Invoice", "DespatchAdvice")
+_ROOT_RE = re.compile(rb"<\s*(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)[\s/>]")
+MAX_ZIP_ENTRIES = 32
+MAX_ZIP_MEMBER_BYTES = 4 * 1024 * 1024
+MAX_ZIP_TOTAL_BYTES = 16 * 1024 * 1024
+
+
+def _ubl_root_name(data: bytes) -> str:
+    """Belgenin kök etiket yerel adını döner (XML bildirimi / DOCTYPE atlanır)."""
+    if not data:
+        return ""
+    head = re.sub(
+        rb"<\?.*?\?>|<!--.*?-->|<!\[CDATA\[.*?\]\]>|<!DOCTYPE[^>]*>",
+        b" ",
+        data[:4096],
+        flags=re.S,
+    )
+    m = _ROOT_RE.search(head)
+    return m.group(2).decode("ascii", "ignore") if m else ""
+
+
+def _zip_xml_members(z: zipfile.ZipFile):
+    total = 0
+    for info in z.infolist()[:MAX_ZIP_ENTRIES]:
+        if info.is_dir() or not info.filename.lower().endswith(".xml"):
+            continue
+        if info.file_size > MAX_ZIP_MEMBER_BYTES:
+            continue
+        with z.open(info) as fh:
+            member = fh.read(MAX_ZIP_MEMBER_BYTES + 1)
+        if len(member) > MAX_ZIP_MEMBER_BYTES:
+            continue
+        total += len(member)
+        if total > MAX_ZIP_TOTAL_BYTES:
+            return
+        yield member
+
+
+def _as_ubl(data: Optional[bytes]) -> Optional[bytes]:
+    """Ham baytları UBL-TR Invoice/DespatchAdvice XML'e indirger; HTML/SOAP reddedilir."""
+    if not data:
+        return None
+    if data[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                data = next((d for d in _zip_xml_members(z) if _ubl_root_name(d) in UBL_ROOTS), None)
+                if data is None:
+                    return None
+        except (zipfile.BadZipFile, KeyError, RuntimeError, ValueError):
+            return None
+    data = data.lstrip(b"\xef\xbb\xbf").lstrip()
+    head = data[:200].decode("utf-8", errors="ignore").lstrip().lower()
+    if head.startswith("<!doctype html") or head.startswith("<html"):
+        return None
+    root = _ubl_root_name(data)
+    return data if root in UBL_ROOTS else None
+
+
+def _decode_possible_ubl(payload: Any) -> Optional[bytes]:
+    """Düz UBL, base64 UBL veya base64 ZIP olabilir."""
+    if payload is None:
+        return None
+    if isinstance(payload, (bytes, bytearray)):
+        return _as_ubl(bytes(payload))
+    if not isinstance(payload, str):
+        return None
+    raw_text = payload.strip()
+    if not raw_text:
+        return None
+    if raw_text.startswith("<"):
+        return _as_ubl(raw_text.encode("utf-8"))
+    try:
+        raw = base64.b64decode("".join(raw_text.split()), validate=False)
+    except Exception:
+        return None
+    return _as_ubl(raw)
+
+
+def _portal_xml_candidates(ettn: str, xml_url: str, page_html: str) -> List[str]:
+    """Portal HTML/AJAX yanıtından XML indirme aday URL'lerini üretir."""
+    candidates: List[str] = []
+    if xml_url:
+        candidates.append(xml_url)
+    if ettn:
+        for path in (
+            f"/Inbox/DownloadXml?ettn={ettn}",
+            f"/Inbox/DownloadXml?Ettn={ettn}",
+            f"/Inbox/DownloadXml?uuid={ettn}",
+            f"/Inbox/GetXml?ettn={ettn}",
+            f"/Inbox/GetXml?uuid={ettn}",
+            f"/Inbox/DownloadUbl?ettn={ettn}",
+            f"/Inbox/Download?ettn={ettn}",
+            f"/Inbox/GetDocumentXml?ettn={ettn}",
+            f"/IncomingInvoice/DownloadXml?ettn={ettn}",
+            f"/IncomingInvoice/DownloadXml?uuid={ettn}",
+            f"/IncomingInvoice/GetXml?uuid={ettn}",
+            f"/IncomingInvoice/GetXml?ettn={ettn}",
+            f"/IncomingEInvoice/DownloadXml?ettn={ettn}",
+            f"/Invoice/DownloadIncomingXml?ettn={ettn}",
+            f"/Invoice/GetIncomingXml?ettn={ettn}",
+            f"/Invoice/DownloadXml?ettn={ettn}",
+            f"/Invoice/GetXml?ettn={ettn}",
+            f"/Document/DownloadXml?ettn={ettn}",
+            f"/Document/GetXml?ettn={ettn}",
+            f"/EInvoice/DownloadXml?ettn={ettn}",
+            f"/GelenKutu/DownloadXml?ettn={ettn}",
+        ):
+            candidates.append(path)
+    html = page_html or ""
+    for href in re.findall(
+        r'(?:href|data-url|data-href|data-xml-url)\s*=\s*["\']([^"\']+)["\']',
+        html,
+        re.I,
+    ):
+        if ettn and ettn.lower() in href.lower():
+            candidates.append(href)
+    for m in re.finditer(
+        r"(?:downloadxml|getxml|downloadubl|getubl)\s*\(\s*['\"]([^'\"]+)['\"]",
+        html,
+        re.I,
+    ):
+        val = m.group(1).strip()
+        if val.startswith("/") or val.startswith("http"):
+            candidates.append(val)
+        elif ettn and val.lower() == ettn.lower():
+            candidates.append(f"/Inbox/DownloadXml?ettn={ettn}")
+    seen: set = set()
+    out: List[str] = []
+    for c in candidates:
+        c = (c or "").strip()
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
+
+
+async def _try_download_portal_xml(
+    client: httpx.AsyncClient,
+    candidates: List[str],
+    *,
+    csrf: str = "",
+    referer: str = "",
+) -> Tuple[Optional[bytes], str]:
+    """Aday URL'lerden ilk geçerli UBL'yi döner; HTML yanıtları reddeder."""
+    last_hint = "Portal HTML üzerinden XML indirilemedi."
+    headers_get = {"Accept": "application/xml,text/xml,application/zip,*/*"}
+    if referer:
+        headers_get["Referer"] = referer
+    for cand in candidates:
+        try:
+            r = await client.get(cand, headers=headers_get)
+        except httpx.RequestError:
+            r = None
+        if r is not None and r.status_code < 400 and r.content:
+            ubl = _as_ubl(r.content)
+            if ubl:
+                return ubl, ""
+            data = None
+            try:
+                data = r.json()
+            except Exception:
+                pass
+            if isinstance(data, dict):
+                for key in (
+                    "Xml",
+                    "XML",
+                    "InvoiceXml",
+                    "Ubl",
+                    "UBL",
+                    "Content",
+                    "Data",
+                    "XmlContent",
+                    "FileContent",
+                    "ExternalLink",
+                    "Url",
+                ):
+                    val = data.get(key)
+                    ubl = _decode_possible_ubl(val)
+                    if ubl:
+                        return ubl, ""
+                    if isinstance(val, str) and key in ("ExternalLink", "Url") and val.startswith("http"):
+                        try:
+                            nested = await client.get(val, headers=headers_get)
+                        except httpx.RequestError:
+                            nested = None
+                        if nested is not None and nested.status_code < 400:
+                            ubl = _as_ubl(nested.content)
+                            if ubl:
+                                return ubl, ""
+            head = r.content[:120].decode("utf-8", errors="ignore").lstrip().lower()
+            if head.startswith("<!doctype html") or head.startswith("<html"):
+                last_hint = "Portal XML yerine HTML sayfası döndü (oturum veya indirme adresi hatalı)."
+            elif r.content[:4] == b"%PDF":
+                last_hint = "Portal PDF döndü; UBL XML indirme adresi bulunamadı."
+            else:
+                last_hint = "Portal yanıtı UBL-TR e-Fatura/e-İrsaliye değil."
+
+        form: Dict[str, str] = {}
+        if csrf:
+            form["__RequestVerificationToken"] = csrf
+        m = re.search(r"(?:ettn|uuid|ETTN|UUID)=([0-9a-fA-F-]{36})", cand)
+        if m:
+            ettn = m.group(1)
+            form.update({"ettn": ettn, "Ettn": ettn, "uuid": ettn, "UUID": ettn})
+        post_url = cand.split("?", 1)[0] if ("?" in cand and form) else cand
+        try:
+            r = await client.post(
+                post_url,
+                data=form or None,
+                headers={**headers_get, "X-Requested-With": "XMLHttpRequest"},
+            )
+        except httpx.RequestError:
+            continue
+        if r.status_code >= 400 or not r.content:
+            continue
+        ubl = _as_ubl(r.content)
+        if ubl:
+            return ubl, ""
+        try:
+            data = r.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            for key in (
+                "Xml",
+                "XML",
+                "InvoiceXml",
+                "Ubl",
+                "UBL",
+                "Content",
+                "Data",
+                "XmlContent",
+                "FileContent",
+            ):
+                ubl = _decode_possible_ubl(data.get(key))
+                if ubl:
+                    return ubl, ""
+    return None, last_hint
+
+
 
 
 def is_test_mode(settings: dict) -> bool:
@@ -389,6 +634,12 @@ class IsnetPortalClient:
                             "currency": it.get("CurrencyCode") or it.get("ParaBirimi") or "TRY",
                             "status": it.get("Status") or it.get("Durum") or "",
                             "xml_url": xml_url,
+                            "xml": it.get("Xml")
+                            or it.get("XML")
+                            or it.get("Ubl")
+                            or it.get("XmlContent")
+                            or it.get("FileContent")
+                            or "",
                         }
                     )
                 if rows:
@@ -418,46 +669,34 @@ class IsnetPortalClient:
             uniq = {r.get("uuid"): r for r in found}
             rows = list(uniq.values())
 
+        csrf = ""
+        try:
+            if page_html:
+                csrf = _token_from_html(page_html)
+        except Exception:
+            csrf = ""
+
         out: List[Dict[str, Any]] = []
         for row in rows:
             xml_bytes = None
             xml_err = ""
             xml_url = (row.get("xml_url") or "").strip()
             ettn = (row.get("uuid") or "").strip()
-            candidates: List[str] = []
-            if xml_url:
-                candidates.append(xml_url)
-            if ettn:
-                candidates.extend(
-                    [
-                        f"/Inbox/DownloadXml?ettn={ettn}",
-                        f"/Inbox/GetXml?ettn={ettn}",
-                        f"/Inbox/Download?ettn={ettn}",
-                        f"/IncomingInvoice/DownloadXml?ettn={ettn}",
-                        f"/IncomingInvoice/GetXml?uuid={ettn}",
-                        f"/Invoice/DownloadIncomingXml?ettn={ettn}",
-                        f"/Invoice/GetIncomingXml?ettn={ettn}",
-                    ]
-                )
-            for href in re.findall(
-                r'href=["\']([^"\']*(?:xml|ubl|download)[^"\']*)["\']', page_html or "", re.I
-            ):
-                if ettn and ettn.lower() in href.lower():
-                    candidates.append(href)
-            for cand in candidates:
-                try:
-                    r = await self._client.get(cand, headers={"Accept": "application/xml,text/xml,*/*"})
-                except httpx.RequestError:
-                    continue
-                if r.status_code >= 400 or not r.content:
-                    continue
-                raw = r.content
-                head = raw[:200].decode("utf-8", errors="ignore").lstrip()
-                if head.startswith("<") or b"Invoice" in raw[:800]:
-                    xml_bytes = raw
-                    break
+            for key in ("xml", "Xml", "XML", "Ubl", "UBL", "XmlContent", "FileContent"):
+                if row.get(key):
+                    xml_bytes = _decode_possible_ubl(row.get(key))
+                    if xml_bytes:
+                        break
             if not xml_bytes:
-                xml_err = "Portal HTML üzerinden XML indirilemedi."
+                candidates = _portal_xml_candidates(ettn, xml_url, page_html or "")
+                xml_bytes, xml_err = await _try_download_portal_xml(
+                    self._client,
+                    candidates,
+                    csrf=csrf,
+                    referer=urljoin(self.base + "/", "Inbox"),
+                )
+            if not xml_bytes and not xml_err:
+                xml_err = "Portal HTML üzerinden UBL XML indirilemedi."
             out.append(
                 {
                     "uuid": row.get("uuid"),
@@ -672,7 +911,9 @@ async def _mobile_post_json(
 async def _download_xml_bytes(client: httpx.AsyncClient, url: str, token: str) -> Optional[bytes]:
     if not url:
         return None
-    header_sets = _auth_header_sets(token) + [{"Accept": "application/xml,text/xml,*/*", "User-Agent": UA}]
+    header_sets = _auth_header_sets(token) + [
+        {"Accept": "application/xml,text/xml,application/zip,*/*", "User-Agent": UA}
+    ]
     for headers in header_sets:
         try:
             r = await client.get(url, headers=headers, follow_redirects=True)
@@ -680,24 +921,35 @@ async def _download_xml_bytes(client: httpx.AsyncClient, url: str, token: str) -
             continue
         if r.status_code >= 400 or not r.content:
             continue
-        raw = r.content
-        text = raw[:200].decode("utf-8", errors="ignore").lstrip()
-        if text.startswith("<") or b"Invoice" in raw[:800]:
-            return raw
+        ubl = _as_ubl(r.content)
+        if ubl:
+            return ubl
         try:
             data = r.json()
         except Exception:
             continue
         if isinstance(data, dict):
-            for key in ("Xml", "XML", "InvoiceXml", "Content", "Data", "ExternalLink"):
+            for key in (
+                "Xml",
+                "XML",
+                "InvoiceXml",
+                "Content",
+                "Data",
+                "ExternalLink",
+                "Ubl",
+                "UBL",
+                "FileContent",
+            ):
                 val = data.get(key)
-                if isinstance(val, str) and val.strip().startswith("<"):
-                    return val.encode("utf-8")
+                ubl = _decode_possible_ubl(val)
+                if ubl:
+                    return ubl
                 if isinstance(val, str) and key == "ExternalLink" and val.startswith("http"):
                     nested = await _download_xml_bytes(client, val, token)
                     if nested:
                         return nested
     return None
+
 
 
 async def _fetch_invoice_xml(
@@ -743,9 +995,30 @@ async def _fetch_invoice_xml(
                 )
             except httpx.RequestError:
                 continue
-            if r.status_code < 400 and r.content and (b"<" in r.content[:100] or b"Invoice" in r.content[:800]):
-                return r.content, ""
-    return None, err or "İşNet Portal XML döndürmedi."
+            if r.status_code < 400 and r.content:
+                ubl = _as_ubl(r.content)
+                if not ubl:
+                    try:
+                        payload = r.json()
+                    except Exception:
+                        payload = None
+                    if isinstance(payload, dict):
+                        for key in (
+                            "Xml",
+                            "XML",
+                            "InvoiceXml",
+                            "Content",
+                            "Data",
+                            "Ubl",
+                            "UBL",
+                            "FileContent",
+                        ):
+                            ubl = _decode_possible_ubl(payload.get(key))
+                            if ubl:
+                                break
+                if ubl:
+                    return ubl, ""
+    return None, err or "İşNet Portal UBL XML döndürmedi."
 
 
 async def _portal_login_with_fallback(
