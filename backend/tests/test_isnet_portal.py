@@ -249,3 +249,82 @@ def test_list_incoming_fetches_xml():
     assert rows[0]["uuid"] == "11111111-2222-3333-4444-555555555555"
     assert rows[0]["xml"] and b"<Invoice" in rows[0]["xml"]
     assert rows[0]["xml_error"] == ""
+
+
+def test_connection_ok_when_mobile_401_uses_portal_html_channel():
+    """Portal HTML OK + Mobile 401 => ok True, inbox_channel=portal_html."""
+    settings = {"username": "1234567890", "mode": "live"}
+    login_html = '<html><input name="__RequestVerificationToken" value="tok" /></html>'
+    home_html = (
+        '<select id="CompanyId"><option value="9" selected>Demo A.Ş.</option></select>'
+        '<div id="kontorInfo">Kalan Kontör : <u>10</u></div>'
+    )
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.cookies = MagicMock()
+    mock.cookies.keys = MagicMock(return_value=[".ASPXFORMSAUTH"])
+    mock.get = AsyncMock(side_effect=[_Resp(login_html), _Resp(home_html), _Resp(home_html)])
+
+    async def _post(url, data=None, json=None, headers=None):
+        if json is not None:
+            return _Resp(status=401, text="Unauthorized")
+        return _Resp("<html>ok</html>")
+
+    mock.post = AsyncMock(side_effect=_post)
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        info = asyncio.get_event_loop().run_until_complete(isnet_portal.test_connection(settings, "secret"))
+    assert info["ok"] is True
+    assert info["mobile_ok"] is False
+    assert info.get("inbox_channel") == "portal_html"
+    assert "Mobile API" in info["message"]
+    assert "Web Portal" in info["message"] or "portal" in info["message"].lower()
+
+
+def test_list_incoming_falls_back_to_portal_html_on_mobile_401():
+    settings = {"username": "1234567890", "mode": "live", "corporate_code": "9"}
+    login_html = '<html><input name="__RequestVerificationToken" value="tok" /></html>'
+    home_html = (
+        '<select id="CompanyId"><option value="9" selected>Demo</option></select>'
+        '<div id="kontorInfo">Kalan Kontör : <u>3</u></div>'
+    )
+    ettn = "11111111-2222-3333-4444-555555555555"
+    inbox_html = (
+        f'<html><body><table id="inbox"><tr><td>{ettn}</td>'
+        f'<td><a href="/Inbox/DownloadXml?ettn={ettn}">XML</a></td></tr></table></body></html>'
+    )
+    ubl = b'<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>'
+
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.cookies = MagicMock()
+    mock.cookies.keys = MagicMock(return_value=[".ASPXFORMSAUTH"])
+
+    async def _get(url, params=None, headers=None, follow_redirects=True):
+        u = str(url)
+        if "account/login" in u.lower():
+            return _Resp(login_html)
+        if "DownloadXml" in u or "GetXml" in u or "DownloadIncomingXml" in u:
+            return _Resp(content=ubl, text=ubl.decode("utf-8"))
+        if "Inbox" in u or "Incoming" in u:
+            return _Resp(inbox_html)
+        return _Resp(home_html)
+
+    async def _post(url, data=None, json=None, headers=None):
+        u = str(url)
+        if json is not None and "Account/Login" in u:
+            return _Resp(status=401, text="Unauthorized")
+        if "Inbox" in u or "Incoming" in u:
+            return _Resp(status=404, data={"ErrorMessage": "no"})
+        return _Resp("<html>ok</html>")
+
+    mock.get = AsyncMock(side_effect=_get)
+    mock.post = AsyncMock(side_effect=_post)
+
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        rows = asyncio.get_event_loop().run_until_complete(isnet_portal.list_incoming(settings, "secret", days=7))
+    assert len(rows) >= 1
+    assert rows[0]["uuid"] == ettn
+    assert rows[0].get("source") == "isnet_portal_html"
+    assert rows[0]["xml"] and b"<Invoice" in rows[0]["xml"]
