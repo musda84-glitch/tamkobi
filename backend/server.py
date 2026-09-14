@@ -2033,10 +2033,20 @@ def _alias_key(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-_B2B_QTY_HEADERS = ("adet", "miktar", "qty", "quantity", "amount", "siparis adedi", "siparis miktari", "order qty")
-_B2B_NAME_HEADERS = ("urun", "urun adi", "product", "product name", "malzeme", "stok adi", "aciklama", "kalem", "name")
-_B2B_SKU_HEADERS = ("sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu")
+_B2B_QTY_HEADERS = (
+    "adet", "adedi", "ad", "miktar", "miktari", "qty", "quantity", "amount",
+    "siparis adedi", "siparis miktari", "siparis", "order qty", "talep", "talep adedi",
+    "stok miktari", "mevcut", "mevcut stok", "sayi", "adet sayisi", "order quantity",
+)
+_B2B_QTY_TOKENS = ("adet", "adedi", "miktar", "miktari", "qty", "quantity", "talep", "siparis")
+_B2B_NAME_HEADERS = (
+    "urun", "urun adi", "product", "product name", "malzeme", "stok adi",
+    "aciklama", "kalem", "name", "raf urunu", "urun tanimi",
+)
+_B2B_SKU_HEADERS = ("sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu", "malzeme kodu", "raf kodu")
 _B2B_BARCODE_HEADERS = ("barkod", "barcode", "ean", "gtin")
+# Raf/konum sütunları ürün adı veya adet sanılmasın
+_B2B_SKIP_HEADERS = ("raf", "raf no", "raf kodu", "lokasyon", "konum", "depo", "depo adi", "sira", "no", "satir")
 
 
 def _b2b_parse_qty(val) -> int:
@@ -2057,43 +2067,112 @@ def _b2b_parse_qty(val) -> int:
         return 0
 
 
-def _b2b_col_index(norms: list, candidates: tuple) -> Optional[int]:
+def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None) -> Optional[int]:
     cand = set(candidates)
+    skip = skip or set()
     for i, n in enumerate(norms):
+        if not n or n in skip:
+            continue
         if n in cand:
             return i
     for i, n in enumerate(norms):
-        if any(n == c or n.startswith(c + " ") or n.endswith(" " + c) for c in candidates):
+        if not n or n in skip:
+            continue
+        if any(n == c or n.startswith(c + " ") or n.endswith(" " + c) or f" {c} " in f" {n} " for c in candidates):
             return i
     return None
 
 
-def _b2b_parse_cart_table(filename: str, data: bytes) -> list:
-    """Excel/CSV sipariş listesini AI olmadan satır satır oku (ürün/kod + adet)."""
+def _b2b_qty_col_index(norms: list, body: list) -> Optional[int]:
+    """Adet sütununu başlıktan veya sayısal yoğunluktan bul."""
+    skip = set(_B2B_SKIP_HEADERS) | set(_B2B_SKU_HEADERS) | set(_B2B_BARCODE_HEADERS) | set(_B2B_NAME_HEADERS)
+    qi = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip)
+    if qi is not None:
+        return qi
+    for i, n in enumerate(norms):
+        if not n or n in skip or n in ("fiyat", "tutar", "birim fiyat", "sale price", "alis", "satis"):
+            continue
+        if any(tok in n.split() or n.endswith(tok) or n.startswith(tok) for tok in _B2B_QTY_TOKENS):
+            # "stok kodu" / "urun kodu" gibi kod sütunlarını ele
+            if "kod" in n or "barkod" in n:
+                continue
+            return i
+    # Sayısal değer oranı en yüksek sütun (ürün kodu hariç)
+    best_i, best_score = None, 0.0
+    for i, n in enumerate(norms):
+        if n in skip or (n and ("kod" in n or "barkod" in n or "fiyat" in n or "tutar" in n)):
+            continue
+        if not body:
+            continue
+        nums = sum(1 for row in body if _b2b_parse_qty(row[i] if i < len(row) else None) > 0)
+        score = nums / max(1, len(body))
+        if score > best_score and nums >= max(1, len(body) // 3):
+            best_i, best_score = i, score
+    return best_i if best_score >= 0.5 else None
+
+
+def _b2b_iter_tables(filename: str, data: bytes):
+    """Aktif sayfa + diğer Excel sayfalarını sırayla ver (CSV tek tablo)."""
+    import io as _io
     name = (filename or "").lower()
-    if not name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
-        return []
-    header, body = migration._read_table(filename, data)
+    yield migration._read_table(filename, data)
+    if not name.endswith((".xlsx", ".xlsm")):
+        return
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(_io.BytesIO(data), read_only=True, data_only=True)
+    except Exception:
+        return
+    active = wb.active.title if wb.active is not None else None
+    for ws in wb.worksheets:
+        if ws.title == active:
+            continue
+        rows = [list(r) for r in ws.iter_rows(values_only=True) if r and any(c not in (None, "") for c in r)]
+        if not rows:
+            continue
+        header_idx = next(
+            (i for i, r in enumerate(rows[:10]) if sum(1 for c in r if isinstance(c, str) and c.strip()) >= max(2, len([c for c in r if c not in (None, "")]) * 0.6)),
+            0,
+        )
+        header = [str(c).strip() if c not in (None, "") else f"Sütun {i + 1}" for i, c in enumerate(rows[header_idx])]
+        body = [list(r) + [None] * (len(header) - len(r)) for r in rows[header_idx + 1:]]
+        yield header, body
+
+
+def _b2b_lines_from_table(header: list, body: list) -> list:
     norms = [_alias_key(h) for h in header]
-    qi = _b2b_col_index(norms, _B2B_QTY_HEADERS)
-    ni = _b2b_col_index(norms, _B2B_NAME_HEADERS)
-    si = _b2b_col_index(norms, _B2B_SKU_HEADERS)
-    bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS)
-    if qi is None and len(header) >= 2:
-        qi = 1
+    skip = set(_B2B_SKIP_HEADERS)
+    qi = _b2b_qty_col_index(norms, body)
+    ni = _b2b_col_index(norms, _B2B_NAME_HEADERS, skip=skip)
+    si = _b2b_col_index(norms, _B2B_SKU_HEADERS, skip=skip)
+    bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS, skip=skip)
+    default_qty = qi is None
     if ni is None and si is None and bi is None and header:
-        ni = 0
-    if qi is None:
+        # İlk ürün benzeri sütun (raf/no atla)
+        for i, n in enumerate(norms):
+            if n not in skip and n not in set(_B2B_QTY_HEADERS):
+                ni = i
+                break
+        if ni is None:
+            ni = 0
+    if qi is None and ni is None and si is None and bi is None:
         return []
     lines = []
     for row in body:
-        qty = _b2b_parse_qty(row[qi] if qi < len(row) else None)
-        if qty <= 0:
-            continue
+        if default_qty:
+            qty = 1
+        else:
+            qty = _b2b_parse_qty(row[qi] if qi is not None and qi < len(row) else None)
+            if qty <= 0:
+                continue
         name_v = str(row[ni]).strip() if ni is not None and ni < len(row) and row[ni] not in (None, "") else ""
         sku_v = str(row[si]).strip() if si is not None and si < len(row) and row[si] not in (None, "") else None
         bar_v = str(row[bi]).strip() if bi is not None and bi < len(row) and row[bi] not in (None, "") else None
         if not name_v and not sku_v and not bar_v:
+            continue
+        # Başlık / özet satırlarını ele
+        joined = _alias_key(name_v or sku_v or "")
+        if joined in norms or joined in ("toplam", "genel toplam", "sum"):
             continue
         lines.append({
             "product_name": name_v or sku_v or bar_v,
@@ -2102,6 +2181,24 @@ def _b2b_parse_cart_table(filename: str, data: bytes) -> list:
             "quantity": qty,
         })
     return lines
+
+
+def _b2b_parse_cart_table(filename: str, data: bytes) -> list:
+    """Excel/CSV sipariş listesini AI olmadan satır satır oku (ürün/kod + adet)."""
+    name = (filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+        return []
+    best: list = []
+    best_score = (-1, -1, -1)
+    skip = set(_B2B_SKIP_HEADERS)
+    for header, body in _b2b_iter_tables(filename, data):
+        lines = _b2b_lines_from_table(header, body)
+        norms = [_alias_key(h) for h in header]
+        named_qty = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip) is not None
+        score = (1 if named_qty else 0, len(lines), len(header))
+        if score > best_score and lines:
+            best, best_score = lines, score
+    return best
 
 
 def _b2b_parse_cart_text_lines(text: str) -> list:
