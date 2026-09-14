@@ -4219,15 +4219,67 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
     return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
 
+def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
+    """None = silinebilir. Taslak ve kağıt faturalar silinebilir; GİB e-belgeleri silinemez."""
+    if not inv:
+        return "Fatura bulunamadı."
+    if inv.get("status") == "draft":
+        return None
+    if inv.get("e_type") == "paper":
+        if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
+            return "Ödemesi olan kağıt fatura silinemez. Önce tahsilatı / ödemeyi geri alın."
+        return None
+    return "Kesilmiş e-fatura / e-arşiv silinemez. Muhasebe bütünlüğü için iptal ya da iade faturası düzenleyin."
+
+
+async def _unlink_orders_from_invoice(invoice_id: str):
+    await db.orders.update_many(
+        {"invoice_id": invoice_id},
+        {"$unset": {"invoice_id": "", "invoice_number": ""}, "$set": {"is_invoiced": False}},
+    )
+
+
+async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
+    """Taslak veya kağıt faturayı çöp kutusuna taşır; etkileri ve sipariş bağını temizler."""
+    invoice_id = inv["_id"]
+    is_draft = inv.get("status") == "draft"
+    reason = _invoice_delete_block_reason(inv)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    paid_inst = await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"})
+    if paid_inst:
+        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan fatura silinemez. Önce taksit tahsilatlarını geri alın.")
+    applied = bool(inv.get("effects_applied")) or (not is_draft and inv.get("status") in ("approved", "sent_to_gib", "paid"))
+    if applied:
+        await _reverse_invoice_effects(inv)
+    await _unlink_orders_from_invoice(invoice_id)
+    await _cancel_promissory_for_query({"invoice_id": invoice_id})
+    inst_docs = await db.installments.find({"invoice_id": invoice_id}).to_list(500)
+    related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
+    kind = note or ("Taslak fatura" if is_draft else "Kağıt fatura")
+    return await trash.soft_delete(
+        "invoices",
+        inv,
+        "invoice",
+        f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺",
+        related=related,
+        note=kind,
+    )
+
+
 @api_router.delete("/invoices/{invoice_id}")
 async def delete_invoice(invoice_id: str):
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
-    if inv.get("status") != "draft":
-        raise HTTPException(status_code=400, detail="Kesilmiş/onaylı fatura silinemez. Muhasebe bütünlüğü için iptal ya da iade faturası düzenleyin.")
-    tid = await trash.soft_delete("invoices", inv, "invoice", f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺", note="Taslak fatura")
-    return {"status": "success", "trash_id": tid, "message": "Taslak fatura çöp kutusuna taşındı (30 gün içinde geri alınabilir)."}
+    is_draft = inv.get("status") == "draft"
+    kind = "Taslak fatura" if is_draft else "Kağıt fatura"
+    tid = await _soft_delete_invoice_doc(inv, note=kind)
+    return {
+        "status": "success",
+        "trash_id": tid,
+        "message": f"{kind} çöp kutusuna taşındı (30 gün içinde geri alınabilir).",
+    }
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
@@ -7868,10 +7920,30 @@ async def create_order(order: Order):
 
 @api_router.put("/orders/{order_id}/status")
 async def update_order_status(order_id: str, req: Dict[str, str]):
-    new_status = req.get("status", "approved")
-    await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": new_status}})
+    new_status = req.get("status") or req.get("order_status") or "approved"
+    order = await db.orders.find_one({"_id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    update: Dict[str, Any] = {"order_status": new_status}
+    unset: Dict[str, str] = {}
+    draft_cleared = False
+    # Onaylı sipariş beklemeye (pending) alınırsa bağlı taslak fatura silinsin
+    if new_status == "pending" and order.get("invoice_id") and not order.get("is_invoiced"):
+        inv = await db.invoices.find_one({"_id": order["invoice_id"]})
+        if inv and inv.get("status") == "draft":
+            await _soft_delete_invoice_doc(inv, note="Sipariş beklemeye alındı — taslak fatura silindi")
+            unset = {"invoice_id": "", "invoice_number": ""}
+            update["is_invoiced"] = False
+            draft_cleared = True
+    ops: Dict[str, Any] = {"$set": update}
+    if unset:
+        ops["$unset"] = unset
+    await db.orders.update_one({"_id": order_id}, ops)
     await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="status")
-    return {"status": "success", "order_status": new_status}
+    out = {"status": "success", "order_status": new_status, "draft_invoice_cleared": draft_cleared}
+    if draft_cleared:
+        out["message"] = "Sipariş beklemeye alındı; bağlı taslak fatura silindi."
+    return out
 
 @api_router.post("/orders/{order_id}/convert-to-invoice")
 async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
@@ -9006,7 +9078,26 @@ async def _restore_expense(doc, _related):
 async def _restore_recipe(doc, _related):
     await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})
 
-for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque)):
+
+async def _restore_invoice(doc, _related):
+    """Çöp kutusundan geri alınan onaylı kağıt faturanın bakiye/stok etkisini yeniden uygula."""
+    if doc.get("effects_applied") and doc.get("status") != "draft":
+        await _apply_invoice_effects(doc)
+    # Sipariş bağlantısını mümkünse geri bağla
+    oid = doc.get("order_id")
+    if oid and doc.get("_id"):
+        order = await db.orders.find_one({"_id": oid})
+        if order and not order.get("invoice_id"):
+            await db.orders.update_one(
+                {"_id": oid},
+                {"$set": {
+                    "invoice_id": doc["_id"],
+                    "invoice_number": doc.get("invoice_number"),
+                    "is_invoiced": bool(doc.get("status") != "draft" and doc.get("status") not in (None,)),
+                }},
+            )
+
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice)):
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)

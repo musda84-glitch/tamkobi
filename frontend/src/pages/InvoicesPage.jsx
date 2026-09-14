@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -280,7 +280,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setShowNewModal(true);
   };
   const handleDeleteInvoice = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} numaralı taslak fatura çöp kutusuna taşınsın mı?`)) return;
+    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
     try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCreateInvoice = async (e) => {
@@ -532,11 +533,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
                       <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
-                        {inv.status === "draft" ? (
+                        {(inv.status === "draft" || canDeleteInvoice(inv)) ? (
                           <>
-                            <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
-                            <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title="Taslağı sil (çöp kutusu)" data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
-                            {!incoming ? (
+                            {inv.status === "draft" ? (
+                              <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                            ) : <span className="w-7 h-7" aria-hidden="true" />}
+                            {canDeleteInvoice(inv) ? (
+                              <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title={inv.status === "draft" ? "Taslağı sil (çöp kutusu)" : "Kağıt faturayı sil (çöp kutusu)"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                            ) : <span className="w-7 h-7" aria-hidden="true" />}
+                            {inv.status === "draft" && !incoming ? (
                               <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                             ) : <span className="w-7 h-7" aria-hidden="true" />}
                           </>
@@ -617,7 +622,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL}  onDelete={handleDeleteInvoice} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}

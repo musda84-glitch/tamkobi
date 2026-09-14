@@ -11,7 +11,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice } from "./InvoiceContextMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
@@ -143,6 +143,18 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     catch (err) { toast.error(err.response?.data?.detail || "Reddedilemedi."); } finally { setBusy(null); }
   };
 
+  const deleteInvoice = async (inv) => {
+    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
+    try {
+      const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
+      toast.success(r.data.message || "Fatura silindi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Silinemedi.");
+    }
+  };
+
   if (!data) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
   const { contact: c, summary: s } = data;
   const bal = Number(c.balance) || 0;
@@ -246,7 +258,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={() => sendToGib(inv, inv.e_type)} disabled={busy === inv.id} className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition disabled:opacity-40" title={`${E_TYPE_TR[inv.e_type] || inv.e_type} olarak kes — başka tür için ⋮`} data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</button>
                         ) : busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <span className="w-7 h-7" aria-hidden="true" />}
-                        <button onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+                                                {canDeleteInvoice(inv) && (
+                          <button onClick={() => deleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`detail-inv-delete-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                        )}
+<button onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -354,7 +369,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onDelete={deleteInvoice} />
         {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
         {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}

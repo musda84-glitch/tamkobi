@@ -167,11 +167,11 @@ export default function OrdersB2BPage() {
 
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
     try {
-      await axios.put(`${API_URL}/orders/${orderId}/status`, { status: newStatus });
-      toast.success("Sipariş durumu güncellendi.");
+      const r = await axios.put(`${API_URL}/orders/${orderId}/status`, { status: newStatus });
+      toast.success(r.data.message || "Sipariş durumu güncellendi.");
       loadData();
     } catch (err) {
-      toast.error("Durum güncellenemedi.");
+      toast.error(err.response?.data?.detail || "Durum güncellenemedi.");
     }
   };
 
