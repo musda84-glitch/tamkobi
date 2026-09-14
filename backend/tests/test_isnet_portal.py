@@ -328,3 +328,67 @@ def test_list_incoming_falls_back_to_portal_html_on_mobile_401():
     assert rows[0]["uuid"] == ettn
     assert rows[0].get("source") == "isnet_portal_html"
     assert rows[0]["xml"] and b"<Invoice" in rows[0]["xml"]
+
+
+
+def test_as_ubl_rejects_html_and_accepts_invoice():
+    html = b"<!DOCTYPE html><html><body>login</body></html>"
+    assert isnet_portal._as_ubl(html) is None
+    ubl = (
+        b'''<?xml version="1.0"?>'''
+        b'<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">'
+        b"<ID>1</ID></Invoice>"
+    )
+    got = isnet_portal._as_ubl(ubl)
+    assert got is not None and b"<Invoice" in got
+
+
+def test_list_incoming_portal_html_rejects_html_download():
+    """Portal belge listeler ama indirme HTML dönerse xml_error dolu olmalı (ingest'e HTML gitmesin)."""
+    settings = {"username": "1234567890", "mode": "live", "corporate_code": "9"}
+    login_html = '<html><input name="__RequestVerificationToken" value="tok" /></html>'
+    home_html = (
+        '<select id="CompanyId"><option value="9" selected>Demo</option></select>'
+        '<div id="kontorInfo">Kalan Kontör : <u>3</u></div>'
+    )
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    inbox_html = f"<html><body><table><tr><td>{ettn}</td></tr></table></body></html>"
+    fake_html = b"<!DOCTYPE html><html><body>not ubl</body></html>"
+
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.cookies = MagicMock()
+    mock.cookies.keys = MagicMock(return_value=[".ASPXFORMSAUTH"])
+
+    async def _get(url, params=None, headers=None, follow_redirects=True):
+        u = str(url)
+        if "account/login" in u.lower():
+            return _Resp(login_html)
+        if "DownloadXml" in u or "GetXml" in u or "Download" in u:
+            return _Resp(content=fake_html, text=fake_html.decode("utf-8"))
+        if "Inbox" in u or "Incoming" in u:
+            return _Resp(inbox_html)
+        return _Resp(home_html)
+
+    async def _post(url, data=None, json=None, headers=None):
+        u = str(url)
+        if json is not None and "Account/Login" in u:
+            return _Resp(status=401, text="Unauthorized")
+        if "Inbox" in u or "Incoming" in u or "Download" in u or "GetXml" in u:
+            return _Resp(content=fake_html, text=fake_html.decode())
+        return _Resp("<html>ok</html>")
+
+    mock.get = AsyncMock(side_effect=_get)
+    mock.post = AsyncMock(side_effect=_post)
+
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        rows = asyncio.get_event_loop().run_until_complete(
+            isnet_portal.list_incoming(settings, "secret", days=7)
+        )
+    assert len(rows) >= 1
+    assert rows[0]["uuid"] == ettn
+    assert rows[0].get("xml") in (None, b"", False) or rows[0].get("xml") is None
+    assert rows[0].get("xml") is None or rows[0].get("xml") == b""
+    assert rows[0].get("xml_error")
+    assert "UBL" in rows[0]["xml_error"] or "HTML" in rows[0]["xml_error"] or "XML" in rows[0]["xml_error"]
