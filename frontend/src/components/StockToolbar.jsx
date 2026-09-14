@@ -17,8 +17,9 @@ export const applyStockFilters = (products, f) => {
     if (f.status === "out" && !(tracked && (p.stock_quantity || 0) <= 0)) return false;
     if (f.status === "in" && !(tracked && (p.stock_quantity || 0) > 0)) return false;
     if (f.status === "untracked" && tracked) return false;
-    if (f.b2b === "yes" && !p.show_in_b2b) return false;
-    if (f.b2b === "no" && p.show_in_b2b) return false;
+    // Toggle UI treats undefined as open (`!== false`); keep filter in sync.
+    if (f.b2b === "yes" && p.show_in_b2b === false) return false;
+    if (f.b2b === "no" && p.show_in_b2b !== false) return false;
     return true;
   });
   const val = (p) => (p.stock_quantity || 0) * (p.purchase_price || 0);

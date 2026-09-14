@@ -30,3 +30,14 @@ test("productFilter b2bOnly respects show_in_b2b", () => {
   expect(f({ show_in_b2b: true, is_active: true, type: "product", sale_price: 10 })).toBe(true);
   expect(f({ show_in_b2b: false, is_active: true, type: "product", sale_price: 10 })).toBe(false);
 });
+
+test("applyStockFilters b2b yes/no matches toggle semantics (undefined = open)", () => {
+  const { applyStockFilters } = require("../components/StockToolbar");
+  const open = { id: "1", name: "A", show_in_b2b: true, track_stock: true, stock_quantity: 1 };
+  const closed = { id: "2", name: "B", show_in_b2b: false, track_stock: true, stock_quantity: 1 };
+  const legacy = { id: "3", name: "C", track_stock: true, stock_quantity: 1 }; // undefined show_in_b2b
+  const base = { status: "all", sort: "name_asc" };
+  expect(applyStockFilters([open, closed, legacy], { ...base, b2b: "yes" }).map((p) => p.id)).toEqual(["1", "3"]);
+  expect(applyStockFilters([open, closed, legacy], { ...base, b2b: "no" }).map((p) => p.id)).toEqual(["2"]);
+  expect(applyStockFilters([open, closed, legacy], { ...base, b2b: "all" }).map((p) => p.id)).toEqual(["1", "2", "3"]);
+});

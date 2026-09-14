@@ -104,16 +104,25 @@ export default function StockBarcodePage() {
     const next = !(prod[field] !== false);
     const prevVal = prod[field];
     setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: next } : p)));
+    // Opening under "B2B'de Gizli" (or closing under "Görünür") would hide the row — keep it visible.
+    if (field === "show_in_b2b") {
+      setStockF((f) => {
+        if (next && f.b2b === "no") return { ...f, b2b: "all" };
+        if (!next && f.b2b === "yes") return { ...f, b2b: "all" };
+        return f;
+      });
+    }
     try {
       const res = await axios.put(`${API_URL}/products/${id}`, { [field]: next });
       const updated = res.data;
       if (!updated || !(updated.id || updated._id)) throw new Error("empty");
-      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated } : p)));
-      await patchCached("products", companyId, { [id]: { ...updated, [field]: updated[field] ?? next } });
+      const flagVal = updated[field] ?? next;
+      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated, [field]: flagVal } : p)));
+      await patchCached("products", companyId, { [id]: { ...updated, [field]: flagVal } });
       toast.success(
         field === "show_in_b2b"
-          ? (updated.show_in_b2b ? "Ürün B2B portalında gösteriliyor." : "Ürün B2B portalından gizlendi.")
-          : (updated.track_stock ? "Stok takibi açıldı." : "Stok takibi kapatıldı.")
+          ? (flagVal !== false ? "Ürün B2B portalında gösteriliyor." : "Ürün B2B portalından gizlendi.")
+          : (flagVal !== false ? "Stok takibi açıldı." : "Stok takibi kapatıldı.")
       );
     } catch {
       setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: prevVal } : p)));
@@ -123,15 +132,20 @@ export default function StockBarcodePage() {
 
   const toggleSelect = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
-  const bulkCloseFlags = async ({ closeB2b = false, closeTrack = false }) => {
-    if (!selected.length || (!closeB2b && !closeTrack)) return;
-    const labels = [closeB2b && "B2B", closeTrack && "Takip"].filter(Boolean).join(" + ");
-    if (!window.confirm(`${selected.length} üründe ${labels} kapatılsın mı?`)) return;
+  const bulkSetFlags = async ({ show_in_b2b, track_stock } = {}) => {
+    const hasB2b = typeof show_in_b2b === "boolean";
+    const hasTrack = typeof track_stock === "boolean";
+    if (!selected.length || (!hasB2b && !hasTrack)) return;
+    const labels = [
+      hasB2b && (show_in_b2b ? "B2B aç" : "B2B kapat"),
+      hasTrack && (track_stock ? "Takip aç" : "Takip kapat"),
+    ].filter(Boolean).join(" + ");
+    if (!window.confirm(`${selected.length} üründe ${labels} uygulansın mı?`)) return;
     setBulkBusy(true);
     try {
       const body = { ids: selected, company_id: companyId };
-      if (closeB2b) body.show_in_b2b = false;
-      if (closeTrack) body.track_stock = false;
+      if (hasB2b) body.show_in_b2b = show_in_b2b;
+      if (hasTrack) body.track_stock = track_stock;
       const r = await axios.post(`${API_URL}/products/bulk-flags`, body);
       const matched = Number(r.data?.matched ?? 0);
       const modified = Number(r.data?.modified ?? 0);
@@ -140,8 +154,8 @@ export default function StockBarcodePage() {
         return;
       }
       const patch = {
-        ...(closeB2b ? { show_in_b2b: false } : {}),
-        ...(closeTrack ? { track_stock: false } : {}),
+        ...(hasB2b ? { show_in_b2b } : {}),
+        ...(hasTrack ? { track_stock } : {}),
       };
       setProducts((prev) => prev.map((p) => (selected.includes(productId(p)) ? { ...p, ...patch } : p)));
       await patchCached(
@@ -149,7 +163,8 @@ export default function StockBarcodePage() {
         companyId,
         Object.fromEntries(selected.map((id) => [id, patch])),
       );
-      toast.success(`${modified || matched} ürün güncellendi (${labels} kapalı).`);
+      if (hasB2b) setStockF((f) => (f.b2b !== "all" ? { ...f, b2b: "all" } : f));
+      toast.success(`${modified || matched} ürün güncellendi (${labels}).`);
       setSelected([]);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Toplu güncelleme başarısız.");
@@ -536,9 +551,12 @@ export default function StockBarcodePage() {
       {selected.length > 0 && (
         <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="stock-bulk-bar">
           <span className="font-bold">{selected.length} ürün seçildi</span>
-          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeB2b: true })} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-b2b-btn">B2B kapat</button>
-          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeTrack: true })} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-track-btn">Takip kapat</button>
-          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeB2b: true, closeTrack: true })} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-both-btn">B2B + Takip kapat</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: true })} className="px-3 py-1.5 bg-blue-500 hover:bg-blue-400 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-b2b-btn">B2B aç</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: false })} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-b2b-btn">B2B kapat</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ track_stock: true })} className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-track-btn">Takip aç</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ track_stock: false })} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-track-btn">Takip kapat</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: true, track_stock: true })} className="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-both-btn">B2B + Takip aç</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: false, track_stock: false })} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-both-btn">B2B + Takip kapat</button>
           <button type="button" onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="stock-bulk-clear-btn">Seçimi kaldır</button>
         </div>
       )}
