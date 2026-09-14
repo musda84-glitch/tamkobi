@@ -36,13 +36,19 @@ export const b2bOrderGross = (o) => {
   if (!o) return 0;
   if (o.grand_total != null && o.grand_total !== "") return Number(o.grand_total) || 0;
   const items = o.items || [];
-  if (items.some((it) => it.vat_rate != null || it.price_includes_vat)) {
-    return items.reduce((s, it) => {
-      const stored = (Number(it.unit_price) || 0) * (Number(it.quantity) || 0);
+  if (items.length) {
+    // enrich_line sonrası unit_price/total her zaman KDV hariçtir; price_includes_vat sadece ürün bayrağıdır.
+    return Math.round(items.reduce((s, it) => {
+      const incl = Number(it.total_incl);
+      if (Number.isFinite(incl)) return s + incl;
+      const net = it.total != null && it.total !== ""
+        ? Number(it.total) || 0
+        : (Number(it.unit_price) || 0) * (Number(it.quantity) || 0);
+      const vatAmt = Number(it.vat_amount);
+      if (Number.isFinite(vatAmt)) return s + net + vatAmt;
       const vat = Number(it.vat_rate) || 0;
-      if (it.price_includes_vat) return s + stored;
-      return s + stored * (1 + vat / 100);
-    }, 0);
+      return s + (vat ? net * (1 + vat / 100) : net);
+    }, 0) * 100) / 100;
   }
   return Number(o.total_amount) || 0;
 };

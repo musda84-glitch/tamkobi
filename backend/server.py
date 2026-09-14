@@ -2604,14 +2604,14 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     if not items:
         raise HTTPException(status_code=400, detail="Sepet boş.")
     legal_docs.require_acceptance(req)
+    # enrich_line sonrası unit_price/total her zaman KDV hariçtir; toplamlar tek kaynaktan.
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
-    total = round(sum(i.total for i in items), 2)
-    grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
+    total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
     if not _bs.get("allow_orders", True):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
-    if float(_bs.get("min_order_amount", 0) or 0) > total:
+    if float(_bs.get("min_order_amount", 0) or 0) > grand_total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), customer_order_number=cust_no, channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, subtotal=subtotal, vat_total=vat_total, discount_total=discount_total, grand_total=grand_total, order_status="pending")
@@ -2619,14 +2619,14 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
     doc["source"] = "b2b_portal"
+    doc["subtotal"] = subtotal
+    doc["vat_total"] = vat_total
+    doc["discount_total"] = discount_total
     doc["grand_total"] = grand_total
-    doc["vat_total"] = round(grand_total - sum(
-        (i.total / (1 + float(i.vat_rate or 0) / 100) if i.price_includes_vat and i.vat_rate else i.total)
-        for i in items
-    ), 2)
+    doc["total_amount"] = total
     doc["legal_accept"] = legal_docs.acceptance_record(req)
     await db.orders.insert_one(doc)
-    await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {total:,.2f} ₺ sipariş verdi.", doc["_id"])
+    await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
     return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
 
 @api_router.put("/public/b2b/{token}/orders/{order_id}")
@@ -2639,24 +2639,28 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     items = await _b2b_build_items(c, req.get("items", []))
     if not items:
         raise HTTPException(status_code=400, detail="Siparişte en az bir ürün olmalı.")
-    total = round(sum(i.total for i in items), 2)
-    grand_total = round(sum(_b2b_gross(i.total, i.vat_rate, i.price_includes_vat) for i in items), 2)
-    vat_total = round(grand_total - sum(
-        (i.total / (1 + float(i.vat_rate or 0) / 100) if i.price_includes_vat and i.vat_rate else i.total)
-        for i in items
-    ), 2)
+    subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
+    total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
-    if float(_bs.get("min_order_amount", 0) or 0) > total:
+    if float(_bs.get("min_order_amount", 0) or 0) > grand_total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
-    update: Dict[str, Any] = {"items": [it.model_dump() for it in items], "total_amount": total, "grand_total": grand_total, "vat_total": vat_total, "updated_at": datetime.now(timezone.utc).isoformat()}
+    update: Dict[str, Any] = {
+        "items": [it.model_dump() for it in items],
+        "total_amount": total,
+        "subtotal": subtotal,
+        "grand_total": grand_total,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     if "note" in req:
         update["notes"] = req.get("note") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
-    await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {total:,.2f} ₺ olacak şekilde düzenledi.", order_id)
+    await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
     return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
 
 @api_router.delete("/public/b2b/{token}/orders/{order_id}")

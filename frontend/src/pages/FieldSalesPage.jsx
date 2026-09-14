@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { lineFromProduct } from "../utils/documentLines";
 
 import {
   Smartphone, Search, Plus, Minus, Trash2, UserPlus, Maximize2, Minimize2,
@@ -69,7 +70,14 @@ export default function FieldSalesPage() {
     return orders.filter((o) => o.channel === "saha" && String(o.order_date || "").slice(0, 10) === day).slice(0, 12);
   }, [orders]);
 
-  const total = cart.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0);
+  const total = cart.reduce((s, it) => {
+    const qty = Number(it.quantity) || 0;
+    const unitIncl = Number(it.unit_price_incl);
+    if (Number.isFinite(unitIncl) && unitIncl) return s + unitIncl * qty;
+    const net = qty * (Number(it.unit_price) || 0);
+    const rate = Number(it.vat_rate) || 0;
+    return s + (rate ? net * (1 + rate / 100) : net);
+  }, 0);
   const count = cart.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
 
   const addProduct = (p, qty = 1) => {
@@ -79,17 +87,51 @@ export default function FieldSalesPage() {
       const i = prev.findIndex((x) => x.product_id === id && id);
       if (i >= 0) {
         const next = [...prev];
-        next[i] = { ...next[i], quantity: Number(next[i].quantity) + qty };
+        const quantity = Number(next[i].quantity) + qty;
+        const unit = Number(next[i].unit_price) || 0;
+        const rate = Number(next[i].vat_rate) || 0;
+        const total = Math.round(quantity * unit * 100) / 100;
+        const vat_amount = Math.round(total * rate / 100 * 100) / 100;
+        next[i] = {
+          ...next[i],
+          quantity,
+          total,
+          vat_amount,
+          total_incl: Math.round((total + vat_amount) * 100) / 100,
+        };
         return next;
       }
+      const line = lineFromProduct(p, { invoiceType: "sales", quantity: qty });
       return [...prev, {
         product_id: id, product_name: p.name, sku: p.sku || "", barcode: p.barcode || "",
-        quantity: qty, unit_price: Number(p.sale_price) || 0, image_url: p.image_url, stock_quantity: p.stock_quantity,
+        quantity: qty,
+        unit_price: Number(line.unit_price) || 0,
+        unit_price_incl: Number(line.unit_price_incl) || 0,
+        vat_rate: Number(line.vat_rate) || 0,
+        total: Number(line.total) || 0,
+        total_incl: Number(line.total_incl) || 0,
+        vat_amount: Number(line.vat_amount) || 0,
+        image_url: p.image_url, stock_quantity: p.stock_quantity,
       }];
     });
     toast.success(`${p.name} sepete eklendi`);
   };
-  const setQty = (i, q) => setCart((prev) => prev.map((it, k) => (k === i ? { ...it, quantity: Math.max(1, Number(q) || 1) } : it)));
+  const setQty = (i, q) => setCart((prev) => prev.map((it, k) => {
+    if (k !== i) return it;
+    const quantity = Math.max(1, Number(q) || 1);
+    const unit = Number(it.unit_price) || 0;
+    const rate = Number(it.vat_rate) || 0;
+    const total = Math.round(quantity * unit * 100) / 100;
+    const vat_amount = Math.round(total * rate / 100 * 100) / 100;
+    return {
+      ...it,
+      quantity,
+      total,
+      vat_amount,
+      total_incl: Math.round((total + vat_amount) * 100) / 100,
+      unit_price_incl: Math.round(unit * (1 + rate / 100) * 10000) / 10000,
+    };
+  }));
   const removeLine = (i) => setCart((prev) => prev.filter((_, k) => k !== i));
 
   const scanBarcode = async (code) => {
@@ -137,11 +179,18 @@ export default function FieldSalesPage() {
     if (!cart.length) { toast.error("Sepete en az bir ürün ekleyin."); return; }
     setBusy(true);
     try {
-      const items = cart.map((it) => ({
-        product_id: it.product_id || "", product_name: it.product_name, sku: it.sku || "",
-        quantity: Number(it.quantity), unit_price: Number(it.unit_price),
-        total: Number(it.quantity) * Number(it.unit_price),
-      }));
+      const items = cart.map((it) => {
+        const quantity = Number(it.quantity) || 0;
+        const unit_price = Number(it.unit_price) || 0;
+        const vat_rate = Number(it.vat_rate) || 0;
+        const total = Math.round(quantity * unit_price * 100) / 100;
+        const vat_amount = Math.round(total * vat_rate / 100 * 100) / 100;
+        return {
+          product_id: it.product_id || "", product_name: it.product_name, sku: it.sku || "",
+          quantity, unit_price, unit_price_incl: Number(it.unit_price_incl) || Math.round(unit_price * (1 + vat_rate / 100) * 10000) / 10000,
+          vat_rate, total, vat_amount, total_incl: Math.round((total + vat_amount) * 100) / 100,
+        };
+      });
       const r = await axios.post(`${API_URL}/orders`, {
         company_id: companyId, channel: "saha", order_status: "pending",
         customer_name: name, customer_phone: customer?.phone || newCust?.phone || "",
@@ -274,7 +323,7 @@ export default function FieldSalesPage() {
                     <input type="number" min="1" value={it.quantity} onChange={(e) => setQty(i, e.target.value)} className="w-14 text-center border rounded-xl py-2 font-bold min-h-11" data-testid={`saha-qty-${i}`} />
                     <button onClick={() => setQty(i, it.quantity + 1)} className="w-11 h-11 rounded-xl border bg-slate-50 flex items-center justify-center" data-testid={`saha-qty-plus-${i}`}><Plus className="w-4 h-4" /></button>
                   </div>
-                  <div className="font-bold">{fmt(it.quantity * it.unit_price)} ₺</div>
+                  <div className="font-bold">{fmt((Number(it.unit_price_incl) || Number(it.unit_price) * (1 + (Number(it.vat_rate) || 0) / 100) || 0) * Number(it.quantity))} ₺</div>
                 </div>
               </div>
             ))}

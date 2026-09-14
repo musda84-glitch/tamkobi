@@ -121,3 +121,25 @@ def test_order_items_missing_vat_defaults_20_not_overwrite_zero():
     assert vat == 45.0  # 40 + 5
     assert grand == 295.0
     assert disc == 0.0
+
+
+def test_inclusive_product_order_totals_consistent():
+    """KDV dahil satış fiyatı enrich sonrası subtotal + vat == grand_total."""
+    row = {
+        "product_name": "KDV dahil ürün",
+        "quantity": 2,
+        "unit_price": 120,  # brüt katalog fiyatı
+        "vat_rate": 20,
+        "price_includes_vat": True,
+        "discount_rate": 0,
+    }
+    enrich_line(row, price_mode="incl", default_vat=20)
+    assert abs(row["unit_price"] - 100) < 0.01
+    assert row["total"] == 200.0
+    assert row["vat_amount"] == 40.0
+    assert row["total_incl"] == 240.0
+    sub, vat, disc, grand = order_document_totals([row])
+    assert sub == 200.0
+    assert vat == 40.0
+    assert grand == 240.0
+    assert abs(sub + vat - grand) < 0.001

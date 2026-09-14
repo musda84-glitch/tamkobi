@@ -58,3 +58,24 @@ test("documentLineTotals sums hariç, KDV and dahil", () => {
   expect(t.grandTotal).toBeCloseTo(271);
   expect(t.lineDiscount).toBeCloseTo(20);
 });
+
+test("lineFromProduct treats sale_price as gross when price_includes_vat", () => {
+  const prod = { id: "p2", name: "Brüt", sale_price: 120, purchase_price: 80, vat_rate: 20, price_includes_vat: true };
+  const sale = lineFromProduct(prod, { invoiceType: "sales", quantity: 2 });
+  expect(sale.unit_price).toBeCloseTo(100);
+  expect(sale.unit_price_incl).toBeCloseTo(120);
+  expect(sale.total).toBeCloseTo(200);
+  expect(sale.vat_amount).toBeCloseTo(40);
+  expect(sale.total_incl).toBeCloseTo(240);
+  const buy = lineFromProduct(prod, { invoiceType: "purchase", quantity: 1 });
+  expect(buy.unit_price).toBe(80);
+});
+
+test("documentLineTotals grandTotal equals subtotal + vat (rounded)", () => {
+  const t = documentLineTotals([
+    { name: "X", quantity: 3, unit_price: 33.33, vat_rate: 20, discount_rate: 0 },
+  ]);
+  expect(t.grandTotal).toBeCloseTo(t.subtotal + t.vat, 2);
+  expect(Math.abs(t.subtotal + t.vat - t.grandTotal)).toBeLessThan(0.005);
+});
+
