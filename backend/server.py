@@ -662,9 +662,10 @@ def _isnet_portal_payload(req: Dict[str, Any], existing: Optional[dict] = None) 
     mode = req.get("mode")
     if mode is None and "test_mode" in req:
         mode = "test" if req.get("test_mode") else "live"
-    mode = (mode or existing.get("mode") or "test").strip().lower()
+    # Gerçek NetteFatura hesapları canlıda; test yalnızca İşNet deneme hesabı içindir
+    mode = (mode or existing.get("mode") or "live").strip().lower()
     if mode not in ("test", "live"):
-        mode = "test"
+        mode = "live"
     username = (req.get("username") if "username" in req else existing.get("username") or "").strip()
     # VKN/TCKN digits preferred
     vkn = "".join(ch for ch in str(req.get("vkn") if "vkn" in req else username) if ch.isdigit())
@@ -738,7 +739,13 @@ async def isnet_portal_test_connection(req: Dict[str, Any]):
         "corporate_code": fields["corporate_code"] or existing.get("corporate_code") or "",
         "company_tax_id": fields.get("company_tax_id") or existing.get("company_tax_id") or "",
     }
-    return await isnet_portal.test_connection(settings, password)
+    result = await isnet_portal.test_connection(settings, password)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message") or result.get("hint") or "İşNet Portal bağlantı testi başarısız.",
+        )
+    return result
 
 
 async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Optional[dict] = None) -> Dict[str, Any]:
@@ -758,6 +765,15 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
     elif provider == "isnet_portal":
         rows = await isnet_portal.list_incoming(s, pwd, days=days)
         source_label = "İşNet Portal"
+        # Mobile login test↔canlı düzelttiyse kaydı kalıcı yap
+        if s.get("_mode_switched") and s.get("mode") in ("test", "live"):
+            try:
+                await db.einvoice_settings.update_one(
+                    {"company_id": company_id},
+                    {"$set": {"mode": s["mode"], "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+            except Exception:
+                logger.exception("isnet_portal mode auto-persist failed for %s", company_id)
     else:
         rows = await n11faturam.list_incoming(s, pwd, days=days)
         source_label = "n11 Faturam"
