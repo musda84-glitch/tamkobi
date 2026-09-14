@@ -57,7 +57,7 @@ import cash_approval
 import marketplace_providers
 from zoneinfo import ZoneInfo
 import httpx
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 import comm_service
 import cargo_providers
 import rbac
@@ -2032,14 +2032,37 @@ async def _b2b_find_contact(ident: str) -> Optional[dict]:
 
 
 async def _public_base_url(request: Request, explicit: str = "") -> str:
+    """Resolve public app base for B2B / invite links.
+
+    Prefer an explicit base_url from the client (window.location.origin). Fall back to
+    platform public_url / PUBLIC_APP_URL, then request Origin / Forwarded host.
+    Loopback PUBLIC_APP_URL is ignored when the request carries a non-loopback host so
+    emailed portal links do not become http://127.0.0.1/portal/... (Chromium -102 off-box).
+    """
+    def _is_loopback(url: str) -> bool:
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            host = ""
+        return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
+
     base = (explicit or "").rstrip("/")
     if base:
         return base
     st = await db.platform_settings.find_one({"_id": "platform"}) or {}
-    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
-    if not base:
-        base = str(request.headers.get("origin") or "").rstrip("/")
-    return base
+    configured = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    origin = str(request.headers.get("origin") or "").rstrip("/")
+    fwd_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    fwd_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    forwarded = f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else ""
+    # Prefer a non-loopback public URL when available.
+    for candidate in (configured, origin, forwarded):
+        if candidate and not _is_loopback(candidate):
+            return candidate
+    for candidate in (configured, origin, forwarded):
+        if candidate:
+            return candidate
+    return ""
 
 
 @api_router.post("/public/b2b/login")
