@@ -785,7 +785,14 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
         else:
             already += 1
     if not rows:
-        message = f"{source_label} son {days} günde gelen fatura döndürmedi."
+        if provider == "isnet_portal":
+            message = (
+                f"İşNet Portal son {days} günde gelen fatura döndürmedi. "
+                "Portal hesabında Gelen Kutusu’nda fatura olduğundan emin olun; "
+                "çoklu firmada Ayarlar’daki Portal firma ID’yi kontrol edin."
+            )
+        else:
+            message = f"{source_label} son {days} günde gelen fatura döndürmedi."
     else:
         parts = [f"{len(pulled)} yeni gelen e-fatura alındı"]
         if already:
