@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Headset, Plus, Paperclip, Send, Image as ImageIcon, X, Loader2, CheckCircle2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { useEscape } from "../utils/useEscape";
 
 const cred = { withCredentials: true };
@@ -57,8 +58,9 @@ const Thumbs = ({ items }) => {
 const uploadAll = async (files, companyId, entityId = "new") => {
   const out = [];
   for (const f of files) {
+    const compressed = f.type?.startsWith("image/") ? await compressImageFile(f) : f;
     const fd = new FormData();
-    fd.append("file", f);
+    fd.append("file", compressed);
     const r = await axios.post(`${API_URL}/files/upload?entity=support_ticket&entity_id=${entityId}&company_id=${companyId}`, fd, cred);
     out.push({ url: r.data.url, filename: r.data.filename, content_type: r.data.content_type, size: r.data.size });
   }

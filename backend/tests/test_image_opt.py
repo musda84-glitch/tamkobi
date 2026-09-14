@@ -140,3 +140,12 @@ def test_as_meta_omits_payload():
     assert meta["original_size"] == len(raw)
     assert meta["stored_size"] == r.stored_size
     assert "saved_bytes" in meta
+
+
+def test_photo_prefers_small_webp_or_jpeg():
+    raw = _photo_jpeg(w=2000, h=1500, quality=95)
+    r = image_opt.optimize_upload(raw, "image/jpeg", "big.jpg")
+    assert r.optimized is True
+    assert r.stored_size < len(raw) * 0.5
+    assert r.content_type in {"image/jpeg", "image/webp"}
+    assert max(r.width or 0, r.height or 0) <= image_opt._settings()["max_edge"]

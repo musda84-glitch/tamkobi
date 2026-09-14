@@ -878,15 +878,25 @@ async def save_print_template(company_id: str, doc_type: str, req: Dict[str, Any
 
 def _sniff_upload_content_type(filename: str, content_type: Optional[str]) -> str:
     """Mobile browsers often send empty or application/octet-stream; infer from extension."""
-    _ok = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
+    _ok = {
+        "image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp",
+        "image/heic", "image/heif", "application/pdf",
+    }
     ct = (content_type or "").split(";")[0].strip().lower()
     if ct in _ok:
         return ct
     ext = (filename or "").rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
     return {
         "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp",
-        "gif": "image/gif", "pdf": "application/pdf",
+        "gif": "image/gif", "bmp": "image/bmp", "heic": "image/heic", "heif": "image/heif",
+        "pdf": "application/pdf",
     }.get(ext, ct or "application/octet-stream")
+
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp", "image/heic", "image/heif",
+}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 @api_router.post("/files/upload")
@@ -894,7 +904,7 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     entity = {"quotes": "quote", "projects": "project", "surveys": "survey"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya PDF yükleyebilirsiniz.")
+        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF, HEIC veya PDF yükleyebilirsiniz.")
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
@@ -3714,24 +3724,22 @@ async def get_product(product_id: str):
     hist = (await _purchase_costs_by_product(product.get("company_id"), limit_each=12)).get(product_id) or []
     return _with_purchase_costs(product, hist)
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
-
 @api_router.post("/products/{product_id}/image")
 async def upload_product_image(product_id: str, file: UploadFile = File(...), variant_id: Optional[str] = Query(None)):
     product = await db.products.find_one({"_id": product_id})
     if not product:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP veya GIF yükleyebilirsiniz.")
+    content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya HEIC yükleyebilirsiniz.")
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    opt = image_opt.optimize_upload(data, file.content_type, file.filename or "")
+    opt = image_opt.optimize_upload(data, content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = product.get("company_id") or "comp_nexus_main_01"
     await saas.check_storage_limit(company_id, len(data))
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+    # Uzantı optimize sonucundan gelsin (WebP'ye çevrilmiş JPG .jpg yazılmasın)
     try:
         import storage_manager
         await storage_manager.ensure_account_folders(company_id)

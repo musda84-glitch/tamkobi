@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, X, Wand2, Trash2, Save, ImagePlus, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 const cartesian = (options) =>
   options.reduce((acc, opt) => acc.flatMap((combo) => opt.values.map((v) => ({ ...combo, [opt.name]: v }))), [{}]);
@@ -55,8 +56,9 @@ const VariantImageCell = ({ product, variant, onUpdated }) => {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const upload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const raw = e.target.files?.[0];
+    if (!raw) return;
+    const file = await compressImageFile(raw);
     const form = new FormData();
     form.append("file", file);
     try {

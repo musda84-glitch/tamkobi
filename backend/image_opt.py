@@ -1,25 +1,39 @@
-"""Compress uploaded raster images while keeping high visual quality.
+"""Panele yüklenen raster görselleri sunucuda otomatik küçültür.
 
-Keeps the original bytes when the candidate is not at least IMAGE_MIN_SAVINGS
-smaller (tiny logos, already-compressed WebP, animated GIF).
+Orijinal baytlar yalnızca aday en az IMAGE_MIN_SAVINGS oranında daha küçük
+değilse korunur (küçük logolar, zaten sıkı WebP, animasyonlu GIF).
 """
 from __future__ import annotations
 
 import io
 import logging
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Optional, Tuple
 
 logger = logging.getLogger("TamKobiERP")
 
-IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/bmp"}
+IMAGE_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+    "image/heic",
+    "image/heif",
+}
 EXT_FOR_TYPE = {
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
     "image/gif": "gif",
+    "image/bmp": "bmp",
+    "image/tiff": "tif",
+    "image/heic": "heic",
+    "image/heif": "heif",
 }
 
 
@@ -35,22 +49,24 @@ def enabled() -> bool:
 
 
 def _settings():
+    """Panel görselleri için agresif ama kaliteli varsayılanlar (MB tasarrufu)."""
     try:
         min_savings = float(os.environ.get("IMAGE_MIN_SAVINGS", "0.05"))
     except (TypeError, ValueError):
         min_savings = 0.05
     return {
-        "max_edge": _i("IMAGE_MAX_EDGE", 2560),
-        "jpeg_quality": _i("IMAGE_JPEG_QUALITY", 85),
-        "webp_quality": _i("IMAGE_WEBP_QUALITY", 82),
+        # 1920px çoğu panel/ürün kartı için yeterli; 4K yüklemeleri budar
+        "max_edge": _i("IMAGE_MAX_EDGE", 1920),
+        "jpeg_quality": _i("IMAGE_JPEG_QUALITY", 80),
+        "webp_quality": _i("IMAGE_WEBP_QUALITY", 78),
         "min_savings": min_savings,
         "skip_under": _i("IMAGE_SKIP_UNDER_BYTES", 4096),
     }
 
 
-MAX_EDGE = _i("IMAGE_MAX_EDGE", 2560)
-JPEG_QUALITY = _i("IMAGE_JPEG_QUALITY", 85)
-WEBP_QUALITY = _i("IMAGE_WEBP_QUALITY", 82)
+MAX_EDGE = _i("IMAGE_MAX_EDGE", 1920)
+JPEG_QUALITY = _i("IMAGE_JPEG_QUALITY", 80)
+WEBP_QUALITY = _i("IMAGE_WEBP_QUALITY", 78)
 MIN_SAVINGS = float(os.environ.get("IMAGE_MIN_SAVINGS", "0.05"))
 SKIP_UNDER = _i("IMAGE_SKIP_UNDER_BYTES", 4096)
 
@@ -89,6 +105,15 @@ def _sniff_type(data: bytes, content_type: str) -> str:
         return "image/webp"
     if data[:6] in (b"GIF87a", b"GIF89a"):
         return "image/gif"
+    if data[:2] == b"BM":
+        return "image/bmp"
+    if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return "image/tiff"
+    # HEIC/HEIF (ftyp....heic|heif|mif1)
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brand = data[8:12].lower()
+        if brand in (b"heic", b"heif", b"mif1", b"msf1", b"avif"):
+            return "image/heic" if brand != b"avif" else "image/heic"
     return ct
 
 
@@ -106,11 +131,21 @@ def _has_alpha(im) -> bool:
     return False
 
 
+def _try_register_heif() -> None:
+    try:
+        from pillow_heif import register_heif_opener  # type: ignore
+
+        register_heif_opener()
+    except Exception:
+        pass
+
+
 def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
-    """Return original or a smaller high-quality variant. Never raises."""
+    """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez."""
     original = OptimizeResult(
         data=data,
-        content_type=(content_type or "application/octet-stream").split(";")[0].strip() or "application/octet-stream",
+        content_type=(content_type or "application/octet-stream").split(";")[0].strip()
+        or "application/octet-stream",
         ext=(filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else "bin"),
         original_size=len(data),
         stored_size=len(data),
@@ -130,6 +165,9 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         original.reason = "already_small"
         return original
 
+    if original.content_type in {"image/heic", "image/heif"}:
+        _try_register_heif()
+
     try:
         from PIL import Image, ImageOps
     except Exception as e:
@@ -144,6 +182,7 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
             original.reason = "animated"
             original.width, original.height = im.size
             return original
+        # EXIF yönünü düzelt; kaydederken metadata kopyalanmaz → ek MB düşer
         im = ImageOps.exif_transpose(im) or im
         original.width, original.height = im.size
         w, h = im.size
@@ -159,25 +198,50 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
             im = im.convert("RGB")
 
         candidates: list[Tuple[bytes, str, str]] = []
-        rgb = im.convert("RGB") if im.mode == "RGBA" and not alpha else (im if im.mode == "RGB" else im.convert("RGB"))
+        rgb = (
+            im.convert("RGB")
+            if im.mode == "RGBA" and not alpha
+            else (im if im.mode == "RGB" else im.convert("RGB"))
+        )
         if not alpha:
-            candidates.append((
-                _save(rgb, "JPEG", quality=cfg["jpeg_quality"], optimize=True, progressive=True),
-                "image/jpeg",
-                "jpg",
-            ))
+            candidates.append(
+                (
+                    _save(
+                        rgb,
+                        "JPEG",
+                        quality=cfg["jpeg_quality"],
+                        optimize=True,
+                        progressive=True,
+                    ),
+                    "image/jpeg",
+                    "jpg",
+                )
+            )
         try:
             webp_src = im if (alpha and im.mode == "RGBA") else rgb
-            candidates.append((
-                _save(webp_src, "WEBP", quality=cfg["webp_quality"], method=4),
-                "image/webp",
-                "webp",
-            ))
+            candidates.append(
+                (
+                    _save(webp_src, "WEBP", quality=cfg["webp_quality"], method=6),
+                    "image/webp",
+                    "webp",
+                )
+            )
+            if alpha:
+                # Logolar için kayıpsız WebP denemesi
+                candidates.append(
+                    (
+                        _save(webp_src, "WEBP", lossless=True, method=6),
+                        "image/webp",
+                        "webp",
+                    )
+                )
         except Exception:
             pass
         if original.content_type == "image/png" or alpha:
             png_src = im.convert("RGBA") if alpha else rgb
-            candidates.append((_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png"))
+            candidates.append(
+                (_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png")
+            )
 
         best = min(candidates, key=lambda c: len(c[0])) if candidates else None
         if not best:
@@ -188,6 +252,16 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
             original.reason = "no_savings"
             original.width, original.height = im.size
             return original
+        logger.info(
+            "image_opt: %s → %s (%s→%s bytes, -%s%%, %sx%s)",
+            filename or sniffed,
+            ext,
+            len(data),
+            len(payload),
+            round(100.0 * (len(data) - len(payload)) / max(len(data), 1), 1),
+            im.size[0],
+            im.size[1],
+        )
         return OptimizeResult(
             data=payload,
             content_type=ctype,
@@ -203,3 +277,4 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         logger.warning("image optimize failed (%s); storing original", e)
         original.reason = "error"
         return original
+
