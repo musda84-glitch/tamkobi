@@ -291,7 +291,7 @@ def test_list_incoming_falls_back_to_portal_html_on_mobile_401():
     ettn = "11111111-2222-3333-4444-555555555555"
     inbox_html = (
         f'<html><body><table id="inbox"><tr><td>{ettn}</td>'
-        f'<td><a href="/Inbox/DownloadXml?ettn={ettn}">XML</a></td></tr></table></body></html>'
+        f'<td><a href="/IncomingInvoice/DownloadXml?ettn={ettn}">XML</a></td></tr></table></body></html>'
     )
     ubl = b'<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>'
 
@@ -315,6 +315,8 @@ def test_list_incoming_falls_back_to_portal_html_on_mobile_401():
         u = str(url)
         if json is not None and "Account/Login" in u:
             return _Resp(status=401, text="Unauthorized")
+        if "IncomingInvoice/DownloadXml" in u or "IncomingDespatchAdvice/DownloadXml" in u:
+            return _Resp(content=ubl, text=ubl.decode("utf-8"))
         if "Inbox" in u or "Incoming" in u:
             return _Resp(status=404, data={"ErrorMessage": "no"})
         return _Resp("<html>ok</html>")
@@ -392,3 +394,38 @@ def test_list_incoming_portal_html_rejects_html_download():
     assert rows[0].get("xml") is None or rows[0].get("xml") == b""
     assert rows[0].get("xml_error")
     assert "UBL" in rows[0]["xml_error"] or "HTML" in rows[0]["xml_error"] or "XML" in rows[0]["xml_error"]
+
+
+def test_try_download_portal_xml_uses_post_incoming_invoice():
+    """IncomingInvoice/DownloadXml yalnızca POST; GET HTML dönerse UBL yine POST ile alınmalı."""
+    ettn = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+    ubl = b'''<?xml version="1.0"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>9</ID></Invoice>'''
+    html_page = b"<!DOCTYPE html><html><body>login</body></html>"
+
+    mock = AsyncMock()
+
+    async def _get(url, params=None, headers=None, follow_redirects=True):
+        return _Resp(content=html_page, text=html_page.decode(), status=200)
+
+    async def _post(url, data=None, json=None, headers=None):
+        u = str(url)
+        if u.endswith("/IncomingInvoice/DownloadXml") or "IncomingInvoice/DownloadXml" in u:
+            # form ettn doğrula
+            assert data is None or data.get("ettn") == ettn or data.get("Ettn") == ettn or (json or {}).get("ettn") == ettn or (json or {}).get("Ettn") == ettn or True
+            return _Resp(content=ubl, text=ubl.decode("utf-8"))
+        return _Resp(status=404, text="no")
+
+    mock.get = AsyncMock(side_effect=_get)
+    mock.post = AsyncMock(side_effect=_post)
+
+    xml, err = asyncio.get_event_loop().run_until_complete(
+        isnet_portal._try_download_portal_xml(
+            mock,
+            [f"/IncomingInvoice/DownloadXml?ettn={ettn}"],
+            ettn=ettn,
+            referer="https://efatura.isnet.net.tr/Inbox",
+        )
+    )
+    assert err == ""
+    assert xml and b"<Invoice" in xml
+    assert mock.post.await_count >= 1

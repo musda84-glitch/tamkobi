@@ -111,34 +111,33 @@ def _decode_possible_ubl(payload: Any) -> Optional[bytes]:
     return _as_ubl(raw)
 
 
+# Canlı portalda (efatura/nettefatura) XML indirme aksiyonları yalnızca POST kabul ediyor.
+# GET /Inbox/DownloadXml 404; POST /IncomingInvoice/DownloadXml oturum ister (route var).
+PORTAL_XML_POST_ACTIONS = (
+    "/IncomingInvoice/DownloadXml",
+    "/IncomingDespatchAdvice/DownloadXml",
+    "/OutgoingInvoice/DownloadXml",
+)
+
+
 def _portal_xml_candidates(ettn: str, xml_url: str, page_html: str) -> List[str]:
     """Portal HTML/AJAX yanıtından XML indirme aday URL'lerini üretir."""
     candidates: List[str] = []
     if xml_url:
         candidates.append(xml_url)
     if ettn:
+        # Önce gerçek (POST) aksiyonlar — GET adayları yedek.
+        for action in PORTAL_XML_POST_ACTIONS:
+            candidates.append(f"{action}?ettn={ettn}")
+            candidates.append(f"{action}?Ettn={ettn}")
+            candidates.append(f"{action}?uuid={ettn}")
         for path in (
+            f"/IncomingInvoice/DownloadPdf?ettn={ettn}",  # bazen zip/xml yanlışlıkla burada
             f"/Inbox/DownloadXml?ettn={ettn}",
-            f"/Inbox/DownloadXml?Ettn={ettn}",
-            f"/Inbox/DownloadXml?uuid={ettn}",
             f"/Inbox/GetXml?ettn={ettn}",
-            f"/Inbox/GetXml?uuid={ettn}",
-            f"/Inbox/DownloadUbl?ettn={ettn}",
-            f"/Inbox/Download?ettn={ettn}",
-            f"/Inbox/GetDocumentXml?ettn={ettn}",
-            f"/IncomingInvoice/DownloadXml?ettn={ettn}",
-            f"/IncomingInvoice/DownloadXml?uuid={ettn}",
-            f"/IncomingInvoice/GetXml?uuid={ettn}",
-            f"/IncomingInvoice/GetXml?ettn={ettn}",
-            f"/IncomingEInvoice/DownloadXml?ettn={ettn}",
-            f"/Invoice/DownloadIncomingXml?ettn={ettn}",
-            f"/Invoice/GetIncomingXml?ettn={ettn}",
             f"/Invoice/DownloadXml?ettn={ettn}",
             f"/Invoice/GetXml?ettn={ettn}",
             f"/Document/DownloadXml?ettn={ettn}",
-            f"/Document/GetXml?ettn={ettn}",
-            f"/EInvoice/DownloadXml?ettn={ettn}",
-            f"/GelenKutu/DownloadXml?ettn={ettn}",
         ):
             candidates.append(path)
     html = page_html or ""
@@ -158,7 +157,7 @@ def _portal_xml_candidates(ettn: str, xml_url: str, page_html: str) -> List[str]
         if val.startswith("/") or val.startswith("http"):
             candidates.append(val)
         elif ettn and val.lower() == ettn.lower():
-            candidates.append(f"/Inbox/DownloadXml?ettn={ettn}")
+            candidates.append(f"/IncomingInvoice/DownloadXml?ettn={ettn}")
     seen: set = set()
     out: List[str] = []
     for c in candidates:
@@ -170,59 +169,168 @@ def _portal_xml_candidates(ettn: str, xml_url: str, page_html: str) -> List[str]
     return out
 
 
+def _ettn_form_variants(ettn: str, csrf: str = "") -> List[Dict[str, str]]:
+    """DownloadXml POST gövdesi için olası alan adları (C# model genelde Ettn)."""
+    variants = [
+        {"Ettn": ettn},
+        {"ettn": ettn},
+        {"UUID": ettn},
+        {"uuid": ettn},
+        {"Ettn": ettn, "uuid": ettn},
+        {"Id": ettn},
+        {"InvoiceId": ettn},
+    ]
+    if csrf:
+        variants = [{**v, "__RequestVerificationToken": csrf} for v in variants]
+    return variants
+
+
+async def _response_as_ubl(client: httpx.AsyncClient, r: httpx.Response, headers_get: dict) -> Optional[bytes]:
+    if r is None or r.status_code >= 400 or not r.content:
+        return None
+    ubl = _as_ubl(r.content)
+    if ubl:
+        return ubl
+    data = None
+    try:
+        data = r.json()
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in (
+        "Xml",
+        "XML",
+        "InvoiceXml",
+        "Ubl",
+        "UBL",
+        "Content",
+        "Data",
+        "XmlContent",
+        "FileContent",
+        "ExternalLink",
+        "Url",
+        "FileUrl",
+        "DownloadUrl",
+    ):
+        val = data.get(key)
+        ubl = _decode_possible_ubl(val)
+        if ubl:
+            return ubl
+        if isinstance(val, str) and key in ("ExternalLink", "Url", "FileUrl", "DownloadUrl") and val.startswith("http"):
+            try:
+                nested = await client.get(val, headers=headers_get)
+            except httpx.RequestError:
+                nested = None
+            if nested is not None:
+                ubl = _as_ubl(nested.content)
+                if ubl:
+                    return ubl
+    return None
+
+
 async def _try_download_portal_xml(
     client: httpx.AsyncClient,
     candidates: List[str],
     *,
     csrf: str = "",
     referer: str = "",
+    ettn: str = "",
 ) -> Tuple[Optional[bytes], str]:
-    """Aday URL'lerden ilk geçerli UBL'yi döner; HTML yanıtları reddeder."""
+    """Aday URL'lerden ilk geçerli UBL'yi döner; HTML yanıtları reddeder.
+
+    NetteFatura portalında IncomingInvoice/DownloadXml yalnızca POST ile çalışır.
+    """
     last_hint = "Portal HTML üzerinden XML indirilemedi."
     headers_get = {"Accept": "application/xml,text/xml,application/zip,*/*"}
     if referer:
         headers_get["Referer"] = referer
+    headers_post = {
+        **headers_get,
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    ettn = (ettn or "").strip()
+    if not ettn:
+        for cand in candidates:
+            m = re.search(r"(?:ettn|uuid|ETTN|UUID)=([0-9a-fA-F-]{36})", cand or "")
+            if m:
+                ettn = m.group(1)
+                break
+
+    # 1) Bilinen POST aksiyonları (GET 404 verir)
+    if ettn:
+        for action in PORTAL_XML_POST_ACTIONS:
+            for form in _ettn_form_variants(ettn, csrf):
+                try:
+                    r = await client.post(action, data=form, headers=headers_post)
+                except httpx.RequestError:
+                    continue
+                ubl = await _response_as_ubl(client, r, headers_get)
+                if ubl:
+                    return ubl, ""
+                if r is not None and r.content:
+                    head = r.content[:120].decode("utf-8", errors="ignore").lstrip().lower()
+                    if head.startswith("<!doctype html") or head.startswith("<html"):
+                        last_hint = "Portal XML yerine HTML sayfası döndü (oturum veya indirme adresi hatalı)."
+                    elif r.status_code < 400:
+                        last_hint = "Portal yanıtı UBL-TR e-Fatura/e-İrsaliye değil."
+            # JSON gövde denemesi
+            for body in (
+                {"ettn": ettn},
+                {"Ettn": ettn},
+                {"uuid": ettn},
+                {"Ettn": ettn, "InvoiceDirection": 1},
+            ):
+                try:
+                    r = await client.post(
+                        action,
+                        json=body,
+                        headers={
+                            **headers_get,
+                            "X-Requested-With": "XMLHttpRequest",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                except httpx.RequestError:
+                    continue
+                ubl = await _response_as_ubl(client, r, headers_get)
+                if ubl:
+                    return ubl, ""
+
+    # 2) Sayfadan/guess listesinden adaylar — POST öncelikli
     for cand in candidates:
+        post_url = cand.split("?", 1)[0]
+        form: Dict[str, str] = {}
+        if csrf:
+            form["__RequestVerificationToken"] = csrf
+        m = re.search(r"(?:ettn|uuid|ETTN|UUID)=([0-9a-fA-F-]{36})", cand)
+        if m:
+            e = m.group(1)
+            form.update({"ettn": e, "Ettn": e, "uuid": e, "UUID": e})
+        if form or post_url in PORTAL_XML_POST_ACTIONS:
+            try:
+                r = await client.post(
+                    post_url,
+                    data=form or None,
+                    headers={**headers_get, "X-Requested-With": "XMLHttpRequest"},
+                )
+            except httpx.RequestError:
+                r = None
+            if r is not None:
+                ubl = await _response_as_ubl(client, r, headers_get)
+                if ubl:
+                    return ubl, ""
+
         try:
             r = await client.get(cand, headers=headers_get)
         except httpx.RequestError:
-            r = None
-        if r is not None and r.status_code < 400 and r.content:
-            ubl = _as_ubl(r.content)
-            if ubl:
-                return ubl, ""
-            data = None
-            try:
-                data = r.json()
-            except Exception:
-                pass
-            if isinstance(data, dict):
-                for key in (
-                    "Xml",
-                    "XML",
-                    "InvoiceXml",
-                    "Ubl",
-                    "UBL",
-                    "Content",
-                    "Data",
-                    "XmlContent",
-                    "FileContent",
-                    "ExternalLink",
-                    "Url",
-                ):
-                    val = data.get(key)
-                    ubl = _decode_possible_ubl(val)
-                    if ubl:
-                        return ubl, ""
-                    if isinstance(val, str) and key in ("ExternalLink", "Url") and val.startswith("http"):
-                        try:
-                            nested = await client.get(val, headers=headers_get)
-                        except httpx.RequestError:
-                            nested = None
-                        if nested is not None and nested.status_code < 400:
-                            ubl = _as_ubl(nested.content)
-                            if ubl:
-                                return ubl, ""
+            continue
+        ubl = await _response_as_ubl(client, r, headers_get)
+        if ubl:
+            return ubl, ""
+        if r is not None and r.content:
             head = r.content[:120].decode("utf-8", errors="ignore").lstrip().lower()
             if head.startswith("<!doctype html") or head.startswith("<html"):
                 last_hint = "Portal XML yerine HTML sayfası döndü (oturum veya indirme adresi hatalı)."
@@ -230,50 +338,7 @@ async def _try_download_portal_xml(
                 last_hint = "Portal PDF döndü; UBL XML indirme adresi bulunamadı."
             else:
                 last_hint = "Portal yanıtı UBL-TR e-Fatura/e-İrsaliye değil."
-
-        form: Dict[str, str] = {}
-        if csrf:
-            form["__RequestVerificationToken"] = csrf
-        m = re.search(r"(?:ettn|uuid|ETTN|UUID)=([0-9a-fA-F-]{36})", cand)
-        if m:
-            ettn = m.group(1)
-            form.update({"ettn": ettn, "Ettn": ettn, "uuid": ettn, "UUID": ettn})
-        post_url = cand.split("?", 1)[0] if ("?" in cand and form) else cand
-        try:
-            r = await client.post(
-                post_url,
-                data=form or None,
-                headers={**headers_get, "X-Requested-With": "XMLHttpRequest"},
-            )
-        except httpx.RequestError:
-            continue
-        if r.status_code >= 400 or not r.content:
-            continue
-        ubl = _as_ubl(r.content)
-        if ubl:
-            return ubl, ""
-        try:
-            data = r.json()
-        except Exception:
-            data = None
-        if isinstance(data, dict):
-            for key in (
-                "Xml",
-                "XML",
-                "InvoiceXml",
-                "Ubl",
-                "UBL",
-                "Content",
-                "Data",
-                "XmlContent",
-                "FileContent",
-            ):
-                ubl = _decode_possible_ubl(data.get(key))
-                if ubl:
-                    return ubl, ""
     return None, last_hint
-
-
 
 
 def is_test_mode(settings: dict) -> bool:
@@ -694,6 +759,7 @@ class IsnetPortalClient:
                     candidates,
                     csrf=csrf,
                     referer=urljoin(self.base + "/", "Inbox"),
+                    ettn=ettn,
                 )
             if not xml_bytes and not xml_err:
                 xml_err = "Portal HTML üzerinden UBL XML indirilemedi."
