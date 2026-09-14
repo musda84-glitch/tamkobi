@@ -3129,6 +3129,29 @@ async def update_product(product_id: str, updated: Dict[str, Any]):
     res = await db.products.find_one({"_id": product_id})
     return clean_doc(res)
 
+
+@api_router.post("/products/bulk-flags")
+async def bulk_product_flags(req: Dict[str, Any]):
+    """Toplu B2B / stok takibi bayrağı güncellemesi."""
+    ids = [str(i) for i in (req.get("ids") or []) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Ürün seçilmedi.")
+    if len(ids) > 2000:
+        raise HTTPException(status_code=400, detail="En fazla 2000 ürün seçilebilir.")
+    patch: Dict[str, Any] = {}
+    if "show_in_b2b" in req:
+        patch["show_in_b2b"] = bool(req.get("show_in_b2b"))
+    if "track_stock" in req:
+        patch["track_stock"] = bool(req.get("track_stock"))
+    if not patch:
+        raise HTTPException(status_code=400, detail="Güncellenecek alan yok (show_in_b2b / track_stock).")
+    company_id = req.get("company_id")
+    q: Dict[str, Any] = {"_id": {"$in": ids}}
+    if company_id:
+        q["company_id"] = company_id
+    result = await db.products.update_many(q, {"$set": patch})
+    return {"status": "success", "matched": result.matched_count, "modified": result.modified_count, "ids": ids, **patch}
+
 async def _product_usage_labels(product_id: str) -> List[str]:
     """Fatura / sipariş / teklifte geçen stok kartları cari bakiyesini etkilemeden silinemez."""
     labels = []

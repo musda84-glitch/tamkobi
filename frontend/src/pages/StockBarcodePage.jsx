@@ -83,6 +83,8 @@ export default function StockBarcodePage() {
   const [reorder, setReorder] = useState(null);
   const [detailTab, setDetailTab] = useState("images");
   const [withVariants, setWithVariants] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const openDetail = (prod, tab = "images") => {
     setDetailTab(tab);
@@ -95,6 +97,37 @@ export default function StockBarcodePage() {
       setProducts((prev) => prev.map((p) => (p.id === res.data.id ? res.data : p)));
       toast.success(field === "show_in_b2b" ? (res.data.show_in_b2b ? "Ürün B2B portalında gösteriliyor." : "Ürün B2B portalından gizlendi.") : (res.data.track_stock ? "Stok takibi açıldı." : "Stok takibi kapatıldı."));
     } catch { toast.error("Güncellenemedi."); }
+  };
+
+  const productId = (p) => p?.id || p?._id;
+  const toggleSelect = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const bulkCloseFlags = async ({ closeB2b = false, closeTrack = false }) => {
+    if (!selected.length || (!closeB2b && !closeTrack)) return;
+    const labels = [closeB2b && "B2B", closeTrack && "Takip"].filter(Boolean).join(" + ");
+    if (!window.confirm(`${selected.length} üründe ${labels} kapatılsın mı?`)) return;
+    setBulkBusy(true);
+    try {
+      const body = { ids: selected, company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" };
+      if (closeB2b) body.show_in_b2b = false;
+      if (closeTrack) body.track_stock = false;
+      const r = await axios.post(`${API_URL}/products/bulk-flags`, body);
+      setProducts((prev) => prev.map((p) => {
+        const id = productId(p);
+        if (!selected.includes(id)) return p;
+        return {
+          ...p,
+          ...(closeB2b ? { show_in_b2b: false } : {}),
+          ...(closeTrack ? { track_stock: false } : {}),
+        };
+      }));
+      toast.success(`${r.data.modified ?? selected.length} ürün güncellendi (${labels} kapalı).`);
+      setSelected([]);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Toplu güncelleme başarısız.");
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const handleProductUpdated = (updated) => {
@@ -351,6 +384,9 @@ export default function StockBarcodePage() {
     p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (p.barcode || "").includes(searchTerm)
   ), stockF), [products, searchTerm, stockF]);
+  const allFilteredIds = useMemo(() => filtered.map(productId).filter(Boolean), [filtered]);
+  const allFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selected.includes(id));
+  const toggleSelectAllFiltered = () => setSelected(allFilteredSelected ? [] : allFilteredIds);
   const stockListResetKey = useMemo(() => `${filterCategory}|${searchTerm}|${JSON.stringify(stockF)}`, [filterCategory, searchTerm, stockF]);
   const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(filtered, { resetKey: stockListResetKey });
   const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
@@ -463,12 +499,31 @@ export default function StockBarcodePage() {
       <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
       <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} onReorderCritical={() => openReorder()} />
 
+      {selected.length > 0 && (
+        <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="stock-bulk-bar">
+          <span className="font-bold">{selected.length} ürün seçildi</span>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeB2b: true })} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-b2b-btn">B2B kapat</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeTrack: true })} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-track-btn">Takip kapat</button>
+          <button type="button" disabled={bulkBusy} onClick={() => bulkCloseFlags({ closeB2b: true, closeTrack: true })} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-both-btn">B2B + Takip kapat</button>
+          <button type="button" onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="stock-bulk-clear-btn">Seçimi kaldır</button>
+        </div>
+      )}
       {/* Products Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
+                <th className="px-3 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAllFiltered}
+                    className="rounded border-slate-300"
+                    title="Filtrelenen tüm ürünleri seç"
+                    data-testid="stock-select-all"
+                  />
+                </th>
                 <th className="px-4 py-3">Ürün & SKU</th>
                 <th className="px-4 py-3">Barkod (EAN-13)</th>
                 <th className="px-4 py-3">Kategori / Tür</th>
@@ -483,7 +538,16 @@ export default function StockBarcodePage() {
               {pagedProducts.map((prod) => {
                 const isCritical = prod.stock_quantity <= prod.min_stock_alert;
                 return (
-                  <tr key={prod.id || prod._id} className="hover:bg-slate-50/70 transition" data-testid={`prod-row-${prod.sku}`}>
+                  <tr key={prod.id || prod._id} className={`hover:bg-slate-50/70 transition ${selected.includes(productId(prod)) ? "bg-indigo-50/40" : ""}`} data-testid={`prod-row-${prod.sku}`}>
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(productId(prod))}
+                        onChange={() => toggleSelect(productId(prod))}
+                        className="rounded border-slate-300"
+                        data-testid={`stock-select-${prod.sku}`}
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <button
