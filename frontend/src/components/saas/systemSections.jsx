@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -17,6 +17,7 @@ import { RequestsPanel } from "./RequestsPanel";
 import { PaymentsPanel, RemindersPanel, PlatformSettingsPanel } from "./PlatformPanels";
 import { AiProviderPanel } from "./AiProviderPanel";
 import { PlatformUsersPanel } from "./PlatformUsersPanel";
+import { UserDataErasePanel } from "./UserDataErasePanel";
 import { WebsiteAdminPanel } from "./WebsiteAdminPanel";
 import { ModuleCatalogPanel } from "./ModuleCatalogPanel";
 import { QuotasPanel } from "./QuotasPanel";
@@ -39,6 +40,7 @@ export const SYSTEM_SECTIONS = [
   { key: "kotalar", label: "Kotalar", icon: Gauge, render: (c) => <QuotasPanel onOpenCompany={c.openCompany} /> },
   { key: "depolama", label: "Depolama", icon: HardDrive, render: (c) => <StorageManagerPanel onOpenCompany={c.openCompany} /> },
   { key: "kullanicilar", label: "Panel Yöneticileri", icon: Users, render: () => <PlatformUsersPanel /> },
+  { key: "veri-silme", label: "Kullanıcı Veri Silme", icon: UserX, render: () => <UserDataErasePanel /> },
   { key: "destek", label: "Destek Talepleri", icon: Headset, badge: "open_tickets", render: (c) => <SupportTicketsPanel onOpenCompany={c.openCompany} /> },
   { key: "talepler", label: "Yükseltme Talepleri", icon: Inbox, badge: "pending_requests", render: (c) => <RequestsPanel requests={c.requests} onChanged={c.changed} onOpenCompany={c.openCompany} /> },
   { key: "odemeler", label: "Ödemeler", icon: CreditCard, render: () => <PaymentsPanel /> },
