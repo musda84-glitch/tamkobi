@@ -107,29 +107,52 @@ def test_isnet_in_providers_and_payload():
             "username": "apiuser",
             "client_code": "ISN-9",
             "gib_alias": "urn:mail:pk@x.com",
+            "company_tax_id": "1234567890",
+            "company_vendor_number": "001",
         }
     )
     assert mapped["mode"] == "test"
     assert mapped["corporate_code"] == "ISN-9"
     assert mapped["alias"] == "urn:mail:pk@x.com"
+    assert mapped["company_tax_id"] == "1234567890"
+    assert mapped["company_vendor_number"] == "001"
     assert "isnet" in server.EINVOICE_PROVIDERS
     assert "Net-e" in server.EINVOICE_PROVIDERS["isnet"]["name"] or "IsNet" in server.EINVOICE_PROVIDERS["isnet"]["name"]
+    assert "NetteFatura-API" in (server.EINVOICE_PROVIDERS["isnet"].get("docs") or "")
 
 
 def test_company_tax_code_and_soap_serialize():
     assert isnet.company_tax_code({"company_tax_id": "1234567890"}) == "1234567890"
     assert isnet.company_tax_code({}, {"tax_number": "11111111111"}) == "11111111111"
+    assert isnet.company_vendor_number({"company_vendor_number": "42"}) == "42"
+    req = isnet._company_request({"company_tax_id": "1234567890", "company_vendor_number": "42"})
+    assert req == {"CompanyTaxCode": "1234567890", "CompanyVendorNumber": "42"}
     xml = isnet._serialize_ein(
         {
             "CompanyTaxCode": "1234567890",
+            "CompanyVendorNumber": "42",
             "Invoices": [{"InvoiceContent": "QQ==", "ReceiverTag": "urn:mail:pk@x.com"}],
         }
     )
     assert "<ein:CompanyTaxCode>1234567890</ein:CompanyTaxCode>" in xml
-    assert "InvoiceXml" in xml
+    assert "<ein:CompanyVendorNumber>42</ein:CompanyVendorNumber>" in xml
+    assert "<ein:Invoice>" in xml  # NetteFatura-API ARRAY_ITEM_NAME_MAP: Invoices -> Invoice
+    assert "InvoiceXml" not in xml
     assert "ReceiverTag" in xml
 
 
 def test_address_book_url_follows_mode():
     assert "AddressBookService" in isnet.address_book_url({"mode": "test"})
     assert isnet.address_book_url({"mode": "live"}) == isnet.LIVE_ADDRESS_BOOK
+
+
+def test_endpoints_match_nettefatura_api():
+    """https://github.com/EfeSorogluu/NetteFatura-API src/constants/endpoints.ts"""
+    assert isnet.TEST_SOAP == "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
+    assert isnet.LIVE_SOAP == "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
+    assert "AddressBookService" in isnet.TEST_ADDRESS_BOOK
+    assert isnet.TEST_API == "https://einvoiceapitest.isnet.net.tr"
+    assert isnet.LIVE_API == "https://einvoiceapi.isnet.net.tr"
+    assert isnet.TEST_PORTAL == "https://efatura.isnet.net.tr"
+    assert isnet.LIVE_PORTAL == "https://nettefatura.isnet.net.tr"
+

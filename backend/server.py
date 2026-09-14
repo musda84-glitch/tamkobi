@@ -391,8 +391,8 @@ EINVOICE_PROVIDERS = {
     "isnet": {
         "name": "İşNet Net-e Fatura (NetteFatura)",
         "fields": ["username", "password", "corporate_code"],
-        "docs": "https://nettefatura.isnet.net.tr/",
-        "hint": "İşNet portalinden müşteri/firma kodu, API kullanıcı adı ve şifre. GİB PK alias ve şirket VKN (SOAP) zorunludur — OvoCRM/NetteFatura ile aynı InvoiceService+AddressBookService. Test: einvoiceapitest.isnet.net.tr / einvoiceservicetest.isnet.net.tr",
+        "docs": "https://github.com/EfeSorogluu/NetteFatura-API",
+        "hint": "NetteFatura SOAP (IP–VKN): şirket VKN zorunlu. Portal kullanıcı/şifre + müşteri kodu + GİB PK alias. Resmi SDK: github.com/EfeSorogluu/NetteFatura-API — Test SOAP: einvoiceservicetest.isnet.net.tr · Portal API: einvoiceapitest.isnet.net.tr",
     },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
@@ -420,6 +420,7 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "alias": s.get("alias") or "",
         "corporate_code": s.get("corporate_code") or "",
         "company_tax_id": s.get("company_tax_id") or "",
+        "company_vendor_number": s.get("company_vendor_number") or "",
         "has_password": bool(s.get("password_enc")),
         "has_api_key": bool(s.get("api_key_enc")),
         "status": s.get("status") or "simulated",
@@ -460,6 +461,10 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         "corporate_code": (req.get("corporate_code") if "corporate_code" in req else existing.get("corporate_code") or "").strip(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if "company_tax_id" in req:
+        update["company_tax_id"] = "".join(ch for ch in str(req.get("company_tax_id") or "") if ch.isdigit())
+    if "company_vendor_number" in req:
+        update["company_vendor_number"] = str(req.get("company_vendor_number") or "").strip()
     if "auto_pull" in req:
         update["auto_pull"] = bool(req.get("auto_pull"))
     if "auto_process" in req:
@@ -568,6 +573,7 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
         "alias": alias,
         "client_code": corporate,
         "company_tax_id": company_tax,
+        "company_vendor_number": str(req.get("company_vendor_number") if "company_vendor_number" in req else existing.get("company_vendor_number") or "").strip(),
     }
 
 
@@ -595,6 +601,7 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "corporate_code": fields["corporate_code"],
         "alias": fields["alias"],
         "company_tax_id": fields.get("company_tax_id") or "",
+        "company_vendor_number": fields.get("company_vendor_number") or "",
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "assigned_at": existing.get("assigned_at") or datetime.now(timezone.utc).isoformat(),
     }
@@ -628,6 +635,7 @@ async def isnet_test_connection(req: Dict[str, Any]):
         "client_code": fields["corporate_code"] or existing.get("corporate_code") or "",
         "alias": fields["alias"] or existing.get("alias") or "",
         "company_tax_id": fields.get("company_tax_id") or existing.get("company_tax_id") or "",
+        "company_vendor_number": fields.get("company_vendor_number") or existing.get("company_vendor_number") or "",
     }
     info = await isnet.test_connection(settings, password)
     return info
