@@ -1,4 +1,3 @@
-
 import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -12,9 +11,28 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
   const ref = useRef(null);
   const upload = async (file) => {
     if (!file) return;
+    const name = (file.name || "").toLowerCase();
+    if (name.endsWith(".xls") && !name.endsWith(".xlsx") && !name.endsWith(".xlsm")) {
+      toast.error("Eski .xls desteklenmiyor. Excel’de .xlsx olarak kaydedip yeniden yükleyin.");
+      return;
+    }
     setBusy(true);
-    const fd = new FormData(); fd.append("file", file);
-    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/ai-cart`, fd); setRes({ ...r.data, items: r.data.items.map((i) => ({ ...i, on: true })) }); setPick({}); if (!r.data.items.length && !r.data.unmatched.length) toast.error("Listedeki ürünler katalogla eşleşmedi."); } catch (e) { const d = e.response?.data?.detail; toast.error(typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg || x).join(" ") : "Dosya işlenemedi."); } finally { setBusy(false); if (ref.current) ref.current.value = ""; }
+    const fd = new FormData();
+    fd.append("file", file, file.name || "siparis.xlsx");
+    try {
+      const r = await axios.post(`${API_URL}/public/b2b/${token}/ai-cart`, fd, { timeout: 120000 });
+      const items = Array.isArray(r.data?.items) ? r.data.items : [];
+      const unmatched = Array.isArray(r.data?.unmatched) ? r.data.unmatched : [];
+      setRes({ ...r.data, items: items.map((i) => ({ ...i, on: true })), unmatched });
+      setPick({});
+      if (!items.length && !unmatched.length) toast.error("Listedeki ürünler katalogla eşleşmedi.");
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg || x).join(" ") : "Dosya işlenemedi.");
+    } finally {
+      setBusy(false);
+      if (ref.current) ref.current.value = "";
+    }
   };
   const mapUnmatched = (i) => {
     const u = res.unmatched[i];
@@ -41,9 +59,17 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
   return (
     <>
       <label className={`flex items-center gap-2 border-2 border-dashed rounded-xl px-3 py-2.5 cursor-pointer transition ${busy ? "border-indigo-300 bg-indigo-50" : "border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/40"}`} data-testid="b2b-ai-cart-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); upload(e.dataTransfer.files?.[0]); }}>
-        <input ref={ref} type="file" accept=".xlsx,.xls,.csv,.pdf,.txt" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="b2b-ai-cart-input" disabled={busy} />
+        <input
+          ref={ref}
+          type="file"
+          accept=".xlsx,.xlsm,.csv,.pdf,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,application/pdf"
+          className="hidden"
+          onChange={(e) => upload(e.target.files?.[0])}
+          data-testid="b2b-ai-cart-input"
+          disabled={busy}
+        />
         {busy ? <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" /> : <Sparkles className="w-5 h-5 text-indigo-600" />}
-        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod + adet içeren herhangi bir dosya (xlsx, csv, pdf)</div></div>
+        <div className="text-xs"><div className="font-bold text-slate-800">{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle → AI sepeti oluştursun"}</div><div className="text-[10px] text-slate-500 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Ürün adı / kod + adet içeren dosya (xlsx, csv, pdf)</div></div>
       </label>
       {res && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRes(null)}>
