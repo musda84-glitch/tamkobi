@@ -1,8 +1,7 @@
-
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Save, Loader2, Sparkles, PlugZap } from "lucide-react";
+import { Save, Loader2, Sparkles, PlugZap, KeyRound, Pencil, X } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { Toggle, inputCls } from "./saasUi";
 
@@ -14,17 +13,30 @@ const errText = (e, fallback) => {
   return fallback;
 };
 
+const maskedKeyLabel = (d) => {
+  if (d?.key_hint) return `••••••••${d.key_hint}`;
+  if (d?.has_key) return "••••••••••••";
+  if (d?.has_env_key) return d.env_var || "ortam değişkeni";
+  return "";
+};
+
 export const AiProviderPanel = () => {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ api_key: "" });
+  const [editKey, setEditKey] = useState(false);
   const [busy, setBusy] = useState(false);
-  const load = () => axios.get(`${API_URL}/system/ai`).then((r) => setD(r.data)).catch(() => toast.error("AI ayarları alınamadı."));
+  const load = () => axios.get(`${API_URL}/system/ai`).then((r) => {
+    setD(r.data);
+    setF({ api_key: "" });
+    setEditKey(false);
+  }).catch(() => toast.error("AI ayarları alınamadı."));
   useEffect(() => { load(); }, []);
   const catalog = d?.catalog || [];
   const current = useMemo(() => catalog.find((c) => c.id === d?.provider) || catalog[0], [catalog, d]);
   const models = current?.models || [];
   const custom = !!current?.custom;
   const pendingKey = (f.api_key || "").trim();
+  const showKeyInput = editKey || !(d?.has_key || d?.has_env_key);
   const canTest = !!(d?.has_key || d?.has_env_key || pendingKey || (custom && (d?.base_url || "").trim()));
   if (!d) return <div className="text-xs text-slate-400">Yükleniyor…</div>;
 
@@ -43,9 +55,12 @@ export const AiProviderPanel = () => {
         base_url: custom ? (d.base_url || "") : "",
         api_key: pendingKey || undefined,
       });
-      setD({ ...r.data, last_test: pendingKey ? null : r.data.last_test });
+      setD(r.data);
       setF({ api_key: "" });
-      toast.success("AI entegrasyonu kaydedildi. Bağlantıyı Test Et ile doğrulayabilirsiniz.");
+      setEditKey(false);
+      toast.success(r.data.has_key
+        ? `AI ayarları kaydedildi. Anahtar saklandı (${maskedKeyLabel(r.data)}).`
+        : "AI entegrasyonu kaydedildi.");
     } catch (e) {
       toast.error(errText(e, "Kaydedilemedi."));
     } finally { setBusy(false); }
@@ -76,16 +91,26 @@ export const AiProviderPanel = () => {
     const meta = catalog.find((c) => c.id === id);
     if (meta?.custom) {
       setD({ ...d, provider: id, advisor_model: "", extract_model: "", last_test: null });
+      setEditKey(true);
+      setF({ api_key: "" });
       return;
     }
     const ids = (meta?.models || []).map((m) => m.id);
+    const providerChanged = id !== d.provider;
     setD({
       ...d,
       provider: id,
       advisor_model: ids.includes(d.advisor_model) ? d.advisor_model : (ids[0] || d.advisor_model),
       extract_model: ids.includes(d.extract_model) ? d.extract_model : (ids[Math.min(1, ids.length - 1)] || ids[0] || d.extract_model),
       last_test: null,
+      // Sağlayıcı değişince eski anahtar taşınmaz; kullanıcıya yeni anahtar sor.
+      has_key: providerChanged ? false : d.has_key,
+      key_hint: providerChanged ? "" : d.key_hint,
     });
+    if (providerChanged) {
+      setEditKey(true);
+      setF({ api_key: "" });
+    }
   };
 
   return (
@@ -133,25 +158,49 @@ export const AiProviderPanel = () => {
               </select>
             )}
           </div>
-          <div className="sm:col-span-2">
-            <label className="block font-semibold text-slate-700 mb-1">API anahtarı {(d.has_key || d.has_env_key) && <span className="text-emerald-600">{d.has_key ? "(kayıtlı)" : `(${d.env_var || "ortam değişkeni"})`}</span>}</label>
-            <input
-              type="password"
-              value={f.api_key}
-              onChange={(e) => {
-                setF({ api_key: e.target.value });
-                if (d.last_test) setD({ ...d, last_test: null });
-              }}
-              placeholder={d.has_key ? "••••••••" : d.has_env_key ? `Boş bırakırsanız ${d.env_var} kullanılır` : `${current?.label || "Sağlayıcı"} API anahtarı`}
-              className={inputCls}
-              data-testid="ai-api-key"
-              autoComplete="off"
-            />
-            <p className="text-[10px] text-slate-500 mt-1">Anahtarı yazdıktan sonra <b>Kaydet</b>, ardından <b>Bağlantıyı Test Et</b>. Kaydetmeden de test edebilirsiniz.</p>
+          <div className="sm:col-span-2 space-y-2">
+            <label className="block font-semibold text-slate-700 mb-1">API anahtarı</label>
+            {!showKeyInput ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5" data-testid="ai-key-saved">
+                <KeyRound className="w-4 h-4 text-emerald-700" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-emerald-900">Kayıtlı anahtar korunuyor</div>
+                  <div className="font-mono text-[11px] text-emerald-800" data-testid="ai-key-hint">{maskedKeyLabel(d)}</div>
+                  <div className="text-[10px] text-emerald-700/80 mt-0.5">Sayfa yenilense de silinmez. Değiştirmek için yeni anahtar girin.</div>
+                </div>
+                <button type="button" onClick={() => { setEditKey(true); setF({ api_key: "" }); }} className="px-3 py-1.5 border border-emerald-300 bg-white text-emerald-800 rounded-lg font-semibold inline-flex items-center gap-1" data-testid="ai-key-change">
+                  <Pencil className="w-3.5 h-3.5" /> Değiştir
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    value={f.api_key}
+                    onChange={(e) => {
+                      setF({ api_key: e.target.value });
+                      if (d.last_test) setD({ ...d, last_test: null });
+                    }}
+                    placeholder={`${current?.label || "Sağlayıcı"} API anahtarı`}
+                    className={inputCls}
+                    data-testid="ai-api-key"
+                    autoComplete="new-password"
+                  />
+                  {(d.has_key || d.has_env_key) && (
+                    <button type="button" onClick={() => { setEditKey(false); setF({ api_key: "" }); }} className="p-2 text-slate-400 hover:text-slate-700" title="Vazgeç" data-testid="ai-key-cancel">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500">Yeni anahtarı yazıp <b>Kaydet</b> deyin. Boş kaydetmek mevcut kayıtlı anahtarı silmez.</p>
+              </div>
+            )}
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
           Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
+          {d.has_key ? <> · anahtar <b data-testid="ai-badge-key">{maskedKeyLabel(d)}</b></> : null}
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={test} disabled={busy || !canTest} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
