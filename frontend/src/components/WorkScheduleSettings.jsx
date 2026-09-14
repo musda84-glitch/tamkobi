@@ -79,7 +79,7 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.notify_missing_checkin !== false} onChange={(e) => set("notify_missing_checkin", e.target.checked)} data-testid="ws-notify-missing" /> Mesai başlangıcı + tolerans geçince giriş yapmayanları bildir (günde 1 kez)</label>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.notify_late_checkin !== false} onChange={(e) => set("notify_late_checkin", e.target.checked)} data-testid="ws-notify-late" /> Geç giriş yapan personeli anında bildir</label>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!s.count_early_as_overtime} onChange={(e) => set("count_early_as_overtime", e.target.checked)} data-testid="ws-early-ot" /> Erken gelişi de mesai say</label>
-            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.require_geo !== false} onChange={(e) => set("require_geo", e.target.checked)} data-testid="ws-require-geo" /> Firma konumu tanımlıysa giriş/çıkış için konum zorunlu</label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.require_geo !== false} onChange={(e) => set("require_geo", e.target.checked)} data-testid="ws-require-geo" /> Firma konumu tanımlıysa giriş için konum zorunlu (çıkış her yerden)</label>
             <p className="text-[10px] text-slate-500">Bildirimler uygulama içi zile düşer; İletişim Merkezi'nde SMTP hesabı tanımlıysa yöneticilere e-posta da gider.</p>
           </div>
         </div>

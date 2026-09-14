@@ -74,9 +74,33 @@ def day_window(schedule: dict, weekday: int) -> dict:
             "break_minutes": int(d.get("break_minutes") if d.get("break_minutes") is not None else schedule.get("break_minutes") or 0)}
 
 
+def _as_float(v, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return float(default)
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def _add_minutes(hm: str, minutes: int) -> str:
+    total = (_hm(hm) + int(minutes)) % (24 * 60)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def assigned_overtime_hours(rec: Optional[dict]) -> float:
+    """Yönetici tarafından personele atanan fazla mesai (saat)."""
+    if not isinstance(rec, dict):
+        return 0.0
+    return max(0.0, _as_float(rec.get("assigned_overtime_hours"), 0.0))
+
+
 def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
-    """check_in/check_out (HH:MM) → hours, normal_hours, overtime_hours, late_minutes, early_leave_minutes, is_off_day. plan = o güne özel vardiya."""
-    out = {"hours": 0.0, "normal_hours": 0.0, "overtime_hours": 0.0, "late_minutes": 0, "early_leave_minutes": 0, "is_off_day": False}
+    """check_in/check_out (HH:MM) → hours, normal_hours, overtime_hours, late_minutes, early_leave_minutes, is_off_day.
+    Atanan fazla mesai beklenen çıkışı (expected_end) uzatır; erken çıkış buna göre, fazla mesai mesai bitişine göre hesaplanır.
+    """
+    out = {"hours": 0.0, "normal_hours": 0.0, "overtime_hours": 0.0, "late_minutes": 0, "early_leave_minutes": 0, "is_off_day": False,
+           "assigned_overtime_hours": 0.0, "expected_end": None}
     try:
         wd = datetime.strptime(rec.get("date"), "%Y-%m-%d").weekday()
     except Exception:
@@ -89,9 +113,18 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         out["shift_label"] = "İzin/Tatil" if plan.get("off") else f"{plan.get('start')}–{plan.get('end')}"
         if not plan.get("off"):
             win = {"start": plan.get("start") or win["start"], "end": plan.get("end") or win["end"], "break_minutes": int(plan.get("break_minutes") if plan.get("break_minutes") is not None else win["break_minutes"])}
-    start, end = _hm(win["start"]), _hm(win["end"])
+    start_m, end_m = _hm(win["start"]), _hm(win["end"])
+    assigned_ot = assigned_overtime_hours(rec)
+    out["assigned_overtime_hours"] = round(assigned_ot, 2)
+    expected_end_hm = win["end"]
+    expected_end_m = end_m
+    if assigned_ot > 0 and not out["is_off_day"]:
+        add_m = int(round(assigned_ot * 60))
+        expected_end_m = end_m + add_m
+        expected_end_hm = _add_minutes(win["end"], add_m)
+    out["expected_end"] = expected_end_hm
     if ci and not out["is_off_day"]:
-        out["late_minutes"] = max(0, _hm(ci) - start - int(schedule.get("late_tolerance_minutes") or 0))
+        out["late_minutes"] = max(0, _hm(ci) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
     if not (ci and co):
         return out
     a, b = _hm(ci), _hm(co)
@@ -102,10 +135,12 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         ot = worked
     else:
         tol = int(schedule.get("overtime_tolerance_minutes") or 0)
-        ot = (b - end) if b - end > tol else 0
-        if schedule.get("count_early_as_overtime") and a < start:
-            ot += start - a
-        out["early_leave_minutes"] = max(0, end - b)
+        # Fazla mesai: kayıtlı mesai bitişine göre
+        ot = (b - end_m) if b - end_m > tol else 0
+        if schedule.get("count_early_as_overtime") and a < start_m:
+            ot += start_m - a
+        # Erken çıkış: atanan fazla mesai dahil beklenen çıkışa göre
+        out["early_leave_minutes"] = max(0, expected_end_m - b)
         ot = min(ot, worked)
     out["hours"] = round(worked / 60, 2)
     out["overtime_hours"] = round(ot / 60, 2)
@@ -192,10 +227,15 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     company = await _db.companies.find_one({"_id": employee["company_id"]}) or {}
     schedule = merge_schedule(company, employee)
     existing = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date}) or {}
+    if "assigned_overtime_hours" in patch:
+        assigned_ot = max(0.0, _as_float(patch.get("assigned_overtime_hours"), 0.0))
+    else:
+        assigned_ot = assigned_overtime_hours(existing)
     rec = {"company_id": employee["company_id"], "employee_id": employee["_id"], "employee_name": employee["full_name"], "date": date,
            "status": patch.get("status") or ("present" if (patch.get("check_in") or patch.get("check_out")) else existing.get("status")) or "present",
            "check_in": patch.get("check_in", existing.get("check_in")), "check_out": patch.get("check_out", existing.get("check_out")),
-           "note": patch.get("note", existing.get("note", "")), "source": source}
+           "note": patch.get("note", existing.get("note", "")), "source": source,
+           "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
         rec.update({"check_in": None, "check_out": None})
     plan = await _db.shift_plans.find_one({"employee_id": employee["_id"], "date": date})
@@ -205,12 +245,21 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     except Exception:
         _wd = 0
     _win = day_window(schedule, _wd) if not plan or plan.get("off") else {"start": plan.get("start"), "end": plan.get("end"), "break_minutes": plan.get("break_minutes")}
-    rec["schedule_snapshot"] = {"start": _win["start"], "end": _win["end"], "break_minutes": _win["break_minutes"], "from_shift_plan": bool(plan)}
+    rec["schedule_snapshot"] = {
+        "start": _win["start"], "end": _win["end"], "break_minutes": _win["break_minutes"], "from_shift_plan": bool(plan),
+        "expected_end": rec.get("expected_end") or _win["end"], "assigned_overtime_hours": assigned_ot,
+    }
     if confirmed is not None:
         rec["employee_confirmed"] = confirmed
         rec["employee_confirmed_at"] = _now() if confirmed else None
     elif "employee_confirmed" not in existing:
         rec["employee_confirmed"] = False
+    # Preserve assignment metadata
+    for k in ("assigned_overtime_by", "assigned_overtime_at", "assigned_overtime_note"):
+        if k in patch:
+            rec[k] = patch[k]
+        elif existing.get(k) is not None:
+            rec[k] = existing[k]
     rec["updated_at"] = _now()
     await _db.attendance.update_one({"employee_id": employee["_id"], "date": date}, {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
     return _clean(await _db.attendance.find_one({"employee_id": employee["_id"], "date": date}))
@@ -306,16 +355,29 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     schedule = merge_schedule(company, emp)
     loc = company.get("location")
     geo = None
-    if loc and schedule.get("require_geo", True):
+    # Konum zorunluluğu yalnızca girişte; çıkış her konumdan yapılabilir (panel mesai saatine / atanan fazla mesaiye göre işlenir).
+    if action == "check_in" and loc and schedule.get("require_geo", True):
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
         except (KeyError, TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Konum gerekli: telefon konum iznini açın. Firma konumu tanımlı olduğundan giriş/çıkış yalnızca firma yakınından yapılabilir.")
+            raise HTTPException(status_code=400, detail="Konum gerekli: telefon konum iznini açın. Firma konumu tanımlı olduğundan giriş yalnızca firma yakınından yapılabilir.")
         dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
         radius = float(loc.get("radius_m") or 300)
         if dist > radius:
-            raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). {'Giriş' if action == 'check_in' else 'Çıkış'} yapılamadı.")
-        geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now()}
+            raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
+        geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True}
+    elif action == "check_out":
+        # Çıkışta konum zorunlu değil; gönderilmişse kayda ekle (zorunlu tutulmaz).
+        try:
+            lat, lng = float(req["latitude"]), float(req["longitude"])
+        except (KeyError, TypeError, ValueError):
+            lat = lng = None
+        if lat is not None and lng is not None:
+            if loc:
+                dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
+                geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False}
+            else:
+                geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False}
     today = _today(schedule)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
     if action == "check_in" and existing.get("check_in"):
@@ -337,14 +399,58 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             await notify_managers(emp["company_id"], "attendance_late", f"Geç giriş: {emp['full_name']}",
                                   f"{emp['full_name']} bugün {now_s} saatinde giriş yaptı — mesai başlangıcına göre {rec['late_minutes']} dk geç.", dedupe_key=f"late:{emp['_id']}:{today}")
     if action == "check_out":
+        if rec.get("assigned_overtime_hours"):
+            msg += f" Atanan fazla mesai {rec['assigned_overtime_hours']} sa (beklenen çıkış {rec.get('expected_end') or schedule.get('end')})."
         if rec.get("overtime_hours"):
-            msg += f" Bugün {rec['hours']} sa çalışıldı, {rec['overtime_hours']} sa fazla mesai otomatik yazıldı."
+            msg += f" Bugün {rec['hours']} sa çalışıldı, {rec['overtime_hours']} sa fazla mesai yazıldı."
         elif rec.get("early_leave_minutes"):
-            msg += f" Mesai bitişinden {rec['early_leave_minutes']} dk erken çıkış."
+            end_label = rec.get("expected_end") or schedule.get("end")
+            msg += f" Beklenen çıkış ({end_label}) saatinden {rec['early_leave_minutes']} dk erken çıkış."
         else:
             msg += f" Bugün {rec['hours']} sa çalışıldı."
     if geo:
         msg += f" (firma konumuna {geo['distance_m']} m)"
+    return {"status": "success", "record": rec, "message": msg}
+
+
+@router.put("/personnel/attendance/assign-overtime")
+async def assign_overtime(req: Dict[str, Any], request: Request):
+    """Yönetici personele gün bazlı fazla mesai atar; çıkış hesabı beklenen bitiş = mesai bitişi + atanan saat."""
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Fazla mesai atamak için yönetici yetkisi gerekir.")
+    emp = await _db.employees.find_one({"_id": req.get("employee_id")})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Personel bulunamadı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    try:
+        hours = _as_float(req.get("hours"), 0.0)
+    except Exception:
+        hours = 0.0
+    if hours < 0:
+        raise HTTPException(status_code=400, detail="Fazla mesai saati negatif olamaz.")
+    hours = round(hours, 2)
+    date = (req.get("date") or "").strip() or _today(schedule)
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Geçersiz tarih.")
+    note = (req.get("note") or "").strip()[:200]
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    patch = {
+        "assigned_overtime_hours": hours,
+        "assigned_overtime_by": str(user.get("_id") or user.get("id") or ""),
+        "assigned_overtime_at": _now(),
+        "assigned_overtime_note": note,
+    }
+    if req.get("note") is not None and note:
+        # keep attendance note separate unless empty
+        patch["note"] = note if not existing.get("note") else existing.get("note")
+    rec = await apply_day(emp, date, patch, source=existing.get("source") or "manager")
+    msg = f"{emp['full_name']} için {date} tarihine {hours} sa fazla mesai atandı (beklenen çıkış {rec.get('expected_end')})."
+    if hours == 0:
+        msg = f"{emp['full_name']} için {date} fazla mesai ataması kaldırıldı."
     return {"status": "success", "record": rec, "message": msg}
 
 
