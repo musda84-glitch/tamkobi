@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -10,7 +10,7 @@ import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
-import { cachedList, productFilter } from "../utils/dataSync";
+import { cachedList, productFilter, patchCached } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -85,21 +85,42 @@ export default function StockBarcodePage() {
   const [withVariants, setWithVariants] = useState(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const loadGenRef = useRef(0);
 
   const openDetail = (prod, tab = "images") => {
     setDetailTab(tab);
     setDetailProduct(prod);
   };
 
+  const productId = (p) => p?.id || p?._id;
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+
   const toggleFlag = async (prod, field) => {
+    const id = productId(prod);
+    if (!id) {
+      toast.error("Ürün kimliği bulunamadı.");
+      return;
+    }
+    const next = !(prod[field] !== false);
+    const prevVal = prod[field];
+    setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: next } : p)));
     try {
-      const res = await axios.put(`${API_URL}/products/${prod.id}`, { [field]: !(prod[field] !== false) });
-      setProducts((prev) => prev.map((p) => (p.id === res.data.id ? res.data : p)));
-      toast.success(field === "show_in_b2b" ? (res.data.show_in_b2b ? "Ürün B2B portalında gösteriliyor." : "Ürün B2B portalından gizlendi.") : (res.data.track_stock ? "Stok takibi açıldı." : "Stok takibi kapatıldı."));
-    } catch { toast.error("Güncellenemedi."); }
+      const res = await axios.put(`${API_URL}/products/${id}`, { [field]: next });
+      const updated = res.data;
+      if (!updated || !(updated.id || updated._id)) throw new Error("empty");
+      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated } : p)));
+      await patchCached("products", companyId, { [id]: { ...updated, [field]: updated[field] ?? next } });
+      toast.success(
+        field === "show_in_b2b"
+          ? (updated.show_in_b2b ? "Ürün B2B portalında gösteriliyor." : "Ürün B2B portalından gizlendi.")
+          : (updated.track_stock ? "Stok takibi açıldı." : "Stok takibi kapatıldı.")
+      );
+    } catch {
+      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: prevVal } : p)));
+      toast.error("Güncellenemedi.");
+    }
   };
 
-  const productId = (p) => p?.id || p?._id;
   const toggleSelect = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   const bulkCloseFlags = async ({ closeB2b = false, closeTrack = false }) => {
@@ -108,20 +129,27 @@ export default function StockBarcodePage() {
     if (!window.confirm(`${selected.length} üründe ${labels} kapatılsın mı?`)) return;
     setBulkBusy(true);
     try {
-      const body = { ids: selected, company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" };
+      const body = { ids: selected, company_id: companyId };
       if (closeB2b) body.show_in_b2b = false;
       if (closeTrack) body.track_stock = false;
       const r = await axios.post(`${API_URL}/products/bulk-flags`, body);
-      setProducts((prev) => prev.map((p) => {
-        const id = productId(p);
-        if (!selected.includes(id)) return p;
-        return {
-          ...p,
-          ...(closeB2b ? { show_in_b2b: false } : {}),
-          ...(closeTrack ? { track_stock: false } : {}),
-        };
-      }));
-      toast.success(`${r.data.modified ?? selected.length} ürün güncellendi (${labels} kapalı).`);
+      const matched = Number(r.data?.matched ?? 0);
+      const modified = Number(r.data?.modified ?? 0);
+      if (matched < 1) {
+        toast.error("Seçilen ürünler güncellenemedi (şirket/ürün eşleşmedi).");
+        return;
+      }
+      const patch = {
+        ...(closeB2b ? { show_in_b2b: false } : {}),
+        ...(closeTrack ? { track_stock: false } : {}),
+      };
+      setProducts((prev) => prev.map((p) => (selected.includes(productId(p)) ? { ...p, ...patch } : p)));
+      await patchCached(
+        "products",
+        companyId,
+        Object.fromEntries(selected.map((id) => [id, patch])),
+      );
+      toast.success(`${modified || matched} ürün güncellendi (${labels} kapalı).`);
       setSelected([]);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Toplu güncelleme başarısız.");
@@ -132,7 +160,9 @@ export default function StockBarcodePage() {
 
   const handleProductUpdated = (updated) => {
     setDetailProduct(updated);
-    setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    const id = productId(updated);
+    setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated } : p)));
+    if (id) patchCached("products", companyId, { [id]: updated });
   };
 
   const handleDeleteProduct = async (prod) => {
@@ -147,7 +177,6 @@ export default function StockBarcodePage() {
     }
   };
 
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const openReorder = async (productIds) => {
     try {
       const qs = productIds?.length ? `&product_ids=${productIds.join(",")}` : "";
@@ -203,17 +232,22 @@ export default function StockBarcodePage() {
   });
 
   const loadProducts = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     try {
       setLoading(true);
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       loadCategories();
-      axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => setUnits(r.data)).catch(() => {});
-      const rows = await cachedList("products", cid, { filter: productFilter({ category: filterCategory }), onCached: setProducts });
+      axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => { if (gen === loadGenRef.current) setUnits(r.data); }).catch(() => {});
+      const rows = await cachedList("products", cid, {
+        filter: productFilter({ category: filterCategory }),
+        onCached: (cachedRows) => { if (gen === loadGenRef.current) setProducts(cachedRows); },
+      });
+      if (gen !== loadGenRef.current) return;
       setProducts(rows);
     } catch (err) {
-      toast.error("Ürünler yüklenemedi.");
+      if (gen === loadGenRef.current) toast.error("Ürünler yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, [activeCompany, filterCategory, loadCategories]);
   useEffect(() => { loadProducts(); }, [loadProducts]);
@@ -514,15 +548,19 @@ export default function StockBarcodePage() {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
-                <th className="px-3 py-3 w-10">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleSelectAllFiltered}
-                    className="rounded border-slate-300"
-                    title="Filtrelenen tüm ürünleri seç"
-                    data-testid="stock-select-all"
-                  />
+                <th className="px-3 py-3 w-12">
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span className="text-[9px] font-bold normal-case tracking-normal text-slate-400">Seç</span>
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFiltered}
+                      className="rounded border-slate-300"
+                      title="Filtrelenen tüm ürünleri seç"
+                      aria-label="Filtrelenen tüm ürünleri seç"
+                      data-testid="stock-select-all"
+                    />
+                  </div>
                 </th>
                 <th className="px-4 py-3">Ürün & SKU</th>
                 <th className="px-4 py-3">Barkod (EAN-13)</th>
@@ -610,8 +648,8 @@ export default function StockBarcodePage() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
-                        <button onClick={() => toggleFlag(prod, "show_in_b2b")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.show_in_b2b !== false ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="B2B portalında göster/gizle" data-testid={`b2b-toggle-${prod.sku}`}>B2B {prod.show_in_b2b !== false ? "Açık" : "Kapalı"}</button>
-                        <button onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
+                        <button type="button" onClick={() => toggleFlag(prod, "show_in_b2b")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.show_in_b2b !== false ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="B2B portalında göster/gizle" data-testid={`b2b-toggle-${prod.sku}`}>B2B {prod.show_in_b2b !== false ? "Açık" : "Kapalı"}</button>
+                        <button type="button" onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-center w-[168px] min-w-[168px]">

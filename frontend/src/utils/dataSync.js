@@ -106,6 +106,30 @@ export async function cachedList(collection, companyId, { filter, onCached } = {
   }
 }
 
+
+/**
+ * Patch rows already stored in IndexedDB (e.g. after a local PUT / bulk update)
+ * so the next paint from cache does not revert UI changes.
+ */
+export async function patchCached(collection, companyId, patchById) {
+  if (!companyId || !patchById) return null;
+  const cached = await readCache(collection, companyId);
+  if (!cached?.items) return null;
+  const items = { ...cached.items };
+  let touched = 0;
+  for (const [id, patch] of Object.entries(patchById)) {
+    if (!id || !patch) continue;
+    const cur = items[id];
+    if (!cur) continue;
+    items[id] = { ...cur, ...patch, id: cur.id || id };
+    touched += 1;
+  }
+  if (!touched) return cached;
+  const next = { ...cached, items, savedAt: new Date().toISOString() };
+  await writeCache(collection, companyId, next);
+  return next;
+}
+
 export async function dropCached(collection, companyId) {
   try {
     const db = await openDb();
