@@ -1,0 +1,103 @@
+"""B2B AI sepet: Excel tablo okuma (AI anahtarı olmadan)."""
+import io
+import os
+import sys
+
+import requests
+from openpyxl import Workbook
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import server  # noqa: E402
+
+from conftest import API
+
+
+def _xlsx(headers, rows, *, title_row=None, extra_sheets=None) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    if title_row:
+        ws.append([title_row])
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    for name, h2, rows2 in extra_sheets or []:
+        w2 = wb.create_sheet(name)
+        w2.append(h2)
+        for r in rows2:
+            w2.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestB2bCartTableParse:
+    def test_stok_miktari_and_raf_columns(self):
+        data = _xlsx(
+            ["Ürün Adı", "Stok Kodu", "Raf", "Stok Miktarı"],
+            [["Duvar Rafı 60cm", "RAF-60", "A1", 5], ["Köşe Rafı", "RAF-KOSE", "B2", 2]],
+        )
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["product_name"] == "Duvar Rafı 60cm"
+        assert lines[0]["sku"] == "RAF-60"
+        assert lines[0]["quantity"] == 5
+        assert lines[1]["quantity"] == 2
+
+    def test_no_qty_defaults_to_one(self):
+        data = _xlsx(
+            ["Ürün Adı", "Stok Kodu", "Raf"],
+            [["Duvar Rafı 60cm", "RAF-60", "A1"], ["Köşe Rafı", "RAF-KOSE", "B2"]],
+        )
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 2
+        assert all(x["quantity"] == 1 for x in lines)
+
+    def test_talep_and_adedi_headers(self):
+        data = _xlsx(["Kod", "Malzeme", "Talep"], [["RAF-60", "Duvar Rafı", 3]])
+        lines = server._b2b_parse_cart_table("siparis.xlsx", data)
+        assert lines == [{"product_name": "Duvar Rafı", "sku": "RAF-60", "barcode": None, "quantity": 3}]
+
+        data2 = _xlsx(["Stokkodu", "Ürün Adı", "Adedi"], [["SKU1", "Test Ürün", 7]])
+        lines2 = server._b2b_parse_cart_table("a.xlsx", data2)
+        assert lines2[0]["quantity"] == 7
+        assert lines2[0]["sku"] == "SKU1"
+
+    def test_second_sheet_and_title_row(self):
+        data = _xlsx(
+            ["x"],
+            [["y"]],
+            extra_sheets=[("Liste", ["Ürün", "Adet"], [["Duvar Rafı", 2], ["Köşe Rafı", 4]])],
+        )
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["quantity"] == 2
+        assert lines[1]["product_name"] == "Köşe Rafı"
+
+        data2 = _xlsx(["Ürün Adı", "Adet"], [["Duvar Rafı", 4]], title_row="RAFLAR SİPARİŞ LİSTESİ")
+        lines2 = server._b2b_parse_cart_table("Raflar.xlsx", data2)
+        assert lines2 == [{"product_name": "Duvar Rafı", "sku": None, "barcode": None, "quantity": 4}]
+
+    def test_sample_ornek_xlsx(self):
+        path = os.path.join(os.path.dirname(__file__), "b2b_siparis_ornek.xlsx")
+        data = open(path, "rb").read()
+        lines = server._b2b_parse_cart_table("b2b_siparis_ornek.xlsx", data)
+        assert len(lines) >= 3
+        assert lines[0]["quantity"] == 3
+
+    def test_api_raflar_without_ai(self):
+        token = os.environ.get("TEST_B2B_TOKEN") or "9a89e4fd1a0e451c8461f1bccd9f5028"
+        data = _xlsx(
+            ["Ürün Adı", "Stok Kodu", "Raf", "Stok Miktarı"],
+            [["Nexus RGB Mekanik Gaming Klavye (Blue Switch)", "NEX-KYB", "A1", 2]],
+        )
+        r = requests.post(
+            f"{API}/public/b2b/{token}/ai-cart",
+            files={"file": ("Raflar.xlsx", data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            timeout=60,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("parse_mode") == "table"
+        assert body["total_lines"] >= 1
+        assert body["items"] or body["unmatched"]
