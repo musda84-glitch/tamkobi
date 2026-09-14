@@ -1534,6 +1534,7 @@ async def register(req: RegisterRequest, response: Response):
             "id": user_id,
             "email": email,
             "name": req.name,
+            "user_number": mongo_user.get("user_number"),
             "role": "admin",
             "company_ids": [company_id],
             "active_company_id": company_id
