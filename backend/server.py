@@ -2043,9 +2043,50 @@ _B2B_NAME_HEADERS = (
     "aciklama", "kalem", "name", "raf urunu", "urun tanimi",
 )
 _B2B_SKU_HEADERS = ("sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu", "malzeme kodu", "raf kodu")
-_B2B_BARCODE_HEADERS = ("barkod", "barcode", "ean", "gtin")
+_B2B_BARCODE_HEADERS = (
+    "barkod", "barcode", "ean", "gtin", "upc",
+    "ean code", "eancode", "ean 13", "ean13", "ean 8", "ean8",
+    "gtin 13", "gtin13", "gtin 14", "gtin14",
+    "barkod no", "barkod numarasi", "barcode no", "product ean", "product barcode",
+)
 # Raf/konum sütunları ürün adı veya adet sanılmasın
 _B2B_SKIP_HEADERS = ("raf", "raf no", "raf kodu", "lokasyon", "konum", "depo", "depo adi", "sira", "no", "satir")
+_B2B_BARCODE_TOKENS = ("barkod", "barcode", "ean", "gtin", "upc")
+
+
+def _b2b_norm_code(val) -> Optional[str]:
+    """Excel/CSV hücrelerini barkod/EAN/SKU için normalize et (869…6789.0 → 869…6789)."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, float):
+        if val != val:  # NaN
+            return None
+        if abs(val) >= 1e11 and abs(val - round(val)) < 1e-6:
+            return str(int(round(val)))
+        if abs(val - round(val)) < 1e-9 and abs(val) < 1e16:
+            return str(int(round(val)))
+        s = f"{val:.0f}" if abs(val) >= 1e11 else str(val).strip()
+    elif isinstance(val, int):
+        return str(val)
+    else:
+        s = str(val).strip()
+    if not s or s.lower() in ("none", "nan", "null"):
+        return None
+    # Bilimsel gösterim / sondaki .0
+    if re.fullmatch(r"\d+(\.0+)?", s):
+        return s.split(".", 1)[0]
+    if re.fullmatch(r"\d+(\.\d+)?[eE][+-]?\d+", s):
+        try:
+            return str(int(round(float(s))))
+        except (TypeError, ValueError):
+            return s
+    # Aradaki boşluk/tire temizliği (yalnızca rakam+ayraç ise)
+    compact = re.sub(r"[\s\-]", "", s)
+    if re.fullmatch(r"\d{8,14}", compact):
+        return compact
+    return s
 
 
 def _b2b_parse_qty(val) -> int:
@@ -2066,7 +2107,7 @@ def _b2b_parse_qty(val) -> int:
         return 0
 
 
-def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None) -> Optional[int]:
+def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None, token_hints: tuple = ()) -> Optional[int]:
     cand = set(candidates)
     skip = skip or set()
     for i, n in enumerate(norms):
@@ -2079,6 +2120,15 @@ def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None
             continue
         if any(n == c or n.startswith(c + " ") or n.endswith(" " + c) or f" {c} " in f" {n} " for c in candidates):
             return i
+    if token_hints:
+        for i, n in enumerate(norms):
+            if not n or n in skip:
+                continue
+            parts = set(n.split())
+            # "eancode" gibi birleşik yazımlar
+            glued = n.replace(" ", "")
+            if any(t in parts or glued == t or glued.startswith(t) or glued.endswith(t) for t in token_hints):
+                return i
     return None
 
 
@@ -2143,11 +2193,12 @@ def _b2b_lines_from_table(header: list, body: list) -> list:
     skip = set(_B2B_SKIP_HEADERS)
     qi = _b2b_qty_col_index(norms, body)
     ni = _b2b_col_index(norms, _B2B_NAME_HEADERS, skip=skip)
-    si = _b2b_col_index(norms, _B2B_SKU_HEADERS, skip=skip)
-    bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS, skip=skip)
+    bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS, skip=skip, token_hints=_B2B_BARCODE_TOKENS)
+    # Barkod sütunu SKU sanılmasın
+    sku_skip = skip | ({norms[bi]} if bi is not None else set())
+    si = _b2b_col_index(norms, _B2B_SKU_HEADERS, skip=sku_skip)
     default_qty = qi is None
     if ni is None and si is None and bi is None and header:
-        # İlk ürün benzeri sütun (raf/no atla)
         for i, n in enumerate(norms):
             if n not in skip and n not in set(_B2B_QTY_HEADERS):
                 ni = i
@@ -2156,7 +2207,7 @@ def _b2b_lines_from_table(header: list, body: list) -> list:
             ni = 0
     if qi is None and ni is None and si is None and bi is None:
         return []
-    lines = []
+    out = []
     for row in body:
         if default_qty:
             qty = 1
@@ -2165,22 +2216,27 @@ def _b2b_lines_from_table(header: list, body: list) -> list:
             if qty <= 0:
                 continue
         name_v = str(row[ni]).strip() if ni is not None and ni < len(row) and row[ni] not in (None, "") else ""
-        sku_v = str(row[si]).strip() if si is not None and si < len(row) and row[si] not in (None, "") else None
-        bar_v = str(row[bi]).strip() if bi is not None and bi < len(row) and row[bi] not in (None, "") else None
+        sku_v = _b2b_norm_code(row[si]) if si is not None and si < len(row) and row[si] not in (None, "") else None
+        bar_v = _b2b_norm_code(row[bi]) if bi is not None and bi < len(row) and row[bi] not in (None, "") else None
+        # Tek sütunda yalnızca EAN/barkod varsa barcode alanına yaz
+        if not bar_v:
+            for cand in (sku_v, name_v):
+                compact = re.sub(r"[\s\-]", "", cand or "")
+                if re.fullmatch(r"\d{8,14}", compact):
+                    bar_v = compact
+                    break
         if not name_v and not sku_v and not bar_v:
             continue
-        # Başlık / özet satırlarını ele
         joined = _alias_key(name_v or sku_v or "")
         if joined in norms or joined in ("toplam", "genel toplam", "sum"):
             continue
-        lines.append({
+        out.append({
             "product_name": name_v or sku_v or bar_v,
             "sku": sku_v,
             "barcode": bar_v,
             "quantity": qty,
         })
-    return lines
-
+    return out
 
 def _b2b_guess_table_name(filename: str, data: bytes) -> str:
     """Uzantı yoksa/yanlışsa içerikten tablo dosya adı türet (xlsx=ZIP/PK)."""
@@ -2247,7 +2303,12 @@ def _b2b_parse_cart_text_lines(text: str) -> list:
 async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     import difflib
     prods = await db.products.find({"company_id": company_id, "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
-    idx = {str(k).lower(): p for p in prods for k in (p.get("sku"), p.get("barcode")) if k}
+    idx = {}
+    for p in prods:
+        for k in (p.get("sku"), p.get("barcode")):
+            nk = _b2b_norm_code(k)
+            if nk:
+                idx[nk.lower()] = p
     names = {p["name"].lower(): p for p in prods if p.get("name")}
     by_id = {p["_id"]: p for p in prods}
     aliases = {r["alias"]: r["product_id"] for r in await db.b2b_product_aliases.find({"company_id": company_id}).to_list(5000) if r.get("alias") and r.get("product_id")}
@@ -2256,7 +2317,12 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     for it in lines or []:
         qty = max(1, int(float(it.get("quantity") or 1)))
         requested = it.get("product_name") or it.get("sku") or it.get("barcode") or "?"
-        p = idx.get(str(it.get("barcode") or "").lower()) or idx.get(str(it.get("sku") or "").lower())
+        codes = []
+        for raw in (it.get("barcode"), it.get("sku"), it.get("product_name"), requested):
+            nk = _b2b_norm_code(raw)
+            if nk and nk.lower() not in {c.lower() for c in codes}:
+                codes.append(nk)
+        p = next((idx.get(c.lower()) for c in codes if idx.get(c.lower())), None)
         conf, learned = (1.0, False) if p else (0.0, False)
         if not p:
             ak = _alias_key(requested)
@@ -2280,7 +2346,6 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     if used_aliases:
         await db.b2b_product_aliases.update_many({"company_id": company_id, "alias": {"$in": used_aliases}}, {"$inc": {"hits": 1}})
     return items, unmatched
-
 
 @api_router.post("/public/b2b/{token}/ai-cart")
 async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
