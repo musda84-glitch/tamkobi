@@ -2033,25 +2033,35 @@ def _alias_key(s: str) -> str:
 
 
 _B2B_QTY_HEADERS = (
-    "adet", "adedi", "ad", "miktar", "miktari", "qty", "quantity", "amount",
+    "adet", "adedi", "miktar", "miktari", "qty", "quantity", "amount",
     "siparis adedi", "siparis miktari", "siparis", "order qty", "talep", "talep adedi",
-    "stok miktari", "mevcut", "mevcut stok", "sayi", "adet sayisi", "order quantity",
+    "stok miktari", "stok", "mevcut", "mevcut stok", "eldeki miktar", "kullanilabilir",
+    "depo miktari", "kalan", "sayi", "adet sayisi", "order quantity", "stock", "stock qty",
 )
-_B2B_QTY_TOKENS = ("adet", "adedi", "miktar", "miktari", "qty", "quantity", "talep", "siparis")
+# "ad" bilerek yok: Türkçe "Ad" (ürün adı) sütunu adet sanılmasın
+_B2B_QTY_TOKENS = ("adet", "adedi", "miktar", "miktari", "qty", "quantity", "talep", "siparis", "stok")
 _B2B_NAME_HEADERS = (
-    "urun", "urun adi", "product", "product name", "malzeme", "stok adi",
-    "aciklama", "kalem", "name", "raf urunu", "urun tanimi",
+    "urun", "urun adi", "product", "product name", "malzeme", "malzeme adi", "stok adi",
+    "aciklama", "kalem", "name", "ad", "adi", "raf urunu", "urun tanimi", "stok ismi",
 )
-_B2B_SKU_HEADERS = ("sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu", "malzeme kodu", "raf kodu")
+_B2B_SKU_HEADERS = (
+    "sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu",
+    "malzeme kodu", "urun kod", "stok no", "product code",
+)
 _B2B_BARCODE_HEADERS = (
     "barkod", "barcode", "ean", "gtin", "upc",
     "ean code", "eancode", "ean 13", "ean13", "ean 8", "ean8",
     "gtin 13", "gtin13", "gtin 14", "gtin14",
-    "barkod no", "barkod numarasi", "barcode no", "product ean", "product barcode",
+    "barkod no", "barkod numarasi", "barcode no", "product ean", "product barcode", "barkodu",
 )
-# Raf/konum sütunları ürün adı veya adet sanılmasın
-_B2B_SKIP_HEADERS = ("raf", "raf no", "raf kodu", "lokasyon", "konum", "depo", "depo adi", "sira", "no", "satir")
+# Raf/konum + fiyat/meta — ürün adı veya adet sanılmasın
+_B2B_SKIP_HEADERS = (
+    "raf", "raf no", "raf kodu", "lokasyon", "konum", "depo", "depo adi", "sira", "no", "satir",
+    "min stok", "minimum stok", "kategori", "birim", "fiyat", "alis fiyati", "satis fiyati",
+    "stok degeri", "kdv", "para birimi", "currency", "birim fiyat", "sale price", "purchase price",
+)
 _B2B_BARCODE_TOKENS = ("barkod", "barcode", "ean", "gtin", "upc")
+_B2B_QTY_SKIP_TOKENS = ("min", "minimum", "fiyat", "tutar", "deger", "kdv", "oran")
 
 
 def _b2b_norm_code(val) -> Optional[str]:
@@ -2135,21 +2145,35 @@ def _b2b_col_index(norms: list, candidates: tuple, *, skip: Optional[set] = None
 def _b2b_qty_col_index(norms: list, body: list) -> Optional[int]:
     """Adet sütununu başlıktan veya sayısal yoğunluktan bul."""
     skip = set(_B2B_SKIP_HEADERS) | set(_B2B_SKU_HEADERS) | set(_B2B_BARCODE_HEADERS) | set(_B2B_NAME_HEADERS)
-    qi = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip)
-    if qi is not None:
+
+    def _qty_blocked(n: str) -> bool:
+        if not n or n in skip:
+            return True
+        parts = set(n.split())
+        if "kod" in parts or "barkod" in parts or any(t in parts for t in _B2B_QTY_SKIP_TOKENS):
+            return True
+        if any(x in n for x in ("fiyat", "tutar", "deger", "kategori", "birim fiyat")):
+            return True
+        return False
+
+    # Önce kesin başlıklar (min stok / fiyat hariç)
+    for i, n in enumerate(norms):
+        if _qty_blocked(n):
+            continue
+        if n in _B2B_QTY_HEADERS:
+            return i
+    qi = _b2b_col_index(norms, _B2B_QTY_HEADERS, skip=skip | {n for n in norms if n and _qty_blocked(n)})
+    if qi is not None and not _qty_blocked(norms[qi]):
         return qi
     for i, n in enumerate(norms):
-        if not n or n in skip or n in ("fiyat", "tutar", "birim fiyat", "sale price", "alis", "satis"):
+        if _qty_blocked(n):
             continue
         if any(tok in n.split() or n.endswith(tok) or n.startswith(tok) for tok in _B2B_QTY_TOKENS):
-            # "stok kodu" / "urun kodu" gibi kod sütunlarını ele
-            if "kod" in n or "barkod" in n:
-                continue
             return i
-    # Sayısal değer oranı en yüksek sütun (ürün kodu hariç)
+    # Sayısal değer oranı en yüksek sütun (ürün kodu / fiyat hariç)
     best_i, best_score = None, 0.0
     for i, n in enumerate(norms):
-        if n in skip or (n and ("kod" in n or "barkod" in n or "fiyat" in n or "tutar" in n)):
+        if _qty_blocked(n or ""):
             continue
         if not body:
             continue
@@ -2160,32 +2184,116 @@ def _b2b_qty_col_index(norms: list, body: list) -> Optional[int]:
     return best_i if best_score >= 0.5 else None
 
 
-def _b2b_iter_tables(filename: str, data: bytes):
-    """Aktif sayfa + diğer Excel sayfalarını sırayla ver (CSV tek tablo)."""
+def _b2b_rows_to_table(rows: list) -> Optional[tuple]:
+    """Ham satır listesinden (başlık, gövde) üret; başlığı ilk 25 satırda ara."""
+    if not rows:
+        return None
+    header_idx = next(
+        (
+            i
+            for i, r in enumerate(rows[:25])
+            if sum(1 for c in r if isinstance(c, str) and c.strip())
+            >= max(2, len([c for c in r if c not in (None, "")]) * 0.6)
+        ),
+        0,
+    )
+    header = [str(c).strip() if c not in (None, "") else f"Sütun {i + 1}" for i, c in enumerate(rows[header_idx])]
+    body = [list(r) + [None] * (len(header) - len(r)) for r in rows[header_idx + 1:]]
+    if not header:
+        return None
+    return header, body
+
+
+def _b2b_load_xlsx_sheet_rows(data: bytes, *, data_only: bool) -> list:
+    """Tüm sayfaları satır listesi olarak döndür (boş sayfalar atlanır)."""
     import io as _io
-    name = (filename or "").lower()
-    yield migration._read_table(filename, data)
-    if not name.endswith((".xlsx", ".xlsm")):
-        return
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(_io.BytesIO(data), read_only=True, data_only=True)
-    except Exception:
-        return
-    active = wb.active.title if wb.active is not None else None
+    import openpyxl
+    wb = openpyxl.load_workbook(_io.BytesIO(data), read_only=True, data_only=data_only)
+    out = []
     for ws in wb.worksheets:
-        if ws.title == active:
-            continue
         rows = [list(r) for r in ws.iter_rows(values_only=True) if r and any(c not in (None, "") for c in r)]
-        if not rows:
-            continue
-        header_idx = next(
-            (i for i, r in enumerate(rows[:10]) if sum(1 for c in r if isinstance(c, str) and c.strip()) >= max(2, len([c for c in r if c not in (None, "")]) * 0.6)),
-            0,
-        )
-        header = [str(c).strip() if c not in (None, "") else f"Sütun {i + 1}" for i, c in enumerate(rows[header_idx])]
-        body = [list(r) + [None] * (len(header) - len(r)) for r in rows[header_idx + 1:]]
-        yield header, body
+        if rows:
+            out.append((ws.title, rows))
+    return out
+
+
+def _b2b_looks_like_csv(data: bytes) -> bool:
+    if not data or data.startswith(b"PK"):
+        return False
+    if data.startswith(b"\xd0\xcf\x11\xe0"):  # OLE / eski xls
+        return False
+    sample = data[:4096]
+    if sample.startswith(b"%PDF"):
+        return False
+    try:
+        text = sample.decode("utf-8-sig")
+    except Exception:
+        try:
+            text = sample.decode("latin-1")
+        except Exception:
+            return False
+    if not text.strip():
+        return False
+    # En az bir satırda ayırıcı + metin
+    for line in text.splitlines()[:5]:
+        if sum(line.count(d) for d in ";,\t|") >= 1 and any(ch.isalpha() for ch in line):
+            return True
+    return False
+
+
+def _b2b_iter_tables(filename: str, data: bytes):
+    """CSV/Excel tablolarını sayfa sayfa ver. Boş aktif sayfa diğer sayfaları engellemez."""
+    name = (filename or "").lower()
+
+    # .xlsx uzantılı ama aslında CSV/metin olan indirmeler (Excel “CSV’yi xlsx diye kaydet”)
+    if _b2b_looks_like_csv(data) and not data.startswith(b"PK"):
+        try:
+            yield migration._read_table(
+                (filename if name.endswith((".csv", ".txt")) else "siparis.csv"),
+                data,
+            )
+        except HTTPException:
+            pass
+        return
+
+    if name.endswith((".csv", ".txt")) or (not name.endswith((".xlsx", ".xlsm", ".xls")) and _b2b_looks_like_csv(data)):
+        try:
+            yield migration._read_table(filename if name.endswith((".csv", ".txt")) else "siparis.csv", data)
+        except HTTPException:
+            return
+        return
+
+    if not (name.endswith((".xlsx", ".xlsm")) or (data or b"").startswith(b"PK")):
+        # Son çare: migration okuyucusu
+        try:
+            yield migration._read_table(filename, data)
+        except HTTPException:
+            return
+        return
+
+    sheet_rows = []
+    try:
+        sheet_rows = _b2b_load_xlsx_sheet_rows(data, data_only=True)
+    except Exception:
+        sheet_rows = []
+    # Formül sonuçları cache’sizse data_only boş kalabilir → ham değerlerle dene
+    if not sheet_rows:
+        try:
+            sheet_rows = _b2b_load_xlsx_sheet_rows(data, data_only=False)
+        except Exception:
+            sheet_rows = []
+    if not sheet_rows:
+        # openpyxl başarısızsa eski yol (tek sayfa) — hata yut
+        try:
+            yield migration._read_table(filename if name.endswith((".xlsx", ".xlsm")) else "siparis.xlsx", data)
+        except HTTPException:
+            return
+        return
+
+    for _title, rows in sheet_rows:
+        table = _b2b_rows_to_table(rows)
+        if table:
+            yield table
 
 
 def _b2b_lines_from_table(header: list, body: list) -> list:
@@ -2372,15 +2480,33 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     # Uzantı boş/yanlış olsa da ZIP(PK) içeriği xlsx olarak denenir.
     try:
         parsed_items = _b2b_parse_cart_table(file.filename, data)
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        # Tablo okuma "dosya boş" gibi sert hataları AI yedeğine düşürmek için yut
+        if he.status_code == 400:
+            logger.warning("B2B cart table parse HTTP 400: %s", he.detail)
+            parsed_items = []
+        else:
+            raise
     except Exception as e:
         logger.warning("B2B cart table parse failed: %s", e)
         parsed_items = []
     if not parsed_items:
-        text = await _file_to_text(file, data)
+        try:
+            text = await _file_to_text(file, data)
+        except HTTPException as he:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Raflar.xlsx / sipariş listesi okunamadı. Dosyanın gerçek .xlsx olduğundan emin olun "
+                    "(eski .xls ise Excel’de .xlsx kaydedin). Ürün adı veya kod/EAN + Adet/Stok Miktarı sütunları olsun; "
+                    f"adet yoksa her satır 1 sayılır. ({he.detail})"
+                ),
+            )
         if len(text.strip()) < 10:
-            raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
+            raise HTTPException(
+                status_code=400,
+                detail="Dosyada okunabilir satır bulunamadı. Excel’de Ürün/Kod/EAN + Adet sütunları olan bir sayfa olduğundan emin olun.",
+            )
         try:
             parsed = await ai_service_extract_orders(text)
             parsed_items = [it for o in (parsed.get("orders") or []) for it in (o.get("items") or [])]
@@ -8270,12 +8396,30 @@ async def _file_to_text(file: UploadFile, data: bytes) -> str:
             return "\n".join((p.extract_text() or "") for p in reader.pages[:15])
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
-    if name.endswith((".xlsx", ".xlsm", ".xls", ".csv", ".txt")):
+    if name.endswith((".xlsx", ".xlsm", ".xls", ".csv", ".txt")) or (data[:2] == b"PK"):
         if name.endswith(".xls") and not name.endswith(".xlsx") and not name.endswith(".xlsm"):
             raise HTTPException(status_code=400, detail="Eski .xls dosyalarını Excel’de .xlsx olarak kaydedip yeniden yükleyin.")
-        header, body = migration._read_table(file.filename, data)
-        lines = [" | ".join(header)] + [" | ".join("" if c is None else str(c) for c in r) for r in body[:400]]
-        return "\n".join(lines)
+        # Boş aktif sayfa / çok sayfalı dosyalar için B2B okuyucusunu kullan
+        chunks = []
+        try:
+            for header, body in _b2b_iter_tables(file.filename or "siparis.xlsx", data):
+                chunks.append(" | ".join(header))
+                chunks.extend(" | ".join("" if c is None else str(c) for c in r) for r in body[:400])
+                if len(chunks) > 500:
+                    break
+        except Exception:
+            chunks = []
+        if chunks:
+            return "\n".join(chunks)
+        try:
+            header, body = migration._read_table(file.filename or "siparis.xlsx", data)
+            return "\n".join(
+                [" | ".join(header)] + [" | ".join("" if c is None else str(c) for c in r) for r in body[:400]]
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Dosya okunamadı: {str(e)[:100]}")
     return data.decode("utf-8", "ignore")
 
 @api_router.post("/ai/order-extract")

@@ -142,3 +142,61 @@ class TestB2bCartTableParse:
         )
         assert r3.status_code == 400
         assert "xlsx" in (r3.json().get("detail") or "").lower()
+
+    def test_empty_first_sheet_reads_second(self):
+        data = _xlsx(
+            ["x"],
+            [],
+            extra_sheets=[("Liste", ["Ürün Adı", "Adet"], [["Duvar Rafı", 2], ["Köşe Rafı", 3]])],
+        )
+        # empty body on first sheet: still openpyxl writes header-only — simulate truly empty via openpyxl
+        from openpyxl import Workbook
+        import io
+        wb = Workbook()
+        wb.active.title = "Bos"
+        ws = wb.create_sheet("Liste")
+        ws.append(["Ürün Adı", "Adet"])
+        ws.append(["Duvar Rafı", 2])
+        ws.append(["Köşe Rafı", 3])
+        buf = io.BytesIO()
+        wb.save(buf)
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", buf.getvalue())
+        assert len(lines) == 2
+        assert lines[0]["quantity"] == 2
+        assert lines[1]["product_name"] == "Köşe Rafı"
+
+    def test_ad_column_is_name_not_qty(self):
+        data = _xlsx(["Ad", "Kod"], [["Duvar Rafı", "R1"], ["Köşe Rafı", "R2"]])
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["product_name"] == "Duvar Rafı"
+        assert lines[0]["sku"] == "R1"
+        assert lines[0]["quantity"] == 1
+
+    def test_stock_export_stok_column(self):
+        data = _xlsx(
+            ["SKU", "Barkod", "Ürün", "Kategori", "Birim", "Stok", "Min. Stok", "Alış Fiyatı", "Satış Fiyatı"],
+            [["NEX-KYB", "8690", "Klavye", "Genel", "Adet", 2, 1, 100, 200],
+             ["NEX-CHG", "8691", "Şarj", "Genel", "Adet", 5, 1, 50, 80]],
+        )
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["quantity"] == 2
+        assert lines[1]["quantity"] == 5
+        assert lines[0]["barcode"] == "8690"
+
+    def test_csv_bytes_with_xlsx_filename(self):
+        csv = "\ufeffÜrün Adı;Stok Kodu;Adet\nDuvar Rafı;RAF-1;4\n".encode("utf-8")
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", csv)
+        assert lines == [{"product_name": "Duvar Rafı", "sku": "RAF-1", "barcode": None, "quantity": 4}]
+
+    def test_mevcut_stok_and_deep_header(self):
+        data = _xlsx(
+            ["Stok Kodu", "Ürün Adı", "Barkod", "Mevcut Stok"],
+            [["RAF-60", "Duvar Rafı", "8690123456789", 12]],
+            title_row="RAFLAR LİSTESİ",
+        )
+        lines = server._b2b_parse_cart_table("Raflar.xlsx", data)
+        assert len(lines) == 1
+        assert lines[0]["quantity"] == 12
+        assert lines[0]["barcode"] == "8690123456789"

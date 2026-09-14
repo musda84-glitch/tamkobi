@@ -25,7 +25,13 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
       const unmatched = Array.isArray(r.data?.unmatched) ? r.data.unmatched : [];
       setRes({ ...r.data, items: items.map((i) => ({ ...i, on: true })), unmatched });
       setPick({});
-      if (!items.length && !unmatched.length) toast.error("Listedeki ürünler katalogla eşleşmedi.");
+      if (!items.length && !unmatched.length) {
+        toast.error(
+          r.data?.parse_mode === "table"
+            ? "Dosya okundu ama satırlar katalogla eşleşmedi. Ürün adı/kod/EAN’leri kontrol edin."
+            : "Dosyadan ürün satırı çıkarılamadı. Ürün adı veya kod/EAN + Adet sütunları olan .xlsx/.csv deneyin.",
+        );
+      }
     } catch (e) {
       const d = e.response?.data?.detail;
       toast.error(typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg || x).join(" ") : "Dosya işlenemedi.");
