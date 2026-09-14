@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>TamKobi eklenti ayarları</title>
+    <link rel="stylesheet" href="popup.css" />
+    <style>
+      body {
+        width: auto;
+        min-width: 320px;
+        padding: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hdr" style="border: 0; padding: 0 0 12px">
+      <div class="brand">TamKobi eklenti</div>
+      <div class="sub">Kurulum adresinizi girin (panel / web / sistem aynı kök).</div>
+    </header>
+    <section class="cfg" style="border: 0; padding: 0">
+      <label for="baseUrl">Kurulum adresi</label>
+      <div class="row">
+        <input id="baseUrl" type="url" placeholder="https://tamkobi.com" spellcheck="false" />
+        <button type="button" id="saveBase" class="save">Kaydet</button>
+      </div>
+      <p id="status" class="status" hidden></p>
+    </section>
+    <script src="popup.js"></script>
+  </body>
+</html>

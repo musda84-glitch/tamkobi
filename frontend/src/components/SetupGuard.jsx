@@ -4,9 +4,16 @@ import axios from "axios";
 import { API_URL } from "../api/client";
 import { readInstalledCache, resolveSetupStatus, writeInstalledCache } from "../utils/setupStatus";
 
+/**
+ * Kurulum durumunu önbellekten boyayıp arka planda doğrular.
+ * Önbellek yoksa kısa bir bekleme gösterir (ilk kurulum / temiz tarayıcı).
+ */
 export default function SetupGuard({ children }) {
   const location = useLocation();
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useState(() => {
+    const cached = readInstalledCache();
+    return cached ? { installed: true, fromCache: true } : null;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +36,10 @@ export default function SetupGuard({ children }) {
 
   if (!status) {
     return (
-      <div className="min-h-screen bg-[#0b0f1a] text-slate-400 flex items-center justify-center text-xs" data-testid="setup-guard-loading">
+      <div
+        className="min-h-screen bg-[#0b0f1a] text-slate-400 flex items-center justify-center text-xs"
+        data-testid="setup-guard-loading"
+      >
         Yükleniyor…
       </div>
     );
