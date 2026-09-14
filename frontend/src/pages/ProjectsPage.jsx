@@ -11,6 +11,7 @@ import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendAp
 import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -21,9 +22,10 @@ const ImageStrip = ({ entity, doc, onUpdated }) => {
   const [busy, setBusy] = useState(false);
   const docId = doc?.id || doc?._id;
   const upload = async (e) => {
-    const f = e.target.files?.[0];
+    const raw = e.target.files?.[0];
     e.target.value = "";
-    if (!f || !docId) { toast.error("Önce kaydı oluşturun, sonra görsel ekleyin."); return; }
+    if (!raw || !docId) { toast.error("Önce kaydı oluşturun, sonra görsel ekleyin."); return; }
+    const f = await compressImageFile(raw);
     const fd = new FormData();
     fd.append("file", f);
     setBusy(true);

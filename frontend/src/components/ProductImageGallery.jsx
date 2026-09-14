@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ImagePlus, Star, Trash2, Loader2, ImageIcon } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 export const ProductImageGallery = ({ product, onUpdated }) => {
   const fileRef = useRef(null);
@@ -12,14 +13,16 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
   const images = product.images?.length ? product.images : (product.image_url ? [product.image_url] : []);
 
   const handleUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const raw = e.target.files?.[0];
+    if (!raw) return;
+    const file = await compressImageFile(raw);
     const form = new FormData();
     form.append("file", file);
     try {
       setUploading(true);
       const res = await axios.post(`${API_URL}/products/${product.id}/image`, form, { withCredentials: true });
-      toast.success("Görsel yüklendi.");
+      const saved = res.data?.saved_pct;
+      toast.success(saved ? `Görsel yüklendi (≈%${saved} küçültüldü).` : "Görsel yüklendi.");
       onUpdated(res.data.product);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Görsel yüklenemedi.");

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Navigation, Ruler, Calendar, User, MapPin, ImagePlus } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const STATUSES = [["planned", "Planlandı"], ["done", "Yapıldı"], ["quoted", "Teklif Verildi"], ["cancelled", "İptal"]];
@@ -17,9 +18,10 @@ export const SurveyDetailModal = ({ survey, onClose, onChanged }) => {
   const [images, setImages] = useState(survey.images || []);
   const [uploading, setUploading] = useState(false);
   const upload = async (e) => {
-    const f = e.target.files?.[0];
+    const raw = e.target.files?.[0];
     e.target.value = "";
-    if (!f || !surveyId) { toast.error("Keşif kaydı bulunamadı."); return; }
+    if (!raw || !surveyId) { toast.error("Keşif kaydı bulunamadı."); return; }
+    const f = await compressImageFile(raw);
     const fd = new FormData();
     fd.append("file", f);
     setUploading(true);

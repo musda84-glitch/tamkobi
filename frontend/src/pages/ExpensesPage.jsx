@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { ExportButtons } from "../components/ExportButtons";
 import { BudgetPanel } from "../components/BudgetPanel";
 import { FxPicker, fmtMoney } from "../components/FxPicker";
@@ -49,7 +50,19 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   }, [companyId]);
   const isEdit = !!initial.id;
   const calc = useMemo(() => { const a = Number(f.amount) || 0, r = Number(f.vat_rate) || 0; const net = f.vat_included ? a / (1 + r / 100) : a; return { net, vat: net * r / 100, total: net * (1 + r / 100) }; }, [f.amount, f.vat_rate, f.vat_included]);
-  const upload = async (file) => { if (!file) return; const fd = new FormData(); fd.append("file", file); try { const r = await axios.post(`${API_URL}/files/upload?entity=expense&entity_id=${f.id || "new"}&company_id=${companyId}`, fd); setF({ ...f, receipt_url: r.data.url }); toast.success("Fiş/fatura eklendi."); } catch (err) { toast.error(err.response?.data?.detail || "Yüklenemedi."); } };
+  const upload = async (file) => {
+    if (!file) return;
+    const compressed = await compressImageFile(file);
+    const fd = new FormData();
+    fd.append("file", compressed);
+    try {
+      const r = await axios.post(`${API_URL}/files/upload?entity=expense&entity_id=${f.id || "new"}&company_id=${companyId}`, fd);
+      setF({ ...f, receipt_url: r.data.url });
+      toast.success(r.data?.saved_pct ? `Fiş/fatura eklendi (≈%${r.data.saved_pct} küçültüldü).` : "Fiş/fatura eklendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Yüklenemedi.");
+    }
+  };
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {

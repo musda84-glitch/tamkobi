@@ -11,6 +11,7 @@ import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { UsersRolesPanel } from "../components/UsersRolesPanel";
 import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
 import { MigrationPanel } from "../components/MigrationPanel";
@@ -31,7 +32,20 @@ const CompanyForm = ({ companyId }) => {
   if (!c) return null;
   const set = (k, v) => setC({ ...c, [k]: v });
   const save = async (e) => { e.preventDefault(); setBusy(true); try { await axios.put(`${API_URL}/companies/${companyId}`, c); toast.success("Şirket bilgileri kaydedildi."); } catch { toast.error("Kaydedilemedi."); } finally { setBusy(false); } };
-  const uploadLogo = async (e) => { const f = e.target.files?.[0]; if (!f) return; const fd = new FormData(); fd.append("file", f); try { const r = await axios.post(`${API_URL}/files/upload?entity=company&entity_id=${companyId}&company_id=${companyId}`, fd); setC({ ...c, logo_url: r.data.url }); toast.success("Logo yüklendi."); } catch (err) { toast.error(err.response?.data?.detail || "Logo yüklenemedi."); } };
+  const uploadLogo = async (e) => {
+    const raw = e.target.files?.[0];
+    if (!raw) return;
+    const f = await compressImageFile(raw);
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await axios.post(`${API_URL}/files/upload?entity=company&entity_id=${companyId}&company_id=${companyId}`, fd);
+      setC({ ...c, logo_url: r.data.url });
+      toast.success(r.data?.saved_pct ? `Logo yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Logo yüklendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Logo yüklenemedi.");
+    }
+  };
   const fields = [["name", "Şirket Ünvanı"], ["tax_number", "VKN / TCKN"], ["tax_office", "Vergi Dairesi"], ["mersis", "MERSİS No"], ["trade_registry", "Ticaret Sicil No"], ["phone", "Telefon"], ["email", "E-posta"], ["website", "Web Sitesi"], ["address", "Adres"], ["city", "Şehir"], ["bank_name", "Banka"], ["iban", "IBAN"], ["e_invoice_alias", "GİB Posta Kutusu (PK)"]];
   return (
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs" data-testid="company-form">

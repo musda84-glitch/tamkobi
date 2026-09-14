@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
 
@@ -22,7 +23,14 @@ const Docs = ({ card, companyId, reload }) => {
   const upload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     setBusy(true);
-    try { const fd = new FormData(); fd.append("file", file); await axios.post(`${API_URL}/files/upload?entity=employee&entity_id=${card.employee.id}&company_id=${companyId}`, fd); toast.success("Belge yüklendi."); reload(); }
+    try {
+      const fd = new FormData();
+      const compressed = file.type?.startsWith("image/") ? await compressImageFile(file) : file;
+      fd.append("file", compressed);
+      await axios.post(`${API_URL}/files/upload?entity=employee&entity_id=${card.employee.id}&company_id=${companyId}`, fd);
+      toast.success("Belge yüklendi.");
+      reload();
+    }
     catch (err) { toast.error(err.response?.data?.detail || "Yüklenemedi."); } finally { setBusy(false); if (ref.current) ref.current.value = ""; }
   };
   const del = async (d) => { if (!window.confirm("Belge silinsin mi?")) return; await axios.delete(`${API_URL}/files/${d.id}`); reload(); };

@@ -3,8 +3,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Inbox, Loader2, Paperclip, Send, X } from "lucide-react";
-import { API_URL } from "../../context/AuthContext";
-import { resolveImageUrl } from "../../utils/imageUrl";
+import { API_URL } from "../context/AuthContext";
+import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { StatusFlow } from "../../pages/SupportPage";
 import { fmtDate } from "./saasUi";
 
@@ -21,8 +22,9 @@ const STATUS_CLS = {
 const uploadAll = async (files, companyId, entityId) => {
   const out = [];
   for (const f of files) {
+    const compressed = f.type?.startsWith("image/") ? await compressImageFile(f) : f;
     const fd = new FormData();
-    fd.append("file", f);
+    fd.append("file", compressed);
     const r = await axios.post(`${API_URL}/files/upload?entity=support_ticket&entity_id=${entityId}&company_id=${companyId}`, fd, cred);
     out.push({ url: r.data.url, filename: r.data.filename, content_type: r.data.content_type, size: r.data.size });
   }
