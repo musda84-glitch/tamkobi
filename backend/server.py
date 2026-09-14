@@ -392,7 +392,7 @@ EINVOICE_PROVIDERS = {
         "name": "İşNet Net-e Fatura (NetteFatura)",
         "fields": ["username", "password", "corporate_code"],
         "docs": "https://nettefatura.isnet.net.tr/",
-        "hint": "İşNet portalinden müşteri/firma kodu, API kullanıcı adı ve şifre. Test: einvoiceapitest.isnet.net.tr — Canlı: einvoiceapi.isnet.net.tr. GİB PK alias zorunludur.",
+        "hint": "İşNet portalinden müşteri/firma kodu, API kullanıcı adı ve şifre. GİB PK alias ve şirket VKN (SOAP) zorunludur — OvoCRM/NetteFatura ile aynı InvoiceService+AddressBookService. Test: einvoiceapitest.isnet.net.tr / einvoiceservicetest.isnet.net.tr",
     },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
@@ -419,6 +419,7 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "api_url": s.get("api_url") or "",
         "alias": s.get("alias") or "",
         "corporate_code": s.get("corporate_code") or "",
+        "company_tax_id": s.get("company_tax_id") or "",
         "has_password": bool(s.get("password_enc")),
         "has_api_key": bool(s.get("api_key_enc")),
         "status": s.get("status") or "simulated",
@@ -554,12 +555,19 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
         else (req.get("gib_alias") if "gib_alias" in req else existing.get("alias") or "")
     )
     alias = (alias or "").strip()
+    company_tax = (
+        req.get("company_tax_id")
+        if "company_tax_id" in req
+        else (req.get("vkn") if "vkn" in req else existing.get("company_tax_id") or "")
+    )
+    company_tax = "".join(ch for ch in str(company_tax or "") if ch.isdigit())
     return {
         "mode": mode,
         "username": username,
         "corporate_code": corporate,
         "alias": alias,
         "client_code": corporate,
+        "company_tax_id": company_tax,
     }
 
 
@@ -586,6 +594,7 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "username": fields["username"],
         "corporate_code": fields["corporate_code"],
         "alias": fields["alias"],
+        "company_tax_id": fields.get("company_tax_id") or "",
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "assigned_at": existing.get("assigned_at") or datetime.now(timezone.utc).isoformat(),
     }
@@ -618,37 +627,46 @@ async def isnet_test_connection(req: Dict[str, Any]):
         "corporate_code": fields["corporate_code"] or existing.get("corporate_code") or "",
         "client_code": fields["corporate_code"] or existing.get("corporate_code") or "",
         "alias": fields["alias"] or existing.get("alias") or "",
+        "company_tax_id": fields.get("company_tax_id") or existing.get("company_tax_id") or "",
     }
     info = await isnet.test_connection(settings, password)
     return info
 
 
 async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Optional[dict] = None) -> Dict[str, Any]:
-    """n11 Faturam gelen kutusundan UBL XML çeker ve Gelen e-Belgeler'e yazar (HTTP veya otomatik döngü)."""
+    """n11 Faturam / İşNet gelen kutusundan UBL XML çeker ve Gelen e-Belgeler'e yazar."""
     s = settings if settings is not None else (await db.einvoice_settings.find_one({"company_id": company_id}) or {})
-    if s.get("provider") != "n11faturam":
-        raise HTTPException(status_code=400, detail="Gelen kutu yalnızca n11 Faturam ile çekilir. Bu şirkete n11 Faturam atanmamış.")
+    provider = s.get("provider") or ""
+    if provider not in ("n11faturam", "isnet"):
+        raise HTTPException(status_code=400, detail="Gelen kutu n11 Faturam veya İşNet ile çekilir. Bu şirkete uygun entegratör atanmamış.")
     if s.get("status") != "configured":
-        raise HTTPException(status_code=400, detail="Önce Ayarlar → e-Fatura ekranından n11 Faturam kurum kodu, kullanıcı adı ve şifresini kaydedin.")
+        raise HTTPException(status_code=400, detail="Önce Ayarlar → e-Fatura ekranından entegratör kimlik bilgilerini kaydedin.")
     pwd = _einvoice_password(s)
     if not pwd:
-        raise HTTPException(status_code=400, detail="Kayıtlı n11 Faturam şifresi çözülemedi; şifreyi Ayarlar → e-Fatura ekranından yeniden kaydedin.")
-    rows = await n11faturam.list_incoming(s, pwd, days=days)
+        raise HTTPException(status_code=400, detail="Kayıtlı e-Fatura şifresi çözülemedi; şifreyi Ayarlar → e-Fatura ekranından yeniden kaydedin.")
+    if provider == "isnet":
+        rows = await isnet.list_incoming(s, pwd, days=days)
+        source_label = "İşNet"
+    else:
+        rows = await n11faturam.list_incoming(s, pwd, days=days)
+        source_label = "n11 Faturam"
     pulled, already, failed = [], 0, []
     for row in rows:
         label = row.get("invoice_id") or row.get("uuid") or "numarasız belge"
         xml_bytes = row.get("xml")
         if not xml_bytes:
-            failed.append({"invoice": label, "reason": row.get("xml_error") or "n11 bu fatura için XML döndürmedi."})
+            failed.append({"invoice": label, "reason": row.get("xml_error") or f"{source_label} bu fatura için XML döndürmedi."})
             continue
         # Okunamayan tek bir fatura tüm çekme işlemini düşürmesin.
         try:
-            doc = await edocs.ingest_ubl_bytes(company_id, xml_bytes, filename=f"n11-{label}.xml", source="n11faturam", meta=row)
+            doc = await edocs.ingest_ubl_bytes(
+                company_id, xml_bytes, filename=f"{provider}-{label}.xml", source=provider, meta=row
+            )
         except HTTPException as e:
             failed.append({"invoice": label, "reason": str(e.detail)})
             continue
         except Exception as e:
-            logger.exception("n11 gelen e-fatura işlenemedi: %s", label)
+            logger.exception("%s gelen e-fatura işlenemedi: %s", provider, label)
             failed.append({"invoice": label, "reason": f"Belge işlenemedi: {e}"})
             continue
         if doc:
@@ -656,7 +674,7 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
         else:
             already += 1
     if not rows:
-        message = f"n11 Faturam son {days} günde gelen fatura döndürmedi."
+        message = f"{source_label} son {days} günde gelen fatura döndürmedi."
     else:
         parts = [f"{len(pulled)} yeni gelen e-fatura alındı"]
         if already:
@@ -693,8 +711,8 @@ async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01
 
 
 async def _run_einvoice_inbox_auto_tick() -> None:
-    """Tek tur: auto_pull açık n11 Faturam şirketlerinde çek + (isteğe bağlı) içeri al."""
-    for s in await db.einvoice_settings.find({"provider": "n11faturam", "status": "configured"}).to_list(200):
+    """Tek tur: auto_pull açık n11 / İşNet şirketlerinde çek + (isteğe bağlı) içeri al."""
+    for s in await db.einvoice_settings.find({"provider": {"$in": ["n11faturam", "isnet"]}, "status": "configured"}).to_list(200):
         if not s.get("auto_pull", True):
             continue
         cid = s.get("company_id")
@@ -3950,21 +3968,27 @@ async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_0
     local = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
     settings = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     live = settings.get("status") == "configured"
-    if live and settings.get("provider") == "n11faturam":
+    if live and settings.get("provider") in ("n11faturam", "isnet"):
         pwd = _einvoice_password(settings)
+        provider = settings.get("provider")
         try:
-            remote = await n11faturam.lookup_user(settings, pwd, tid)
+            if provider == "isnet":
+                remote = await isnet.lookup_user(settings, pwd, tid)
+                src_label = "İşNet"
+            else:
+                remote = await n11faturam.lookup_user(settings, pwd, tid)
+                src_label = "n11 Faturam"
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"n11 Faturam GİB sorgusu başarısız: {e}")
+            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız: {e}")
         is_efatura = bool(remote.get("is_e_invoice_user"))
         alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
         msg = "Cari kayıtlarınızda bulundu." if local else (
-            f"n11 Faturam: {remote.get('name') or tid} e-Fatura mükellefi." if is_efatura else "n11 Faturam: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
+            f"{src_label}: {remote.get('name') or tid} e-Fatura mükellefi." if is_efatura else f"{src_label}: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
         )
         return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": is_efatura, "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
-                "alias": alias, "source": "n11faturam", "name": remote.get("name") or "",
+                "alias": alias, "source": provider, "name": remote.get("name") or "",
                 "local_contact": clean_doc(local) if local else None, "message": msg}
     # Gerçek entegratör bağlı değilse GİB mükellef sorgusu SİMÜLE edilir (VKN'ler mükellef kabul edilir)
     is_efatura = local.get("is_e_invoice_user") if local else len(tid) == 10

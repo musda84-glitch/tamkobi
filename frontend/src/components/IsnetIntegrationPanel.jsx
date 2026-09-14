@@ -21,6 +21,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     password: "",
     client_code: "",
     gib_alias: "",
+    company_tax_id: "",
   });
 
   const load = useCallback(async () => {
@@ -34,6 +35,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
         password: "",
         client_code: d.corporate_code || "",
         gib_alias: d.alias || "",
+        company_tax_id: d.company_tax_id || "",
       });
       setTestMode((d.mode || "test") !== "live");
       setHasPassword(Boolean(d.has_password));
@@ -58,6 +60,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     password: formData.password,
     client_code: formData.client_code,
     gib_alias: formData.gib_alias,
+    company_tax_id: formData.company_tax_id,
   });
 
   const handleTestConnection = async () => {
@@ -182,6 +185,23 @@ export default function IsnetIntegrationPanel({ companyId }) {
             className={`${inputCls} font-mono`}
             required
             data-testid="isnet-gib-alias"
+          />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">
+            Şirket VKN / TCKN
+            <span className="text-slate-400 font-normal"> (SOAP GİB / bakiye — OvoCRM uyumu)</span>
+          </label>
+          <input
+            type="text"
+            name="company_tax_id"
+            value={formData.company_tax_id}
+            onChange={handleChange}
+            placeholder="10 veya 11 haneli vergi kimlik no"
+            className={`${inputCls} font-mono`}
+            inputMode="numeric"
+            maxLength={11}
+            data-testid="isnet-company-tax-id"
           />
         </div>
 

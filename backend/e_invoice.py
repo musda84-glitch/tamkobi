@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 import n11faturam
+import isnet
 import ubl_export
 
 logger = logging.getLogger("tamkobi.e_invoice")
@@ -253,12 +254,15 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     password_fn: Optional[Callable] = _deps.get("password_fn")
     consume = _deps.get("consume_credits")
 
-    if settings.get("provider") == "n11faturam" and settings.get("status") == "configured" and et in ("e_invoice", "e_archive"):
+    provider = settings.get("provider") or ""
+    if provider in ("n11faturam", "isnet") and settings.get("status") == "configured" and et in ("e_invoice", "e_archive"):
         if not password_fn:
             raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
         pwd = password_fn(settings)
+        sender = n11faturam if provider == "n11faturam" else isnet
+        label = "n11 Faturam" if provider == "n11faturam" else "İşNet Net-e Fatura"
         try:
-            sent = await n11faturam.send_document(
+            sent = await sender.send_document(
                 settings, pwd, {**inv, "id": invoice_id, "e_type": et, "gib_scenario": scen}, contact, company
             )
         except HTTPException as e:
@@ -281,12 +285,12 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         patch = {
             "status": "approved",
             "einvoice_state": "sent",
-            "gib_status": "n11 Faturam ile GİB'e iletildi",
+            "gib_status": f"{label} ile GİB'e iletildi",
             "gib_tracking_id": tracking,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": sent.get("invoice_id") or None,
             "gib_document_url": sent.get("document_url") or "",
-            "integrator": "n11faturam",
+            "integrator": provider,
             "gib_scenario": scen,
             "gib_mode": settings.get("mode") or "test",
             "issued_at": _now(),
@@ -297,19 +301,22 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             xml_str, ettn, _iid = n11faturam.build_ubl(
                 {**inv, "e_type": et, "gib_scenario": scen}, company, contact, ettn=sent.get("ettn")
             )
-            await store_outgoing_xml(invoice_id, inv["company_id"], xml_str.encode("utf-8"), {"scenario": scen, "ettn": ettn, "source": "n11faturam"})
+            await store_outgoing_xml(
+                invoice_id, inv["company_id"], xml_str.encode("utf-8"),
+                {"scenario": scen, "ettn": ettn, "source": provider},
+            )
         except Exception:
-            logger.exception("n11 UBL arşivi yazılamadı")
+            logger.exception("%s UBL arşivi yazılamadı", provider)
         return {
             "status": "success",
             "einvoice_state": "sent",
-            "message": f"Fatura n11 Faturam üzerinden GİB'e iletildi. ETTN: {tracking}",
+            "message": f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}",
             "invoice_id": invoice_id,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": sent.get("invoice_id"),
             "tracking_id": tracking,
             "document_url": sent.get("document_url") or "",
-            "provider": "n11faturam",
+            "provider": provider,
             "mode": settings.get("mode") or "test",
             "scenario": scen,
             "gib_credits_left": remaining,

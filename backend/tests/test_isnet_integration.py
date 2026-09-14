@@ -114,3 +114,22 @@ def test_isnet_in_providers_and_payload():
     assert mapped["alias"] == "urn:mail:pk@x.com"
     assert "isnet" in server.EINVOICE_PROVIDERS
     assert "Net-e" in server.EINVOICE_PROVIDERS["isnet"]["name"] or "IsNet" in server.EINVOICE_PROVIDERS["isnet"]["name"]
+
+
+def test_company_tax_code_and_soap_serialize():
+    assert isnet.company_tax_code({"company_tax_id": "1234567890"}) == "1234567890"
+    assert isnet.company_tax_code({}, {"tax_number": "11111111111"}) == "11111111111"
+    xml = isnet._serialize_ein(
+        {
+            "CompanyTaxCode": "1234567890",
+            "Invoices": [{"InvoiceContent": "QQ==", "ReceiverTag": "urn:mail:pk@x.com"}],
+        }
+    )
+    assert "<ein:CompanyTaxCode>1234567890</ein:CompanyTaxCode>" in xml
+    assert "InvoiceXml" in xml
+    assert "ReceiverTag" in xml
+
+
+def test_address_book_url_follows_mode():
+    assert "AddressBookService" in isnet.address_book_url({"mode": "test"})
+    assert isnet.address_book_url({"mode": "live"}) == isnet.LIVE_ADDRESS_BOOK
