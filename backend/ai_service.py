@@ -481,6 +481,47 @@ async def extract_orders_from_text(text: str) -> dict:
     return {"orders": orders}
 
 
+B2B_CART_SYSTEM = """Sen bir B2B sipariş listesi ayrıştırıcısısın. Sana verilen metin (PDF, Excel/CSV tablo dökümü) içinden yalnızca SEPET KALEMLERİNİ çıkar. Yalnızca geçerli JSON döndür:
+{"items":[{"product_name":"ürün adı veya null","sku":"stok/ürün kodu veya null","barcode":"EAN/barkod veya null","quantity":1}]}
+Kurallar:
+- Her satır bir kalem. quantity = adet/miktar/talep (yoksa 1).
+- FİYAT / TUTAR / KDV / İSKONTO / TOPLAM / LİSTE FİYATI sütunlarını ve değerlerini ASLA okuma, quantity olarak kullanma veya JSON'a yazma. Fiyatlar B2B katalogdan uygulanır.
+- Barkod/EAN (8–14 hane) varsa barcode alanına yaz. Stok kodu varsa sku alanına yaz.
+- Sayılarda Türkçe biçim (1.234 veya 12,5) olabilir → quantity için tam sayıya yuvarla.
+- Ürün kimliği yoksa satırı atla. Hiç kalem yoksa {"items":[]} döndür."""
+
+
+async def extract_b2b_cart_from_text(text: str) -> dict:
+    """B2B AI sepet: yalnız ürün kimliği + adet; fiyat alanları yok sayılır."""
+    chat = await make_chat(f"b2b-cart-{abs(hash(text[:200]))}", B2B_CART_SYSTEM, purpose="extract")
+    raw = str(await chat.send_message(UserMessage(text=f"B2B SİPARİŞ LİSTESİ (fiyatları yok say):\n\n{text[:30000]}"))).strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("AI yanıtı JSON içermiyor.")
+    data = json.loads(raw[start:end + 1])
+    items = []
+    for it in data.get("items") or []:
+        name = str(it.get("product_name") or "").strip()[:200]
+        sku = it.get("sku")
+        barcode = it.get("barcode")
+        sku = str(sku).strip() if sku not in (None, "") else None
+        barcode = str(barcode).strip() if barcode not in (None, "") else None
+        try:
+            q = int(round(float(it.get("quantity") or 1))) or 1
+        except (TypeError, ValueError):
+            q = 1
+        if not name and not sku and not barcode:
+            continue
+        # Model yanlışlıkla fiyat alanları döndürse bile at
+        items.append({
+            "product_name": name or sku or barcode,
+            "sku": sku,
+            "barcode": barcode,
+            "quantity": max(1, q),
+        })
+    return {"items": items}
+
+
 PRODUCT_SYSTEM = """Sen bir stok/ürün listesi ayrıştırıcısısın. Sana verilen metin (PDF katalog, fiyat listesi, Excel/CSV dökümü) içinden ÜRÜN/STOK KARTLARINI çıkar. Yalnızca geçerli JSON döndür:
 {"products":[{"name":"ürün adı","sku":"stok kodu veya null","barcode":"barkod/EAN veya null","category":"kategori veya null","unit":"Adet|Kg|Metre|Litre|Paket|Koli veya null","vat_rate":20,"purchase_price":0.0,"sale_price":0.0,"stock_quantity":0.0,"min_stock_alert":null,"type":"product|service|raw_material"}]}
 Kurallar: Her satır/kalem bir üründür. Sayılarda Türkçe biçim (1.234,56) olabilir → ondalık noktaya çevir. KDV yoksa 20. Birim yoksa Adet. Tür belirsizse product. Stok miktarı yoksa 0. Ürün adı yoksa satırı atla. Hiç ürün yoksa {"products":[]} döndür."""

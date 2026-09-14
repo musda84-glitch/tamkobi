@@ -108,6 +108,39 @@ class TestB2bCartTableParse:
         assert server._b2b_norm_code(8690123456789.0) == "8690123456789"
         assert server._b2b_norm_code("8690-1234-5678-9") == "8690123456789"
 
+    def test_price_columns_ignored_for_qty(self):
+        """Dosyadaki fiyat/tutar adet sanılmamalı; yalnız Adet sütunu geçerli."""
+        data = _xlsx(
+            ["Ürün Adı", "Stok Kodu", "Birim Fiyat", "KDV", "Tutar", "Adet"],
+            [["Duvar Rafı", "RAF-60", 199.90, 20, 399.80, 2], ["Köşe Rafı", "RAF-KOSE", 89.50, 20, 89.50, 1]],
+        )
+        lines = server._b2b_parse_cart_table("fiyatli.xlsx", data)
+        assert len(lines) == 2
+        assert lines[0]["quantity"] == 2
+        assert lines[1]["quantity"] == 1
+        assert "unit_price" not in lines[0] and "total" not in lines[0]
+
+        # Yalnız fiyat sütunları varsa adet=1 (fiyat quantity olmaz)
+        data2 = _xlsx(
+            ["Ürün Adı", "Liste Fiyatı", "Toplam"],
+            [["Duvar Rafı", 150, 450], ["Köşe Rafı", 80, 160]],
+        )
+        lines2 = server._b2b_parse_cart_table("sadece-fiyat.xlsx", data2)
+        assert len(lines2) == 2
+        assert all(x["quantity"] == 1 for x in lines2)
+
+    def test_sanitize_strips_prices(self):
+        raw = [
+            {"product_name": "A", "sku": "S1", "barcode": None, "quantity": 3, "unit_price": 99.9, "total": 299.7},
+            {"product_name": "B", "quantity": 1, "sale_price": 50, "price": 50},
+        ]
+        clean = server._b2b_sanitize_cart_lines(raw)
+        assert clean == [
+            {"product_name": "A", "sku": "S1", "barcode": None, "quantity": 3},
+            {"product_name": "B", "sku": None, "barcode": None, "quantity": 1},
+        ]
+        assert all(set(x.keys()) == {"product_name", "sku", "barcode", "quantity"} for x in clean)
+
     def test_api_raflar_without_ai(self):
         token = os.environ.get("TEST_B2B_TOKEN") or "9a89e4fd1a0e451c8461f1bccd9f5028"
         data = _xlsx(
