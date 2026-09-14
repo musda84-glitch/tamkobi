@@ -102,8 +102,8 @@ export default function IsnetIntegrationPanel({ companyId }) {
     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-xl" data-testid="isnet-integration-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">İşNet Net-e Fatura Entegrasyonu</h3>
-          <p className="text-slate-500 mt-0.5">İşNet e-Fatura servis sağlayıcısı bağlantı ve kimlik ayarları.</p>
+          <h3 className="text-sm font-bold text-slate-900">İşNet SOAP API (NetteFatura-API)</h3>
+          <p className="text-slate-500 mt-0.5">Resmi SOAP / IP–VKN bağlantısı. Statik IP ve İşNet sözleşmesi gerekir.</p>
         </div>
         <span
           className={`text-[10px] font-bold px-2 py-0.5 rounded border ${status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
