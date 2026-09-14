@@ -7,7 +7,9 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
+import { ScanButton } from "../components/CameraScanner";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
+import { matchesB2BQuery } from "../utils/b2bSearch";
 
 const TABS = [["catalog", "Ürünler", Package], ["orders", "Siparişlerim", Truck], ["statement", "Hesap Ekstresi", FileText], ["installments", "Taksitlerim", CalendarClock]];
 
@@ -32,7 +34,7 @@ export default function B2BPortalPage() {
   if (err) return <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6"><div className="bg-white rounded-2xl p-8 shadow-xl text-center font-bold text-slate-800" data-testid="b2b-error">{err}</div></div>;
   if (!d) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>;
   const cats = ["all", ...Array.from(new Set(d.products.map((p) => p.category).filter(Boolean)))];
-  const prods = d.products.filter((p) => (cat === "all" || p.category === cat) && (p.name.toLowerCase().includes(q.toLowerCase()) || (p.sku || "").toLowerCase().includes(q.toLowerCase())));
+  const prods = d.products.filter((p) => (cat === "all" || p.category === cat) && matchesB2BQuery(p, q));
   const lines = Object.entries(cart).map(([key, row]) => ({ key, p: d.products.find((x) => x.id === row.productId), qty: row.qty, note: row.note || "" })).filter((l) => l.p && l.qty > 0);
   const sub = lines.reduce((s, l) => s + b2bNet(l.p) * l.qty, 0);
   const vat = lines.reduce((s, l) => s + (b2bGross(l.p) - b2bNet(l.p)) * l.qty, 0);
@@ -75,11 +77,31 @@ export default function B2BPortalPage() {
             </aside>
             <div className="md:col-span-9 lg:col-span-7 space-y-3 order-2">
               {(d.settings?.allow_orders !== false && d.settings?.allow_ai_cart !== false) && <B2BAiCart token={token} products={d.products} onApply={(sel) => { setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c)); }} />}
-              <div className="relative"><Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün / kod ara…" className="w-full border rounded-xl pl-9 p-2.5 text-sm bg-white" data-testid="b2b-search" /></div>
+              <div className="flex gap-2 items-stretch">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Ürün, kod, barkod veya etiket ara…"
+                    className="w-full border rounded-xl pl-9 pr-3 p-2.5 text-sm bg-white"
+                    data-testid="b2b-search"
+                    autoComplete="off"
+                    inputMode="search"
+                  />
+                </div>
+                <ScanButton
+                  size="sm"
+                  label="Kamera"
+                  title="Kamera ile barkod okut"
+                  className="!px-3 !rounded-xl shrink-0"
+                  onScan={(code) => setQ(String(code || "").trim())}
+                />
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">{prods.map((p) => (
                 <div key={p.id} className="bg-white rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 min-w-0" data-testid={`b2b-product-${p.sku}`}>
                   <div className="relative aspect-[3/2] bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden" data-testid={`b2b-image-${p.sku}`}>{p.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" className="absolute inset-0 h-full w-full object-contain" /> : <Package className="w-8 h-8 text-slate-300" />}</div>
-                  <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}</div></div>
+                  <div className="min-w-0"><div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div><div className="text-[10px] text-slate-400 font-mono truncate">{p.sku}{p.barcode ? ` · ${p.barcode}` : ""}</div>{Array.isArray(p.tags) && p.tags.length > 0 && <div className="flex flex-wrap gap-0.5 mt-0.5">{p.tags.slice(0, 3).map((t) => <span key={t} className="text-[9px] px-1 py-0 rounded bg-slate-100 text-slate-500">{t}</span>)}</div>}</div>
                   <div className="flex items-end justify-between gap-1"><div className="min-w-0"><div className="text-base font-black text-slate-900 whitespace-nowrap" data-testid={`b2b-price-${p.sku}`}>{fmt(b2bGross(p))} ₺</div>{b2bGross(p) < b2bGross(p, "list_price") && <div className="text-[10px] text-slate-400 line-through">{fmt(b2bGross(p, "list_price"))} ₺</div>}<div className="text-[10px] text-slate-400">{Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz"} • {p.unit}</div></div><span className={`text-[10px] font-semibold shrink-0 ${p.in_stock ? "text-emerald-600" : "text-rose-600"}`}>{p.in_stock ? "Stokta" : "Yok"}</span></div>
                   <label className="block">
                     <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
