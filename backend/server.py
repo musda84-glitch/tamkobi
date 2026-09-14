@@ -2033,6 +2033,94 @@ def _alias_key(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+_B2B_QTY_HEADERS = ("adet", "miktar", "qty", "quantity", "amount", "siparis adedi", "siparis miktari", "order qty")
+_B2B_NAME_HEADERS = ("urun", "urun adi", "product", "product name", "malzeme", "stok adi", "aciklama", "kalem", "name")
+_B2B_SKU_HEADERS = ("sku", "stok kodu", "urun kodu", "kod", "stock code", "item code", "stokkodu")
+_B2B_BARCODE_HEADERS = ("barkod", "barcode", "ean", "gtin")
+
+
+def _b2b_parse_qty(val) -> int:
+    if val is None or val == "":
+        return 0
+    if isinstance(val, (int, float)):
+        return max(0, int(round(float(val))))
+    s = str(val).strip().replace(" ", "")
+    if not s:
+        return 0
+    if re.match(r"^\d{1,3}(\.\d{3})+(,\d+)?$", s):
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s and "." not in s:
+        s = s.replace(",", ".")
+    try:
+        return max(0, int(round(float(s))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _b2b_col_index(norms: list, candidates: tuple) -> Optional[int]:
+    cand = set(candidates)
+    for i, n in enumerate(norms):
+        if n in cand:
+            return i
+    for i, n in enumerate(norms):
+        if any(n == c or n.startswith(c + " ") or n.endswith(" " + c) for c in candidates):
+            return i
+    return None
+
+
+def _b2b_parse_cart_table(filename: str, data: bytes) -> list:
+    """Excel/CSV sipariş listesini AI olmadan satır satır oku (ürün/kod + adet)."""
+    name = (filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+        return []
+    header, body = migration._read_table(filename, data)
+    norms = [_alias_key(h) for h in header]
+    qi = _b2b_col_index(norms, _B2B_QTY_HEADERS)
+    ni = _b2b_col_index(norms, _B2B_NAME_HEADERS)
+    si = _b2b_col_index(norms, _B2B_SKU_HEADERS)
+    bi = _b2b_col_index(norms, _B2B_BARCODE_HEADERS)
+    if qi is None and len(header) >= 2:
+        qi = 1
+    if ni is None and si is None and bi is None and header:
+        ni = 0
+    if qi is None:
+        return []
+    lines = []
+    for row in body:
+        qty = _b2b_parse_qty(row[qi] if qi < len(row) else None)
+        if qty <= 0:
+            continue
+        name_v = str(row[ni]).strip() if ni is not None and ni < len(row) and row[ni] not in (None, "") else ""
+        sku_v = str(row[si]).strip() if si is not None and si < len(row) and row[si] not in (None, "") else None
+        bar_v = str(row[bi]).strip() if bi is not None and bi < len(row) and row[bi] not in (None, "") else None
+        if not name_v and not sku_v and not bar_v:
+            continue
+        lines.append({
+            "product_name": name_v or sku_v or bar_v,
+            "sku": sku_v,
+            "barcode": bar_v,
+            "quantity": qty,
+        })
+    return lines
+
+
+def _b2b_parse_cart_text_lines(text: str) -> list:
+    """Serbest metinden 'ürün … adet' satırlarını kabaca çıkar (AI yedek)."""
+    lines = []
+    for raw in (text or "").splitlines():
+        s = raw.strip()
+        if not s or len(s) < 3:
+            continue
+        m = re.search(r"^(.*?)(?:\s*[|;,\t]\s*|\s+)(\d+(?:[.,]\d+)?)\s*(?:adet|ad|pcs|qty)?\s*$", s, re.I)
+        if not m:
+            continue
+        name_v = m.group(1).strip(" -•|\t")
+        qty = _b2b_parse_qty(m.group(2))
+        if name_v and qty > 0 and not re.fullmatch(r"[\d.,]+", name_v):
+            lines.append({"product_name": name_v[:200], "sku": None, "barcode": None, "quantity": qty})
+    return lines[:400]
+
+
 async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     import difflib
     prods = await db.products.find({"company_id": company_id, "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
@@ -2083,16 +2171,44 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
-    text = await _file_to_text(file, data)
-    if len(text.strip()) < 10:
-        raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
-    try:
-        parsed = await ai_service_extract_orders(text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
-    parsed_items = [it for o in (parsed.get("orders") or []) for it in (o.get("items") or [])]
+    fname = (file.filename or "").lower()
+    parsed_items: list = []
+    parse_mode = "table"
+    ai_error = None
+    # Excel/CSV: önce AI’sız tablo okuma (ürün/kod + adet). AI anahtarı kırık olsa bile çalışır.
+    if fname.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+        try:
+            parsed_items = _b2b_parse_cart_table(file.filename, data)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("B2B cart table parse failed: %s", e)
+            parsed_items = []
+    if not parsed_items:
+        text = await _file_to_text(file, data)
+        if len(text.strip()) < 10:
+            raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
+        try:
+            parsed = await ai_service_extract_orders(text)
+            parsed_items = [it for o in (parsed.get("orders") or []) for it in (o.get("items") or [])]
+            parse_mode = "ai"
+        except Exception as e:
+            ai_error = str(e)[:140]
+            parsed_items = _b2b_parse_cart_text_lines(text)
+            parse_mode = "text"
+            if not parsed_items:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Sipariş listesi okunamadı. Excel/CSV’de Ürün + Adet sütunları kullanın veya AI anahtarını kontrol edin. ({ai_error})",
+                )
     items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
-    return {"filename": file.filename, "items": items, "unmatched": unmatched, "total_lines": len(items) + len(unmatched)}
+    return {
+        "filename": file.filename,
+        "items": items,
+        "unmatched": unmatched,
+        "total_lines": len(items) + len(unmatched),
+        "parse_mode": parse_mode,
+    }
 
 
 @api_router.post("/public/b2b/{token}/ai-cart/match")
@@ -7938,7 +8054,9 @@ async def _file_to_text(file: UploadFile, data: bytes) -> str:
             return "\n".join((p.extract_text() or "") for p in reader.pages[:15])
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
-    if name.endswith((".xlsx", ".xlsm", ".csv", ".txt")):
+    if name.endswith((".xlsx", ".xlsm", ".xls", ".csv", ".txt")):
+        if name.endswith(".xls") and not name.endswith(".xlsx") and not name.endswith(".xlsm"):
+            raise HTTPException(status_code=400, detail="Eski .xls dosyalarını Excel’de .xlsx olarak kaydedip yeniden yükleyin.")
         header, body = migration._read_table(file.filename, data)
         lines = [" | ".join(header)] + [" | ".join("" if c is None else str(c) for c in r) for r in body[:400]]
         return "\n".join(lines)

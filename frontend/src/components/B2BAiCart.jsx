@@ -14,7 +14,7 @@ export const B2BAiCart = ({ token, products = [], onApply }) => {
     if (!file) return;
     setBusy(true);
     const fd = new FormData(); fd.append("file", file);
-    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/ai-cart`, fd); setRes({ ...r.data, items: r.data.items.map((i) => ({ ...i, on: true })) }); setPick({}); if (!r.data.items.length && !r.data.unmatched.length) toast.error("Listedeki ürünler katalogla eşleşmedi."); } catch (e) { toast.error(e.response?.data?.detail || "Dosya işlenemedi."); } finally { setBusy(false); if (ref.current) ref.current.value = ""; }
+    try { const r = await axios.post(`${API_URL}/public/b2b/${token}/ai-cart`, fd); setRes({ ...r.data, items: r.data.items.map((i) => ({ ...i, on: true })) }); setPick({}); if (!r.data.items.length && !r.data.unmatched.length) toast.error("Listedeki ürünler katalogla eşleşmedi."); } catch (e) { const d = e.response?.data?.detail; toast.error(typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => x.msg || x).join(" ") : "Dosya işlenemedi."); } finally { setBusy(false); if (ref.current) ref.current.value = ""; }
   };
   const mapUnmatched = (i) => {
     const u = res.unmatched[i];
