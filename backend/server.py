@@ -2477,6 +2477,9 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
     includes = bool(p.get("price_includes_vat"))
     track = p.get("track_stock", True)
     qty = float(p.get("stock_quantity", 0) or 0)
+    tags = p.get("tags") or []
+    if not isinstance(tags, list):
+        tags = [str(tags)] if tags else []
     return {
         "id": p["_id"],
         "name": p.get("name"),
@@ -2485,6 +2488,7 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
         "unit": p.get("unit"),
         "image_url": p.get("image_url"),
         "barcode": p.get("barcode") or "",
+        "tags": [str(t).strip() for t in tags if str(t).strip()],
         "list_price": sale,
         "price": price,
         "list_price_gross": _b2b_gross(sale, vat, includes),
