@@ -10,6 +10,34 @@ import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
 
+
+const playOverscanBeep = () => {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+    [0, 0.18, 0.36].forEach((at, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "square";
+      o.frequency.value = i === 1 ? 880 : 520;
+      g.gain.setValueAtTime(0.0001, now + at);
+      g.gain.exponentialRampToValueAtTime(0.25, now + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(now + at); o.stop(now + at + 0.16);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch (_) { /* ignore */ }
+};
+
+const detailText = (detail) => {
+  if (!detail) return "Okutulamadı.";
+  if (typeof detail === "string") return detail;
+  return detail.message || detail.detail || "Okutulamadı.";
+};
+
 const ST = {
   idle: ["Bekliyor", "bg-slate-100 text-slate-600"],
   open: ["Açık", "bg-sky-50 text-sky-700"],
@@ -29,6 +57,7 @@ export default function OrderPickKioskPage() {
   const [ses, setSes] = useState(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [overscanFlash, setOverscanFlash] = useState(null);
   const inputRef = useRef(null);
 
   const loadList = useCallback(async () => {
@@ -60,11 +89,28 @@ export default function OrderPickKioskPage() {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: 1 });
       setSes(r.data);
       setCode("");
+      setOverscanFlash(null);
       toast.success(r.data.message);
       if (navigator.vibrate) navigator.vibrate(40);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Okutulamadı.");
-      if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
+      const detail = e.response?.data?.detail;
+      const overscan = e.response?.status === 409 || detail?.code === "overscan" || /fazla/i.test(detailText(detail));
+      const msg = detailText(detail);
+      if (overscan) {
+        playOverscanBeep();
+        setOverscanFlash({
+          message: msg,
+          productName: detail?.product_name,
+          lineIndex: detail?.line_index,
+          at: Date.now(),
+        });
+        toast.error(msg, { duration: 5000 });
+        if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 160]);
+        setTimeout(() => setOverscanFlash(null), 2600);
+      } else {
+        toast.error(msg);
+        if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
+      }
     } finally { setBusy(false); setTimeout(() => inputRef.current?.focus(), 50); }
   };
 
@@ -128,6 +174,14 @@ export default function OrderPickKioskPage() {
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-100 flex flex-col" data-testid="order-pick-session">
+      {overscanFlash && (
+        <div className="absolute inset-x-0 top-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
+          <div className="m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-3 shadow-xl animate-pulse">
+            <div className="text-sm font-black tracking-wide">FAZLA ÜRÜN OKUTULDU</div>
+            <div className="text-xs font-semibold mt-0.5 opacity-95">{overscanFlash.message}</div>
+          </div>
+        </div>
+      )}
       <div className="bg-slate-900 text-white px-3 py-3 flex items-center gap-2">
         <button onClick={back} className="p-2 rounded-lg bg-white/10" data-testid="pick-back"><ArrowLeft className="w-5 h-5" /></button>
         <div className="min-w-0 flex-1">
@@ -146,7 +200,7 @@ export default function OrderPickKioskPage() {
           const done = Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
           const img = resolveImageUrl(it.image_url);
           return (
-            <div key={idx} className={`bg-white rounded-2xl border p-3 flex gap-3 items-center ${done ? "border-emerald-300" : "border-slate-200"}`} data-testid={`pick-line-${idx}`}>
+            <div key={idx} className={`bg-white rounded-2xl border p-3 flex gap-3 items-center transition ${overscanFlash?.lineIndex === it.line_index || overscanFlash?.lineIndex === idx || (overscanFlash && String(it.product_name) === String(overscanFlash.productName)) ? "border-rose-500 ring-2 ring-rose-400 bg-rose-50 animate-pulse" : done ? "border-emerald-300" : "border-slate-200"}`} data-testid={`pick-line-${idx}`}>
               {img ? <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" /> : <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
