@@ -53,12 +53,24 @@ import {
   Smartphone,
   ScrollText,
   Headset,
+  PanelLeftClose,
+  PanelLeft,
 } from "lucide-react";
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem("sidebar_collapsed", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   const ICONS = {
     "/": LayoutDashboard, "/panel": LayoutDashboard, "/invoices": FileText, "/dis-ticaret": Globe, "/dispatches": Truck, "/expenses": Receipt,
@@ -96,37 +108,52 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   return (
     <div className="min-h-screen bg-slate-50 flex text-slate-900 font-sans antialiased">
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="h-16 px-5 border-b border-slate-800/80 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2.5 font-bold text-lg text-white tracking-tight" data-testid="brand-logo-btn">
+      <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"}>
+        <div className={`h-16 border-b border-slate-800/80 flex items-center ${sidebarCollapsed ? "px-2 justify-center gap-1" : "px-5 justify-between"}`}>
+          <Link to="/" className={`flex items-center font-bold text-white tracking-tight ${sidebarCollapsed ? "gap-0 justify-center" : "gap-2.5 text-lg"}`} data-testid="brand-logo-btn" title="TamKobi">
             <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
-            <span>Tam<span className="text-emerald-400">Kobi</span></span>
-            <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
+            {!sidebarCollapsed && (
+              <>
+                <span>Tam<span className="text-emerald-400">Kobi</span></span>
+                <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
+              </>
+            )}
           </Link>
           <button onClick={() => setMobileMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white">
             <X className="w-5 h-5" />
           </button>
+          <button
+            type="button"
+            onClick={toggleSidebarCollapsed}
+            className="hidden lg:inline-flex p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+            title={sidebarCollapsed ? "Menüyü genişlet" : "Menüyü küçült"}
+            data-testid="sidebar-collapse-btn"
+          >
+            {sidebarCollapsed ? <PanelLeft className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
         </div>
 
-        <AccountMenu />
+        {!sidebarCollapsed && <AccountMenu />}
 
         <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700" data-testid="app-sidebar-nav">
-          <AppSidebarNav items={menuItems} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
+          <AppSidebarNav items={menuItems} collapsed={sidebarCollapsed} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
         </nav>
 
-        <div className="p-3 border-t border-slate-800 bg-slate-950/40 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center font-bold text-xs text-white">
+        <div className={`border-t border-slate-800 bg-slate-950/40 space-y-2 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
+          <div className={`flex items-center ${sidebarCollapsed ? "flex-col gap-1.5" : "justify-between"}`}>
+            <div className={`flex items-center min-w-0 ${sidebarCollapsed ? "justify-center" : "gap-2.5"}`} title={user?.name || "Kullanıcı"}>
+              <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center font-bold text-xs text-white shrink-0">
                 {user?.name?.charAt(0) || "U"}
               </div>
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
-                {user?.user_number ? (
-                  <p className="text-[10px] text-emerald-400 truncate font-mono" data-testid="sidebar-user-number">{user.user_number}</p>
-                ) : null}
-                <p className="text-[10px] text-slate-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
-              </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white truncate">{user?.name || "Kullanıcı"}</p>
+                  {user?.user_number ? (
+                    <p className="text-[10px] text-emerald-400 truncate font-mono" data-testid="sidebar-user-number">{user.user_number}</p>
+                  ) : null}
+                  <p className="text-[10px] text-slate-400 truncate">{user?.role_name || roleLabels[user?.role] || "Kullanıcı"}</p>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
               <DataExportIconButton />
@@ -135,11 +162,11 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               </button>
             </div>
           </div>
-          <BuildStamp tone="dark" layout="sidebar" />
+          {!sidebarCollapsed && <BuildStamp tone="dark" layout="sidebar" />}
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
+      <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ${sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"}`}>
         <header className="h-16 bg-white border-b border-slate-200/80 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
           <div className="flex items-center gap-3">
             <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg" data-testid="mobile-menu-toggle">

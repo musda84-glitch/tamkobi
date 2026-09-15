@@ -14,7 +14,7 @@ function loadOpen() {
   return null;
 }
 
-export default function AppSidebarNav({ items, onNavigate, onReorder }) {
+export default function AppSidebarNav({ items, collapsed = false, onNavigate, onReorder }) {
   const location = useLocation();
   const groups = useMemo(() => groupMenuItems(items), [items]);
   const activePath = location.pathname;
@@ -48,7 +48,7 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
   };
 
   const linkClass = (item, isActive) =>
-    `flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+    `flex items-center ${collapsed ? "justify-center px-1.5" : "justify-between px-2.5"} py-1.5 rounded-md text-xs font-medium transition-all ${
       isActive
         ? item.isAi
           ? "bg-gradient-to-r from-purple-600/90 to-indigo-600/90 text-white shadow-md shadow-purple-900/40"
@@ -76,12 +76,12 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
           if (dragPath && dragPath !== item.path && groupIdOf(dragPath) === groupIdOf(item.path)) onReorder?.(dragPath, item.path);
           setDragPath(null);
         }}
-        title="Aynı paket içinde sürükleyip sıralayabilirsiniz"
+        title={collapsed ? item.label : "Aynı paket içinde sürükleyip sıralayabilirsiniz"}
         onClick={() => onNavigate?.()}
         data-testid={`nav-item-${item.path.replace("/", "") || "dashboard"}`}
         className={linkClass(item, isActive)}
       >
-        <div className="flex items-center gap-2.5 truncate">
+        <div className={`flex items-center truncate ${collapsed ? "justify-center w-full gap-0" : "gap-2.5"}`}>
           {Icon && (
             <Icon
               className={`w-4 h-4 shrink-0 ${
@@ -97,9 +97,9 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
               }`}
             />
           )}
-          <span className="truncate">{item.label}</span>
+          {!collapsed && <span className="truncate">{item.label}</span>}
         </div>
-        {item.badge && (
+        {!collapsed && item.badge && (
           <span
             className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0 ${
               isActive ? "bg-white/20 text-white" : item.isAi ? "bg-purple-500/20 text-purple-300" : "bg-slate-800 text-slate-400"
@@ -111,6 +111,15 @@ export default function AppSidebarNav({ items, onNavigate, onReorder }) {
       </Link>
     );
   };
+
+  if (collapsed) {
+    const flat = groups.flatMap((g) => g.items);
+    return (
+      <div className="space-y-0.5" data-testid="nav-collapsed-rail">
+        {flat.map(renderItem)}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-1.5">
