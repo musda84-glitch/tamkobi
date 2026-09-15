@@ -4280,6 +4280,14 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
 
+@api_router.get("/invoices/{invoice_id}")
+async def get_invoice(invoice_id: str):
+    """Tek fatura — mobil uygulama ve detay ekranları için."""
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    return clean_doc(inv)
+
 @api_router.post("/invoices/{invoice_id}/create-dispatch")
 async def create_dispatch_from_invoice(invoice_id: str):
     inv = await db.invoices.find_one({"_id": invoice_id})
@@ -9838,6 +9846,35 @@ async def root():
 async def api_version():
     """Public. Names the commit this API process was built from so a stale image is visible."""
     return JSONResponse(read_stamp(), headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+
+@app.get("/api/mobile/manifest")
+async def mobile_manifest():
+    """Public. iOS/Android uygulamasının bağlandığı API sözleşmesi."""
+    stamp = read_stamp()
+    return JSONResponse(
+        {
+            "app": "TamKobi",
+            "platform": "mobile",
+            "auth": "bearer",
+            "api_prefix": "/api",
+            "min_app_version": "1.0.0",
+            "features": [
+                "dashboard",
+                "search",
+                "contacts",
+                "invoices",
+                "orders",
+                "saha",
+                "stock",
+                "barcode",
+                "attendance",
+                "notifications",
+            ],
+            "version": stamp,
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

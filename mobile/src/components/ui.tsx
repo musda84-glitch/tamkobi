@@ -1,0 +1,203 @@
+import { Ionicons } from "@expo/vector-icons";
+import React from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type TextInputProps,
+  type ViewProps,
+} from "react-native";
+import { colors, radius, spacing } from "../theme";
+
+export function Screen({ children, onRefresh, refreshing, padded = true }: {
+  children: React.ReactNode;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+  padded?: boolean;
+}) {
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: 40 }]}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
+export function Card({ children, style }: ViewProps) {
+  return <View style={[styles.card, style]}>{children}</View>;
+}
+
+export function H1({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.h1}>{children}</Text>;
+}
+
+export function Muted({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.muted}>{children}</Text>;
+}
+
+export function Row({ children, style }: ViewProps) {
+  return <View style={[styles.row, style]}>{children}</View>;
+}
+
+export function Badge({ label, tone = "slate" }: { label: string; tone?: "slate" | "green" | "red" | "amber" | "indigo" }) {
+  const bg = { slate: "#F1F5F9", green: "#D1FAE5", red: "#FEE2E2", amber: "#FEF3C7", indigo: "#E0E7FF" }[tone];
+  const fg = { slate: "#334155", green: "#047857", red: "#B91C1C", amber: "#B45309", indigo: "#3730A3" }[tone];
+  return (
+    <View style={[styles.badge, { backgroundColor: bg }]}>
+      <Text style={[styles.badgeText, { color: fg }]}>{label}</Text>
+    </View>
+  );
+}
+
+export function PrimaryButton({
+  title,
+  onPress,
+  disabled,
+  loading,
+  color = colors.secondary,
+  testID,
+}: {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  color?: string;
+  testID?: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      disabled={disabled || loading}
+      style={[styles.btn, { backgroundColor: color, opacity: disabled ? 0.5 : 1 }]}
+    >
+      {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{title}</Text>}
+    </Pressable>
+  );
+}
+
+export function Field(props: TextInputProps & { label: string; testID?: string }) {
+  const { label, style, ...rest } = props;
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        placeholderTextColor={colors.muted}
+        style={[styles.input, style]}
+        {...rest}
+      />
+    </View>
+  );
+}
+
+export function Empty({ icon, title, hint }: { icon: keyof typeof Ionicons.glyphMap; title: string; hint?: string }) {
+  return (
+    <View style={styles.empty}>
+      <Ionicons name={icon} size={36} color={colors.muted} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      {hint ? <Text style={styles.muted}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+export function ErrorBanner({ message }: { message?: string | null }) {
+  if (!message) return null;
+  return (
+    <View style={styles.error}>
+      <Text style={styles.errorText}>{message}</Text>
+    </View>
+  );
+}
+
+export function ListRow({
+  title,
+  subtitle,
+  right,
+  onPress,
+  testID,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: string;
+  onPress?: () => void;
+  testID?: string;
+}) {
+  return (
+    <Pressable testID={testID} onPress={onPress} style={styles.listRow} disabled={!onPress}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.listTitle} numberOfLines={1}>{title}</Text>
+        {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
+      </View>
+      {right ? <Text style={styles.listRight}>{right}</Text> : null}
+      {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
+    </Pressable>
+  );
+}
+
+export function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <View style={styles.kpi}>
+      <Text style={styles.kpiLabel}>{label}</Text>
+      <Text style={styles.kpiValue}>{value}</Text>
+      {sub ? <Text style={styles.muted}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { flexGrow: 1 },
+  padded: { padding: spacing.md, gap: spacing.md },
+  card: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: 8,
+  },
+  h1: { fontSize: 22, fontWeight: "800", color: colors.text },
+  muted: { color: colors.muted, fontSize: 13 },
+  row: { flexDirection: "row", alignItems: "center", gap: 8 },
+  badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  badgeText: { fontSize: 11, fontWeight: "700" },
+  btn: { borderRadius: radius.md, minHeight: 48, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
+  btnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  label: { fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: "#fff",
+  },
+  empty: { alignItems: "center", paddingVertical: 28, gap: 8 },
+  emptyTitle: { fontWeight: "700", color: colors.text },
+  error: { backgroundColor: "#FEE2E2", borderRadius: radius.md, padding: 12 },
+  errorText: { color: "#B91C1C", fontWeight: "600" },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  listTitle: { fontWeight: "700", color: colors.text, fontSize: 15 },
+  listRight: { fontWeight: "800", color: colors.text, marginLeft: 8 },
+  kpi: { flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 12 },
+  kpiLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  kpiValue: { fontSize: 18, fontWeight: "800", color: colors.text, marginTop: 4 },
+});
