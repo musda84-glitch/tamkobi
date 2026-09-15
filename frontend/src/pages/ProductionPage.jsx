@@ -34,7 +34,7 @@ export default function ProductionPage() {
       const [o, p, k] = await Promise.all([
         axios.get(`${API_URL}/production/orders?company_id=${companyId}${statusQs}&include_steps=1`),
         axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`),
-        axios.get(`${API_URL}/production/orders/kpis?company_id=${companyId}`),
+        axios.get(`${API_URL}/production/kpis?company_id=${companyId}`),
       ]);
       setOrders(o.data || []);
       setProducts(p.data || []);
