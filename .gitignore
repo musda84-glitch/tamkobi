@@ -72,6 +72,9 @@ backend/data/*.json.tmp
 
 # Archive files and large assets
 **/*.zip
+# Ship the browser extension download with the frontend image
+!frontend/public/downloads/
+!frontend/public/downloads/**
 **/*.tar.gz
 **/*.tar
 **/*.tgz

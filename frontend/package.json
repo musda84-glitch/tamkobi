@@ -65,9 +65,12 @@
     "zod": "3.24.4"
   },
   "scripts": {
+    "prestart": "node scripts/pack-browser-extension.mjs",
+    "prebuild": "node scripts/pack-browser-extension.mjs",
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "pack-extension": "node scripts/pack-browser-extension.mjs"
   },
   "browserslist": {
     "production": [

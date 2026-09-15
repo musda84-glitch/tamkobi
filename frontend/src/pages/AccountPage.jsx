@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { Building2, CreditCard, KeyRound, Loader2, Plus, Settings, UserRound, Wallet } from "lucide-react";
+import { Building2, CreditCard, KeyRound, Loader2, Plus, Puzzle, Settings, UserRound, Wallet } from "lucide-react";
+import { Link } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 import { EMBEDDED_SETTINGS_PARAM } from "../utils/settingsTabs";
@@ -71,6 +72,17 @@ const ProfileTab = ({ user }) => {
   };
   return (
     <div className="space-y-4 text-xs max-w-2xl" data-testid="account-profile">
+      <Link
+        to={`/settings?tab=extension`}
+        className="flex items-center justify-between gap-3 bg-sky-50 border border-sky-200 rounded-2xl px-4 py-3 hover:bg-sky-100/70"
+        data-testid="account-go-browser-extension"
+      >
+        <span className="font-semibold text-sky-950 inline-flex items-center gap-2">
+          <Puzzle className="w-4 h-4" />
+          TamKobi tarayıcı eklentisini indir
+        </span>
+        <span className="text-sky-800 font-bold">İndir →</span>
+      </Link>
       <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center gap-4">
         <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-lg font-bold">{user?.name?.charAt(0) || "U"}</div>
         <div>
