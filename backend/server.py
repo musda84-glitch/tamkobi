@@ -1856,8 +1856,6 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         {"key": "quotes", "label": "Onay bekleyen teklif", "count": quotes, "path": "/projects"},
         {"key": "critical_stock", "label": "Kritik stok", "count": crit, "path": "/stock"},
         {"key": "leaves", "label": "Bekleyen personel talebi", "count": int(leaves or 0) + int(early_leaves or 0), "path": "/personnel"},
-        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/quotes"},
-        {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
     ]
     return {"date": today, "tasks": [t for t in tasks if t["count"]], "collections": bucket("sales"), "payments": bucket("purchase"),
             "drafts": {"count": len(drafts), "total": round(sum(float(i.get("grand_total", 0)) for i in drafts), 2)},

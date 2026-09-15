@@ -42,7 +42,24 @@ export const OverviewPanel = ({ companyId }) => {
     <div className="space-y-4" data-testid="overview-panel">
       <div className="bg-slate-900 text-white rounded-2xl p-4 flex flex-col md:flex-row md:items-center gap-3" data-testid="today-tasks">
         <div className="flex items-center gap-2 font-bold text-sm shrink-0"><CalendarCheck className="w-4 h-4 text-emerald-400" /> Bugün <span className="text-slate-400 font-normal text-xs">{new Date(d.date).toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "long" })}</span></div>
-        <div className="flex flex-wrap gap-2">{d.tasks.length === 0 ? <span className="text-xs text-slate-300">Bugün için bekleyen görev yok 🎉</span> : d.tasks.map((t) => <button key={t.key} onClick={() => navigate(t.path)} className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 rounded-lg px-2.5 py-1.5 text-xs" data-testid={`task-${t.key}`}><b className="text-emerald-300">{t.count}</b> {t.label}{t.extra && <span className="text-rose-300">· {t.extra}</span>}</button>)}
+        <div className="flex flex-wrap gap-2">{d.tasks.length === 0 ? <span className="text-xs text-slate-300">Bugün için bekleyen görev yok 🎉</span> : d.tasks.map((t) => {
+            const isPersonnel = t.key === "leaves";
+            return (
+              <button
+                key={t.key}
+                onClick={() => navigate(t.path)}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ${
+                  isPersonnel
+                    ? "bg-rose-500/25 hover:bg-rose-500/40 ring-1 ring-rose-400/40"
+                    : "bg-white/10 hover:bg-white/20"
+                }`}
+                data-testid={`task-${t.key}`}
+              >
+                <b className={isPersonnel ? "text-rose-200" : "text-emerald-300"}>{t.count}</b> {t.label}
+                {t.extra && <span className="text-rose-300">· {t.extra}</span>}
+              </button>
+            );
+          })}
           {d.budget_warnings.map((w) => <button key={w.category} onClick={() => navigate("/expenses")} className="flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-lg px-2.5 py-1.5 text-xs" data-testid={`task-budget-${w.category}`}><AlertTriangle className="w-3 h-3" /> {w.category} bütçesi %{w.pct}</button>)}</div>
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
