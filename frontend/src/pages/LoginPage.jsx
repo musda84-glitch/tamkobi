@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { LogIn } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
 
@@ -27,6 +28,7 @@ export default function LoginPage() {
     try { localStorage.removeItem(REMEMBER_KEY); } catch { /* ignore */ }
     setForm({ email: "", password: "" });
     setRemember(false);
+    toast.message("Kayıtlı giriş bilgisi temizlendi.");
   };
 
   const submit = async (e) => {
@@ -56,13 +58,13 @@ export default function LoginPage() {
           <label className="block text-xs font-semibold mb-1">Şifre</label>
           <input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-password" autoComplete="current-password" />
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none" data-testid="login-remember-label">
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="login-remember-row">
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none" data-testid="login-remember-label">
             <input
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              className="rounded border-slate-300"
+              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
               data-testid="login-remember"
             />
             Beni hatırla
@@ -70,8 +72,9 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={forgetMe}
-            className="text-xs text-slate-500 hover:text-slate-800 font-medium underline-offset-2 hover:underline"
+            className="text-xs text-slate-600 hover:text-rose-700 font-semibold underline-offset-2 hover:underline px-1.5 py-0.5"
             data-testid="login-forget"
+            title="Kayıtlı e-postayı temizle"
           >
             Beni unut
           </button>
