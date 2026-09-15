@@ -82,7 +82,11 @@ export default function OrderPickKioskPage() {
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/${path}`, body || {});
       if (r.data.items) setSes(r.data);
-      toast.success(r.data.message || ok);
+      const msg = r.data.message || ok;
+      toast.success(msg);
+      if (path === "complete" && r.data.draft_invoice_number) {
+        toast.message(`Taslak fatura: ${r.data.draft_invoice_number}`, { duration: 5000 });
+      }
       if (path === "complete") { back(); }
       return r.data;
     } catch (e) { toast.error(e.response?.data?.detail || "İşlem başarısız."); }

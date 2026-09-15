@@ -9078,7 +9078,7 @@ trash.init(db)
 migration.init(db)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)})
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
-order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp})
+order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp, "create_draft_invoice_for_order": _create_draft_invoice_for_order})
 trade.init(db, create_invoice)
 
 async def _restore_bank_tx(doc, _related):
