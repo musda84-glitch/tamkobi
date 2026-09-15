@@ -6,6 +6,7 @@ import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileChec
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
+import { RADIAL_SLOT_COUNT, radialTaskOptions, DEFAULT_RADIAL_SLOTS } from "../utils/radialQuickMenu";
 import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -24,7 +25,7 @@ import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Modül Sıralama", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS (Netgsm)", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -228,6 +229,51 @@ const ModuleOrder = () => {
   );
 };
 
+const RadialSlotsEditor = () => {
+  const { menuItems, radialSlots, persistRadialSlots, resetRadialSlots } = useAuth();
+  const options = radialTaskOptions(menuItems);
+  const setSlot = (idx, value) => {
+    const next = [...(radialSlots || DEFAULT_RADIAL_SLOTS)];
+    while (next.length < RADIAL_SLOT_COUNT) next.push("");
+    next[idx] = value;
+    persistRadialSlots(next);
+  };
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs max-w-lg space-y-3" data-testid="radial-slots-settings" id="hizli-menu">
+      <div className="flex justify-between items-center">
+        <h3 className="text-sm font-bold">Hızlı Menü Görevleri</h3>
+        <button type="button" onClick={resetRadialSlots} className="text-slate-500 hover:underline" data-testid="radial-slots-reset">Varsayılana dön</button>
+      </div>
+      <p className="text-slate-500">Sağ tık / üst bar dairesel menüsündeki her yuvaya genel menüden bir sayfa veya hızlı işlem (yeni fatura, barkod…) atayın. Boş bırakılan yuvalar gizlenir.</p>
+      <div className="space-y-2">
+        {Array.from({ length: RADIAL_SLOT_COUNT }).map((_, i) => (
+          <label key={i} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid={`radial-slot-row-${i}`}>
+            <span className="w-16 font-mono text-slate-400 shrink-0">Yuva {i + 1}</span>
+            <select
+              value={radialSlots?.[i] || ""}
+              onChange={(e) => setSlot(i, e.target.value)}
+              className="flex-1 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs"
+              data-testid={`radial-slot-select-${i}`}
+            >
+              <option value="">— Boş —</option>
+              <optgroup label="Hızlı işlem">
+                {options.filter((o) => o.group === "Hızlı işlem").map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Genel menü">
+                {options.filter((o) => o.group === "Genel menü").map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const UcBox = ({ title, sub, items, base, testId, companyId, call }) => {
   const [val, setVal] = useState("");
   return (
@@ -362,7 +408,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}
           {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
-          {tab === "modules" && <ModuleOrder />}
+          {tab === "modules" && <div className="space-y-4"><ModuleOrder /><RadialSlotsEditor /></div>}
         </div>
       </div>
     </div>
