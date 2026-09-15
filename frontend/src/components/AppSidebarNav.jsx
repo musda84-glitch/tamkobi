@@ -14,7 +14,7 @@ function loadOpen() {
   return null;
 }
 
-export default function AppSidebarNav({ items, collapsed = false, onNavigate, onReorder }) {
+export default function AppSidebarNav({ items, collapsed = false, onNavigate, onReorder, counts = {} }) {
   const location = useLocation();
   const groups = useMemo(() => groupMenuItems(items), [items]);
   const activePath = location.pathname;
@@ -65,6 +65,7 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
   const renderItem = (item) => {
     const Icon = item.icon;
     const isActive = activePath === item.path;
+    const count = Number(counts?.[item.path] || 0);
     return (
       <Link
         key={item.path}
@@ -83,29 +84,50 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
       >
         <div className={`flex items-center truncate ${collapsed ? "justify-center w-full gap-0" : "gap-2.5"}`}>
           {Icon && (
-            <Icon
-              className={`w-4 h-4 shrink-0 ${
-                isActive
-                  ? item.isSystem
-                    ? "text-slate-900"
-                    : "text-white"
-                  : item.isAi
-                    ? "text-purple-400"
-                    : item.isSystem
-                      ? "text-amber-400"
-                      : "text-slate-400"
-              }`}
-            />
+            <span className="relative shrink-0">
+              <Icon
+                className={`w-4 h-4 ${
+                  isActive
+                    ? item.isSystem
+                      ? "text-slate-900"
+                      : "text-white"
+                    : item.isAi
+                      ? "text-purple-400"
+                      : item.isSystem
+                        ? "text-amber-400"
+                        : "text-slate-400"
+                }`}
+              />
+              {collapsed && count > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center" data-testid={`nav-count-${item.path.replace("/", "") || "dashboard"}`}>
+                  {count > 9 ? "9+" : count}
+                </span>
+              )}
+            </span>
           )}
           {!collapsed && <span className="truncate">{item.label}</span>}
         </div>
-        {!collapsed && item.badge && (
-          <span
-            className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0 ${
-              isActive ? "bg-white/20 text-white" : item.isAi ? "bg-purple-500/20 text-purple-300" : "bg-slate-800 text-slate-400"
-            }`}
-          >
-            {item.badge}
+        {!collapsed && (count > 0 || item.badge) && (
+          <span className="flex items-center gap-1 shrink-0">
+            {count > 0 && (
+              <span
+                className={`text-[10px] min-w-[1.15rem] h-4 px-1 rounded-full font-bold flex items-center justify-center ${
+                  isActive ? "bg-white text-rose-700" : "bg-rose-600 text-white"
+                }`}
+                data-testid={`nav-count-${item.path.replace("/", "") || "dashboard"}`}
+              >
+                {count > 99 ? "99+" : count}
+              </span>
+            )}
+            {item.badge && (
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
+                  isActive ? "bg-white/20 text-white" : item.isAi ? "bg-purple-500/20 text-purple-300" : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {item.badge}
+              </span>
+            )}
           </span>
         )}
       </Link>
