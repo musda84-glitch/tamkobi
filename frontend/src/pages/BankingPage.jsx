@@ -17,6 +17,7 @@ import {
   Landmark,
   Wallet,
   CreditCard,
+  Cpu,
   ArrowRightLeft,
   Plus,
   ArrowDownRight,
@@ -44,6 +45,7 @@ const ACCOUNT_GROUPS = [
   { type: "bank", badge: "Banka Hesapları", unit: "Hesap", icon: Landmark, card: "bg-blue-50/60 border-blue-200", iconBox: "bg-blue-100 text-blue-700", badgeCls: "text-blue-700 bg-blue-100", border: "border-blue-200/60" },
   { type: "cash_box", badge: "Kasalar", unit: "Kasa", icon: Wallet, card: "bg-emerald-50/60 border-emerald-200", iconBox: "bg-emerald-100 text-emerald-700", badgeCls: "text-emerald-700 bg-emerald-100", border: "border-emerald-200/60" },
   { type: "pos", badge: "POS Hesapları", unit: "POS", icon: CreditCard, card: "bg-purple-50/60 border-purple-200", iconBox: "bg-purple-100 text-purple-700", badgeCls: "text-purple-700 bg-purple-100", border: "border-purple-200/60" },
+  { type: "okc_pos", badge: "ÖKC POS Cihazları", unit: "ÖKC", icon: Cpu, card: "bg-teal-50/60 border-teal-200", iconBox: "bg-teal-100 text-teal-700", badgeCls: "text-teal-700 bg-teal-100", border: "border-teal-200/60" },
   { type: "credit_card", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" }
 ];
 
@@ -55,7 +57,16 @@ const emptyAccountForm = {
   iban: "",
   currency: "TRY",
   current_balance: 0.0,
-  pos_commission_rate: 1.5
+  pos_commission_rate: 1.5,
+  card_holder: "",
+  card_last4: "",
+  card_expiry: "",
+  card_limit: "",
+  okc_brand: "",
+  okc_serial: "",
+  okc_terminal_id: "",
+  okc_api_url: "",
+  okc_api_key: "",
 };
 
 export default function BankingPage() {
@@ -166,7 +177,16 @@ export default function BankingPage() {
       } else {
         payload.iban = newAccount.iban;
         payload.account_number = newAccount.account_number;
-        if (newAccount.type === "pos") payload.pos_commission_rate = Number(newAccount.pos_commission_rate || 0);
+        if (newAccount.type === "pos" || newAccount.type === "okc_pos") {
+          payload.pos_commission_rate = Number(newAccount.pos_commission_rate || 0);
+        }
+        if (newAccount.type === "okc_pos") {
+          payload.okc_brand = (newAccount.okc_brand || "").trim() || null;
+          payload.okc_serial = (newAccount.okc_serial || "").trim() || null;
+          payload.okc_terminal_id = (newAccount.okc_terminal_id || "").trim() || null;
+          payload.okc_api_url = (newAccount.okc_api_url || "").trim() || null;
+          payload.okc_api_key = (newAccount.okc_api_key || "").trim() || null;
+        }
       }
       if (editingAccount) {
         const { current_balance: _bal, ...meta } = payload;
@@ -206,6 +226,11 @@ export default function BankingPage() {
       card_last4: acc.card_last4 || "",
       card_expiry: acc.card_expiry || "",
       card_limit: acc.card_limit ?? "",
+      okc_brand: acc.okc_brand || "",
+      okc_serial: acc.okc_serial || "",
+      okc_terminal_id: acc.okc_terminal_id || "",
+      okc_api_url: acc.okc_api_url || "",
+      okc_api_key: acc.okc_api_key || "",
     });
     setShowAddAccountModal(true);
   };
@@ -604,7 +629,7 @@ export default function BankingPage() {
       {/* ADD ACCOUNT MODAL */}
       {showAddAccountModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`bg-white rounded-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto ${newAccount.type === "credit_card" ? "max-w-lg" : "max-w-md"}`} data-testid="add-account-modal">
+          <div className={`bg-white rounded-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto ${newAccount.type === "credit_card" || newAccount.type === "okc_pos" ? "max-w-lg" : "max-w-md"}`} data-testid="add-account-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">{editingAccount ? "Hesabı Düzelt" : "Yeni Banka / Kasa / POS Hesabı"}</h3>
               <button type="button" onClick={() => { setShowAddAccountModal(false); setEditingAccount(null); setStmtFile(null); }} className="text-slate-400">
@@ -631,14 +656,15 @@ export default function BankingPage() {
                   <option value="bank">Banka Vadesiz Ticari</option>
                   <option value="cash_box">Nakit Kasa</option>
                   <option value="pos">POS Cihazı / Sanal POS</option>
+                  <option value="okc_pos">ÖKC POS Cihazı</option>
                   <option value="credit_card">Kredi Kartı (Şirket Kartı)</option>
                 </select>
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Banka / Kurum Adı</label>
+                <label className="block font-semibold text-slate-700 mb-1">{newAccount.type === "okc_pos" ? "Marka / Kurum" : "Banka / Kurum Adı"}</label>
                 <input
                   type="text"
-                  placeholder="Örn: Garanti BBVA, Yapı Kredi, Merkez Kasa"
+                  placeholder={newAccount.type === "okc_pos" ? "Örn: Hugin, Beko, Ingenico, PAX" : "Örn: Garanti BBVA, Yapı Kredi, Merkez Kasa"}
                   value={newAccount.bank_name}
                   onChange={(e) => setNewAccount({ ...newAccount, bank_name: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
@@ -728,16 +754,104 @@ export default function BankingPage() {
                   </label>
                 </div>
               ) : (
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">IBAN No</label>
-                  <input
-                    type="text"
-                    placeholder="TR..."
-                    value={newAccount.iban}
-                    onChange={(e) => setNewAccount({ ...newAccount, iban: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
-                  />
-                </div>
+                <>
+                  {newAccount.type === "okc_pos" && (
+                    <div className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/40 p-3" data-testid="okc-connection-fields">
+                      <p className="text-[11px] text-teal-800 font-medium">ÖKC (Ödeme Kaydedici Cihaz) API bağlantısı — satış fişi / Z raporu senkronu için uç nokta ve kimlik bilgilerini girin.</p>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">ÖKC Markası</label>
+                        <select
+                          value={newAccount.okc_brand}
+                          onChange={(e) => setNewAccount({ ...newAccount, okc_brand: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                          data-testid="okc-brand-select"
+                        >
+                          <option value="">Seçin</option>
+                          <option value="hugin">Hugin</option>
+                          <option value="beko">Beko</option>
+                          <option value="ingenico">Ingenico</option>
+                          <option value="pax">PAX</option>
+                          <option value="inpos">Inpos</option>
+                          <option value="verifone">Verifone</option>
+                          <option value="other">Diğer</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Seri No</label>
+                          <input
+                            type="text"
+                            placeholder="Cihaz seri no"
+                            value={newAccount.okc_serial}
+                            onChange={(e) => setNewAccount({ ...newAccount, okc_serial: e.target.value })}
+                            className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
+                            data-testid="okc-serial-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Terminal ID</label>
+                          <input
+                            type="text"
+                            placeholder="Terminal / Sicil no"
+                            value={newAccount.okc_terminal_id}
+                            onChange={(e) => setNewAccount({ ...newAccount, okc_terminal_id: e.target.value })}
+                            className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
+                            data-testid="okc-terminal-input"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Bağlantı URL (API)</label>
+                        <input
+                          type="url"
+                          placeholder="https://..."
+                          value={newAccount.okc_api_url}
+                          onChange={(e) => setNewAccount({ ...newAccount, okc_api_url: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono text-[11px]"
+                          data-testid="okc-api-url-input"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">API Anahtarı</label>
+                        <input
+                          type="password"
+                          placeholder="••••••••"
+                          value={newAccount.okc_api_key}
+                          onChange={(e) => setNewAccount({ ...newAccount, okc_api_key: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
+                          data-testid="okc-api-key-input"
+                          autoComplete="off"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {(newAccount.type === "pos" || newAccount.type === "okc_pos") && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">POS Komisyon Oranı (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={newAccount.pos_commission_rate}
+                        onChange={(e) => setNewAccount({ ...newAccount, pos_commission_rate: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                        data-testid="pos-commission-input"
+                      />
+                    </div>
+                  )}
+                  {newAccount.type !== "okc_pos" && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">IBAN No</label>
+                      <input
+                        type="text"
+                        placeholder="TR..."
+                        value={newAccount.iban}
+                        onChange={(e) => setNewAccount({ ...newAccount, iban: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
+                      />
+                    </div>
+                  )}
+                </>
               )}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{newAccount.type === "credit_card" ? "Mevcut Kart Borcu (₺)" : "Açılış Bakiyesi (₺)"}</label>
