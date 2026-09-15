@@ -7500,6 +7500,61 @@ async def _shopphp_refresh_cached_prices(company_id: str, sent: List[dict]) -> N
             c["on_sale"] = c["approved"] = bool(int(u["active"]))
     await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
 
+@api_router.post("/marketplace/products/equalize-from-stock")
+async def marketplace_equalize_from_stock(req: Dict[str, Any]):
+    """Stok kartındaki fiyat/stok değerlerini tüm canlı (yazılabilir) pazaryerlerine aynı şekilde gönder.
+
+    İsteğe bağlı `barcodes` / `channels` ile daraltılabilir. Eşleşmeyen barkodlar atlanır.
+    """
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    only_barcodes = {str(b).strip() for b in (req.get("barcodes") or []) if str(b).strip()} or None
+    only_channels = {str(c).strip() for c in (req.get("channels") or []) if str(c).strip()} or None
+    results = []
+    total_sent = 0
+    for channel in ("trendyol", "shopphp"):
+        if only_channels and channel not in only_channels:
+            continue
+        cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+        if channel == "trendyol":
+            if not cfg or not marketplace_providers.has_live_credentials(cfg):
+                results.append({"channel": channel, "ok": False, "skipped": True, "detail": "Canlı API yok veya yapılandırılmamış."})
+                continue
+        elif channel == "shopphp":
+            if not cfg or not (cfg.get("rest_email") and cfg.get("rest_password_enc")):
+                results.append({"channel": channel, "ok": False, "skipped": True, "detail": "ShopPHP REST bilgileri yok (salt-okunur XML veya yapılandırılmamış)."})
+                continue
+        else:
+            continue
+        cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel})
+        items = []
+        for it in (cache or {}).get("items") or []:
+            barcode = str(it.get("barcode") or "").strip()
+            if not barcode:
+                continue
+            if only_barcodes and barcode not in only_barcodes:
+                continue
+            items.append({"barcode": barcode, "stock_code": it.get("stock_code") or it.get("sku") or "", "product_id": it.get("product_id") or ""})
+        if not items:
+            results.append({"channel": channel, "ok": False, "skipped": True, "detail": "Önbellekte ürün yok — önce kanaldan çekin.", "sent": 0})
+            continue
+        try:
+            res = await marketplace_push_price_stock({"company_id": company_id, "channel": channel, "items": items, "from_stock": True})
+            sent = int(res.get("sent") or 0)
+            total_sent += sent
+            results.append({"channel": channel, "ok": True, "sent": sent, "message": res.get("message"), "batch_request_id": res.get("batch_request_id")})
+        except HTTPException as e:
+            results.append({"channel": channel, "ok": False, "sent": 0, "detail": e.detail})
+        except Exception as e:
+            results.append({"channel": channel, "ok": False, "sent": 0, "detail": str(e)[:200]})
+    ok_n = sum(1 for r in results if r.get("ok"))
+    return {
+        "status": "success" if ok_n else "error",
+        "total_sent": total_sent,
+        "results": results,
+        "message": f"Stok kartından eşitleme: {ok_n}/{len(results)} kanal · toplam {total_sent} ürün gönderildi.",
+    }
+
+
 @api_router.post("/marketplace/products/push")
 async def marketplace_push_price_stock(req: Dict[str, Any]):
     """Seçili ürünlerin fiyat / stok / aktiflik bilgisini pazaryerine gönder. items: [{barcode, sale_price?, list_price?, quantity?, active?}] veya from_stock=true → eşleşen stok kartından."""

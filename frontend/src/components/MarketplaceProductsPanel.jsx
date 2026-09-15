@@ -68,6 +68,39 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     catch (e) { toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı."); }
   };
 
+  const equalizeAll = async () => {
+    const matched = (d?.rows || []).filter((r) => r.product_id);
+    const barcodes = sel.length
+      ? sel.filter((bc) => matched.some((r) => r.barcode === bc))
+      : matched.map((r) => r.barcode);
+    if (!barcodes.length) {
+      toast.error(sel.length ? "Seçili ürünlerin stok kartı eşleşmesi yok." : "Eşleşmiş ürün yok — önce stok kartına bağlayın.");
+      return;
+    }
+    const scope = sel.length ? `seçili ${barcodes.length}` : `eşleşmiş ${barcodes.length}`;
+    if (!window.confirm(`${scope} ürünün stok kartı fiyat/stoğu tüm canlı pazaryerlerine (Trendyol, ShopPHP) aynı şekilde gönderilsin mi?`)) return;
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/marketplace/products/equalize-from-stock`, {
+        company_id: companyId,
+        barcodes,
+      });
+      toast.success(r.data.message);
+      (r.data.results || []).forEach((chRes) => {
+        if (!chRes.ok && !chRes.skipped) toast.error(`${chRes.channel}: ${chRes.detail || "hata"}`);
+        else if (chRes.skipped) toast(`${chRes.channel}: ${chRes.detail}`);
+      });
+      setSel([]);
+      setEdits({});
+      load();
+      setTimeout(() => loadLogs(true), 4000);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eşitleme gönderilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!d) return <div className="p-6 text-xs text-slate-400 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Pazaryeri ürünleri yükleniyor…</div>;
   const counts = { all: d.rows.length, unmatched: d.rows.filter((r) => !r.product_id).length, price_diff: d.rows.filter((r) => r.price_diff && Math.abs(r.price_diff) >= 0.01).length, stock_diff: d.rows.filter((r) => r.stock_diff && Math.abs(r.stock_diff) >= 1).length };
   return (
@@ -88,6 +121,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         <div className="flex items-center gap-1 border-l pl-2"><input type="number" min="0" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} placeholder="Toplu stok" className="w-24 bg-white border border-slate-200 rounded-lg p-1.5" data-testid="mp-bulk-qty" /><button onClick={applyBulkQty} className="px-2 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold" data-testid="mp-bulk-apply">Tümüne Uygula</button></div>
         <div className="flex items-center gap-1 border-l pl-2 text-[10px] text-slate-500">Stok kaynağı: {[["marketplace", "Pazaryeri"], ["crm", "Stok Kartı"]].map(([k, l]) => <button key={k} onClick={() => setStockSrc(k)} className={`px-2 py-1 rounded-lg border text-xs font-semibold ${stockSrc === k ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`mp-stocksrc-${k}`}>{l}</button>)}</div>
         {d.push_supported !== false && <button onClick={() => push(stockSrc === "crm")} disabled={busy || !sel.length} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-send-btn"><Upload className="w-3.5 h-3.5" /> Stok/Fiyat Gönder{sel.length ? ` (${sel.length})` : ""}</button>}
+        <button onClick={equalizeAll} disabled={busy} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" title="Eşleşen stok kartı fiyat ve stokunu Trendyol + ShopPHP kanallarına aynı şekilde gönderir" data-testid="mp-equalize-all-btn"><Upload className="w-3.5 h-3.5" /> Tüm pazaryerlerine eşitle</button>
       </div>
       {logs.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-2xl p-3 text-xs" data-testid="mp-push-logs">
