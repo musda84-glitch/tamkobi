@@ -113,7 +113,13 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     <div className="min-h-screen bg-slate-50 flex text-slate-900 font-sans antialiased">
       <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"}>
         <div className={`h-16 border-b border-slate-800/80 flex items-center ${sidebarCollapsed ? "px-2 justify-center gap-1" : "px-5 justify-between"}`}>
-          <Link to="/" className={`flex items-center font-bold text-white tracking-tight ${sidebarCollapsed ? "gap-0 justify-center" : "gap-2.5 text-lg"}`} data-testid="brand-logo-btn" title="TamKobi">
+          <Link
+            to="/panel"
+            onClick={() => setMobileMenuOpen(false)}
+            className={`flex items-center font-bold text-white tracking-tight ${sidebarCollapsed ? "gap-0 justify-center" : "gap-2.5 text-lg"}`}
+            data-testid="brand-logo-btn"
+            title="Genel Bakış"
+          >
             <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
             {!sidebarCollapsed && (
               <>
