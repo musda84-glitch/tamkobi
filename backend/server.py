@@ -1865,6 +1865,88 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
             "vat": {"month": month, "calculated": sales_vat, "deductible": round(purch_vat + exp_vat, 2), "payable": round(sales_vat - purch_vat - exp_vat, 2), "declaration_date": nxt.strftime("%Y-%m-%d"), "days_left": (nxt.date() - now.date()).days},
             "budget_warnings": budgets["warnings"]}
 
+
+@api_router.get("/dashboard/ops-alerts")
+async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
+    """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
+    products, new_orders, shipped, prod_orders = await asyncio.gather(
+        db.products.find(
+            {"company_id": company_id, "track_stock": {"$ne": False}},
+            {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1},
+        ).to_list(5000),
+        db.orders.find(
+            {"company_id": company_id, "order_status": {"$in": ["pending", "new"]}},
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1},
+        ).sort("created_at", -1).to_list(20),
+        db.orders.find(
+            {"company_id": company_id, "order_status": "shipped"},
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "cargo_tracking_number": 1, "order_date": 1},
+        ).sort("updated_at", -1).to_list(20),
+        db.production_orders.find(
+            {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+            {"order_code": 1, "order_number": 1, "finished_product_name": 1, "product_name": 1, "status": 1, "quantity": 1, "planned_quantity": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(20),
+    )
+    low_sorted = sorted(
+        [
+            {
+                "id": str(p.get("_id") or ""),
+                "title": p.get("name") or p.get("sku") or "Ürün",
+                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {float(p.get('min_stock_alert') or 0):g}"
+                + (f" · {p['sku']}" if p.get("sku") else ""),
+                "path": "/stock",
+                "_qty": float(p.get("stock_quantity") or 0),
+            }
+            for p in products
+            if float(p.get("stock_quantity") or 0) <= float(p.get("min_stock_alert") or 0)
+        ],
+        key=lambda x: x["_qty"],
+    )
+    for row in low_sorted:
+        row.pop("_qty", None)
+
+    def _fmt_try(n):
+        try:
+            return f"{float(n):,.2f} ₺".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return None
+
+    def order_row(o, path="/orders"):
+        amt = o.get("grand_total") if o.get("grand_total") is not None else o.get("total_amount")
+        parts = [
+            o.get("customer_name") or None,
+            _fmt_try(amt) if amt is not None else None,
+            o.get("channel"),
+            f"Takip: {o['cargo_tracking_number']}" if o.get("cargo_tracking_number") else None,
+        ]
+        return {
+            "id": str(o.get("_id") or ""),
+            "title": o.get("order_number") or "Sipariş",
+            "detail": " · ".join(x for x in parts if x),
+            "path": path,
+        }
+
+    def prod_row(o):
+        name = o.get("finished_product_name") or o.get("product_name") or "Üretim"
+        code = o.get("order_code") or o.get("order_number") or ""
+        qty = o.get("planned_quantity") if o.get("planned_quantity") is not None else o.get("quantity")
+        st = "Planlandı" if o.get("status") == "planned" else "Üretimde"
+        return {
+            "id": str(o.get("_id") or ""),
+            "title": f"{code} · {name}".strip(" ·"),
+            "detail": f"{st}" + (f" · {float(qty):g} adet" if qty is not None else ""),
+            "path": "/production",
+        }
+
+    groups = [
+        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock", "count": len(low_sorted), "items": low_sorted[:8]},
+        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": len(prod_orders), "items": [prod_row(o) for o in prod_orders[:8]]},
+        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders", "count": len(shipped), "items": [order_row(o) for o in shipped[:8]]},
+        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders", "count": len(new_orders), "items": [order_row(o) for o in new_orders[:8]]},
+    ]
+    total = sum(g["count"] for g in groups)
+    return {"count": total, "groups": groups}
+
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
     now = datetime.now(timezone.utc)
