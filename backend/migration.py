@@ -495,6 +495,34 @@ def _pick(d: dict, *keys, default=None):
     return default
 
 
+def _bh_photo_url(product: dict) -> Optional[str]:
+    """BizimHesap ürün görseli — farklı alan adları ve göreli yollar."""
+    raw = _pick(
+        product or {},
+        "photo", "photoUrl", "photoURL", "image", "imageUrl", "imageURL",
+        "picture", "thumbnail", "thumbnailUrl", "img", "productImage",
+        default="",
+    )
+    if isinstance(raw, dict):
+        raw = _pick(raw, "url", "src", "href", "path", default="") or ""
+    if isinstance(raw, list) and raw:
+        first = raw[0]
+        raw = first.get("url") if isinstance(first, dict) else first
+    url = str(raw or "").strip()
+    if not url or url.lower() in ("null", "none", "undefined"):
+        return None
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith("http://") or url.startswith("https://") or url.startswith("data:"):
+        return url
+    # Göreli yol → BizimHesap kökü
+    if url.startswith("/"):
+        return "https://bizimhesap.com" + url
+    if url.startswith("uploads/") or url.startswith("files/") or url.startswith("images/"):
+        return "https://bizimhesap.com/" + url
+    return None
+
+
 def _bh_http_detail(path: str, r: httpx.Response) -> str:
     snippet = (r.text or "").strip().replace("\n", " ")[:180]
     try:
@@ -589,6 +617,16 @@ async def _bh_products(company_id: str, token: str, firm_id: str = "", force: bo
     return items, False
 
 
+@router.get("/migration/bizimhesap/warehouses")
+async def bh_warehouses(company_id: str = "comp_nexus_main_01"):
+    """Token kayıtlıysa depo listesini döner (ürün testi gerekmez)."""
+    token, firm_id = await _bh_creds(company_id)
+    warehouses = _unwrap(await _bh_get("/warehouses", token, firm_id, timeout=30.0))
+    wh = [{"id": str(_pick(w, "id", "warehouseId", "depoId", "code", default="")), "name": _pick(w, "name", "title", "warehouseName", "depoAdi", default="Depo")} for w in warehouses]
+    wh = [w for w in wh if w["id"]]
+    return {"warehouses": wh, "count": len(wh)}
+
+
 @router.post("/migration/bizimhesap/test")
 async def bh_test(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
@@ -603,10 +641,11 @@ async def bh_test(req: Dict[str, Any]):
     except HTTPException as e:
         product_error = e.detail
     active = sum(1 for p in products if str(p.get("isActive", 1)) in ("1", "True", "true"))
-    res = {"ok": True, "cached": cached, "product_count": len(products), "active_count": active, "with_barcode": sum(1 for p in products if p.get("barcode")), "with_code": sum(1 for p in products if p.get("code")), "warehouses": wh,
-           "sample": [{k: p.get(k) for k in ("title", "code", "barcode", "price", "buyingPrice", "unit", "tax", "quantity", "category", "brand")} for p in products[:3]], "product_fields": sorted({k for p in products[:50] for k in p.keys()}),
+    with_photo = sum(1 for p in products if _bh_photo_url(p))
+    res = {"ok": True, "cached": cached, "product_count": len(products), "active_count": active, "with_barcode": sum(1 for p in products if p.get("barcode")), "with_code": sum(1 for p in products if p.get("code")), "with_photo": with_photo, "warehouses": wh,
+           "sample": [{k: p.get(k) for k in ("title", "code", "barcode", "price", "buyingPrice", "unit", "tax", "quantity", "category", "brand", "photo")} for p in products[:3]], "product_fields": sorted({k for p in products[:50] for k in p.keys()}),
            "product_error": product_error, "firm_id": firm_id}
-    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_test": {"at": _now(), "product_count": len(products), "warehouse_count": len(wh), "product_error": product_error}}})
+    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_test": {"at": _now(), "product_count": len(products), "warehouse_count": len(wh), "with_photo": with_photo, "product_error": product_error}}})
     return res
 
 
@@ -615,19 +654,21 @@ async def bh_import(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     token, firm_id = await _bh_creds(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
-    products, _cached = await _bh_products(company_id, token, firm_id)
+    with_images = req.get("with_images", True)
+    products, _cached = await _bh_products(company_id, token, firm_id, force=bool(req.get("force")))
     stock: Dict[str, float] = {}
-    if req.get("with_stock") and req.get("warehouse_id"):
-        for it in _unwrap(await _bh_get(f"/inventory/{req['warehouse_id']}", token, firm_id)):
+    warehouse_id = (req.get("warehouse_id") or "").strip() or None
+    if req.get("with_stock", True) and warehouse_id:
+        for it in _unwrap(await _bh_get(f"/inventory/{warehouse_id}", token, firm_id, timeout=90.0)):
             try:
-                q = float(str(_pick(it, "qty", "quantity", "stock", default=0) or 0).replace(",", "."))
+                q = float(str(_pick(it, "qty", "quantity", "stock", "amount", default=0) or 0).replace(",", "."))
             except (TypeError, ValueError):
                 continue
-            for k in ("id", "productId", "barcode", "code"):
+            for k in ("id", "productId", "product_id", "barcode", "code", "sku"):
                 v = str(it.get(k) or "").strip().lower()
                 if v:
                     stock[v] = q
-    batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "products", "entity_label": ENTITIES["products"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /products", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now()}
+    batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "products", "entity_label": ENTITIES["products"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /products", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now(), "with_images": 0, "with_stock_qty": 0}
     only_active = req.get("only_active", True)
     for p in products:
         if only_active and str(p.get("isActive", 1)) not in ("1", "True", "true"):
@@ -650,20 +691,24 @@ async def bh_import(req: Dict[str, Any]):
                     pass
         if str(p.get("currency") or "").upper() in ("USD", "EUR", "GBP"):
             data["currency"] = str(p["currency"]).upper()
-        photo = str(p.get("photo") or "").strip()
-        if photo.startswith("http"):
-            data["image_url"] = photo
+        if with_images:
+            photo = _bh_photo_url(p)
+            if photo:
+                data["image_url"] = photo
+                data["images"] = [photo]
+                batch["with_images"] += 1
         qty = None
         for k in (ext_id.lower() if ext_id else None, barcode.lower() if barcode else None, code.lower() if code else None):
             if k and k in stock:
                 qty = stock[k]; break
         if qty is None and p.get("quantity") not in (None, "") and not stock:
             try:
-                qty = float(p["quantity"])
+                qty = float(str(p["quantity"]).replace(",", "."))
             except (TypeError, ValueError):
                 qty = None
         if qty is not None:
             data["stock_quantity"] = qty
+            batch["with_stock_qty"] += 1
         data = {k: v for k, v in data.items() if v is not None}
         ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"barcode": barcode}] if barcode else []) + ([{"sku": code}] if code else [])
         existing = await _db.products.find_one({"company_id": company_id, "$or": ors}) if ors else None
@@ -677,9 +722,15 @@ async def bh_import(req: Dict[str, Any]):
             doc = _build_doc("products", company_id, data, batch["_id"]); doc["bizimhesap_id"] = ext_id; doc["source"] = "bizimhesap"
             await _db.products.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
     await _db.migration_batches.insert_one(batch)
-    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_import": {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"])}}})
-    return {"status": "success", "batch_id": batch["_id"], "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "with_stock": bool(stock),
-            "message": f"BizimHesap: {len(products)} ürün okundu → {len(batch['inserted_ids'])} yeni stok kartı, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı (pasif/mevcut)" + (f", depodan {len(stock)} stok kaydı eşlendi." if stock else ".")}
+    last = {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "with_images": batch["with_images"], "with_stock_qty": batch["with_stock_qty"], "warehouse_id": warehouse_id}
+    await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_import": last}})
+    parts = [f"BizimHesap: {len(products)} ürün okundu → {len(batch['inserted_ids'])} yeni stok kartı, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı"]
+    if stock:
+        parts.append(f"depodan {len(stock)} stok kaydı eşlendi ({batch['with_stock_qty']} karta yazıldı)")
+    if with_images:
+        parts.append(f"{batch['with_images']} üründe resim alındı")
+    return {"status": "success", "batch_id": batch["_id"], "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "with_stock": bool(stock), "with_images": batch["with_images"], "with_stock_qty": batch["with_stock_qty"],
+            "message": "; ".join(parts) + "."}
 
 
 _BH_TYPE_FIELDS = ("type", "customertype", "caritype", "kind", "accounttype", "carituru")

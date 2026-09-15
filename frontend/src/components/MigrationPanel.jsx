@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Upload, Download, Loader2, RotateCcw, CheckCircle2, AlertTriangle, Plug, FileSpreadsheet, ArrowRight, Sparkles } from "lucide-react";
+import { Upload, Download, Loader2, RotateCcw, CheckCircle2, AlertTriangle, Plug, FileSpreadsheet, ArrowRight, Sparkles, Package } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -15,19 +15,50 @@ const BizimHesapCard = ({ companyId, onImported }) => {
   const [test, setTest] = useState(null);
   const [err, setErr] = useState("");
   const [wh, setWh] = useState("");
+  const [warehouses, setWarehouses] = useState([]);
+  const [stockOpt, setStockOpt] = useState({ with_stock: true, with_images: true, only_active: true });
   const [busy, setBusy] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/migration/bizimhesap/config?company_id=${companyId}`).then((r) => { setCfg(r.data); setFirmId(r.data.firm_id || ""); }).catch(() => {}), [companyId]);
+  const loadWarehouses = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_URL}/migration/bizimhesap/warehouses`, { params: { company_id: companyId } });
+      const list = r.data?.warehouses || [];
+      setWarehouses(list);
+      setWh((prev) => prev || list[0]?.id || "");
+    } catch { /* token yoksa sessiz */ }
+  }, [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (cfg?.configured) loadWarehouses(); }, [cfg?.configured, loadWarehouses]);
   const save = async () => { setBusy("save"); setErr(""); try { await axios.put(`${API_URL}/migration/bizimhesap/config`, { company_id: companyId, token, firm_id: firmId }); toast.success("BizimHesap bağlantı bilgileri kaydedildi."); setToken(""); load(); } catch (e) { const m = e.response?.data?.detail || "Kaydedilemedi."; setErr(m); toast.error(m); } finally { setBusy(""); } };
-  const runTest = async () => { setBusy("test"); setErr(""); setTest(null); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/test`, { company_id: companyId, token: token || undefined, firm_id: firmId || undefined }); setTest(r.data); if (r.data.warehouses?.[0]) setWh(r.data.warehouses[0].id); if (r.data.product_error) { setErr(r.data.product_error); toast.success(`Bağlantı kuruldu: ${r.data.warehouses.length} depo. Ürün listesi alınamadı.`); } else { toast.success(`Bağlantı başarılı: ${r.data.product_count} ürün, ${r.data.warehouses.length} depo.`); } } catch (e) { const m = e.response?.data?.detail || "Bağlantı testi başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const runTest = async () => { setBusy("test"); setErr(""); setTest(null); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/test`, { company_id: companyId, token: token || undefined, firm_id: firmId || undefined }); setTest(r.data); setWarehouses(r.data.warehouses || []); if (r.data.warehouses?.[0]) setWh(r.data.warehouses[0].id); if (r.data.product_error) { setErr(r.data.product_error); toast.success(`Bağlantı kuruldu: ${r.data.warehouses.length} depo. Ürün listesi alınamadı.`); } else { toast.success(`Bağlantı başarılı: ${r.data.product_count} ürün${r.data.with_photo ? ` · ${r.data.with_photo} resimli` : ""}, ${r.data.warehouses.length} depo.`); } } catch (e) { const m = e.response?.data?.detail || "Bağlantı testi başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
   const [custOpt, setCustOpt] = useState({ only_with_balance: false, invert_sign: false, contact_type: "auto" });
   const importCustomers = async () => { if (!window.confirm("BizimHesap carileri (ünvan, VKN, iletişim, bakiye) aktarılsın mı? Mevcut cariler VKN/ünvan eşleşmesiyle güncellenir ve müşteri/tedarikçi türleri yeniden belirlenir; işlem Aktarım Günlüğü'nden geri alınabilir.")) return; setBusy("cust"); setErr(""); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/import-customers`, { company_id: companyId, ...custOpt, on_duplicate: "update" }); toast.success(r.data.message); load(); onImported(); } catch (e) { const m = e.response?.data?.detail || "Cari aktarımı başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
-  const doImport = async () => { if (!window.confirm("BizimHesap ürünleri stok kartlarına aktarılsın mı? Mevcut (barkod/SKU eşleşen) kartlar güncellenir.")) return; setBusy("import"); setErr(""); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/import`, { company_id: companyId, with_stock: !!wh, warehouse_id: wh || null, on_duplicate: "update" }); toast.success(r.data.message); load(); onImported(); } catch (e) { const m = e.response?.data?.detail || "Aktarım başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const doImport = async () => {
+    if (!window.confirm("BizimHesap stok kartları (ürün, miktar, resim) aktarılsın mı? Mevcut barkod/SKU eşleşen kartlar güncellenir.")) return;
+    setBusy("import"); setErr("");
+    try {
+      const r = await axios.post(`${API_URL}/migration/bizimhesap/import`, {
+        company_id: companyId,
+        with_stock: !!stockOpt.with_stock && !!wh,
+        with_images: !!stockOpt.with_images,
+        only_active: !!stockOpt.only_active,
+        warehouse_id: stockOpt.with_stock ? (wh || null) : null,
+        on_duplicate: "update",
+      });
+      toast.success(r.data.message);
+      load();
+      onImported();
+    } catch (e) {
+      const m = e.response?.data?.detail || "Stok aktarımı başarısız.";
+      setErr(m); toast.error(m);
+    } finally { setBusy(""); }
+  };
   const canTest = busy !== "test" && (cfg?.configured || token.trim());
+  const whList = warehouses.length ? warehouses : (test?.warehouses || []);
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 text-xs" data-testid="bizimhesap-card">
       <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><Plug className="w-4 h-4 text-emerald-600" /> BizimHesap API Bağlantısı</b>{cfg?.configured && <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold" data-testid="bh-configured">Token kayıtlı {cfg.token_mask}</span>}</div>
-      <p className="text-slate-500">BizimHesap paneli → <b>Ayarlar / API</b> içinden hesap <b>Token</b> ve <b>Firma ID</b> değerlerini alın. Resmi API ürün, depo ve stok okur; cari/fatura listeleri için aşağıdaki Excel aktarımını da kullanabilirsiniz.</p>
+      <p className="text-slate-500">BizimHesap paneli → <b>Ayarlar / API</b> içinden hesap <b>Token</b> ve <b>Firma ID</b> değerlerini alın. Resmi API ürün, depo, stok miktarı ve ürün resimlerini okur; cari/fatura listeleri için aşağıdaki Excel aktarımını da kullanabilirsiniz.</p>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={cfg?.configured ? "Yeni token (değiştirmek için)" : "BizimHesap Token"} className={inp} data-testid="bh-token" />
         <input value={firmId} onChange={(e) => setFirmId(e.target.value)} placeholder="Firma ID" className={inp} data-testid="bh-firm" />
@@ -36,9 +67,37 @@ const BizimHesapCard = ({ companyId, onImported }) => {
       {err && <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3" data-testid="bh-error">{err}</div>}
       {test && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2" data-testid="bh-test-result">
-          <div className="flex flex-wrap items-center gap-3"><CheckCircle2 className="w-4 h-4 text-emerald-600" /><b>{test.product_count} ürün</b><span>{test.warehouses.length} depo</span>{test.product_fields?.length > 0 && <span className="text-slate-500">Alanlar: {test.product_fields.slice(0, 12).join(", ")}{test.product_fields.length > 12 ? "…" : ""}</span>}</div>
-          <div className="flex flex-wrap items-center gap-2"><label>Stok miktarı deposu:</label><select value={wh} onChange={(e) => setWh(e.target.value)} className="bg-white border rounded-lg p-1.5" data-testid="bh-warehouse"><option value="">Stok alma</option>{test.warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
-            <button onClick={doImport} disabled={busy === "import"} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import">{busy === "import" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Ürünleri Aktar</button></div>
+          <div className="flex flex-wrap items-center gap-3"><CheckCircle2 className="w-4 h-4 text-emerald-600" /><b>{test.product_count} ürün</b>{test.with_photo != null && <span>{test.with_photo} resimli</span>}<span>{test.warehouses.length} depo</span>{test.product_fields?.length > 0 && <span className="text-slate-500">Alanlar: {test.product_fields.slice(0, 12).join(", ")}{test.product_fields.length > 12 ? "…" : ""}</span>}</div>
+        </div>)}
+      {cfg?.configured && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2" data-testid="bh-products">
+          <div className="flex flex-wrap items-center gap-2">
+            <b className="text-slate-800 flex items-center gap-1.5"><Package className="w-3.5 h-3.5 text-emerald-600" /> Ürünler, Stok & Resimler</b>
+            <button type="button" onClick={loadWarehouses} className="text-[10px] text-slate-500 hover:text-slate-800 underline" data-testid="bh-refresh-wh">Depoları yenile</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1"><input type="checkbox" checked={stockOpt.with_stock} onChange={(e) => setStockOpt({ ...stockOpt, with_stock: e.target.checked })} data-testid="bh-opt-stock" /> Stok miktarlarını çek</label>
+            <label className="flex items-center gap-1"><input type="checkbox" checked={stockOpt.with_images} onChange={(e) => setStockOpt({ ...stockOpt, with_images: e.target.checked })} data-testid="bh-opt-images" /> Ürün resimlerini çek</label>
+            <label className="flex items-center gap-1"><input type="checkbox" checked={stockOpt.only_active} onChange={(e) => setStockOpt({ ...stockOpt, only_active: e.target.checked })} data-testid="bh-opt-active" /> Sadece aktif ürünler</label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1">Depo
+              <select value={wh} onChange={(e) => setWh(e.target.value)} disabled={!stockOpt.with_stock} className="bg-white border border-slate-200 rounded-lg p-1.5 disabled:opacity-50" data-testid="bh-warehouse">
+                <option value="">Depo seçin</option>
+                {whList.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </label>
+            <button onClick={doImport} disabled={busy === "import" || (stockOpt.with_stock && !wh && whList.length > 0)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import">
+              {busy === "import" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Stok Kartlarını Aktar
+            </button>
+          </div>
+          {cfg?.last_import && (
+            <div className="text-[10px] text-slate-400" data-testid="bh-last-import">
+              Son stok aktarımı: {new Date(cfg.last_import.at).toLocaleString("tr-TR")} · {cfg.last_import.inserted} yeni, {cfg.last_import.updated} güncellendi
+              {cfg.last_import.with_stock_qty != null ? ` · ${cfg.last_import.with_stock_qty} stok miktarı` : ""}
+              {cfg.last_import.with_images != null ? ` · ${cfg.last_import.with_images} resim` : ""}
+            </div>
+          )}
         </div>)}
       {cfg?.configured && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3" data-testid="bh-customers">
@@ -53,7 +112,6 @@ const BizimHesapCard = ({ companyId, onImported }) => {
           <button onClick={importCustomers} disabled={busy === "cust"} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import-customers">{busy === "cust" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Carileri Aktar</button>
           {cfg?.last_customer_import && <span className="text-[10px] text-slate-400">Son: {new Date(cfg.last_customer_import.at).toLocaleString("tr-TR")} · {cfg.last_customer_import.inserted} yeni / {cfg.last_customer_import.updated} güncel · toplam bakiye {Number(cfg.last_customer_import.total_balance).toLocaleString("tr-TR")} ₺</span>}
         </div>)}
-      {cfg?.last_import && <div className="text-[10px] text-slate-400">Son aktarım: {new Date(cfg.last_import.at).toLocaleString("tr-TR")} · {cfg.last_import.inserted} yeni, {cfg.last_import.updated} güncellendi</div>}
     </div>
   );
 };
