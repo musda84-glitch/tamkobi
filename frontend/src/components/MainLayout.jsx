@@ -104,9 +104,11 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const roleLabels = {
     admin: "Yönetici",
-    accountant: "Mali Müşavir",
-    sales: "Satış & B2B",
-    warehouse: "Depo Sorumlusu",
+    accountant: "Muhasebe",
+    sales: "Satış",
+    warehouse: "Depo",
+    production: "Üretim",
+    advisor: "Mali Müşavir",
   };
 
   return (
