@@ -7179,8 +7179,10 @@ def _order_profit(o: dict, fees: dict, cost_lookup: Dict[str, float]) -> dict:
         cost += float(c or 0) * int(it.get("quantity") or 1)
     vat_on_sale = round(revenue - revenue / 1.20, 2)
     net = round(revenue - vat_on_sale - commission - commission_vat - service - cargo - cost, 2)
+    rate = float(fees.get("commission_rate") or 0)
     return {"revenue": revenue, "sale_vat": vat_on_sale, "commission": commission, "commission_vat": commission_vat, "service_fee": service, "cargo_fee": cargo, "product_cost": round(cost, 2),
-            "net_profit": net, "margin_pct": round(net / revenue * 100, 1) if revenue else 0.0, "cost_missing_items": missing}
+            "net_profit": net, "margin_pct": round(net / revenue * 100, 1) if revenue else 0.0, "cost_missing_items": missing,
+            "commission_rate": rate, "effective_commission_rate": round(rate * (1 + float(fees.get("commission_vat_rate") or 0) / 100), 2)}
 
 @api_router.get("/marketplace/profitability")
 async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 30, channel: Optional[str] = None):
