@@ -232,7 +232,18 @@ async def scan_pick(order_id: str, req: Dict[str, Any]):
     ordered = float(line.get("ordered_qty") or 0)
     picked = float(line.get("picked_qty") or 0)
     if picked + qty > ordered + 1e-9:
-        raise HTTPException(status_code=400, detail=f"{line['product_name']}: sipariş {ordered:g} adet, {picked:g} okutuldu. Fazla okutmayın.")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "overscan",
+                "message": f"{line['product_name']}: siparişte {ordered:g} adet var, {picked:g} okutuldu. Fazla ürün okutmayın.",
+                "product_name": line.get("product_name"),
+                "product_id": line.get("product_id"),
+                "line_index": line.get("line_index"),
+                "ordered_qty": ordered,
+                "picked_qty": picked,
+            },
+        )
     line["picked_qty"] = round(picked + qty, 3)
     if o.get("order_status") == "pending":
         await _db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "preparing"}})
