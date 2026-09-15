@@ -117,6 +117,9 @@ export const AuthProvider = ({ children }) => {
       setAuthenticated(true);
       setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
+      if (res.data.user?.preferences?.dashboard_layout?.length) {
+        try { localStorage.setItem("dashboard_layout", JSON.stringify(res.data.user.preferences.dashboard_layout)); } catch { /* ignore */ }
+      }
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
         const found = res.data.companies.find(c => c.id === res.data.user?.active_company_id || c._id === res.data.user?.active_company_id);
