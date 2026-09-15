@@ -16,7 +16,9 @@ export const SupportContactBar = ({ companyId }) => {
   const s = license?.support;
   const hasContact = contact && s && (s.email || s.phone);
   const showSupport = tickets || hasContact;
-  const href = s?.email ? `mailto:${s.email}?subject=${encodeURIComponent("Destek talebi")}` : (s?.phone ? `tel:${s.phone}` : null);
+  const href = s?.email
+    ? `mailto:${s.email}?subject=${encodeURIComponent("Destek talebi")}`
+    : (s?.phone ? `tel:${s.phone}` : null);
 
   return (
     <div
@@ -24,7 +26,7 @@ export const SupportContactBar = ({ companyId }) => {
       data-testid="support-contact-bar"
     >
       <HeaderFxRates companyId={companyId} />
-      <GlobalSearch companyId={companyId} />
+      <GlobalSearch companyId={companyId} className="min-w-[12rem] sm:min-w-[16rem]" />
       {showSupport && (
         <div className="ml-auto flex flex-wrap items-center gap-2 shrink-0" data-testid="support-contact-actions">
           <span className="flex items-center gap-1.5">

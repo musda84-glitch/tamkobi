@@ -10,6 +10,7 @@ import { EmployeeCardModal } from "../components/EmployeeCardModal";
 import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
 import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 
 import {
   UserCheck,
@@ -163,6 +164,11 @@ export default function PersonnelPage() {
       </div>
 
       <GeoAttendanceCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onChanged={loadPersonnelData} />
+
+      <PersonnelRequestsInbox
+        companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+        onChanged={loadPersonnelData}
+      />
 
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
         {[["payroll", "Çalışanlar & Bordro", UserCheck], ["attendance", "Puantaj", Clock],

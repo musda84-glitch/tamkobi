@@ -1,10 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix } from "../utils/money";
 import { BarcodeRenderer } from "./BarcodeRenderer";
+
+const pickItemImage = (it = {}, prod = {}) => (
+  it.thumbnail_url || it.image_url
+  || prod.thumbnail_url || prod.image_url
+  || (Array.isArray(it.images) && it.images[0])
+  || (Array.isArray(prod.images) && prod.images[0])
+  || ""
+);
+
+const printThumbUrl = (raw) => {
+  const resolved = resolveImageUrl(raw);
+  if (!resolved) return "";
+  try {
+    const u = new URL(resolved, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    if (/unsplash\.com|images\.pexels\.com|cloudinary\.com/i.test(u.hostname) || u.searchParams.has("w")) {
+      u.searchParams.set("w", "128");
+      if (!u.searchParams.has("q") && /unsplash/i.test(u.hostname)) u.searchParams.set("q", "60");
+      return u.toString();
+    }
+  } catch { /* keep */ }
+  return resolved;
+};
+
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
@@ -27,7 +50,36 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const companyId = company?.id || "comp_nexus_main_01";
-  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { m[p.id || p._id] = p; }); setProdById(m); }).catch(() => {}); }, [companyId]);
+  const items = doc.items || [];
+  const productIds = useMemo(
+    () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
+    [items]
+  );
+  useEffect(() => {
+    const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
+    if (productIds.length) qs.set("ids", productIds.join(","));
+    let cancelled = false;
+    axios.get(`${API_URL}/products?${qs}`).then((r) => {
+      if (cancelled) return;
+      const m = {};
+      (r.data || []).forEach((p) => { m[p.id || p._id] = p; });
+      setProdById(m);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyId, productIds]);
+  useEffect(() => {
+    const urls = items
+      .map((it) => printThumbUrl(pickItemImage(it, prodById[it.product_id] || {})))
+      .filter(Boolean);
+    const loaders = urls.map((src) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.fetchPriority = "high";
+      img.src = src;
+      return img;
+    });
+    return () => { loaders.forEach((img) => { img.src = ""; }); };
+  }, [items, prodById]);
   useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   if (!tpl) return null;
@@ -35,7 +87,6 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const pickLayout = async (l) => { const next = { ...tpl, layout: l }; setTpl(next); try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, next); } catch { /* keep local */ } };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
-  const items = doc.items || [];
   const total = doc.grand_total ?? doc.total_amount ?? 0;
   const color = layout === "minimal" ? "#0f172a" : (tpl.primary_color || "#059669");
   const textSize = tpl.font_size === "xs" ? "text-[10px]" : tpl.font_size === "base" ? "text-sm" : "text-xs";
@@ -50,7 +101,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
-      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
+      <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700">Yazdırma Önizleme — {TITLES[docType]}</span>
           <div className="flex items-center gap-2">
@@ -108,27 +159,35 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           )}
           <div className={isModern ? "px-10 pb-10" : ""}>
           {tpl.header_note && <p className="mt-3 text-slate-600 italic">{tpl.header_note}</p>}
-          <div className="mt-5 grid grid-cols-2 gap-6">
+          <div className="mt-5 grid grid-cols-2 gap-6" data-testid="print-party-grid">
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div>
               <div className="font-bold text-base">{customer}</div>
               {(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}
               {doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}
-              {(doc.customer_order_number || doc.po_number) && (
-                <div className="text-slate-700 mt-1.5 text-xs font-semibold" data-testid="print-customer-order-number">
-                  Müşteri sipariş no: <span className="font-mono">{doc.customer_order_number || doc.po_number}</span>
-                </div>
-              )}
+              {(() => {
+                const custNo = String(
+                  doc.customer_order_number || doc.po_number || doc.buyer_order_number
+                  || doc.external_order_number || doc.customer_po || ""
+                ).trim();
+                if (!custNo) return null;
+                return (
+                  <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900" data-testid="print-customer-order-number">
+                    Müşteri sipariş no: <span className="font-mono">{custNo}</span>
+                  </div>
+                );
+              })()}
               {(doc.incoterm || doc.country) && <div className="text-slate-500 mt-1" data-testid="print-trade-meta">{[doc.incoterm, doc.country, doc.customs_office, doc.regime_code && `Rejim ${doc.regime_code}`, doc.declaration_no && `Bey. ${doc.declaration_no}`, doc.bl_awb && `BL ${doc.bl_awb}`, doc.dab_no && `DAB ${doc.dab_no}`, doc.certificate, doc.trade_file_number].filter(Boolean).join(" · ")}</div>}
             </div>
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
-          <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
+          <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`} data-testid="print-items-table">
             <thead>
               <tr style={thStyle} className={thCls}>
-                {tpl.show_images !== false && <th className={`p-2 w-12 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>}
-                <th className="text-left p-2">Açıklama</th>
-                {tpl.show_barcode !== false && <th className="text-left p-2 w-24">Barkod</th>}
+                {/* Resim / Açıklama / Barkod always separate for alignment */}
+                <th className={`p-2 w-20 min-w-[5rem] text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
+                <th className="text-left p-2 min-w-[8rem]">Açıklama</th>
+                <th className="text-left p-2 w-52">Barkod</th>
                 <th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>
                 {!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}
                 {!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}
@@ -140,35 +199,42 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
-              const img = it.image_url || prod.image_url;
+              const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
-                <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
-                  {tpl.show_images !== false && (
-                    <td className="p-1 align-middle" data-testid={`print-item-image-${i}`}>
-                      {img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}
-                    </td>
-                  )}
-                  <td className="p-2 align-middle">
+                <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`} data-testid={`print-item-row-${i}`}>
+                  <td className="p-2 align-middle min-w-[5rem]" data-testid={`print-item-image-${i}`}>
+                    {img ? (
+                      <img
+                        src={img}
+                        alt=""
+                        width={64}
+                        height={64}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority="high"
+                        className="w-16 h-16 min-w-16 shrink-0 object-contain rounded border bg-white"
+                      />
+                    ) : <div className="w-16 h-16 min-w-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
+                  </td>
+                  <td className="p-2 align-middle" data-testid={`print-item-name-${i}`}>
                     <div className="min-w-0">
-                      <span>
+                      <span className="font-semibold text-slate-900">
                         {it.name || it.product_name}
-                        {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
+                        {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600 font-normal">(%{it.discount_rate} isk.)</span>}
                       </span>
                       {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
                       {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                     </div>
                   </td>
-                  {tpl.show_barcode !== false && (
-                    <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
-                      {code ? (
-                        <div className="flex flex-col items-start gap-0.5">
-                          <BarcodeRenderer code={String(code)} width={72} height={18} showText={false} compact />
-                          <span className="font-mono text-[9px] text-slate-500 leading-none">{code}</span>
-                        </div>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                  )}
+                  <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
+                    {code ? (
+                      <div className="flex flex-col items-start gap-1 min-w-[12rem] py-1">
+                        <BarcodeRenderer code={String(code)} width={200} height={52} showText={false} compact />
+                        <span className="font-mono text-[11px] text-slate-700 leading-none tracking-wide">{code}</span>
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="p-2 text-right align-middle">{it.quantity} {it.unit || ""}</td>
                   {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
                   {!hideLine && !hideVat && <td className="p-2 text-right">{fmtM(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))}</td>}

@@ -1810,7 +1810,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
-    invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, budgets = await asyncio.gather(
+    invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, early_leaves, budgets = await asyncio.gather(
         db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}},
                          {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1}).to_list(20000),
         db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1}).to_list(5000),
@@ -1820,6 +1820,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}),
         db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000),
         db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "early_leave_request.status": "pending"}),
         expenses.get_budgets(company_id),
     )
     def bucket(t):
@@ -1854,16 +1855,95 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
         {"key": "quotes", "label": "Onay bekleyen teklif", "count": quotes, "path": "/projects"},
         {"key": "critical_stock", "label": "Kritik stok", "count": crit, "path": "/stock"},
-        {"key": "leaves", "label": "Bekleyen izin talebi", "count": leaves, "path": "/personnel"},
-        {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/quotes"},
-        {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
-        {"key": "leaves", "label": "Bekleyen izin talebi", "count": await db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}), "path": "/personnel"},
+        {"key": "leaves", "label": "Bekleyen personel talebi", "count": int(leaves or 0) + int(early_leaves or 0), "path": "/personnel"},
     ]
     return {"date": today, "tasks": [t for t in tasks if t["count"]], "collections": bucket("sales"), "payments": bucket("purchase"),
             "drafts": {"count": len(drafts), "total": round(sum(float(i.get("grand_total", 0)) for i in drafts), 2)},
             "invoices": {"incoming": counts("purchase"), "outgoing": counts("sales")},
             "vat": {"month": month, "calculated": sales_vat, "deductible": round(purch_vat + exp_vat, 2), "payable": round(sales_vat - purch_vat - exp_vat, 2), "declaration_date": nxt.strftime("%Y-%m-%d"), "days_left": (nxt.date() - now.date()).days},
             "budget_warnings": budgets["warnings"]}
+
+
+@api_router.get("/dashboard/ops-alerts")
+async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
+    """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
+    products, new_orders, shipped, prod_orders = await asyncio.gather(
+        db.products.find(
+            {"company_id": company_id, "track_stock": {"$ne": False}},
+            {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1},
+        ).to_list(5000),
+        db.orders.find(
+            {"company_id": company_id, "order_status": {"$in": ["pending", "new"]}},
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1},
+        ).sort("created_at", -1).to_list(20),
+        db.orders.find(
+            {"company_id": company_id, "order_status": "shipped"},
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "cargo_tracking_number": 1, "order_date": 1},
+        ).sort("updated_at", -1).to_list(20),
+        db.production_orders.find(
+            {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+            {"order_code": 1, "order_number": 1, "finished_product_name": 1, "product_name": 1, "status": 1, "quantity": 1, "planned_quantity": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(20),
+    )
+    low_sorted = sorted(
+        [
+            {
+                "id": str(p.get("_id") or ""),
+                "title": p.get("name") or p.get("sku") or "Ürün",
+                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {float(p.get('min_stock_alert') or 0):g}"
+                + (f" · {p['sku']}" if p.get("sku") else ""),
+                "path": "/stock",
+                "_qty": float(p.get("stock_quantity") or 0),
+            }
+            for p in products
+            if float(p.get("stock_quantity") or 0) <= float(p.get("min_stock_alert") or 0)
+        ],
+        key=lambda x: x["_qty"],
+    )
+    for row in low_sorted:
+        row.pop("_qty", None)
+
+    def _fmt_try(n):
+        try:
+            return f"{float(n):,.2f} ₺".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return None
+
+    def order_row(o, path="/orders"):
+        amt = o.get("grand_total") if o.get("grand_total") is not None else o.get("total_amount")
+        parts = [
+            o.get("customer_name") or None,
+            _fmt_try(amt) if amt is not None else None,
+            o.get("channel"),
+            f"Takip: {o['cargo_tracking_number']}" if o.get("cargo_tracking_number") else None,
+        ]
+        return {
+            "id": str(o.get("_id") or ""),
+            "title": o.get("order_number") or "Sipariş",
+            "detail": " · ".join(x for x in parts if x),
+            "path": path,
+        }
+
+    def prod_row(o):
+        name = o.get("finished_product_name") or o.get("product_name") or "Üretim"
+        code = o.get("order_code") or o.get("order_number") or ""
+        qty = o.get("planned_quantity") if o.get("planned_quantity") is not None else o.get("quantity")
+        st = "Planlandı" if o.get("status") == "planned" else "Üretimde"
+        return {
+            "id": str(o.get("_id") or ""),
+            "title": f"{code} · {name}".strip(" ·"),
+            "detail": f"{st}" + (f" · {float(qty):g} adet" if qty is not None else ""),
+            "path": "/production",
+        }
+
+    groups = [
+        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock", "count": len(low_sorted), "items": low_sorted[:8]},
+        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": len(prod_orders), "items": [prod_row(o) for o in prod_orders[:8]]},
+        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders", "count": len(shipped), "items": [order_row(o) for o in shipped[:8]]},
+        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders", "count": len(new_orders), "items": [order_row(o) for o in new_orders[:8]]},
+    ]
+    total = sum(g["count"] for g in groups)
+    return {"count": total, "groups": groups}
 
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -3190,8 +3270,15 @@ def _with_purchase_costs(product: dict, hist: list) -> dict:
 
 
 @api_router.get("/products")
-async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False, lite: bool = False):
-    """lite=1: teklif kalemi seçici — maliyet geçmişi hesaplanmaz."""
+async def list_products(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    category: Optional[str] = None,
+    type: Optional[str] = None,
+    b2b_only: bool = False,
+    lite: bool = False,
+    ids: Optional[str] = None,
+):
+    """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
     query = {"company_id": company_id}
     if b2b_only:
         query["show_in_b2b"] = {"$ne": False}
@@ -3202,8 +3289,18 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
         query["category"] = category
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "sku": 1, "sale_price": 1, "vat_rate": 1, "unit": 1, "image_url": 1, "company_id": 1, "type": 1, "is_active": 1} if lite else None
-    products = await db.products.find(query, proj).to_list(5000 if lite else 10000)
+    id_list = [x.strip() for x in (ids or "").split(",") if x.strip()]
+    if id_list:
+        query["_id"] = {"$in": id_list}
+    # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
+    proj = {
+        "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
+        "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
+    } if lite else None
+    limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
+    if id_list and limit < 1:
+        return []
+    products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
     if lite:
         return clean_docs(products)
     cost_map = await _purchase_costs_by_product(company_id) if products else {}
@@ -6154,6 +6251,70 @@ async def delete_stock_count(count_id: str):
     return {"status": "success", "message": "Sayım çöp kutusuna taşındı."}
 
 # ----------------- PERSONEL: İZİN, MAAŞ HESABI, PRİM -----------------
+_LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid": "Ücretsiz izin", "other": "Diğer izin"}
+
+
+@api_router.get("/personnel/pending-requests")
+async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış ve puantaj itirazları."""
+    leaves = await db.leave_requests.find({"company_id": company_id, "status": "pending"}).sort("created_at", -1).to_list(200)
+    early = await db.attendance.find(
+        {"company_id": company_id, "early_leave_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    disputes = await db.attendance.find(
+        {
+            "company_id": company_id,
+            "dispute_note": {"$exists": True, "$nin": [None, ""]},
+            "dispute_resolved": {"$ne": True},
+        }
+    ).sort("disputed_at", -1).to_list(100)
+    items = []
+    for lv in leaves:
+        kind_tr = _LEAVE_TYPE_TR.get(lv.get("type"), "İzin")
+        items.append({
+            "kind": "leave",
+            "id": lv.get("_id") or lv.get("id"),
+            "employee_id": lv.get("employee_id"),
+            "employee_name": lv.get("employee_name") or "—",
+            "title": f"{kind_tr} talebi",
+            "detail": f"{lv.get('start_date')} → {lv.get('end_date')} · {lv.get('days') or '?'} gün"
+                      + (f" · {lv.get('reason')}" if lv.get("reason") else ""),
+            "created_at": lv.get("created_at") or "",
+            "link": "/personnel?tab=leaves",
+            "meta": {"type": lv.get("type"), "start_date": lv.get("start_date"), "end_date": lv.get("end_date"), "days": lv.get("days")},
+        })
+    for att in early:
+        elr = att.get("early_leave_request") or {}
+        planned = elr.get("planned_time") or ""
+        items.append({
+            "kind": "early_leave",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Erken çıkış talebi",
+            "detail": f"{att.get('date') or ''}"
+                      + (f" · planlanan {planned}" if planned else "")
+                      + (f" · {elr.get('reason')}" if elr.get("reason") else ""),
+            "created_at": elr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {"date": att.get("date"), "planned_time": planned, "reason": elr.get("reason")},
+        })
+    for att in disputes:
+        items.append({
+            "kind": "dispute",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Puantaj itirazı",
+            "detail": f"{att.get('date') or ''} · {(att.get('dispute_note') or '')[:160]}",
+            "created_at": att.get("disputed_at") or att.get("updated_at") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {"date": att.get("date"), "dispute_note": att.get("dispute_note")},
+        })
+    items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return {"count": len(items), "items": items}
+
+
 @api_router.get("/personnel/leaves")
 async def list_leaves(company_id: Optional[str] = "comp_nexus_main_01", employee_id: Optional[str] = None):
     q = {"company_id": company_id}

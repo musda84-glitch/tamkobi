@@ -56,3 +56,18 @@ class TestProjectsPagePerfEndpoints:
             assert "purchase_costs" not in prod
             assert "avg_purchase_price" not in prod
             assert "last_purchase_price" not in prod
+
+        # lite print fields
+        sample = next((x for x in products if x.get("image_url") or x.get("images")), products[0] if products else None)
+        if sample:
+            assert "name" in sample
+            pid = sample.get("id")
+            r2 = api.get(f"{BASE}/products", params={"company_id": COMPANY, "lite": 1, "ids": pid}, timeout=60)
+            assert r2.status_code == 200, r2.text
+            filtered = r2.json()
+            assert isinstance(filtered, list)
+            assert len(filtered) >= 1
+            assert all(x.get("id") == pid for x in filtered)
+            for prod in filtered:
+                assert "purchase_costs" not in prod
+                assert "avg_purchase_price" not in prod

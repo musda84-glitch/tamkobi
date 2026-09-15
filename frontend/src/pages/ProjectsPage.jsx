@@ -302,11 +302,37 @@ export default function ProjectsPage({ section } = {}) {
               {p.description && <p className="text-slate-600">{p.description}</p>}
               <ImageStrip entity="project" doc={p} onUpdated={load} />
               <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
+              {(() => {
+                const tasks = p.tasks || [];
+                const assigned = tasks.filter((t) => t.assignee_name || t.assignee_id);
+                const done = tasks.filter((t) => t.done || t.status === "done" || t.status === "completed").length;
+                if (!tasks.length && !(p.expense_total > 0)) return null;
+                return (
+                  <div className="flex flex-wrap gap-1.5 text-[10px]" data-testid={`project-summary-${p.project_number}`}>
+                    {tasks.length > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100">
+                        <Users className="w-3 h-3" /> {done}/{tasks.length} görev{assigned.length ? ` · ${assigned.length} atanmış` : ""}
+                      </span>
+                    )}
+                    {p.expense_total > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-semibold border border-rose-100">
+                        <Receipt className="w-3 h-3" /> Masraf {fmt(p.expense_total)} ₺
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+              <div className="grid grid-cols-2 gap-1.5" data-testid={`project-quick-actions-${p.project_number}`}>
+                <button type="button" onClick={() => setExpenseProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-rose-200 text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-xl font-bold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle">
+                  <Receipt className="w-3.5 h-3.5" /> Masraf Ekle
+                </button>
+                <button type="button" onClick={() => setTeamProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-indigo-200 text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-xl font-bold" data-testid={`project-team-${p.project_number}`} title="Personel ata ve görev dağıt">
+                  <Users className="w-3.5 h-3.5" /> Personel / Görev
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t">
                 <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
                 <button onClick={() => openTracking(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-lg font-semibold" data-testid={`project-track-${p.project_number}`} title="Müşteriye durum takip linki gönder"><Link2 className="w-3.5 h-3.5" /> Takip Linki</button>
-                <button onClick={() => setExpenseProject(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded-lg font-semibold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle"><Receipt className="w-3.5 h-3.5" /> Masraf</button>
-                <button onClick={() => setTeamProject(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-200 text-indigo-700 bg-indigo-50 rounded-lg font-semibold" data-testid={`project-team-${p.project_number}`} title="Personel ata ve görev dağıt"><Users className="w-3.5 h-3.5" /> Personel</button>
                 <button onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif Oluştur <ArrowRight className="w-3 h-3" /></button>
                 <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
               </div>

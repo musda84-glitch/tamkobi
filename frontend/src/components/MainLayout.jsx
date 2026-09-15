@@ -13,6 +13,7 @@ import { BuildStamp } from "./BuildStamp";
 import AppSidebarNav from "./AppSidebarNav";
 import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
+import { useNavCounts } from "../hooks/useNavCounts";
 
 import {
   LayoutDashboard,
@@ -84,6 +85,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart,
   };
   const menuItems = (orderedMenu || []).map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
+  const navCounts = useNavCounts(activeCompany?.id || activeCompany?._id);
   const exitImpersonation = async () => {
     try {
       const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {});
@@ -137,7 +139,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         {!sidebarCollapsed && <AccountMenu />}
 
         <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700" data-testid="app-sidebar-nav">
-          <AppSidebarNav items={menuItems} collapsed={sidebarCollapsed} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
+          <AppSidebarNav items={menuItems} collapsed={sidebarCollapsed} counts={navCounts} onNavigate={() => setMobileMenuOpen(false)} onReorder={moveModulePath} />
         </nav>
 
         <div className={`border-t border-slate-800 bg-slate-950/40 space-y-2 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
