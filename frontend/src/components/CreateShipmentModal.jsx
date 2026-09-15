@@ -12,6 +12,7 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
   const [carriers, setCarriers] = useState(null);
   const [carrier, setCarrier] = useState(order.cargo_carrier || "");
   const [pkg, setPkg] = useState(() => packageDefaultsFromOrder(order));
+  const [pkgHint, setPkgHint] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -21,6 +22,28 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
       setCarrier((cur) => cur || (list.find((c) => c.status === "connected" && c.is_active) || list[0])?.carrier_code || "");
     }).catch(() => setCarriers([]));
   }, [companyId]);
+
+  useEffect(() => {
+    const ids = [...new Set((order?.items || []).map((it) => it.product_id).filter(Boolean))];
+    if (!ids.length) return;
+    let cancelled = false;
+    (async () => {
+      const byId = {};
+      await Promise.all(ids.map(async (id) => {
+        try {
+          const r = await axios.get(`${API_URL}/products/${id}`);
+          byId[id] = r.data;
+          byId[String(id)] = r.data;
+        } catch { /* skip missing */ }
+      }));
+      if (cancelled) return;
+      const next = packageDefaultsFromOrder(order, byId);
+      const fromStock = next.desi || next.weight || next.length;
+      setPkg(next);
+      setPkgHint(fromStock ? "Stok kartındaki paket bilgileri otomatik dolduruldu; düzenleyebilirsiniz." : "");
+    })();
+    return () => { cancelled = true; };
+  }, [order]);
 
   const submit = async () => {
     if (!carrier) { toast.error("Kargo firması seçin."); return; }
@@ -78,7 +101,7 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
           )}
         </div>
 
-        <ShipmentPackageFields value={pkg} onChange={setPkg} idPrefix="ship-pkg" />
+        <ShipmentPackageFields value={pkg} onChange={setPkg} idPrefix="ship-pkg" hint={pkgHint} />
 
         <div className="flex justify-end gap-2 border-t pt-2">
           <button onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>

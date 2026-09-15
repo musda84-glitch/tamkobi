@@ -243,7 +243,13 @@ export default function StockBarcodePage() {
     show_in_b2b: true,
     track_stock: true,
     gtip: "",
-    origin_country: ""
+    origin_country: "",
+    desi: "",
+    weight: "",
+    length: "",
+    width: "",
+    height: "",
+    package_count: 1,
   });
 
   const loadProducts = useCallback(async () => {
@@ -274,6 +280,7 @@ export default function StockBarcodePage() {
       return;
     }
     try {
+      const n = (v) => (v === "" || v == null ? null : Number(v));
       const res = await axios.post(`${API_URL}/products`, {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...newProduct,
@@ -281,6 +288,12 @@ export default function StockBarcodePage() {
         sale_price: Number(newProduct.sale_price || 0),
         stock_quantity: Number(newProduct.stock_quantity || 0),
         min_stock_alert: Number(newProduct.min_stock_alert || 5),
+        desi: n(newProduct.desi),
+        weight: n(newProduct.weight),
+        length: n(newProduct.length),
+        width: n(newProduct.width),
+        height: n(newProduct.height),
+        package_count: Math.max(1, Math.min(50, parseInt(newProduct.package_count, 10) || 1)),
         has_variants: withVariants
       });
       toast.success("Ürün ve barkodu başarıyla oluşturuldu.");
@@ -1039,6 +1052,37 @@ export default function StockBarcodePage() {
                     placeholder="TR, CN, DE…"
                     data-testid="product-origin-input"
                   />
+                </div>
+              </div>
+
+              <div className="border border-indigo-100 bg-indigo-50/50 rounded-xl p-3 space-y-2" data-testid="new-product-package-fields">
+                <div className="font-bold text-slate-800 text-[11px]">Paket bilgisi (kargo)</div>
+                <p className="text-[10px] text-slate-500">Kargo oluştururken stok kartından otomatik çekilir. Desi ≈ (en × boy × yükseklik) / 3000.</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Paket</label>
+                    <input type="number" min={1} max={50} value={newProduct.package_count} onChange={(e) => setNewProduct({ ...newProduct, package_count: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-package-count" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Desi</label>
+                    <input type="number" min={0} step={0.1} value={newProduct.desi} onChange={(e) => setNewProduct({ ...newProduct, desi: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" placeholder="1.5" data-testid="new-product-desi" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Ağırlık kg</label>
+                    <input type="number" min={0} step={0.1} value={newProduct.weight} onChange={(e) => setNewProduct({ ...newProduct, weight: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-weight" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">En cm</label>
+                    <input type="number" min={0} step={0.1} value={newProduct.length} onChange={(e) => setNewProduct({ ...newProduct, length: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-length" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Boy cm</label>
+                    <input type="number" min={0} step={0.1} value={newProduct.width} onChange={(e) => setNewProduct({ ...newProduct, width: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-width" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Yükseklik cm</label>
+                    <input type="number" min={0} step={0.1} value={newProduct.height} onChange={(e) => setNewProduct({ ...newProduct, height: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-height" />
+                  </div>
                 </div>
               </div>
 

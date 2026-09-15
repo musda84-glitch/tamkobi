@@ -139,9 +139,10 @@ class Product(BaseDocument):
     origin_country: Optional[str] = None
     desi: Optional[float] = None
     weight: Optional[float] = None  # kg
-    length: Optional[float] = None  # cm
-    width: Optional[float] = None
-    height: Optional[float] = None
+    length: Optional[float] = None  # cm (en)
+    width: Optional[float] = None   # cm (boy)
+    height: Optional[float] = None  # cm (yükseklik)
+    package_count: Optional[int] = 1  # tipik paket sayısı (kargo)
     show_in_b2b: bool = True
     track_stock: bool = True
     track_lot: bool = False          # Parti / lot takibi
