@@ -11,24 +11,39 @@ import {
 } from "lucide-react";
 
 
-const playOverscanBeep = () => {
+let _overscanAudioCtx = null;
+
+const unlockOverscanAudio = () => {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
+    if (!Ctx) return null;
+    if (!_overscanAudioCtx) _overscanAudioCtx = new Ctx();
+    if (_overscanAudioCtx.state === "suspended") _overscanAudioCtx.resume().catch(() => {});
+    return _overscanAudioCtx;
+  } catch (_) {
+    return null;
+  }
+};
+
+const playOverscanBeep = () => {
+  try {
+    const ctx = unlockOverscanAudio();
+    if (!ctx) return;
     const now = ctx.currentTime;
-    [0, 0.18, 0.36].forEach((at, i) => {
+    // Triple alarm beep — audible even in noisy warehouses
+    [0, 0.16, 0.32, 0.55].forEach((at, i) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.type = "square";
-      o.frequency.value = i === 1 ? 880 : 520;
+      o.frequency.value = i % 2 === 0 ? 480 : 920;
       g.gain.setValueAtTime(0.0001, now + at);
-      g.gain.exponentialRampToValueAtTime(0.25, now + at + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
-      o.connect(g); g.connect(ctx.destination);
-      o.start(now + at); o.stop(now + at + 0.16);
+      g.gain.exponentialRampToValueAtTime(0.32, now + at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.13);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(now + at);
+      o.stop(now + at + 0.15);
     });
-    setTimeout(() => ctx.close().catch(() => {}), 800);
   } catch (_) { /* ignore */ }
 };
 
@@ -37,6 +52,22 @@ const detailText = (detail) => {
   if (typeof detail === "string") return detail;
   return detail.message || detail.detail || "Okutulamadı.";
 };
+
+const lineCodes = (it) =>
+  [it?.barcode, it?.sku, it?.ean, it?.product_code]
+    .filter(Boolean)
+    .map((x) => String(x).trim().toLowerCase());
+
+const findScanLine = (items, raw) => {
+  const n = String(raw || "").trim().toLowerCase();
+  if (!n) return null;
+  const exact = (items || []).filter((it) => lineCodes(it).includes(n));
+  if (!exact.length) return null;
+  return exact.find((it) => Number(it.picked_qty) < Number(it.ordered_qty) - 1e-9) || exact[0];
+};
+
+const isLineComplete = (it) =>
+  it && Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
 
 const ST = {
   idle: ["Bekliyor", "bg-slate-100 text-slate-600"],
@@ -59,6 +90,7 @@ export default function OrderPickKioskPage() {
   const [busy, setBusy] = useState(false);
   const [overscanFlash, setOverscanFlash] = useState(null);
   const inputRef = useRef(null);
+  const overscanTimer = useRef(null);
 
   const loadList = useCallback(async () => {
     try {
@@ -79,11 +111,54 @@ export default function OrderPickKioskPage() {
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { if (orderId) openOrder(orderId); else setSes(null); }, [orderId, openOrder]);
 
+  // Unlock Web Audio on first gesture so overscan beeps work under autoplay policy.
+  useEffect(() => {
+    const unlock = () => unlockOverscanAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      if (overscanTimer.current) clearTimeout(overscanTimer.current);
+    };
+  }, []);
+
+  const triggerOverscan = useCallback((opts = {}) => {
+    const msg = opts.message || "Sipariş adedi tamamlandı. Fazla ürün okutmayın.";
+    unlockOverscanAudio();
+    playOverscanBeep();
+    setOverscanFlash({
+      message: msg,
+      productName: opts.productName,
+      lineIndex: opts.lineIndex,
+      at: Date.now(),
+    });
+    toast.error(msg, { duration: 5000 });
+    if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 160]);
+    if (overscanTimer.current) clearTimeout(overscanTimer.current);
+    overscanTimer.current = setTimeout(() => setOverscanFlash(null), 2800);
+  }, []);
+
   const back = () => { setSes(null); setParams({}, { replace: true }); loadList(); };
 
   const scan = async (raw) => {
     const c = String(raw || code).trim();
     if (!c || !ses || busy) return;
+    unlockOverscanAudio();
+
+    // Instant client-side guard when the matched line is already full (2/2 etc.)
+    const localLine = findScanLine(ses.items, c);
+    if (localLine && isLineComplete(localLine)) {
+      setCode("");
+      triggerOverscan({
+        message: `${localLine.product_name}: siparişte ${Number(localLine.ordered_qty)} adet var, ${Number(localLine.picked_qty)} okutuldu. Fazla ürün okutmayın.`,
+        productName: localLine.product_name,
+        lineIndex: localLine.line_index,
+      });
+      setTimeout(() => inputRef.current?.focus(), 50);
+      return;
+    }
+
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: 1 });
@@ -96,17 +171,13 @@ export default function OrderPickKioskPage() {
       const detail = e.response?.data?.detail;
       const overscan = e.response?.status === 409 || detail?.code === "overscan" || /fazla/i.test(detailText(detail));
       const msg = detailText(detail);
+      setCode("");
       if (overscan) {
-        playOverscanBeep();
-        setOverscanFlash({
+        triggerOverscan({
           message: msg,
           productName: detail?.product_name,
           lineIndex: detail?.line_index,
-          at: Date.now(),
         });
-        toast.error(msg, { duration: 5000 });
-        if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 160]);
-        setTimeout(() => setOverscanFlash(null), 2600);
       } else {
         toast.error(msg);
         if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
@@ -116,6 +187,15 @@ export default function OrderPickKioskPage() {
 
   const bump = async (item, delta) => {
     if (busy) return;
+    unlockOverscanAudio();
+    if (delta > 0 && isLineComplete(item)) {
+      triggerOverscan({
+        message: `${item.product_name}: siparişte ${Number(item.ordered_qty)} adet var, ${Number(item.picked_qty)} okutuldu. Fazla ürün okutmayın.`,
+        productName: item.product_name,
+        lineIndex: item.line_index,
+      });
+      return;
+    }
     const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) || 0) + delta));
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, line_index: item.line_index, picked_qty: next });
@@ -179,12 +259,15 @@ export default function OrderPickKioskPage() {
   return (
     <div className="fixed inset-0 z-[80] bg-slate-100 flex flex-col" data-testid="order-pick-session">
       {overscanFlash && (
-        <div className="absolute inset-x-0 top-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
-          <div className="m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-3 shadow-xl animate-pulse">
-            <div className="text-sm font-black tracking-wide">FAZLA ÜRÜN OKUTULDU</div>
-            <div className="text-xs font-semibold mt-0.5 opacity-95">{overscanFlash.message}</div>
+        <>
+          <div className="absolute inset-0 z-[89] bg-rose-600/45 animate-pulse pointer-events-none" data-testid="pick-overscan-flash" />
+          <div className="absolute inset-x-0 top-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
+            <div className="m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-4 shadow-2xl animate-pulse">
+              <div className="text-base sm:text-lg font-black tracking-wide">FAZLA ÜRÜN OKUTULDU</div>
+              <div className="text-sm font-semibold mt-1 opacity-95">{overscanFlash.message}</div>
+            </div>
           </div>
-        </div>
+        </>
       )}
       <div className="bg-slate-900 text-white px-3 py-3 flex items-center gap-2">
         <button onClick={back} className="p-2 rounded-lg bg-white/10" data-testid="pick-back"><ArrowLeft className="w-5 h-5" /></button>
@@ -195,26 +278,31 @@ export default function OrderPickKioskPage() {
         <div className="text-right"><div className="text-lg font-black">{pct}%</div><div className="text-[10px] text-slate-400">{prog.picked}/{prog.ordered}</div></div>
       </div>
       <form className="bg-white border-b p-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); scan(); }}>
-        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
+        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {(ses.items || []).map((it, idx) => {
-          const done = Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
+          const done = isLineComplete(it);
           const img = resolveImageUrl(it.image_url);
+          const warnLine = overscanFlash && (
+            overscanFlash.lineIndex === it.line_index
+            || overscanFlash.lineIndex === idx
+            || String(it.product_name) === String(overscanFlash.productName)
+          );
           return (
-            <div key={idx} className={`bg-white rounded-2xl border p-3 flex gap-3 items-center transition ${overscanFlash?.lineIndex === it.line_index || overscanFlash?.lineIndex === idx || (overscanFlash && String(it.product_name) === String(overscanFlash.productName)) ? "border-rose-500 ring-2 ring-rose-400 bg-rose-50 animate-pulse" : done ? "border-emerald-300" : "border-slate-200"}`} data-testid={`pick-line-${idx}`}>
+            <div key={idx} className={`bg-white rounded-2xl border p-3 flex gap-3 items-center transition ${warnLine ? "border-rose-500 ring-2 ring-rose-400 bg-rose-50 animate-pulse relative z-[91]" : done ? "border-emerald-300" : "border-slate-200"}`} data-testid={`pick-line-${idx}`}>
               {img ? <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" /> : <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
                 <div className="text-[11px] text-slate-500 font-mono">{it.sku || it.barcode || "—"}</div>
-                <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden"><div className={`h-1.5 ${done ? "bg-emerald-500" : "bg-amber-400"}`} style={{ width: `${it.ordered_qty ? Math.min(100, (it.picked_qty / it.ordered_qty) * 100) : 0}%` }} /></div>
+                <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden"><div className={`h-1.5 ${warnLine ? "bg-rose-500" : done ? "bg-emerald-500" : "bg-amber-400"}`} style={{ width: `${it.ordered_qty ? Math.min(100, (it.picked_qty / it.ordered_qty) * 100) : 0}%` }} /></div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => bump(it, -1)} className="w-11 h-11 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
-                <div className="w-14 text-center"><div className="text-xl font-black">{it.picked_qty}</div><div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div></div>
-                <button onClick={() => bump(it, 1)} className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-800 font-bold" data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
+                <div className="w-14 text-center"><div className={`text-xl font-black ${warnLine ? "text-rose-700" : ""}`}>{it.picked_qty}</div><div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div></div>
+                <button onClick={() => bump(it, 1)} className={`w-11 h-11 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
               </div>
             </div>
           );
