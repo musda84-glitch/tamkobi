@@ -405,12 +405,132 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             msg += f" Bugün {rec['hours']} sa çalışıldı, {rec['overtime_hours']} sa fazla mesai yazıldı."
         elif rec.get("early_leave_minutes"):
             end_label = rec.get("expected_end") or schedule.get("end")
-            msg += f" Beklenen çıkış ({end_label}) saatinden {rec['early_leave_minutes']} dk erken çıkış."
+            if rec.get("early_leave_approved") or (rec.get("early_leave_request") or {}).get("status") == "approved":
+                await _db.attendance.update_one({"_id": rec["id"]}, {"$set": {"early_leave_approved": True}})
+                rec["early_leave_approved"] = True
+                msg += f" Onaylı erken çıkış: beklenen ({end_label}) saatinden {rec['early_leave_minutes']} dk önce."
+            else:
+                msg += f" Beklenen çıkış ({end_label}) saatinden {rec['early_leave_minutes']} dk erken çıkış."
         else:
             msg += f" Bugün {rec['hours']} sa çalışıldı."
     if geo:
         msg += f" (firma konumuna {geo['distance_m']} m)"
     return {"status": "success", "record": rec, "message": msg}
+
+
+@router.post("/personnel/attendance/early-leave-request")
+async def request_early_leave(req: Dict[str, Any], request: Request):
+    """Personel bugün için erken çıkış talebi oluşturur; yönetici onaylar."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    reason = (req.get("reason") or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Erken çıkış nedeni en az 3 karakter olmalı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    if not existing.get("check_in"):
+        raise HTTPException(status_code=400, detail="Erken çıkış talebi için önce giriş yapmalısınız.")
+    if existing.get("check_out"):
+        raise HTTPException(status_code=400, detail="Bugün zaten çıkış yapılmış.")
+    prev = existing.get("early_leave_request") or {}
+    if prev.get("status") == "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen bir erken çıkış talebiniz var.")
+    if prev.get("status") == "approved":
+        raise HTTPException(status_code=400, detail="Erken çıkış talebiniz zaten onaylandı — çıkış yapabilirsiniz.")
+    planned = (req.get("planned_time") or "").strip() or None
+    if planned:
+        try:
+            _hm(planned)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Geçersiz planlanan çıkış saati (HH:MM).")
+    elr = {
+        "status": "pending",
+        "reason": reason[:400],
+        "planned_time": planned,
+        "requested_at": _now(),
+        "requested_by": str(user.get("_id") or user.get("id") or ""),
+        "decided_at": None,
+        "decided_by": None,
+        "decision_note": "",
+    }
+    if existing.get("_id"):
+        await _db.attendance.update_one({"_id": existing["_id"]}, {"$set": {"early_leave_request": elr, "early_leave_approved": False, "updated_at": _now()}})
+        rec = _clean(await _db.attendance.find_one({"_id": existing["_id"]}))
+    else:
+        rec = await apply_day(emp, today, {"status": "present", "check_in": existing.get("check_in")}, source=existing.get("source") or "self", confirmed=True)
+        await _db.attendance.update_one({"_id": rec["id"]}, {"$set": {"early_leave_request": elr, "early_leave_approved": False}})
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
+    when = f" (planlanan {planned})" if planned else ""
+    await notify_managers(
+        emp["company_id"],
+        "early_leave_request",
+        f"Erken çıkış talebi: {emp['full_name']}",
+        f"{emp['full_name']} bugün erken çıkış talep etti{when}: {reason[:200]}",
+        link="/personnel?tab=attendance",
+        dedupe_key=f"early:{emp['_id']}:{today}",
+    )
+    return {"status": "success", "record": rec, "message": "Erken çıkış talebiniz yöneticiye iletildi."}
+
+
+@router.delete("/personnel/attendance/early-leave-request")
+async def cancel_early_leave_request(request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Personel kartı bulunamadı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    if not existing or (existing.get("early_leave_request") or {}).get("status") != "pending":
+        raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
+    await _db.attendance.update_one({"_id": existing["_id"]}, {"$unset": {"early_leave_request": ""}, "$set": {"updated_at": _now()}})
+    return {"status": "success", "message": "Erken çıkış talebi iptal edildi."}
+
+
+@router.post("/personnel/attendance/{att_id}/early-leave-decision")
+async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Erken çıkış onaylamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    elr = rec.get("early_leave_request") or {}
+    if elr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen erken çıkış talebi yok.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
+    approved = decision in ("approve", "approved")
+    elr = {
+        **elr,
+        "status": "approved" if approved else "rejected",
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "decision_note": (req.get("note") or "")[:300],
+    }
+    await _db.attendance.update_one(
+        {"_id": att_id},
+        {"$set": {"early_leave_request": elr, "early_leave_approved": approved, "updated_at": _now()}},
+    )
+    await _db.notifications.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": rec.get("employee_id"),
+        "type": "early_leave_decision",
+        "title": "Erken çıkış " + ("onaylandı" if approved else "reddedildi"),
+        "message": f"{rec.get('employee_name')} — {elr['status']}. {elr.get('decision_note') or ''}".strip(),
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})),
+            "message": "Erken çıkış talebi onaylandı." if approved else "Erken çıkış talebi reddedildi."}
 
 
 @router.put("/personnel/attendance/assign-overtime")

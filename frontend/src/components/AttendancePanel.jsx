@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning } from "lucide-react";
+import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning, DoorOpen } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
@@ -30,6 +30,14 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Atama kaydedilemedi."); }
   };
+  const decideEarly = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
+
   if (!data) return null;
   return (
     <div className="space-y-4 text-xs" data-testid="attendance-panel">
@@ -60,7 +68,16 @@ export const AttendancePanel = ({ companyId }) => {
           <span className="font-mono">{r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"} • ${r.hours || 0} sa` : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
           {r.assigned_overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">atanan +{r.assigned_overtime_hours} sa</span>}{r.overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil)" : ""}</span>}
           {r.late_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}
-          {r.early_leave_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{r.early_leave_minutes} dk erken</span>}
+          {r.early_leave_minutes > 0 && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${r.early_leave_approved || r.early_leave_request?.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.early_leave_minutes} dk erken{r.early_leave_approved || r.early_leave_request?.status === "approved" ? " (onaylı)" : ""}</span>}
+          {r.early_leave_request?.status === "pending" && (
+            <span className="inline-flex items-center gap-1.5 text-[10px]" data-testid={`att-early-pending-${r.id}`}>
+              <DoorOpen className="w-3 h-3 text-amber-600" />
+              <span className="font-semibold text-amber-700">Erken çıkış talebi{r.early_leave_request.planned_time ? ` · ${r.early_leave_request.planned_time}` : ""}</span>
+              <span className="text-slate-500 max-w-[180px] truncate" title={r.early_leave_request.reason}>{r.early_leave_request.reason}</span>
+              <button type="button" onClick={() => decideEarly(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-early-approve-${r.id}`}>Onayla</button>
+              <button type="button" onClick={() => decideEarly(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-early-reject-${r.id}`}>Reddet</button>
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-2 text-[10px]">{r.source === "self" && <span className="text-slate-400">telefon/self</span>}{r.dispute_note ? <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3 h-3" /> İtiraz: {r.dispute_note}</span> : r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Personel onayladı</span> : <span className="text-amber-600 font-semibold">Onay bekliyor</span>}</span>
         </div>))}{data.records.length === 0 && <div className="p-6 text-center text-slate-400">Bu ay kayıt yok.</div>}</div></div>
       
