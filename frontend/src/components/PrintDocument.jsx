@@ -101,7 +101,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
-      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
+      <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700">Yazdırma Önizleme — {TITLES[docType]}</span>
           <div className="flex items-center gap-2">
@@ -185,7 +185,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             <thead>
               <tr style={thStyle} className={thCls}>
                 {/* Resim / Açıklama / Barkod always separate for alignment */}
-                <th className={`p-2 w-20 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
+                <th className={`p-2 w-20 min-w-[5rem] text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
                 <th className="text-left p-2 min-w-[8rem]">Açıklama</th>
                 <th className="text-left p-2 w-52">Barkod</th>
                 <th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>
@@ -203,7 +203,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
                 <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`} data-testid={`print-item-row-${i}`}>
-                  <td className="p-2 align-middle" data-testid={`print-item-image-${i}`}>
+                  <td className="p-2 align-middle min-w-[5rem]" data-testid={`print-item-image-${i}`}>
                     {img ? (
                       <img
                         src={img}
@@ -213,9 +213,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                         loading="eager"
                         decoding="async"
                         fetchPriority="high"
-                        className="w-16 h-16 object-contain rounded border bg-white"
+                        className="w-16 h-16 min-w-16 shrink-0 object-contain rounded border bg-white"
                       />
-                    ) : <div className="w-16 h-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
+                    ) : <div className="w-16 h-16 min-w-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
                   </td>
                   <td className="p-2 align-middle" data-testid={`print-item-name-${i}`}>
                     <div className="min-w-0">
