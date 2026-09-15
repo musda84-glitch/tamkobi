@@ -8636,7 +8636,7 @@ async def production_requirements(recipe_id: str, quantity: float = 1):
     costs = _recipe_costs(r)
     return {"rows": rows, "total_material_cost": round(sum(x["cost"] for x in rows), 2), "estimated_total_cost": round(costs["unit_cost"] * quantity, 2), "has_shortage": any(x["shortage"] > 0 for x in rows), "unit_cost": costs["unit_cost"]}
 
-@api_router.get("/production/orders/kpis")
+@api_router.get("/production/kpis")
 async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"):
     """Hafif sayaçlar — liste filtresinden bağımsız KPI (count_documents + index)."""
     month = datetime.now(timezone.utc).strftime("%Y-%m")
