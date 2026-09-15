@@ -132,9 +132,9 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (email, password, remember = true) => {
     try {
-      const res = await axios.post(`${API_URL}/auth/login`, { email, password }, { withCredentials: true });
+      const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
       setUser(res.data.user);
       setAuthenticated(true);
       setLicense(res.data.license || null);

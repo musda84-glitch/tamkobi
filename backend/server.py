@@ -237,6 +237,7 @@ async def get_current_user(request: Request) -> dict:
 class LoginRequest(BaseModel):
     email: str
     password: str
+    remember: bool = True
 
 class RegisterRequest(BaseModel):
     name: str
@@ -284,8 +285,13 @@ async def login(req: LoginRequest, request: Request, response: Response):
     token = create_access_token(user_id, email, user.get("role", "admin"))
     refresh_tok = create_refresh_token(user_id)
 
-    response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400*7, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400*30, path="/")
+    # remember=True → persistent cookies; remember=False → session cookies (browser close ends session)
+    if req.remember:
+        response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400 * 7, path="/")
+        response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400 * 30, path="/")
+    else:
+        response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", path="/")
+        response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", path="/")
 
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
 
