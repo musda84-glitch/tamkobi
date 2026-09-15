@@ -2,6 +2,7 @@ const DEFAULT_BASE = "https://tamkobi.com";
 
 const baseInput = document.getElementById("baseUrl");
 const saveBtn = document.getElementById("saveBase");
+const useTabBtn = document.getElementById("useTab");
 const statusEl = document.getElementById("status");
 
 function normalizeBase(url) {
@@ -23,15 +24,32 @@ function flash(msg) {
   }, 1800);
 }
 
+function saveBase(url, msg) {
+  const baseUrl = normalizeBase(url);
+  baseInput.value = baseUrl;
+  chrome.storage.sync.set({ baseUrl }, () => flash(msg || "Adres kaydedildi"));
+}
+
 chrome.storage.sync.get({ baseUrl: DEFAULT_BASE }, (data) => {
   baseInput.value = data.baseUrl || DEFAULT_BASE;
 });
 
-saveBtn.addEventListener("click", () => {
-  const baseUrl = normalizeBase(baseInput.value);
-  baseInput.value = baseUrl;
-  chrome.storage.sync.set({ baseUrl }, () => flash("Adres kaydedildi"));
-});
+saveBtn.addEventListener("click", () => saveBase(baseInput.value));
+
+if (useTabBtn && chrome.tabs?.query) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs?.[0];
+    if (!tab?.url || !/^https?:/i.test(tab.url)) return;
+    try {
+      const origin = new URL(tab.url).origin;
+      useTabBtn.hidden = false;
+      useTabBtn.textContent = `Açık sekmeyi kullan (${origin})`;
+      useTabBtn.addEventListener("click", () => saveBase(origin, "Sekme adresi kaydedildi"));
+    } catch {
+      /* ignore */
+    }
+  });
+}
 
 const links = document.getElementById("links");
 if (links) {
