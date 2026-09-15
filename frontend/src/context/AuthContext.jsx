@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { API_URL } from "../api/client";
 import { groupIdOf } from "../navGroups";
+import { loadRadialSlots, normalizeRadialSlots, saveRadialSlotsLocal } from "../utils/radialQuickMenu";
 
 const AuthContext = createContext(null);
 
@@ -18,6 +19,7 @@ export const AuthProvider = ({ children }) => {
   const [activeCompany, setActiveCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [moduleOrder, setModuleOrder] = useState(() => { try { return JSON.parse(localStorage.getItem("module_order") || "[]"); } catch { return []; } });
+  const [radialSlots, setRadialSlots] = useState(() => loadRadialSlots());
 
   const BASE_MENU = [
     { label: "Genel Bakış", path: "/panel" },
@@ -98,6 +100,13 @@ export const AuthProvider = ({ children }) => {
   };
   const resetModuleOrder = () => persistOrder([]);
 
+  const persistRadialSlots = async (slots) => {
+    const normalized = saveRadialSlotsLocal(slots);
+    setRadialSlots(normalized);
+    try { await axios.put(`${API_URL}/auth/me/preferences`, { radial_slots: normalized }, { withCredentials: true }); } catch { /* offline */ }
+  };
+  const resetRadialSlots = () => persistRadialSlots(normalizeRadialSlots(null));
+
   useEffect(() => {
     checkAuth();
   }, []);
@@ -119,6 +128,11 @@ export const AuthProvider = ({ children }) => {
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
       if (res.data.user?.preferences?.dashboard_layout?.length) {
         try { localStorage.setItem("dashboard_layout", JSON.stringify(res.data.user.preferences.dashboard_layout)); } catch { /* ignore */ }
+      }
+      if (Array.isArray(res.data.user?.preferences?.radial_slots)) {
+        const slots = normalizeRadialSlots(res.data.user.preferences.radial_slots);
+        setRadialSlots(slots);
+        saveRadialSlotsLocal(slots);
       }
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
@@ -184,7 +198,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, can, permPath, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, radialSlots, persistRadialSlots, resetRadialSlots, can, permPath, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
       {children}
     </AuthContext.Provider>
   );
