@@ -185,6 +185,10 @@ async def startup_event():
             await db.contacts.create_index("tax_number_or_id")
             await db.invoices.create_index("invoice_number")
             await db.orders.create_index("order_number")
+            await db.production_orders.create_index([("company_id", 1), ("status", 1), ("created_at", -1)])
+            await db.work_orders.create_index([("company_id", 1), ("order_id", 1)])
+            await db.work_orders.create_index([("order_id", 1), ("step_no", 1)])
+            await db.recipes.create_index([("company_id", 1), ("created_at", -1)])
             await db.login_attempts.create_index("identifier")
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
@@ -3332,6 +3336,8 @@ async def list_products(
     proj = {
         "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
         "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
+        # üretim / stok uyarıları (maliyet geçmişi yok — hızlı liste)
+        "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
     } if lite else None
     limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
     if id_list and limit < 1:
@@ -8630,14 +8636,59 @@ async def production_requirements(recipe_id: str, quantity: float = 1):
     costs = _recipe_costs(r)
     return {"rows": rows, "total_material_cost": round(sum(x["cost"] for x in rows), 2), "estimated_total_cost": round(costs["unit_cost"] * quantity, 2), "has_shortage": any(x["shortage"] > 0 for x in rows), "unit_cost": costs["unit_cost"]}
 
+@api_router.get("/production/orders/kpis")
+async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Hafif sayaçlar — liste filtresinden bağımsız KPI (count_documents + index)."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    open_n, in_prod, done_month, recipes_n = await asyncio.gather(
+        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "in_production"}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
+        db.recipes.count_documents({"company_id": company_id}),
+    )
+    return {
+        "open": open_n,
+        "in_production": in_prod,
+        "completed_this_month": done_month,
+        "recipes": recipes_n,
+    }
+
 @api_router.get("/production/orders")
-async def list_production_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, product_id: Optional[str] = None):
+async def list_production_orders(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    status: Optional[str] = None,
+    product_id: Optional[str] = None,
+    include_steps: bool = False,
+):
+    """status=open → planned + in_production. include_steps=1 → adım özeti (ayrı work-orders çağrısı gerekmez)."""
     q: Dict[str, Any] = {"company_id": company_id}
-    if status:
-        q["status"] = status
+    if status == "open":
+        q["status"] = {"$in": ["planned", "in_production"]}
+    elif status:
+        q["status"] = {"$in": status.split(",")} if "," in status else status
     if product_id:
         q["finished_product_id"] = product_id
-    return clean_docs(await db.production_orders.find(q).sort("created_at", -1).to_list(300))
+    rows = await db.production_orders.find(q).sort("created_at", -1).to_list(300)
+    if include_steps and rows:
+        oids = [r["_id"] for r in rows]
+        wos = await db.work_orders.find(
+            {"order_id": {"$in": oids}},
+            {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
+        ).to_list(2000)
+        by: Dict[str, list] = {}
+        for w in wos:
+            by.setdefault(w.get("order_id"), []).append(w)
+        for r in rows:
+            ws = sorted(by.get(r["_id"], []), key=lambda x: x.get("step_no") or 0)
+            done = sum(1 for w in ws if w.get("status") == "done")
+            cur = next((w for w in ws if w.get("status") in ("in_progress", "paused", "ready")), None)
+            r["steps_summary"] = {
+                "done": done,
+                "total": len(ws),
+                "current_step_name": (cur or {}).get("step_name"),
+                "current_operator": (cur or {}).get("operator_name"),
+            }
+    return clean_docs(rows)
 
 @api_router.post("/production/orders")
 async def create_production_order(req: Dict[str, Any]):

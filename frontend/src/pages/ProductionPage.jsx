@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -16,30 +15,66 @@ export default function ProductionPage() {
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [wos, setWos] = useState([]);
   const tab = params.get("tab") || "orders";
   const [recipes, setRecipes] = useState([]);
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
+  const [kpis, setKpis] = useState({ open: 0, in_production: 0, completed_this_month: 0, recipes: 0 });
   const [recipeModal, setRecipeModal] = useState(null);
   const [orderModal, setOrderModal] = useState(false);
   const [completeQty, setCompleteQty] = useState({});
   const [filter, setFilter] = useState("open");
+  const [recipesLoaded, setRecipesLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const loadOrders = useCallback(async () => {
+    try {
+      setLoading(true);
+      const statusQs = filter === "open" ? "&status=open" : filter === "all" ? "" : `&status=${filter}`;
+      const [o, p, k] = await Promise.all([
+        axios.get(`${API_URL}/production/orders?company_id=${companyId}${statusQs}&include_steps=1`),
+        axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`),
+        axios.get(`${API_URL}/production/orders/kpis?company_id=${companyId}`),
+      ]);
+      setOrders(o.data || []);
+      setProducts(p.data || []);
+      setKpis(k.data || { open: 0, in_production: 0, completed_this_month: 0, recipes: 0 });
+    } catch {
+      toast.error("Üretim emirleri yüklenemedi.");
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId, filter]);
+
+  const loadRecipes = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_URL}/production/recipes?company_id=${companyId}`);
+      setRecipes(r.data || []);
+      setRecipesLoaded(true);
+    } catch {
+      toast.error("Reçeteler yüklenemedi.");
+    }
+  }, [companyId]);
 
   const load = useCallback(async () => {
-    try {
-      const [r, o, p, w] = await Promise.all([axios.get(`${API_URL}/production/recipes?company_id=${companyId}`), axios.get(`${API_URL}/production/orders?company_id=${companyId}`), axios.get(`${API_URL}/products?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders?company_id=${companyId}`)]);
-      setRecipes(r.data); setOrders(o.data); setProducts(p.data); setWos(w.data);
-    } catch { toast.error("Üretim verileri yüklenemedi."); }
-  }, [companyId]);
-  useEffect(() => { load(); }, [load]);
+    await loadOrders();
+    if (tab === "recipes" || recipesLoaded) await loadRecipes();
+  }, [loadOrders, loadRecipes, tab, recipesLoaded]);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { if (tab === "recipes" && !recipesLoaded) loadRecipes(); }, [tab, recipesLoaded, loadRecipes]);
   useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products, setParams]);
 
   const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
-  const visible = orders.filter((o) => filter === "all" ? true : filter === "open" ? ["planned", "in_production"].includes(o.status) : o.status === filter);
   const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
-  const kpi = [["Açık Emir", orders.filter((o) => ["planned", "in_production"].includes(o.status)).length, "text-amber-600"], ["Üretimde", orders.filter((o) => o.status === "in_production").length, "text-blue-600"], ["Bu Ay Tamamlanan", orders.filter((o) => o.status === "completed" && (o.end_date || "").startsWith(new Date().toISOString().slice(0, 7))).length, "text-emerald-600"], ["Reçete", recipes.length, "text-slate-700"]];
+  const recipeCount = recipesLoaded ? recipes.length : (kpis.recipes || products.filter((p) => p.has_recipe).length);
+  const kpi = [
+    ["Açık Emir", kpis.open, "text-amber-600"],
+    ["Üretimde", kpis.in_production, "text-blue-600"],
+    ["Bu Ay Tamamlanan", kpis.completed_this_month, "text-emerald-600"],
+    ["Reçete", recipeCount, "text-slate-700"],
+  ];
 
   return (
     <div className="space-y-6" data-testid="production-page">
@@ -47,8 +82,8 @@ export default function ProductionPage() {
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Üretim & Reçeteler</h1><p className="text-xs sm:text-sm text-slate-500">Reçete (ürün ağacı) tanımla → üretim emri ver → hammadde düşsün, mamul stoğa girsin</p></div>
         <div className="flex gap-2">
           <button onClick={() => navigate("/atolye")} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="goto-shopfloor-btn"><MonitorPlay className="w-4 h-4" /> Üretim Ekranı</button>
-          <button onClick={() => setRecipeModal({})} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="new-recipe-btn"><BookOpen className="w-4 h-4" /> Yeni Reçete</button>
-          <button onClick={() => setOrderModal(true)} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700" data-testid="new-production-order-btn"><Plus className="w-4 h-4" /> Üretim Emri Ver</button>
+          <button onClick={() => { setRecipeModal({}); if (!recipesLoaded) loadRecipes(); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="new-recipe-btn"><BookOpen className="w-4 h-4" /> Yeni Reçete</button>
+          <button onClick={() => { setOrderModal(true); if (!recipesLoaded) loadRecipes(); }} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700" data-testid="new-production-order-btn"><Plus className="w-4 h-4" /> Üretim Emri Ver</button>
         </div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{kpi.map(([l, v, c]) => <div key={l} className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={`prod-kpi-${l}`}><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-2xl font-bold ${c}`}>{v}</div></div>)}</div>
@@ -59,7 +94,7 @@ export default function ProductionPage() {
         </div>
       )}
       <div className="flex items-center gap-1 border-b border-slate-200">
-        {[["orders", "Üretim Emirleri", Factory, orders.length], ["recipes", "Reçeteler", BookOpen, recipes.length]].map(([k, l, Icon, n]) => <button key={k} onClick={() => setParams({ tab: k })} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`production-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
+        {[["orders", "Üretim Emirleri", Factory, filter === "open" ? orders.length : kpis.open], ["recipes", "Reçeteler", BookOpen, recipeCount]].map(([k, l, Icon, n]) => <button key={k} onClick={() => setParams({ tab: k })} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`production-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
         {tab === "orders" && <div className="ml-auto flex gap-1 text-[11px]">{[["open", "Açık"], ["completed", "Tamamlanan"], ["cancelled", "İptal"], ["all", "Tümü"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-2 py-1 rounded-lg font-semibold ${filter === k ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`} data-testid={`po-filter-${k}`}>{l}</button>)}</div>}
       </div>
 
@@ -68,12 +103,13 @@ export default function ProductionPage() {
           <table className="w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="px-4 py-2">Emir</th><th className="px-4 py-2">Ürün</th><th className="px-4 py-2 text-right">Plan / Üretilen</th><th className="px-4 py-2">Tarih</th><th className="px-4 py-2 text-right">Maliyet</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2 text-right">İşlem</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {visible.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Üretim emri yok.</td></tr>}
-              {visible.map((o) => { const [l, c, Icon] = STATUS[o.status] || STATUS.planned; const remaining = o.planned_quantity - (o.completed_quantity || 0); return (
+              {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="po-loading">Yükleniyor…</td></tr>}
+              {!loading && orders.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Üretim emri yok.</td></tr>}
+              {!loading && orders.map((o) => { const [l, c, Icon] = STATUS[o.status] || STATUS.planned; const remaining = o.planned_quantity - (o.completed_quantity || 0); return (
                 <tr key={o.id} data-testid={`po-row-${o.order_code}`}>
                   <td className="px-4 py-2 font-mono font-semibold text-slate-900">{o.order_code}{o.source === "stock_card" && <div className="text-[9px] text-slate-400 font-sans">Stok kartından</div>}{o.notes && <div className="text-[10px] text-slate-400 font-sans truncate max-w-[160px]">{o.notes}</div>}</td>
                   <td className="px-4 py-2"><div className="font-semibold">{o.finished_product_name}</div><div className="text-[10px] text-slate-400">{o.recipe_name}</div>{o.shortages?.length > 0 && o.status !== "completed" && <div className="text-[10px] text-rose-600 font-semibold flex items-center gap-0.5"><AlertTriangle className="w-3 h-3" /> {o.shortages.length} hammadde eksik</div>}</td>
-                  <td className="px-4 py-2 text-right font-bold">{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span>{(() => { const ws = wos.filter((w) => w.order_id === o.id); if (!ws.length) return null; const d = ws.filter((w) => w.status === "done").length; const cur = ws.find((w) => ["in_progress", "paused", "ready"].includes(w.status)); return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {d}/{ws.length}{cur ? ` • ${cur.step_name}${cur.operator_name ? " (" + cur.operator_name + ")" : ""}` : ""}</div>; })()}</td>
+                  <td className="px-4 py-2 text-right font-bold">{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span>{(() => { const s = o.steps_summary; if (!s?.total) return null; return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {s.done}/{s.total}{s.current_step_name ? ` • ${s.current_step_name}${s.current_operator ? " (" + s.current_operator + ")" : ""}` : ""}</div>; })()}</td>
                   <td className="px-4 py-2 text-slate-500">{o.planned_date || o.start_date}{o.end_date && <div className="text-[10px] text-emerald-600">Bitti: {o.end_date}</div>}</td>
                   <td className="px-4 py-2 text-right">{fmt(o.total_cost)} ₺</td>
                   <td className="px-4 py-2"><span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}><Icon className="w-3 h-3" /> {l}</span></td>
