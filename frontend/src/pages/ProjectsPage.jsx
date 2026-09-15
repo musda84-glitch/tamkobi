@@ -2,13 +2,14 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
 import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
+import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/ProjectExpenseTeamModals";
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
@@ -95,6 +96,8 @@ export default function ProjectsPage({ section } = {}) {
   const [planQuote, setPlanQuote] = useState(null);
   const [approvalQuote, setApprovalQuote] = useState(null);
   const [trackingProject, setTrackingProject] = useState(null);
+  const [expenseProject, setExpenseProject] = useState(null);
+  const [teamProject, setTeamProject] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
@@ -302,6 +305,8 @@ export default function ProjectsPage({ section } = {}) {
               <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t">
                 <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
                 <button onClick={() => openTracking(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-lg font-semibold" data-testid={`project-track-${p.project_number}`} title="Müşteriye durum takip linki gönder"><Link2 className="w-3.5 h-3.5" /> Takip Linki</button>
+                <button onClick={() => setExpenseProject(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded-lg font-semibold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle"><Receipt className="w-3.5 h-3.5" /> Masraf</button>
+                <button onClick={() => setTeamProject(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-indigo-200 text-indigo-700 bg-indigo-50 rounded-lg font-semibold" data-testid={`project-team-${p.project_number}`} title="Personel ata ve görev dağıt"><Users className="w-3.5 h-3.5" /> Personel</button>
                 <button onClick={() => { openForm("quote"); setForm((f) => ({ ...f, kind: "quote", project_id: p.id, contact_id: p.contact_id || "", contact_name: p.contact_name || "", title: `${p.name} teklifi` })); }} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`project-quote-${p.project_number}`}>Teklif Oluştur <ArrowRight className="w-3 h-3" /></button>
                 <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
               </div>
@@ -392,6 +397,8 @@ export default function ProjectsPage({ section } = {}) {
       )}
       {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
       {trackingProject && <ProjectTrackingModal project={trackingProject} contact={contacts.find((c) => c.id === trackingProject.contact_id)} onClose={() => setTrackingProject(null)} onSent={load} />}
+      {expenseProject && <ProjectExpenseModal project={expenseProject} companyId={companyId} onClose={() => setExpenseProject(null)} onSaved={load} />}
+      {teamProject && <ProjectTeamTasksModal project={teamProject} companyId={companyId} onClose={() => setTeamProject(null)} onSaved={load} />}
       {planQuote && <InstallmentPlanModal doc={planQuote} kind="quote" companyId={companyId} onClose={() => setPlanQuote(null)} onChanged={load} />}
       {printDoc && <PrintDocument docType={printDoc.type} doc={printDoc.doc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={companyId} docType="quote" onClose={() => setEditTpl(false)} />}

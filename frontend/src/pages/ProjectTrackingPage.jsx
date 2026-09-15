@@ -80,8 +80,9 @@ export default function ProjectTrackingPage() {
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800"><ClipboardList className="w-3.5 h-3.5" /> İş adımları</div>
               {p.tasks.map((t, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
-                  {t.done ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Circle className="w-3.5 h-3.5 text-slate-300" />}
-                  <span className={t.done ? "text-slate-500 line-through" : "text-slate-800"}>{t.title}</span>
+                  {t.done ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Circle className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+                  <span className={`min-w-0 flex-1 ${t.done ? "text-slate-500 line-through" : "text-slate-800"}`}>{t.title}</span>
+                  {t.assignee_name && <span className="text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded shrink-0">{t.assignee_name}</span>}
                 </div>
               ))}
             </div>

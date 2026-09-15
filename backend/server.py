@@ -1464,7 +1464,7 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
     tasks_pub = []
     for t in (p.get("tasks") or []):
         if isinstance(t, dict):
-            tasks_pub.append({"title": t.get("title") or t.get("name") or "Adım", "done": bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))})
+            tasks_pub.append({"title": t.get("title") or t.get("name") or "Adım", "done": bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi")), "assignee_name": t.get("assignee_name") or None})
         elif t:
             tasks_pub.append({"title": str(t), "done": False})
 
