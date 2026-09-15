@@ -98,9 +98,32 @@ def normalize_package_opts(
     package_count = max(1, min(package_count, 50))
 
     order_desi = 0.0
+    order_weight = 0.0
+    dim_candidates = []
+    package_from_items = None
     for it in order.get("items") or []:
         try:
-            order_desi += float(it.get("desi") or 0) * float(it.get("quantity") or 1)
+            qty = float(it.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1.0
+        try:
+            order_desi += float(it.get("desi") or 0) * qty
+        except (TypeError, ValueError):
+            pass
+        try:
+            order_weight += float(it.get("weight") or 0) * qty
+        except (TypeError, ValueError):
+            pass
+        try:
+            L, W, H = float(it.get("length") or 0), float(it.get("width") or 0), float(it.get("height") or 0)
+            if L > 0 and W > 0 and H > 0:
+                dim_candidates.append((L, W, H))
+        except (TypeError, ValueError):
+            pass
+        try:
+            pc_it = int(it.get("package_count") or 0)
+            if pc_it > 0:
+                package_from_items = (package_from_items or 0) + pc_it
         except (TypeError, ValueError):
             pass
 
@@ -114,6 +137,16 @@ def normalize_package_opts(
     width = _num("width", "default_width")
     height = _num("height", "default_height")
     weight = _num("weight", "default_weight")
+    if weight is None and order_weight > 0:
+        weight = order_weight
+
+    # Ölçüler: tüm kalemlerde aynı ölçü varsa stok kartından kullan
+    if not (length and width and height) and dim_candidates:
+        if len(dim_candidates) == len(order.get("items") or []) and len({d for d in dim_candidates}) == 1:
+            length, width, height = dim_candidates[0]
+
+    if package_count <= 1 and package_from_items and package_from_items > 1 and not opts.get("package_count") and not opts.get("parcel_count"):
+        package_count = max(1, min(package_from_items, 50))
 
     if desi and not (length and width and height):
         side = round((max(float(desi), 0.1) * 3000) ** (1 / 3), 1)

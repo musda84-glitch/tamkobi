@@ -11,22 +11,66 @@ export const emptyPackageForm = () => ({
   height: "",
 });
 
-export const packageDefaultsFromOrder = (order) => {
-  const items = order?.items || [];
+const numOr0 = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** Merge stok kartı paket alanlarını sipariş kalemine (kalemde yoksa). */
+export const mergeItemPackageFromProduct = (item, product) => {
+  if (!product) return item || {};
+  const row = { ...(item || {}) };
+  for (const k of ["desi", "weight", "length", "width", "height", "package_count"]) {
+    const cur = row[k];
+    if ((cur == null || cur === "" || Number(cur) === 0) && product[k] != null && product[k] !== "") {
+      row[k] = product[k];
+    }
+  }
+  return row;
+};
+
+/**
+ * Sipariş + isteğe bağlı stok kartlarından paket formu varsayılanları.
+ * productsById: { [productId]: product }
+ */
+export const packageDefaultsFromOrder = (order, productsById = null) => {
+  const items = (order?.items || []).map((it) => {
+    const pid = it.product_id || it.productId;
+    const prod = productsById && pid ? productsById[pid] || productsById[String(pid)] : null;
+    return mergeItemPackageFromProduct(it, prod);
+  });
   let desi = 0;
   let weight = 0;
+  let packageCount = 0;
+  const dims = [];
   for (const it of items) {
-    const qty = Number(it.quantity) || 1;
-    desi += (Number(it.desi) || 0) * qty;
-    weight += (Number(it.weight) || 0) * qty;
+    const qty = numOr0(it.quantity) || 1;
+    desi += numOr0(it.desi) * qty;
+    weight += numOr0(it.weight) * qty;
+    const L = numOr0(it.length);
+    const W = numOr0(it.width);
+    const H = numOr0(it.height);
+    if (L > 0 && W > 0 && H > 0) dims.push(`${L}|${W}|${H}`);
+    const pc = parseInt(it.package_count, 10);
+    if (pc > 0) packageCount += pc;
+  }
+  let length = "";
+  let width = "";
+  let height = "";
+  // Ölçüleri yalnızca tüm kalemlerde aynı ölçü varsa doldur (karışık paketlerde boş bırak)
+  if (dims.length && dims.length === items.length && new Set(dims).size === 1) {
+    const [L, W, H] = dims[0].split("|");
+    length = L;
+    width = W;
+    height = H;
   }
   return {
-    package_count: 1,
+    package_count: packageCount > 1 ? packageCount : 1,
     desi: desi > 0 ? String(Math.round(desi * 100) / 100) : "",
     weight: weight > 0 ? String(Math.round(weight * 100) / 100) : "",
-    length: "",
-    width: "",
-    height: "",
+    length,
+    width,
+    height,
   };
 };
 
@@ -49,7 +93,7 @@ export const packagePayload = (form) => {
   return out;
 };
 
-export const ShipmentPackageFields = ({ value, onChange, compact = false, idPrefix = "pkg" }) => {
+export const ShipmentPackageFields = ({ value, onChange, compact = false, idPrefix = "pkg", hint }) => {
   const set = (key, raw) => onChange({ ...value, [key]: raw });
   const preview = useMemo(() => {
     const pc = Math.max(1, parseInt(value.package_count, 10) || 1);
@@ -77,6 +121,7 @@ export const ShipmentPackageFields = ({ value, onChange, compact = false, idPref
         Paket bilgisi
         <span className="font-normal text-slate-500">(tüm kargo entegrasyonları)</span>
       </div>
+      {hint && <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1" data-testid={`${idPrefix}-stock-hint`}>{hint}</p>}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <div>
           <label className={label} htmlFor={`${idPrefix}-count`}>Paket sayısı</label>

@@ -1,16 +1,27 @@
-
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Save, Loader2, RefreshCw } from "lucide-react";
+import { Save, Loader2, RefreshCw, Package } from "lucide-react";
 import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
 
+const pkgNum = (v) => (v === "" || v == null ? "" : v);
+
 export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
-  const [f, setF] = useState({ name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit, vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price, min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type, show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false, track_lot: !!product.track_lot, track_serial: !!product.track_serial, track_expiry: !!product.track_expiry, purchase_vat_rate: product.purchase_vat_rate ?? 20, price_includes_vat: product.price_includes_vat === true, vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [] });
+  const [f, setF] = useState({
+    name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit,
+    vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price,
+    min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type,
+    show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false,
+    track_lot: !!product.track_lot, track_serial: !!product.track_serial, track_expiry: !!product.track_expiry,
+    purchase_vat_rate: product.purchase_vat_rate ?? 20, price_includes_vat: product.price_includes_vat === true,
+    vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [],
+    desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
+    width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
+  });
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
@@ -18,9 +29,20 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const r = await axios.put(`${API_URL}/products/${product.id}`, { ...f, vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price), min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity) });
+      const n = (v) => (v === "" || v == null ? null : Number(v));
+      const r = await axios.put(`${API_URL}/products/${product.id}`, {
+        ...f,
+        vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price),
+        min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity),
+        desi: n(f.desi), weight: n(f.weight), length: n(f.length), width: n(f.width), height: n(f.height),
+        package_count: Math.max(1, Math.min(50, parseInt(f.package_count, 10) || 1)),
+      });
       onUpdated(r.data); toast.success("Stok kartı güncellendi."); onSaved?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
+  };
+  const calcDesi = () => {
+    const L = Number(f.length); const W = Number(f.width); const H = Number(f.height);
+    if (L > 0 && W > 0 && H > 0) set("desi", String(Math.round((L * W * H) / 3000 * 100) / 100));
   };
   return (
     <form onSubmit={save} className="space-y-3 text-xs" data-testid="product-edit-form">
@@ -49,6 +71,20 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={f.price_includes_vat} onChange={(e) => set("price_includes_vat", e.target.checked)} data-testid="edit-vat-included-checkbox" /><span className="font-semibold">Satış fiyatı KDV dahil</span></label>
         <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{(f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b> • KDV dahil: <b>{(f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b></div>
       </div>
+
+      <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 space-y-2" data-testid="product-package-fields">
+        <div className="font-bold text-slate-800 flex items-center gap-1.5"><Package className="w-3.5 h-3.5 text-indigo-600" /> Paket bilgisi (kargo)</div>
+        <p className="text-[10px] text-slate-500">Kargo oluştururken bu değerler otomatik doldurulur. Desi ≈ (en × boy × yükseklik) / 3000.</p>
+        <div className="grid grid-cols-3 gap-2">
+          <F label="Paket sayısı"><input type="number" min={1} max={50} step={1} value={f.package_count} onChange={(e) => set("package_count", e.target.value)} className={inputCls} data-testid="edit-package-count" /></F>
+          <F label="Desi"><input type="number" min={0} step={0.1} value={f.desi} onChange={(e) => set("desi", e.target.value)} placeholder="örn. 1.5" className={inputCls} data-testid="edit-desi" /></F>
+          <F label="Ağırlık kg"><input type="number" min={0} step={0.1} value={f.weight} onChange={(e) => set("weight", e.target.value)} className={inputCls} data-testid="edit-weight" /></F>
+          <F label="En cm"><input type="number" min={0} step={0.1} value={f.length} onChange={(e) => set("length", e.target.value)} onBlur={calcDesi} className={inputCls} data-testid="edit-length" /></F>
+          <F label="Boy cm"><input type="number" min={0} step={0.1} value={f.width} onChange={(e) => set("width", e.target.value)} onBlur={calcDesi} className={inputCls} data-testid="edit-width" /></F>
+          <F label="Yükseklik cm"><input type="number" min={0} step={0.1} value={f.height} onChange={(e) => set("height", e.target.value)} onBlur={calcDesi} className={inputCls} data-testid="edit-height" /></F>
+        </div>
+      </div>
+
       <F label="Etiketler">
         <div className="flex flex-wrap gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="tags-editor">
           {f.tags.map((t) => <span key={t} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5 text-[11px] font-semibold">{t}<button type="button" onClick={() => set("tags", f.tags.filter((x) => x !== t))} className="text-indigo-400 hover:text-rose-600">×</button></span>)}

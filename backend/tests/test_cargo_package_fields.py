@@ -38,6 +38,22 @@ def test_normalize_package_opts_from_order_items_and_config():
     assert pkg["package_count"] == 1
 
 
+def test_normalize_package_opts_from_stock_card_dims_and_weight():
+    import cargo_providers as cp
+
+    order = {
+        "items": [
+            {"quantity": 2, "desi": 1.5, "weight": 0.8, "length": 30, "width": 20, "height": 10, "package_count": 1},
+        ]
+    }
+    pkg = cp.normalize_package_opts({}, {}, order)
+    assert pkg["desi"] == 3.0  # 1.5 * 2
+    assert pkg["weight"] == 1.6  # 0.8 * 2
+    assert pkg["length"] == 30.0
+    assert pkg["width"] == 20.0
+    assert pkg["height"] == 10.0
+
+
 def test_geliver_payload_includes_desi_and_extra_parcels():
     import cargo_providers as cp
 

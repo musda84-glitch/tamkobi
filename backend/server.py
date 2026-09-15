@@ -8072,6 +8072,28 @@ async def cargo_auto_ship(req: Dict[str, Any]):
 async def cargo_auto_runs(company_id: Optional[str] = "comp_nexus_main_01"):
     return clean_docs(await db.cargo_auto_runs.find({"company_id": company_id}).sort("created_at", -1).to_list(20))
 
+
+async def _enrich_order_items_from_products(order: dict) -> dict:
+    """Sipariş kalemlerine stok kartındaki desi / ağırlık / ölçü / paket bilgisini işler."""
+    items = list(order.get("items") or [])
+    ids = [str(it.get("product_id")) for it in items if it.get("product_id")]
+    if not ids:
+        return order
+    products = await db.products.find({"_id": {"$in": ids}}).to_list(len(ids))
+    by_id = {str(p["_id"]): p for p in products}
+    PKG_KEYS = ("desi", "weight", "length", "width", "height", "package_count")
+    enriched = []
+    for it in items:
+        p = by_id.get(str(it.get("product_id") or "")) or {}
+        row = {**it}
+        for k in PKG_KEYS:
+            cur = row.get(k)
+            if cur in (None, "", 0, "0") and p.get(k) not in (None, ""):
+                row[k] = p[k]
+        enriched.append(row)
+    return {**order, "items": enriched}
+
+
 @api_router.post("/cargo/create-shipment")
 async def create_cargo_shipment(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
@@ -8088,6 +8110,8 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     order = await db.orders.find_one({"_id": order_id}) if order_id else None
     if order and order.get("cargo_tracking_number") and not req.get("force"):
         raise HTTPException(status_code=400, detail=f"Bu sipariş için zaten kargo kaydı var: {order['cargo_tracking_number']}")
+    if order:
+        order = await _enrich_order_items_from_products(order)
     cfg = await db.cargo_configs.find_one({"company_id": company_id, "carrier_code": carrier_code})
     cat = next((c for c in CARGO_CATALOG if c["carrier_code"] == carrier_code), {})
     live = bool(cfg) and carrier_code == "geliver" and cargo_providers.has_live_credentials(cfg)
