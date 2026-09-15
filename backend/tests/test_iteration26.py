@@ -51,6 +51,7 @@ def test_profitability_calculations_trendyol(api):
     assert ty_orders, "no trendyol orders in window"
     o = ty_orders[0]
     revenue = o["revenue"]
+    assert o.get("commission_rate") == rate, f"commission_rate missing/mismatch: {o.get('commission_rate')} vs {rate}"
     expected_commission = round(revenue * rate / 100, 2)
     assert abs(o["commission"] - expected_commission) < 0.02, f"commission mismatch: {o['commission']} vs {expected_commission}"
     expected_cvat = round(expected_commission * 0.20, 2)
