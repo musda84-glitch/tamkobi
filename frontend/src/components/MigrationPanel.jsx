@@ -1,4 +1,3 @@
-
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -7,6 +6,15 @@ import { API_URL, useAuth } from "../context/AuthContext";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const dl = (url, name) => axios.get(url, { responseType: "blob" }).then((r) => { const a = document.createElement("a"); a.href = URL.createObjectURL(r.data); a.download = name; a.click(); }).catch(() => toast.error("İndirilemedi."));
+
+/** Veri Aktarımı sekmeleri — her firma için ayrı bölüm */
+const PROVIDER_TABS = [
+  { code: "bizimhesap", name: "BizimHesap", blurb: "API ile ürün, stok ve cari; Excel ile fatura ve diğer veriler." },
+  { code: "parasut", name: "Paraşüt", blurb: "Paraşüt Excel/CSV dışa aktarımlarından cari, stok ve fatura taşıyın." },
+  { code: "logo_isbasi", name: "Logo İşbaşı", blurb: "Logo İşbaşı dışa aktarım dosyalarından cari ve stok taşıyın." },
+  { code: "mikro", name: "Mikro", blurb: "Mikro Excel/CSV dışa aktarımlarından cari ve stok taşıyın." },
+  { code: "sovos", name: "Sovos", blurb: "Sovos / Foriba dışa aktarım veya e-fatura listelerinden veri taşıyın." },
+];
 
 const BizimHesapCard = ({ companyId, onImported }) => {
   const [cfg, setCfg] = useState(null);
@@ -116,10 +124,28 @@ const BizimHesapCard = ({ companyId, onImported }) => {
   );
 };
 
-const ExcelWizard = ({ companyId, meta, onImported }) => {
+const ProviderIntroCard = ({ provider }) => (
+  <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`provider-intro-${provider.code}`}>
+    <div className="flex items-center gap-2">
+      <Plug className="w-4 h-4 text-emerald-600" />
+      <b className="text-sm text-slate-900">{provider.name} Aktarımı</b>
+      {provider.code !== "bizimhesap" && (
+        <span className="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[10px]">Excel / CSV</span>
+      )}
+    </div>
+    <p className="text-slate-500">{provider.blurb}</p>
+    {provider.code !== "bizimhesap" && (
+      <p className="text-slate-500">
+        Doğrudan API bağlantısı yakında. Şimdilik {provider.name} panellerinden dışa aktardığınız Excel/CSV dosyalarını aşağıdaki sihirbazla içe aktarın; sütunlar {provider.name} başlıklarına göre otomatik eşlenir.
+      </p>
+    )}
+  </div>
+);
+
+const ExcelWizard = ({ companyId, meta, onImported, lockedSource }) => {
   const { addonOn } = useAuth();
   const [entity, setEntity] = useState("contacts");
-  const [source, setSource] = useState("bizimhesap");
+  const [source, setSource] = useState(lockedSource || "bizimhesap");
   const [parsed, setParsed] = useState(null);
   const [mapping, setMapping] = useState({});
   const [preview, setPreview] = useState(null);
@@ -127,6 +153,10 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState(null);
   const ent = meta.entities.find((e) => e.key === entity);
+  const sourceName = meta.sources.find((s) => s.code === source)?.name || source;
+  useEffect(() => {
+    if (lockedSource) setSource(lockedSource);
+  }, [lockedSource]);
   const upload = async (file) => {
     if (!file) return;
     setBusy("parse"); setPreview(null); setResult(null);
@@ -143,7 +173,14 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4 text-xs" data-testid="excel-wizard">
       <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel / CSV ile Veri Aktarımı</b>{addonOn("ai.migration") && <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Yapay zekâ destekli: farklı sistemlerin Excel başlıklarını AI eşler</span>}</div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-        <div><label className="block font-semibold mb-1">Kaynak sistem</label><select value={source} onChange={(e) => setSource(e.target.value)} disabled={!!parsed} className={inp} data-testid="mig-source">{meta.sources.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></div>
+        <div>
+          <label className="block font-semibold mb-1">Kaynak sistem</label>
+          {lockedSource ? (
+            <div className="w-full bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-xs font-semibold text-emerald-800" data-testid="mig-source-locked">{sourceName}</div>
+          ) : (
+            <select value={source} onChange={(e) => setSource(e.target.value)} disabled={!!parsed} className={inp} data-testid="mig-source">{meta.sources.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</select>
+          )}
+        </div>
         <div><label className="block font-semibold mb-1">Veri türü</label><select value={entity} onChange={(e) => { setEntity(e.target.value); reset(); }} disabled={!!parsed} className={inp} data-testid="mig-entity">{meta.entities.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}</select></div>
         <div className="md:col-span-2 flex items-end gap-2"><button onClick={() => dl(`${API_URL}/migration/template/${entity}`, `sablon_${entity}.xlsx`)} className="px-3 py-2 border border-slate-200 rounded-lg font-semibold flex items-center gap-1" data-testid="mig-template"><Download className="w-3.5 h-3.5" /> Şablon Excel İndir</button>{parsed && <button onClick={reset} className="px-3 py-2 border rounded-lg" data-testid="mig-reset">Yeni dosya</button>}</div>
       </div>
@@ -152,7 +189,7 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
           <input type="file" accept=".xlsx,.xlsm,.csv,.txt" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="mig-file" />
           {busy === "parse" ? <Loader2 className="w-8 h-8 mx-auto animate-spin text-emerald-500" /> : <Upload className="w-8 h-8 mx-auto text-emerald-400" />}
           <div className="mt-2 font-semibold text-slate-800">{ent?.label} dosyasını sürükleyin veya seçin (.xlsx / .csv)</div>
-          <div className="text-slate-500 mt-1">Başlık satırı otomatik bulunur, sütunlar {meta.sources.find((s) => s.code === source)?.name} formatına göre eşlenir.</div>
+          <div className="text-slate-500 mt-1">Başlık satırı otomatik bulunur, sütunlar {sourceName} formatına göre eşlenir.</div>
         </label>)}
       {parsed && !result && (<>
         <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -182,19 +219,55 @@ const ExcelWizard = ({ companyId, meta, onImported }) => {
 export const MigrationPanel = ({ companyId }) => {
   const [meta, setMeta] = useState(null);
   const [batches, setBatches] = useState([]);
+  const [provider, setProvider] = useState(PROVIDER_TABS[0].code);
   const loadBatches = useCallback(() => axios.get(`${API_URL}/migration/batches?company_id=${companyId}`).then((r) => setBatches(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { axios.get(`${API_URL}/migration/sources`).then((r) => setMeta(r.data)).catch(() => toast.error("Aktarım ayarları yüklenemedi.")); loadBatches(); }, [loadBatches]);
   const rollback = async (b) => { if (!window.confirm(`"${b.filename}" aktarımı geri alınsın mı? Eklenen ${b.inserted} kayıt silinir, ${b.updated} güncelleme eski haline döner.`)) return; try { const r = await axios.post(`${API_URL}/migration/batches/${b.id}/rollback`); toast.success(r.data.message); loadBatches(); } catch (e) { toast.error(e.response?.data?.detail || "Geri alınamadı."); } };
+  const active = PROVIDER_TABS.find((p) => p.code === provider) || PROVIDER_TABS[0];
+  const filteredBatches = batches.filter((b) => b.source === provider);
   if (!meta) return <div className="p-6 text-xs text-slate-400">Yükleniyor…</div>;
   return (
     <div className="space-y-4" data-testid="migration-panel">
-      <div><h2 className="text-base font-bold text-slate-900">Veri Aktarım Merkezi</h2><p className="text-xs text-slate-500">Başka bir ön muhasebe / ERP sisteminden (BizimHesap, Paraşüt, Logo İşbaşı, Mikro, OVOCRM, Netesnaf…) carilerinizi, ürünlerinizi, faturalarınızı, hesap bakiyelerinizi ve personelinizi taşıyın. Her aktarım kayıt altına alınır ve tek tıkla geri alınabilir.</p></div>
-      <BizimHesapCard companyId={companyId} onImported={loadBatches} />
-      <ExcelWizard companyId={companyId} meta={meta} onImported={loadBatches} />
+      <div>
+        <h2 className="text-base font-bold text-slate-900">Veri Aktarım Merkezi</h2>
+        <p className="text-xs text-slate-500">BizimHesap, Paraşüt, Logo İşbaşı, Mikro ve Sovos için ayrı sekme bölümleri. Her aktarım kayıt altına alınır ve tek tıkla geri alınabilir.</p>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-1.5 flex flex-wrap gap-1" role="tablist" data-testid="migration-provider-tabs">
+        {PROVIDER_TABS.map((p) => {
+          const on = provider === p.code;
+          return (
+            <button
+              key={p.code}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => setProvider(p.code)}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${on ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-50"}`}
+              data-testid={`migration-provider-${p.code}`}
+            >
+              {p.name}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="space-y-4" role="tabpanel" data-testid={`migration-provider-panel-${provider}`}>
+        {provider === "bizimhesap" ? (
+          <BizimHesapCard companyId={companyId} onImported={loadBatches} />
+        ) : (
+          <ProviderIntroCard provider={active} />
+        )}
+        <ExcelWizard key={provider} companyId={companyId} meta={meta} onImported={loadBatches} lockedSource={provider} />
+      </div>
+
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden text-xs" data-testid="migration-batches">
-        <div className="px-4 py-3 border-b font-bold text-sm text-slate-900">Aktarım Günlüğü</div>
+        <div className="px-4 py-3 border-b font-bold text-sm text-slate-900 flex flex-wrap items-center justify-between gap-2">
+          <span>Aktarım Günlüğü · {active.name}</span>
+          <button type="button" onClick={loadBatches} className="text-[10px] font-semibold text-slate-500 hover:text-slate-800" data-testid="mig-batches-refresh">Yenile</button>
+        </div>
         <table className="w-full"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Veri</th><th className="px-3 py-2 text-left">Kaynak / Dosya</th><th className="px-3 py-2 text-right">Yeni</th><th className="px-3 py-2 text-right">Güncel</th><th className="px-3 py-2 text-right">Atlanan</th><th className="px-3 py-2 text-right">Hatalı</th><th className="px-3 py-2 text-center">İşlem</th></tr></thead>
-          <tbody className="divide-y divide-slate-100">{batches.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-400">Henüz aktarım yapılmadı.</td></tr>}{batches.map((b) => (
+          <tbody className="divide-y divide-slate-100">{filteredBatches.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-400">Bu kaynak için henüz aktarım yapılmadı.</td></tr>}{filteredBatches.map((b) => (
             <tr key={b.id} className={b.status === "rolled_back" ? "opacity-50" : ""} data-testid={`mig-batch-${b.id}`}><td className="px-3 py-2 whitespace-nowrap">{new Date(b.created_at).toLocaleString("tr-TR")}</td><td className="px-3 py-2 font-semibold">{b.entity_label}</td><td className="px-3 py-2">{b.source} · {b.filename}</td><td className="px-3 py-2 text-right text-sky-700 font-bold">{b.inserted}</td><td className="px-3 py-2 text-right">{b.updated}</td><td className="px-3 py-2 text-right">{b.skipped}</td><td className="px-3 py-2 text-right text-rose-600">{b.failed}</td>
               <td className="px-3 py-2"><div className="flex items-center justify-center gap-1">{b.error_count > 0 && <button onClick={() => dl(`${API_URL}/migration/batches/${b.id}/errors.csv`, `hatalar_${b.id.slice(0, 8)}.csv`)} className="px-2 py-1 border rounded-lg" data-testid={`mig-errors-${b.id}`}>Hata CSV</button>}{b.status === "rolled_back" ? <span className="text-slate-400">Geri alındı</span> : <button onClick={() => rollback(b)} className="px-2 py-1 border border-rose-200 text-rose-600 rounded-lg font-semibold flex items-center gap-1" data-testid={`mig-rollback-${b.id}`}><RotateCcw className="w-3 h-3" /> Geri Al</button>}</div></td></tr>))}</tbody></table>
       </div>
