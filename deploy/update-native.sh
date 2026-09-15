@@ -33,6 +33,13 @@ if [ "$SKIP_GIT" -eq 0 ]; then
   if ! git rev-parse --abbrev-ref HEAD | grep -qx main; then
     git checkout main
   fi
+  # Önceki build (örn. eklenti zip yeniden paketleme) tracked dosyaları kirletirse
+  # ff-only merge düşer. Bu checkout yalnızca dağıtım içindir — yerel edit tutulmaz.
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Uyarı: sunucuda yerel değişiklik var; dağıtımdan önce sıfırlanıyor:"
+    git status --short || true
+    git reset --hard HEAD
+  fi
   if ! git merge --ff-only origin/main; then
     echo "HATA: sunucudaki kopya origin/main ile ileri sarılamıyor (ortak ata yok veya ayrışmış)." >&2
     echo "GitHub geçmişi yeniden yazıldı. Bir kez, yedekten sonra:" >&2
@@ -107,7 +114,8 @@ else
   echo "HATA: yarn veya npm bulunamadı." >&2
   exit 1
 fi
-git checkout -- package.json 2>/dev/null || true
+# prebuild eklenti zip'ini yeniden yazar; sonraki ff-only merge için tracked ağacı temiz tut.
+git checkout -- package.json frontend/public/downloads/tamkobi-browser-extension.zip 2>/dev/null || true
 if [ -d build ]; then
   chown -R www-data:www-data build
 fi
