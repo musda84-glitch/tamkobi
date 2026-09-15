@@ -11,24 +11,40 @@ import {
 } from "lucide-react";
 
 
-const playOverscanBeep = () => {
+let _overscanAudioCtx = null;
+const getOverscanAudioCtx = () => {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!_overscanAudioCtx || _overscanAudioCtx.state === "closed") {
+    _overscanAudioCtx = new Ctx();
+  }
+  return _overscanAudioCtx;
+};
+
+const playOverscanBeep = async () => {
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
+    const ctx = getOverscanAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
     const now = ctx.currentTime;
-    [0, 0.18, 0.36].forEach((at, i) => {
+    [0, 0.16, 0.32].forEach((at, i) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.type = "square";
-      o.frequency.value = i === 1 ? 880 : 520;
+      o.frequency.value = i === 1 ? 980 : 480;
       g.gain.setValueAtTime(0.0001, now + at);
-      g.gain.exponentialRampToValueAtTime(0.25, now + at + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
+      g.gain.exponentialRampToValueAtTime(0.28, now + at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.13);
       o.connect(g); g.connect(ctx.destination);
-      o.start(now + at); o.stop(now + at + 0.16);
+      o.start(now + at); o.stop(now + at + 0.15);
     });
-    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch (_) { /* ignore */ }
+};
+
+const unlockOverscanAudio = async () => {
+  try {
+    const ctx = getOverscanAudioCtx();
+    if (ctx?.state === "suspended") await ctx.resume().catch(() => {});
   } catch (_) { /* ignore */ }
 };
 
@@ -59,6 +75,22 @@ export default function OrderPickKioskPage() {
   const [busy, setBusy] = useState(false);
   const [overscanFlash, setOverscanFlash] = useState(null);
   const inputRef = useRef(null);
+  const overscanTimer = useRef(null);
+
+  const triggerOverscan = useCallback((payload) => {
+    const msg = payload?.message || "Fazla ürün okutuldu.";
+    playOverscanBeep();
+    if (overscanTimer.current) clearTimeout(overscanTimer.current);
+    setOverscanFlash({
+      message: msg,
+      productName: payload?.product_name || payload?.productName,
+      lineIndex: payload?.line_index ?? payload?.lineIndex,
+      at: Date.now(),
+    });
+    toast.error(msg, { duration: 5000 });
+    if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 160]);
+    overscanTimer.current = setTimeout(() => setOverscanFlash(null), 2800);
+  }, []);
 
   const loadList = useCallback(async () => {
     try {
@@ -69,6 +101,7 @@ export default function OrderPickKioskPage() {
 
   const openOrder = useCallback(async (id) => {
     try {
+      unlockOverscanAudio();
       const r = await axios.get(`${API_URL}/order-picks/${id}`);
       setSes(r.data);
       setParams({ order: id }, { replace: true });
@@ -84,6 +117,7 @@ export default function OrderPickKioskPage() {
   const scan = async (raw) => {
     const c = String(raw || code).trim();
     if (!c || !ses || busy) return;
+    unlockOverscanAudio();
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: 1 });
@@ -95,20 +129,10 @@ export default function OrderPickKioskPage() {
     } catch (e) {
       const detail = e.response?.data?.detail;
       const overscan = e.response?.status === 409 || detail?.code === "overscan" || /fazla/i.test(detailText(detail));
-      const msg = detailText(detail);
       if (overscan) {
-        playOverscanBeep();
-        setOverscanFlash({
-          message: msg,
-          productName: detail?.product_name,
-          lineIndex: detail?.line_index,
-          at: Date.now(),
-        });
-        toast.error(msg, { duration: 5000 });
-        if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 160]);
-        setTimeout(() => setOverscanFlash(null), 2600);
+        triggerOverscan(typeof detail === "object" && detail ? { ...detail, message: detailText(detail) } : { message: detailText(detail) });
       } else {
-        toast.error(msg);
+        toast.error(detailText(detail));
         if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
       }
     } finally { setBusy(false); setTimeout(() => inputRef.current?.focus(), 50); }
@@ -116,7 +140,17 @@ export default function OrderPickKioskPage() {
 
   const bump = async (item, delta) => {
     if (busy) return;
-    const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) || 0) + delta));
+    const ordered = Number(item.ordered_qty) || 0;
+    const picked = Number(item.picked_qty) || 0;
+    if (delta > 0 && picked + delta > ordered + 1e-9) {
+      triggerOverscan({
+        message: `${item.product_name}: siparişte ${ordered} adet var, ${picked} okutuldu. Fazla ürün eklemeyin.`,
+        product_name: item.product_name,
+        line_index: item.line_index,
+      });
+      return;
+    }
+    const next = Math.max(0, Math.min(ordered, picked + delta));
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, line_index: item.line_index, picked_qty: next });
       setSes(r.data);
@@ -179,8 +213,9 @@ export default function OrderPickKioskPage() {
   return (
     <div className="fixed inset-0 z-[80] bg-slate-100 flex flex-col" data-testid="order-pick-session">
       {overscanFlash && (
-        <div className="absolute inset-x-0 top-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
-          <div className="m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-3 shadow-xl animate-pulse">
+        <div className="absolute inset-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
+          <div className="absolute inset-0 bg-rose-600/25 animate-pulse" />
+          <div className="relative m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-3 shadow-xl animate-pulse">
             <div className="text-sm font-black tracking-wide">FAZLA ÜRÜN OKUTULDU</div>
             <div className="text-xs font-semibold mt-0.5 opacity-95">{overscanFlash.message}</div>
           </div>
