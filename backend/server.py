@@ -9050,6 +9050,8 @@ rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 import user_erase
 user_erase.init(db)
+import company_reset
+company_reset.init(db)
 import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
@@ -9148,6 +9150,7 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(user_erase.router)
+app.include_router(company_reset.router)
 app.include_router(storage_manager.router)
 app.include_router(addons.router)
 app.include_router(support_tickets.router)

@@ -83,7 +83,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Şirket işlemleri</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">Pasif (askıda) şirkette tüm modüller kilitlenir. Silme geri alınamaz.</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Pasif (askıda) şirkette tüm modüller kilitlenir. Silme geri alınamaz. Yalnızca fatura/sipariş/stok/teklif sıfırlamak için <a href="/sistem/veri-silme" className="text-amber-700 font-semibold underline" data-testid="company-reset-data-link">Veri Silme</a> ekranını kullanın.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn"><Power className="w-3.5 h-3.5" /> Aktif</button>
