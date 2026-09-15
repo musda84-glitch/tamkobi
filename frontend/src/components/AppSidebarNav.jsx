@@ -77,7 +77,13 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
           if (dragPath && dragPath !== item.path && groupIdOf(dragPath) === groupIdOf(item.path)) onReorder?.(dragPath, item.path);
           setDragPath(null);
         }}
-        title={collapsed ? item.label : "Aynı paket içinde sürükleyip sıralayabilirsiniz"}
+        title={
+          count > 0
+            ? `${item.label}: ${count} bekleyen`
+            : collapsed
+              ? item.label
+              : "Aynı paket içinde sürükleyip sıralayabilirsiniz"
+        }
         onClick={() => onNavigate?.()}
         data-testid={`nav-item-${item.path.replace("/", "") || "dashboard"}`}
         className={linkClass(item, isActive)}
@@ -98,6 +104,13 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
                         : "text-slate-400"
                 }`}
               />
+              {count > 0 && !collapsed && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-slate-900 animate-pulse"
+                  data-testid={`nav-dot-${item.path.replace("/", "") || "dashboard"}`}
+                  aria-hidden
+                />
+              )}
               {collapsed && count > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center" data-testid={`nav-count-${item.path.replace("/", "") || "dashboard"}`}>
                   {count > 9 ? "9+" : count}
@@ -111,7 +124,7 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
           <span className="flex items-center gap-1 shrink-0">
             {count > 0 && (
               <span
-                className={`text-[10px] min-w-[1.15rem] h-4 px-1 rounded-full font-bold flex items-center justify-center ${
+                className={`text-[10px] min-w-[1.15rem] h-4 px-1 rounded-full font-bold flex items-center justify-center shadow-sm shadow-rose-900/40 ${
                   isActive ? "bg-white text-rose-700" : "bg-rose-600 text-white"
                 }`}
                 data-testid={`nav-count-${item.path.replace("/", "") || "dashboard"}`}
