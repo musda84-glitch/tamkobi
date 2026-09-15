@@ -54,7 +54,11 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
-      if (data?.location && data?.schedule?.require_geo !== false) { const c = await getPos(); coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy }; }
+      // Konum yalnızca girişte zorunlu; çıkış her yerden yapılabilir.
+      if (action === "check_in" && data?.location && data?.schedule?.require_geo !== false) {
+        const c = await getPos();
+        coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+      }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
       toast.success(r.data.message, { duration: 6000 }); load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
@@ -81,7 +85,7 @@ export default function MyAttendancePage() {
             <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">
               <span className="inline-flex items-center gap-1"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Mesai {sch.start}–{sch.end} · mola {sch.break_minutes} dk</span>
               <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-emerald-400" /> {workDays}</span>
-              {data.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> Firma konumu · {data.location.radius_m} m{sch.require_geo === false ? " (zorunlu değil)" : ""}</span> : <span className="text-amber-300">Firma konumu tanımsız — konumsuz giriş</span>}
+              {data.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> Firma konumu · {data.location.radius_m} m{sch.require_geo === false ? " (girişte zorunlu değil)" : " (yalnızca girişte)"}</span> : <span className="text-amber-300">Firma konumu tanımsız — konumsuz giriş</span>}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -92,14 +96,15 @@ export default function MyAttendancePage() {
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}<span className="text-lg sm:text-base">Çıkış Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">{t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? "çıkış bekleniyor" : "önce giriş yapın"}</span>
             </button>
           </div>
-          {(t?.hours || t?.late_minutes) ? (
+          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours) ? (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
               {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
+              {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || sch.end}</span> : null}
               {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
             </div>
           ) : null}
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Mesai bitişinden ({sch.end}) sonraki çıkışlar ve tatil günü çalışmaları otomatik <b className="text-indigo-300">fazla mesai</b> olarak yazılır.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
