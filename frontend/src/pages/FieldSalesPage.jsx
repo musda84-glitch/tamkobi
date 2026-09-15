@@ -5,6 +5,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 import { lineFromProduct } from "../utils/documentLines";
+import { ScanButton } from "../components/CameraScanner";
 
 import {
   Smartphone, Search, Plus, Minus, Trash2, UserPlus, Maximize2, Minimize2,
@@ -282,6 +283,7 @@ export default function FieldSalesPage() {
           <div className="font-bold text-slate-900">2. Ürün ekle</div>
           <form onSubmit={(e) => { e.preventDefault(); scanBarcode(); }} className="flex gap-2">
             <input value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Barkod oku veya yaz, Enter" className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-base min-h-12 font-mono" data-testid="saha-barcode" inputMode="numeric" />
+            <ScanButton size="md" label="Kamera" title="Kamera ile barkod / QR okut" onScan={(code) => { setBarcode(code); scanBarcode(code); }} />
             <button type="submit" className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-semibold min-h-12" data-testid="saha-barcode-go">Ekle</button>
           </form>
           <div className="relative">
