@@ -6,7 +6,6 @@ import { useAuth, API_URL } from "../context/AuthContext";
 import { NotificationBell } from "./NotificationBell";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
-import { HeaderFxRates } from "./HeaderFxRates";
 import { isPublicPath } from "../utils/publicPath";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
@@ -151,7 +150,6 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <span>•</span>
               <LicenseBadge license={license} />
             </div>
-            <HeaderFxRates companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -192,7 +190,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             <button onClick={exitImpersonation} className="px-3 py-1 bg-amber-400 text-slate-900 rounded-lg font-bold" data-testid="impersonation-exit">Destek modunu bitir</button>
           </div>
         )}
-        <SupportContactBar />
+        <SupportContactBar companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>
         )}
