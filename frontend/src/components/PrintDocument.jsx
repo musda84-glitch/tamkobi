@@ -229,9 +229,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                   </td>
                   <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
                     {code ? (
-                      <div className="flex flex-col items-start gap-1 min-w-[12rem] py-1">
+                      <div className="flex flex-col items-center gap-1 min-w-[12rem] w-[200px] py-1">
                         <BarcodeRenderer code={String(code)} width={200} height={52} showText={false} compact />
-                        <span className="font-mono text-[11px] text-slate-700 leading-none tracking-wide">{code}</span>
+                        <span className="font-mono text-[11px] text-slate-700 leading-none tracking-wide text-center w-full">{code}</span>
                       </div>
                     ) : <span className="text-slate-300">—</span>}
                   </td>
