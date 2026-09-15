@@ -19,7 +19,7 @@ _current_user = None
 
 MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/edoc-inbox", "Gelen e-Belgeler"), ("/dis-ticaret", "İthalat / İhracat"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/b2b-yonetim", "B2B Portal Yönetimi"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"), ("/cheques", "Çek / Senet"),
            ("/stock", "Stoklar & Ürünler"), ("/sayim", "Stok Sayımı"), ("/quotes", "Teklifler"), ("/projects", "Projeler"), ("/surveys", "Keşifler"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/hizli-satis", "Hızlı Satış"), ("/saha", "Saha Sipariş"), ("/sevk", "Depo Sevkiyatı"), ("/warehouses", "Depo"),
-           ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/mesai", "Mesaim"), ("/communication", "İletişim"), ("/ai-advisor", "AI Danışman"),
+           ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/mesai", "Mesaim"), ("/communication", "İletişim"), ("/support", "Destek Talepleri"), ("/ai-advisor", "AI Danışman"),
            ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
 LEVELS = ("none", "view", "edit")
 FEATURES = [("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
@@ -51,11 +51,11 @@ def _all(level: str) -> Dict[str, str]:
 
 DEFAULT_ROLES = [
     {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("edit")},
-    {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/cheques": "edit", "/reports": "edit", "/accountant": "edit", "/settings": "none", "/production": "none", "/atolye": "none"}},
-    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit", "/orders": "edit", "/hizli-satis": "edit", "/saha": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/ecommerce": "view", "/cargo": "edit"}},
-    {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/sayim": "edit", "/warehouses": "edit", "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit"}},
-    {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/stock": "view", "/warehouses": "view"}},
-    {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/edoc-inbox": "view", "/contacts": "view", "/banking": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view", "/mesai": "view"}},
+    {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/expenses": "edit", "/loans": "edit", "/cheques": "edit", "/reports": "edit", "/accountant": "edit", "/support": "edit", "/settings": "none", "/production": "none", "/atolye": "none", "/ecommerce": "none", "/cargo": "none", "/saha": "none", "/sevk": "none"}},
+    {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit", "/orders": "edit", "/hizli-satis": "edit", "/saha": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/support": "edit", "/ecommerce": "view", "/cargo": "edit"}},
+    {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/sayim": "edit", "/warehouses": "edit", "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit", "/support": "view"}},
+    {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/stock": "view", "/warehouses": "view", "/support": "view"}},
+    {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/edoc-inbox": "view", "/dis-ticaret": "view", "/contacts": "view", "/banking": "view", "/expenses": "view", "/loans": "view", "/cheques": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view", "/mesai": "view", "/support": "view", "/trash": "view"}},
 ]
 
 # API path prefix -> module key (longest prefix wins)
@@ -64,7 +64,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
-                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/system", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute", "/early-leave-cancel")
 _license_guard = None
@@ -91,9 +91,57 @@ def _clean(d: dict) -> dict:
     return d
 
 
+def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Fill newly added module keys for legacy role docs (in-memory; does not mutate caller)."""
+    p = dict(perms or {})
+    p.setdefault("/dispatches", p.get("/invoices", "none"))
+    p.setdefault("/trash", p.get("/settings", "none"))
+    p.setdefault("/expenses", p.get("/banking", "none"))
+    p.setdefault("/loans", p.get("/banking", "none"))
+    p.setdefault("/cheques", p.get("/banking", "none"))
+    p.setdefault("/quotes", p.get("/projects", "none"))
+    p.setdefault("/surveys", p.get("/projects", "none"))
+    p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
+    p.setdefault("/dis-ticaret", p.get("/invoices", "none"))
+    p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
+    p.setdefault("/sayim", "none")
+    p.setdefault("/saha", p.get("/orders", "none"))
+    p.setdefault("/sevk", "none")
+    p.setdefault("/mesai", "none")
+    p.setdefault("/support", p.get("/communication", "none"))
+    for m, _ in MODULES:
+        p.setdefault(m, "none")
+    return p
+
+
 async def ensure_roles(company_id: str):
     if await _db.roles.count_documents({"company_id": company_id}) == 0:
         await _db.roles.insert_many([{"_id": f"role_{company_id}_{r['code']}", "company_id": company_id, **r, "created_at": _now()} for r in DEFAULT_ROLES])
+        return
+    existing = {r["code"]: r for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
+    for rdef in DEFAULT_ROLES:
+        cur = existing.get(rdef["code"])
+        if not cur:
+            await _db.roles.insert_one({"_id": f"role_{company_id}_{rdef['code']}", "company_id": company_id, **rdef, "created_at": _now()})
+            continue
+        upd: Dict[str, Any] = {}
+        if cur.get("is_system") and cur.get("name") != rdef["name"]:
+            upd["name"] = rdef["name"]
+        raw = dict(cur.get("permissions") or {})
+        missing = [m for m, _ in MODULES if m not in raw]
+        if cur.get("code") == "admin":
+            filled = _all("edit")
+        else:
+            filled = backfill_permissions(raw)
+            # New catalog keys on system roles: prefer DEFAULT_ROLES over inheritance heuristics
+            if cur.get("is_system") and missing:
+                for m in missing:
+                    if m in rdef["permissions"]:
+                        filled[m] = rdef["permissions"][m]
+        if filled != raw:
+            upd["permissions"] = filled
+        if upd:
+            await _db.roles.update_one({"_id": cur["_id"]}, {"$set": {**upd, "updated_at": _now()}})
 
 
 async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, Any]:
@@ -102,21 +150,9 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
     await ensure_roles(cid)
     r = await _db.roles.find_one({"company_id": cid, "code": code}) or await _db.roles.find_one({"company_id": cid, "code": "admin"})
     if r:
-        p = r.setdefault("permissions", {})
-        p.setdefault("/dispatches", p.get("/invoices", "none"))
-        p.setdefault("/trash", p.get("/settings", "none"))
-        p.setdefault("/expenses", p.get("/banking", "none"))
-        p.setdefault("/loans", p.get("/banking", "none"))
-        p.setdefault("/cheques", p.get("/banking", "none"))
-        p.setdefault("/quotes", p.get("/projects", "none"))
-        p.setdefault("/surveys", p.get("/projects", "none"))
-        p.setdefault("/edoc-inbox", p.get("/invoices", "none"))
-        p.setdefault("/dis-ticaret", p.get("/invoices", "none"))
-        p.setdefault("/b2b-yonetim", p.get("/contacts", "none"))
-        p.setdefault("/sayim", "none")
-        p.setdefault("/saha", p.get("/orders", "none"))
-        p.setdefault("/sevk", "none")
-        p.setdefault("/mesai", "none")
+        r["permissions"] = backfill_permissions(r.get("permissions"))
+        if r.get("code") == "admin":
+            r["permissions"] = _all("edit")
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
 
 

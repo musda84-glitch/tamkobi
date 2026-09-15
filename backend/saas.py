@@ -23,11 +23,8 @@ CACHE_TTL = 15
 CORE_MODULES = {"/", "/settings", "/trash"}
 # Etiketler frontend/src/navGroups.js NAV_GROUPS ile aynı kalmalı (ERP menü, paket editörü, web vitrin).
 # Sidebar pages that used to inherit a parent license key (LICENSE_KEY aliases).
+# Only self-service Personelim inherits Mesaim license/role; other panel modules are first-class.
 PANEL_MODULE_FROM = {
-    "/edoc-inbox": "/invoices",
-    "/dis-ticaret": "/invoices",
-    "/b2b-yonetim": "/contacts",
-    "/saha": "/orders",
     "/personelim": "/mesai",
 }
 CATEGORIES = {
@@ -40,7 +37,7 @@ CATEGORIES = {
     "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/hizli-satis": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış",
     "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret",
     "/personnel": "İK", "/mesai": "İK",
-    "/communication": "İletişim",
+    "/communication": "İletişim", "/support": "İletişim",
     "/ai-advisor": "Yapay Zeka",
 }
 DESCRIPTIONS = {
@@ -74,18 +71,19 @@ DESCRIPTIONS = {
     "/personnel": "Personel, bordro, vardiya, izin",
     "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai",
     "/communication": "SMS, e-posta, WhatsApp Business",
+    "/support": "Destek talepleri, ekler ve yanıtlar",
     "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım",
 }
 
 _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/sayim", "/reports"]
-_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/hizli-satis", "/saha", "/sevk", "/communication", "/accountant"]
+_STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/hizli-satis", "/saha", "/sevk", "/communication", "/support", "/accountant"]
 _PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_MODULE_PRICES = {
     "/invoices": 249, "/dispatches": 99, "/contacts": 129, "/installments": 79, "/reports": 99,
     "/banking": 129, "/expenses": 79, "/loans": 79, "/stock": 129, "/projects": 129,
     "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/hizli-satis": 99, "/warehouses": 99, "/production": 199,
-    "/atolye": 99, "/personnel": 159, "/communication": 99, "/ai-advisor": 129, "/accountant": 99,
+    "/atolye": 99, "/personnel": 159, "/communication": 99, "/support": 0, "/ai-advisor": 129, "/accountant": 99, "/edoc-inbox": 0, "/dis-ticaret": 0, "/b2b-yonetim": 0, "/sayim": 0, "/saha": 0, "/sevk": 0, "/mesai": 0, "/cheques": 79, "/quotes": 79, "/surveys": 0,
 }
 CUSTOM_PLAN_ID = "plan_custom"
 # 0 = unlimited. product/contact counts and storage are license-wide (sibling companies share the pool).
