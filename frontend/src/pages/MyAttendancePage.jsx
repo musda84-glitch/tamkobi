@@ -96,7 +96,7 @@ export default function MyAttendancePage() {
         <div><h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-att-title"><Clock className="w-7 h-7 text-emerald-600 shrink-0" /> Personel Giriş Çıkış Kayıtları</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-att-month" />
       </div>
-      {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800" data-testid="my-att-no-employee">Giriş/çıkış yapabilmek için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</div>}
+      {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1" data-testid="my-att-no-employee"><p>Giriş/çıkış ve <b>erken çıkış talebi</b> için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</p><p className="text-amber-700/80">Bağlantı sonrası bugün giriş yaptığınızda “Erken çıkış talep et” butonu görünür.</p></div>}
       {data.employee && (
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-5" data-testid="my-att-today">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -126,9 +126,15 @@ export default function MyAttendancePage() {
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
             </div>
           ) : null}
-          {t?.check_in && !t?.check_out && (
+          {!t?.check_out && (
             <div className="rounded-xl bg-white/10 border border-white/10 p-3 space-y-2" data-testid="my-att-early-leave">
-              {(() => {
+              {!t?.check_in ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300" data-testid="my-att-early-need-checkin">
+                  <DoorOpen className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <span>Erken çıkış talep etmek için önce <b className="text-white">Giriş Yap</b>ın; ardından neden ve planlanan saati gönderebilirsiniz.</span>
+                </div>
+              ) : (
+              (() => {
                 const elr = t.early_leave_request || {};
                 if (elr.status === "pending") {
                   return (
@@ -158,9 +164,11 @@ export default function MyAttendancePage() {
                     </div>
                   </form>
                 );
-              })()}
+              })()
+              )}
             </div>
           )}
+
           <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin; yönetici onayından sonra çıkış yapın.</div>
         </div>
       )}
