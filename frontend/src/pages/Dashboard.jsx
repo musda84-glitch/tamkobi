@@ -5,6 +5,8 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
+import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
+import { OpsAlertsPanel } from "../components/OpsAlertsPanel";
 
 import {
   TrendingUp,
@@ -106,6 +108,10 @@ export default function Dashboard() {
   return (
     <div className="space-y-8" data-testid="dashboard-view">
       <OverviewPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="dashboard-alerts-row">
+        <OpsAlertsPanel companyId={companyId} />
+        <PersonnelRequestsInbox companyId={companyId} />
+      </div>
       {stats.decision?.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="dashboard-decision">
           <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Yönetici karar özeti</div>
