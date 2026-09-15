@@ -3050,7 +3050,7 @@ async def contact_aging(contact_id: str):
     today = date.fromisoformat(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     rate = float(c.get("late_fee_rate", 0) or 0)
     rows = []
-    for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500):
+    for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}, "invoice_type": {"$ne": "late_fee"}, "source": {"$ne": "late_fee"}}).sort("issue_date", 1).to_list(500):
         remaining = round(i.get("grand_total", 0) - i.get("paid_amount", 0), 2)
         due = i.get("due_date") or i.get("issue_date")
         overdue = (today - date.fromisoformat(due)).days if due else 0
@@ -3074,6 +3074,96 @@ async def apply_contact_terms(contact_id: str, req: Dict[str, Any]):
             await db.invoices.update_one({"_id": i["_id"]}, {"$set": {"due_date": new_due}})
             updated += 1
     return {"status": "success", "updated_invoices": updated, "message": f"Vade {days} gün olarak kaydedildi" + (f", {updated} açık faturanın vadesi güncellendi." if updated else ".")}
+
+
+@api_router.post("/contacts/{contact_id}/invoice-late-fees")
+async def invoice_contact_late_fees(contact_id: str, req: Dict[str, Any] = None):
+    """Vade farkı tutarını satış faturası olarak keser; cari faturalar listesine düşer."""
+    req = req or {}
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    aging = await contact_aging(contact_id)
+    fee_rows = [r for r in aging["rows"] if (r.get("late_fee") or 0) > 0 and r.get("invoice_type") != "late_fee"]
+    calculated = round(sum(r["late_fee"] for r in fee_rows), 2)
+    if calculated <= 0:
+        raise HTTPException(status_code=400, detail="Kesilecek vade farkı yok. Oran tanımlı ve vadesi geçmiş açık fatura olmalı.")
+    # Daha önce kesilmiş (iptal/taslak dışı) vade farkı faturalarını düş
+    billed = 0.0
+    async for inv in db.invoices.find({"contact_id": contact_id, "invoice_type": "late_fee", "status": {"$nin": ["cancelled"]}}):
+        billed += float(inv.get("grand_total") or 0)
+    billed = round(billed, 2)
+    amount = round(calculated - billed, 2)
+    if amount <= 0.009:
+        raise HTTPException(status_code=400, detail=f"Vade farkı zaten faturalanmış (hesaplanan {calculated:,.2f} ₺, kesilen {billed:,.2f} ₺).")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    year = datetime.now().strftime("%Y")
+    count = await db.invoices.count_documents({"company_id": c["company_id"]}) + 1
+    invoice_number = f"VF{year}{str(count).zfill(8)}"
+    note_lines = ", ".join(f"{r['invoice_number']} ({r['overdue_days']}g → {r['late_fee']:.2f} ₺)" for r in fee_rows[:12])
+    if len(fee_rows) > 12:
+        note_lines += f" +{len(fee_rows) - 12} fatura"
+    line_total = amount
+    item = {
+        "product_id": None,
+        "name": "Vade farkı (gecikme faizi)",
+        "quantity": 1,
+        "unit": "Adet",
+        "unit_price": amount,
+        "vat_rate": 0,
+        "discount_rate": 0,
+        "discount_percent": 0,
+        "total": line_total,
+        "vat_amount": 0,
+        "is_service": True,
+        "note": note_lines,
+    }
+    approve = bool(req.get("approve", True))
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": c["company_id"],
+        "invoice_type": "late_fee",
+        "e_type": "paper",
+        "invoice_number": invoice_number,
+        "contact_id": contact_id,
+        "contact_name": c.get("name"),
+        "contact_tax_id": c.get("tax_number_or_id") or c.get("tax_id"),
+        "issue_date": today,
+        "due_date": today,
+        "items": [item],
+        "subtotal": amount,
+        "vat_total": 0.0,
+        "discount_total": 0.0,
+        "grand_total": amount,
+        "currency": "TRY",
+        "fx_rate": 1.0,
+        "local_total": amount,
+        "status": "approved" if approve else "draft",
+        "payment_status": "unpaid",
+        "paid_amount": 0.0,
+        "gib_status": "Kağıt Fatura (Matbu)" if approve else "Taslak",
+        "notes": f"Vade farkı faturası. Kaynak: {note_lines}. Oran: %{float(c.get('late_fee_rate') or 0)}/ay.",
+        "source": "late_fee",
+        "source_invoice_ids": [r["invoice_id"] for r in fee_rows],
+        "late_fee_calculated": calculated,
+        "late_fee_previously_billed": billed,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "effects_applied": False,
+    }
+    if approve:
+        # Satış gibi cari bakiyesine alacak yaz (müşteri bize borçlu ↑)
+        await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": amount}})
+        doc["effects_applied"] = True
+        doc["approved_at"] = datetime.now(timezone.utc).isoformat()
+    await db.invoices.insert_one(doc)
+    return {
+        "status": "success",
+        "invoice": clean_doc(doc),
+        "message": f"Vade farkı faturası kesildi: {invoice_number} · {amount:,.2f} ₺".replace(",", "X").replace(".", ",").replace("X", "."),
+        "amount": amount,
+        "calculated": calculated,
+        "previously_billed": billed,
+    }
 
 @api_router.get("/contacts/{contact_id}/installments")
 async def list_contact_balance_installments(contact_id: str):
@@ -3161,7 +3251,7 @@ async def get_contact_overview(contact_id: str):
     cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"contact_id": contact_id}).sort("due_date", 1).to_list(200)]
     projects = await db.projects.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
-    sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
+    sales = [i for i in invoices if i.get("invoice_type") in ("sales", "late_fee") and i.get("status") not in ("draft", "cancelled")]
     total_invoiced = sum(i.get("grand_total", 0) or 0 for i in sales)
     total_paid = sum(i.get("paid_amount", 0) or 0 for i in sales)
     return {
@@ -4265,6 +4355,8 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
     elif type == "import":
         query["trade_kind"] = "import"
         query["invoice_type"] = {"$ne": "dispatch"}
+    elif type == "sales":
+        query["invoice_type"] = {"$in": ["sales", "late_fee"]}
     elif type and type != "all":
         query["invoice_type"] = type
     else:
@@ -4444,8 +4536,9 @@ async def _apply_lot_delta(item: dict, sign: float):
 
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. Taslaklar için çağrılmaz."""
+    is_recv = inv.get("invoice_type") in ("sales", "late_fee")
     if inv.get("contact_id"):
-        change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
+        change = fx.try_amount(inv) if is_recv else -fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
     if inv.get("invoice_type") == "sales":
         for item in inv.get("items", []):
@@ -4457,8 +4550,9 @@ async def _apply_invoice_effects(inv: dict):
 
 async def _reverse_invoice_effects(inv: dict):
     """Gelen e-fatura reddi: cariyi geri al; satış stok düşümünü veya gelen alış stok girişini tersine çevir."""
+    is_recv = inv.get("invoice_type") in ("sales", "late_fee")
     if inv.get("contact_id"):
-        change = -float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else float(inv.get("grand_total", 0))
+        change = -float(inv.get("grand_total", 0)) if is_recv else float(inv.get("grand_total", 0))
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
     if inv.get("invoice_type") == "sales":
         for item in inv.get("items", []):
@@ -4727,7 +4821,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         partner = await db.partners.find_one({"_id": req["partner_id"]})
         if not partner:
             raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-        is_sales = inv.get("invoice_type") == "sales"
+        is_sales = inv.get("invoice_type") in ("sales", "late_fee")
         tx_type = "withdrawal" if is_sales else "capital_in"
         inc = {"balance": -try_amt, "total_withdrawn": try_amt} if is_sales else {"balance": try_amt, "total_capital_in": try_amt}
         await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
@@ -4742,7 +4836,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         acc = await db.bank_accounts.find_one({"_id": account_id})
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
         await bank_guard.assert_manual_allowed(db, account_id)
-        is_sales = inv.get("invoice_type") == "sales"
+        is_sales = inv.get("invoice_type") in ("sales", "late_fee")
         if is_sales:
             await bank_guard.assert_collection_allowed(db, account_id)
         acc_ccy = (acc.get("currency") if acc else "TRY") or "TRY"

@@ -14,7 +14,9 @@ test("invoiceTypeFilter export/import uses trade_kind", () => {
 
 test("invoiceTypeFilter matches invoice_type", () => {
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales" })).toBe(true);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "late_fee" })).toBe(true);
   expect(invoiceTypeFilter("purchase")({ invoice_type: "sales" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "late_fee" })).toBe(false);
   expect(invoiceTypeFilter("dispatch")({ invoice_type: "dispatch" })).toBe(true);
 });
 

@@ -55,6 +55,7 @@ const typeBadge = (inv) => {
   if (inv.trade_kind === "import") return ["İthalat", "bg-teal-50 text-teal-800"];
   if (inv.invoice_type === "proforma") return ["Proforma", "bg-violet-50 text-violet-700"];
   if (inv.invoice_type === "return") return ["İade", "bg-rose-50 text-rose-700"];
+  if (inv.invoice_type === "late_fee") return ["Vade Farkı", "bg-amber-50 text-amber-800"];
   if (inv.invoice_type === "sales") return ["Satış", "bg-blue-50 text-blue-700"];
   if (inv.invoice_type === "dispatch") return ["İrsaliye", "bg-fuchsia-50 text-fuchsia-700"];
   return ["Alış", "bg-amber-50 text-amber-700"];
@@ -1153,8 +1154,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 )}
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">{paymentModalInvoice.invoice_type === "sales" ? "Kasa / Banka / POS / Ortak (tahsilat)" : "Kasa / Banka / Kart / Ortak"}</label>
-                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} />
+                <label className="block font-semibold text-slate-700 mb-1">{["sales","late_fee"].includes(paymentModalInvoice.invoice_type) ? "Kasa / Banka / POS / Ortak (tahsilat)" : "Kasa / Banka / Kart / Ortak"}</label>
+                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={["sales","late_fee"].includes(paymentModalInvoice.invoice_type)} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">

@@ -9,6 +9,8 @@ export const invoiceTypeFilter = (type) => (inv) => {
   if (type === "export") return inv.trade_kind === "export" && inv.invoice_type !== "dispatch";
   if (type === "import") return inv.trade_kind === "import" && inv.invoice_type !== "dispatch";
   if (!type || type === "all") return inv.invoice_type !== "dispatch";
+  // Vade farkı faturaları satış listesinde görünsün
+  if (type === "sales") return inv.invoice_type === "sales" || inv.invoice_type === "late_fee";
   return inv.invoice_type === type;
 };
 
