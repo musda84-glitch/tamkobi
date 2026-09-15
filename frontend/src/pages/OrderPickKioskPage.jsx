@@ -89,9 +89,11 @@ export default function OrderPickKioskPage() {
   const [ses, setSes] = useState(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [qtyDrafts, setQtyDrafts] = useState({});
   const [overscanFlash, setOverscanFlash] = useState(null);
   const inputRef = useRef(null);
   const overscanTimer = useRef(null);
+  const qtyCancelRef = useRef(false);
 
   const loadList = useCallback(async () => {
     try {
@@ -104,6 +106,7 @@ export default function OrderPickKioskPage() {
     try {
       const r = await axios.get(`${API_URL}/order-picks/${id}`);
       setSes(r.data);
+      setQtyDrafts({});
       setParams({ order: id }, { replace: true });
       setTimeout(() => inputRef.current?.focus(), 80);
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş açılamadı."); }
@@ -186,6 +189,37 @@ export default function OrderPickKioskPage() {
     } finally { setBusy(false); setTimeout(() => inputRef.current?.focus(), 50); }
   };
 
+  const applyPickedQty = async (item, rawQty) => {
+    if (busy) return;
+    unlockOverscanAudio();
+    const ordered = Number(item.ordered_qty) || 0;
+    const current = Number(item.picked_qty) || 0;
+    let next = Number(rawQty);
+    if (!Number.isFinite(next)) next = current;
+    next = Math.max(0, next);
+    if (next > ordered) {
+      triggerOverscan({
+        message: `${item.product_name}: siparişte ${ordered} adet var, ${current} okutuldu. Fazla ürün okutmayın.`,
+        productName: item.product_name,
+        lineIndex: item.line_index,
+      });
+      next = ordered;
+    }
+    if (Math.abs(next - current) < 1e-9) return;
+    try {
+      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, {
+        product_id: item.product_id,
+        product_name: item.product_name,
+        line_index: item.line_index,
+        picked_qty: next,
+      });
+      setSes(r.data);
+      setQtyDrafts({});
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Güncellenemedi.");
+    }
+  };
+
   const bump = async (item, delta) => {
     if (busy) return;
     unlockOverscanAudio();
@@ -198,10 +232,7 @@ export default function OrderPickKioskPage() {
       return;
     }
     const next = Math.max(0, Math.min(Number(item.ordered_qty) || 0, (Number(item.picked_qty) || 0) + delta));
-    try {
-      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/adjust`, { product_id: item.product_id, product_name: item.product_name, line_index: item.line_index, picked_qty: next });
-      setSes(r.data);
-    } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); }
+    await applyPickedQty(item, next);
   };
 
   const act = async (path, body, ok) => {
@@ -312,7 +343,42 @@ export default function OrderPickKioskPage() {
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => bump(it, -1)} className="w-11 h-11 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
-                <div className="w-14 text-center"><div className={`text-xl font-black ${warnLine ? "text-rose-700" : ""}`}>{it.picked_qty}</div><div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div></div>
+                <div className="w-14 text-center">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    min={0}
+                    max={it.ordered_qty}
+                    value={qtyDrafts[idx] ?? it.picked_qty}
+                    disabled={busy}
+                    onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
+                    onChange={(e) => setQtyDrafts((d) => ({ ...d, [idx]: e.target.value }))}
+                    onBlur={() => {
+                      if (qtyCancelRef.current) {
+                        qtyCancelRef.current = false;
+                        setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                        return;
+                      }
+                      const raw = qtyDrafts[idx];
+                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                      if (raw === undefined || raw === "") return;
+                      applyPickedQty(it, raw);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.currentTarget.blur(); }
+                      if (e.key === "Escape") {
+                        qtyCancelRef.current = true;
+                        setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    className={`w-full text-center text-xl font-black bg-transparent border-b-2 outline-none py-0 ${warnLine ? "text-rose-700 border-rose-400" : "border-slate-200 focus:border-emerald-500"}`}
+                    data-testid={`pick-qty-input-${idx}`}
+                    aria-label="Okutulan miktar"
+                  />
+                  <div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div>
+                </div>
                 <button onClick={() => bump(it, 1)} className={`w-11 h-11 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
               </div>
             </div>
