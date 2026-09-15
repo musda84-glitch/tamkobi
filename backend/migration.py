@@ -19,7 +19,7 @@ BIZIMHESAP_BASE = "https://bizimhesap.com/api/b2b"
 BIZIMHESAP_KEY = "BZMHB2B724018943908D0B82491F203F"
 
 SOURCES = [{"code": "bizimhesap", "name": "BizimHesap", "api": True}, {"code": "parasut", "name": "Paraşüt"}, {"code": "logo_isbasi", "name": "Logo İşbaşı"}, {"code": "mikro", "name": "Mikro"},
-           {"code": "ovocrm", "name": "OVOCRM"}, {"code": "netesnaf", "name": "Netesnaf"}, {"code": "other", "name": "Diğer (Excel / CSV)"}]
+           {"code": "sovos", "name": "Sovos"}, {"code": "ovocrm", "name": "OVOCRM"}, {"code": "netesnaf", "name": "Netesnaf"}, {"code": "other", "name": "Diğer (Excel / CSV)"}]
 
 # target field: (label, required, type, aliases)
 ENTITIES: Dict[str, Dict[str, Any]] = {
@@ -92,6 +92,10 @@ SOURCE_HINTS: Dict[str, Dict[str, Dict[str, str]]] = {
                 "invoices": {"fatura numarası": "invoice_number", "müşteri": "contact_name", "toplam": "grand_total", "düzenleme tarihi": "issue_date", "vade tarihi": "due_date"}},
     "logo_isbasi": {"contacts": {"cari hesap ünvanı": "name", "cari hesap kodu": "category", "vergi kimlik no": "tax_number_or_id"},
                     "products": {"malzeme kodu": "sku", "malzeme adı": "name", "malzeme açıklaması": "name"}},
+    "mikro": {"contacts": {"cari ünvanı": "name", "cari kodu": "category", "vergi numarası": "tax_number_or_id", "bakiye": "balance"},
+              "products": {"stok kodu": "sku", "stok adı": "name", "barkod": "barcode", "satış fiyatı": "sale_price", "alış fiyatı": "purchase_price"}},
+    "sovos": {"contacts": {"ünvan": "name", "vergi kimlik no": "tax_number_or_id", "vergi dairesi": "tax_office"},
+              "invoices": {"fatura no": "invoice_number", "ettn": "invoice_number", "düzenleme tarihi": "issue_date", "genel toplam": "grand_total"}},
 }
 
 
