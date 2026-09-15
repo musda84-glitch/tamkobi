@@ -1,30 +1,88 @@
-
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { LogIn } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
 
+const REMEMBER_KEY = "tamkobi_remember_email";
+
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
+  const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
-  const submit = async (e) => {
-    e.preventDefault(); setBusy(true);
-    const ok = await login(form.email, form.password);
-    setBusy(false);
-    if (ok) navigate("/panel");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(REMEMBER_KEY);
+      if (saved) {
+        setForm((f) => ({ ...f, email: saved }));
+        setRemember(true);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const forgetMe = () => {
+    try { localStorage.removeItem(REMEMBER_KEY); } catch { /* ignore */ }
+    setForm({ email: "", password: "" });
+    setRemember(false);
   };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const ok = await login(form.email, form.password, remember);
+    setBusy(false);
+    if (ok) {
+      try {
+        if (remember) localStorage.setItem(REMEMBER_KEY, form.email.trim().toLowerCase());
+        else localStorage.removeItem(REMEMBER_KEY);
+      } catch { /* ignore */ }
+      navigate("/panel");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page">
         <div className="text-2xl font-black text-slate-900">Tam<span className="text-emerald-600">Kobi</span></div>
         <p className="text-xs text-slate-500">Hesabınızla giriş yapın.</p>
-        <div><label className="block text-xs font-semibold mb-1">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-email" /></div>
-        <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-password" /></div>
-        <button disabled={busy} className="w-full py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2" data-testid="login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Giriş Yap"}</button>
-        <p className="text-[11px] text-slate-500 text-center">Hesabınız yok mu? <Link to="/web" className="text-emerald-600 font-semibold" data-testid="login-signup-link">14 gün ücretsiz deneyin</Link> · Bayi misiniz? <Link to="/b2b/giris" className="text-indigo-600 font-semibold" data-testid="login-b2b-link">B2B Girişi</Link></p>
+        <div>
+          <label className="block text-xs font-semibold mb-1">E-posta</label>
+          <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-email" autoComplete="username" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold mb-1">Şifre</label>
+          <input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-password" autoComplete="current-password" />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none" data-testid="login-remember-label">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="rounded border-slate-300"
+              data-testid="login-remember"
+            />
+            Beni hatırla
+          </label>
+          <button
+            type="button"
+            onClick={forgetMe}
+            className="text-xs text-slate-500 hover:text-slate-800 font-medium underline-offset-2 hover:underline"
+            data-testid="login-forget"
+          >
+            Beni unut
+          </button>
+        </div>
+        <button disabled={busy} className="w-full py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2" data-testid="login-submit">
+          <LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Giriş Yap"}
+        </button>
+        <p className="text-[11px] text-slate-500 text-center">
+          Hesabınız yok mu? <Link to="/web" className="text-emerald-600 font-semibold" data-testid="login-signup-link">14 gün ücretsiz deneyin</Link>
+          {" "}· Bayi misiniz? <Link to="/b2b/giris" className="text-indigo-600 font-semibold" data-testid="login-b2b-link">B2B Girişi</Link>
+        </p>
         <BuildStamp tone="light" />
       </form>
     </div>
