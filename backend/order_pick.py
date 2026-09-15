@@ -293,13 +293,37 @@ async def notify_missing(order_id: str):
     missing = [i for i in ses["items"] if float(i.get("picked_qty") or 0) + 1e-9 < float(i.get("ordered_qty") or 0)]
     if not missing:
         return {"status": "ok", "message": "Eksik kalem yok.", "missing": []}
-    lines = ", ".join(f"{i['product_name']} ({float(i['picked_qty'] or 0):g}/{float(i['ordered_qty']):g})" for i in missing[:12])
+    lines = ", ".join(
+        f"{i['product_name']} ({float(i['picked_qty'] or 0):g}/{float(i['ordered_qty']):g})"
+        for i in missing[:12]
+    )
     title = f"Depo eksik: {o.get('order_number')}"
     msg = f"{o.get('customer_name')} siparişi {o.get('order_number')} toplanırken eksik: {lines}"
-    note = await attendance.notify_managers(o["company_id"], "order_pick_missing", title, msg, link=f"/sevk?order={order_id}")
-    await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"notified_missing_at": _now(), "updated_at": _now()}})
-    await _db.notifications.update_one({"title": title, "company_id": o["company_id"]}, {"$set": {"link": f"/sevk?order={order_id}", "ref_type": "order_pick", "ref_id": order_id}})
-    return {"status": note.get("status"), "message": "Yöneticiye eksik kalemler bildirildi.", "missing": [{"product_name": i["product_name"], "picked": i["picked_qty"], "ordered": i["ordered_qty"]} for i in missing], "mail": note.get("mail")}
+    link = f"/sevk?order={order_id}"
+    note = await attendance.notify_managers(o["company_id"], "order_pick_missing", title, msg, link=link)
+    await _db.order_pick_sessions.update_one(
+        {"_id": ses["_id"]},
+        {"$set": {"notified_missing_at": _now(), "updated_at": _now(), "missing_summary": lines}},
+    )
+    await _db.notifications.update_one(
+        {"title": title, "company_id": o["company_id"], "type": "order_pick_missing"},
+        {"$set": {
+            "link": link,
+            "ref_type": "order_pick",
+            "ref_id": order_id,
+            "is_read": False,
+            "order_number": o.get("order_number"),
+            "customer_name": o.get("customer_name"),
+            "missing_count": len(missing),
+            "updated_at": _now(),
+        }},
+    )
+    return {
+        "status": note.get("status") or "sent",
+        "message": f"Yöneticiye {len(missing)} eksik kalem bildirildi.",
+        "missing": [{"product_name": i["product_name"], "picked": i["picked_qty"], "ordered": i["ordered_qty"]} for i in missing],
+        "mail": note.get("mail"),
+    }
 
 
 @router.post("/order-picks/{order_id}/to-production")
@@ -328,18 +352,31 @@ async def send_missing_to_production(order_id: str):
             po = await _create_production_order({
                 "company_id": o["company_id"],
                 "finished_product_id": pid,
+                "finished_product_name": i.get("product_name"),
                 "planned_quantity": miss,
-                "source": "sales_order",
+                "source": "order_pick",
+                "allow_without_recipe": True,
                 "notes": f"Sipariş {o.get('order_number')} eksik {miss:g} adet",
             })
-            row = {"product_id": pid, "product_name": i["product_name"], "qty": miss, "order_code": po.get("order_code")}
+            row = {
+                "product_id": pid,
+                "product_name": i["product_name"],
+                "qty": miss,
+                "order_code": po.get("order_code"),
+                "needs_recipe": bool(po.get("needs_recipe")),
+            }
             created.append(row)
             existing.append(row)
             existing_pids.add(str(pid))
         except HTTPException as e:
             skipped.append({"product_name": i["product_name"], "reason": str(e.detail)})
+        except Exception as e:
+            skipped.append({"product_name": i["product_name"], "reason": str(e)[:160]})
     if created:
-        await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"production_orders": existing, "updated_at": _now()}})
+        await _db.order_pick_sessions.update_one(
+            {"_id": ses["_id"]},
+            {"$set": {"production_orders": existing, "sent_to_production_at": _now(), "updated_at": _now()}},
+        )
         await attendance.notify_managers(
             o["company_id"], "order_pick_production",
             f"Üretime alındı: {o.get('order_number')}",
@@ -348,6 +385,11 @@ async def send_missing_to_production(order_id: str):
         )
     if not created and not skipped:
         return {"status": "ok", "message": "Eksik kalem yok.", "created": [], "skipped": []}
+    if not created and skipped:
+        if all(s.get("reason") == "zaten üretime alındı" for s in skipped):
+            return {"status": "ok", "message": "Kalemler zaten üretime alınmış.", "created": [], "skipped": skipped}
+        reasons = "; ".join(f"{s['product_name']}: {s['reason']}" for s in skipped[:5])
+        raise HTTPException(status_code=400, detail=f"Üretim emri açılamadı. {reasons}")
     msg = f"{len(created)} üretim emri açıldı." + (f" {len(skipped)} kalem atlandı." if skipped else "")
     return {"status": "ok", "message": msg, "created": created, "skipped": skipped}
 

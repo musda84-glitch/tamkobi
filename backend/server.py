@@ -1862,8 +1862,14 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     exp_vat = round(sum(float(e.get("vat_amount", 0) or 0) for e in exp_rows), 2)
     nxt = (now.replace(day=1) + timedelta(days=32)).replace(day=26)
     crit = len([p for p in products if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)])
+    pick_missing = await db.notifications.count_documents({
+        "company_id": company_id,
+        "type": {"$in": ["order_pick_missing", "order_pick_production"]},
+        "is_read": False,
+    })
     tasks = [
         {"key": "pending_orders", "label": "Onay bekleyen sipariş", "count": pending_orders, "path": "/orders"},
+        {"key": "pick_missing", "label": "Depo eksik / üretime al bildirimi", "count": pick_missing, "path": "/sevk"},
         {"key": "due_today", "label": "Bugün vadesi gelen fatura", "count": sum(1 for i in invs if i.get("due_date") == today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
@@ -1952,7 +1958,21 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
             "path": "/production",
         }
 
+    pick_notes = await db.notifications.find(
+        {"company_id": company_id, "type": {"$in": ["order_pick_missing", "order_pick_production"]}, "is_read": False},
+        {"title": 1, "message": 1, "link": 1, "type": 1, "ref_id": 1, "order_number": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(20)
+    pick_items = [
+        {
+            "id": str(n.get("_id") or ""),
+            "title": n.get("title") or "Depo bildirimi",
+            "detail": n.get("message") or "",
+            "path": n.get("link") or "/sevk",
+        }
+        for n in pick_notes
+    ]
     groups = [
+        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": len(pick_items), "items": pick_items[:8]},
         {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock", "count": len(low_sorted), "items": low_sorted[:8]},
         {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": len(prod_orders), "items": [prod_row(o) for o in prod_orders[:8]]},
         {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders", "count": len(shipped), "items": [order_row(o) for o in shipped[:8]]},
@@ -8452,11 +8472,44 @@ async def create_production_order(req: Dict[str, Any]):
         recipe = await db.recipes.find_one({"_id": req["recipe_id"]})
     elif req.get("finished_product_id") or req.get("product_id"):
         recipe = await db.recipes.find_one({"company_id": company_id, "finished_product_id": req.get("finished_product_id") or req.get("product_id"), "is_active": {"$ne": False}})
-    if not recipe:
-        raise HTTPException(status_code=400, detail="Bu ürün için reçete bulunamadı. Önce Üretim → Reçeteler bölümünden reçete oluşturun.")
     qty = float(req.get("planned_quantity") or 1)
     if qty <= 0:
         raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalı.")
+    allow_without = bool(req.get("allow_without_recipe") or req.get("allow_no_recipe")) or req.get("source") in ("sales_order", "order_pick", "warehouse_pick")
+    if not recipe:
+        if not allow_without:
+            raise HTTPException(status_code=400, detail="Bu ürün için reçete bulunamadı. Önce Üretim → Reçeteler bölümünden reçete oluşturun.")
+        pid = req.get("finished_product_id") or req.get("product_id")
+        if not pid:
+            raise HTTPException(status_code=400, detail="Ürün gerekli.")
+        prod = await db.products.find_one({"_id": pid}) or {}
+        name = req.get("finished_product_name") or prod.get("name") or "Ürün"
+        note = (req.get("notes") or "").strip()
+        if note and "reçetesiz" not in note.lower():
+            note = f"{note} (reçetesiz — depo sevkiyatı)"
+        elif not note:
+            note = "Depo sevkiyatından reçetesiz açıldı"
+        order = ProductionOrder(
+            company_id=company_id,
+            order_code=f"URT-{datetime.now().strftime('%Y')}-{str(uuid.uuid4().int)[:5]}",
+            recipe_id="",
+            recipe_name="",
+            finished_product_id=str(pid),
+            finished_product_name=name,
+            planned_quantity=qty,
+            target_warehouse_id=req.get("target_warehouse_id", "main_warehouse"),
+            status="planned",
+            total_cost=0.0,
+            planned_date=req.get("planned_date"),
+            source=req.get("source", "order_pick"),
+            notes=note,
+            shortages=[],
+        )
+        doc = order.to_mongo()
+        doc["needs_recipe"] = True
+        await db.production_orders.insert_one(doc)
+        await _generate_work_orders(doc, {"unit": prod.get("unit") or "Adet", "steps": [{"no": 1, "name": "Üretim", "station": "Genel", "duration_min": 0}]})
+        return {**clean_doc(doc), "requirements": [], "needs_recipe": True, "message": f"{order.order_code} üretim emri oluşturuldu (reçetesiz)."}
     rows = await _requirements(recipe, qty)
     shortages = [x for x in rows if x["shortage"] > 0]
     if shortages and req.get("strict"):

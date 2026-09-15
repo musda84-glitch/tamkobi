@@ -74,9 +74,17 @@ class TestOrderPickKiosk:
 
         prod = s.post(f"{API}/order-picks/{oid}/to-production", timeout=20)
         assert prod.status_code == 200, prod.text[:300]
-        assert "skipped" in prod.json() or "created" in prod.json()
+        body = prod.json()
+        assert body.get("created"), body
+        assert body["created"][0].get("order_code")
+        ov = s.get(f"{API}/dashboard/overview", params={"company_id": COMPANY}, timeout=20)
+        assert ov.status_code == 200
+        assert any(x.get("key") == "pick_missing" and x.get("count", 0) > 0 for x in ov.json().get("tasks", [])), ov.json().get("tasks")
+        ops = s.get(f"{API}/dashboard/ops-alerts", params={"company_id": COMPANY}, timeout=20)
+        assert ops.status_code == 200
+        assert any(g.get("key") == "pick_missing" and g.get("count", 0) > 0 for g in ops.json().get("groups", [])), ops.json().get("groups")
         again = s.post(f"{API}/order-picks/{oid}/to-production", timeout=20)
-        assert again.status_code == 200
+        assert again.status_code == 200, again.text[:300]
         assert again.json().get("created") == []
 
     def test_variant_scan_hits_matching_line(self):
