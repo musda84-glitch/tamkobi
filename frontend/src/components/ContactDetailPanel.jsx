@@ -23,6 +23,7 @@ import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, fmtMoney, hydrateLine } from "../utils/documentLines";
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { ContactForm } from "./ContactForm";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -31,6 +32,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("invoices");
   const [busy, setBusy] = useState(null);
+  const [editContactOpen, setEditContactOpen] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
   const [printDoc, setPrintDoc] = useState(null);
   const [editTpl, setEditTpl] = useState(null);
@@ -185,6 +187,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <button type="button" onClick={() => setEditContactOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Cari bilgilerini düzenle" data-testid="detail-edit-contact-btn"><Pencil className="w-3.5 h-3.5" /> Cariyi Düzenle</button>
             <button onClick={() => navigate(`/invoices?new=sales&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition" title="Bu cariye satış faturası kes" data-testid="detail-sell-btn"><ArrowUpRight className="w-3.5 h-3.5" /> Satış Yap</button>
             <button onClick={() => navigate(`/invoices?new=purchase&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Bu cariden alış faturası gir" data-testid="detail-buy-btn"><ArrowDownLeft className="w-3.5 h-3.5" /> Alış Yap</button>
             <button onClick={openPay} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition" data-testid="detail-collect-btn"><Wallet className="w-3.5 h-3.5" /> Tahsilat</button>
@@ -453,6 +456,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
         )}
+      {editContactOpen && (
+        <ContactForm
+          companyId={c.company_id || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          contact={c}
+          onClose={() => setEditContactOpen(false)}
+          onSaved={() => { setEditContactOpen(false); load(); }}
+        />
+      )}
       </div>
     </div>
   );
