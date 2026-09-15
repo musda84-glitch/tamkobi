@@ -14,7 +14,7 @@ import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument"
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
-import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS } from "../components/InvoiceToolbar";
+import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort, invoiceSortCol, invoiceSortDir } from "../components/InvoiceToolbar";
 import InvoiceActionPanel from "../components/InvoiceActionPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
@@ -43,6 +43,9 @@ import {
   MessageSquare,
   MoreVertical,
   MousePointerClick,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
   FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -122,6 +125,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
   const listResetKey = useMemo(() => `${filterType}|${contactFilter || ""}|${JSON.stringify(filters)}`, [filterType, contactFilter, filters]);
   const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(visibleInvoices, { resetKey: listResetKey });
+
+  const activeSortCol = invoiceSortCol(filters.sort);
+  const activeSortDir = invoiceSortDir(filters.sort);
+  const onHeaderSort = (col) => setFilters((s) => ({ ...s, sort: toggleInvoiceSort(s.sort, col) }));
+  const SortTh = ({ col, children, className = "", title }) => {
+    const active = activeSortCol === col;
+    const right = className.includes("text-right");
+    return (
+      <th className={`px-4 py-3 ${className}`} title={title || "Sıralamak için tıkla"}>
+        <button type="button" onClick={() => onHeaderSort(col)} className={`inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 ${right ? "justify-end w-full" : ""} ${active ? "text-emerald-700" : "text-slate-500"}`} data-testid={`inv-col-sort-${col}`}>
+          {children}
+          {active ? (activeSortDir === "asc" ? <ArrowUp className="w-3 h-3 shrink-0" /> : <ArrowDown className="w-3 h-3 shrink-0" />) : <ArrowUpDown className="w-3 h-3 text-slate-300 shrink-0" />}
+        </button>
+      </th>
+    );
+  };
+
   const [printInv, setPrintInv] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
@@ -477,15 +497,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını <b>sağ tıklayarak</b> E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır.
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
+          <table className="w-full min-w-[1200px] text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
-                <th className="px-4 py-3">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</th>
-                <th className="px-4 py-3">Cari (Müşteri / Tedarikçi)</th>
-                <th className="px-4 py-3">Tarih / Vade</th>
-                <th className="px-4 py-3">GİB Durumu</th>
-                <th className="px-4 py-3 text-right">Tutar</th>
-                <th className="px-4 py-3 text-right">{filterType === "dispatch" ? "İrsaliye Durumu" : "Ödeme Durumu"}</th>
+                <SortTh col="number" className="min-w-[200px]">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</SortTh>
+                <SortTh col="contact" className="min-w-[200px]">Cari (Müşteri / Tedarikçi)</SortTh>
+                <SortTh col="date" className="min-w-[120px]">Tarih / Vade</SortTh>
+                <SortTh col="gib" className="min-w-[240px]">GİB Durumu</SortTh>
+                <SortTh col="amount" className="text-right min-w-[110px]">Tutar</SortTh>
+                {filterType === "dispatch" ? (
+                  <th className="px-4 py-3 text-right min-w-[120px]">İrsaliye Durumu</th>
+                ) : (
+                  <SortTh col="pay" className="text-right min-w-[120px]">Ödeme Durumu</SortTh>
+                )}
                 <th className="px-4 py-3 text-center">İşlemler</th>
               </tr>
             </thead>
