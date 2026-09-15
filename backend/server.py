@@ -3835,6 +3835,180 @@ async def pos_checkout(req: Dict[str, Any], request: Request):
     }
 
 
+async def _pos_find_receipt(company_id: str, invoice_number: str):
+    num = str(invoice_number or "").strip()
+    if not num:
+        return None
+    inv = await db.invoices.find_one({"company_id": company_id, "invoice_number": num})
+    if inv:
+        return inv
+    # Barkod / büyük-küçük harf toleransı
+    inv = await db.invoices.find_one({
+        "company_id": company_id,
+        "invoice_number": {"$regex": f"^{re.escape(num)}$", "$options": "i"},
+    })
+    return inv
+
+
+@api_router.get("/pos/receipt/{invoice_number}")
+async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = "comp_nexus_main_01"):
+    """Fiş numarası / barkod ile POS satış fişi ara."""
+    inv = await _pos_find_receipt(company_id, invoice_number)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fiş bulunamadı.")
+    if inv.get("invoice_type") not in (None, "sales") or inv.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Bu belge iade için uygun değil.")
+    returned = float(inv.get("returned_amount") or 0)
+    grand = float(inv.get("grand_total") or 0)
+    doc = clean_doc(inv)
+    return {
+        "invoice": doc,
+        "fully_returned": returned >= grand - 0.01 and grand > 0,
+        "returned_amount": returned,
+        "remaining": round(max(0, grand - returned), 2),
+    }
+
+
+@api_router.post("/pos/return")
+async def pos_return(req: Dict[str, Any], request: Request):
+    """POS fiş iadesi: stok geri + kasa çıkışı + iade kaydı."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    invoice_number = req.get("invoice_number") or ""
+    invoice_id = req.get("invoice_id")
+    inv = None
+    if invoice_id:
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id})
+    if not inv and invoice_number:
+        inv = await _pos_find_receipt(company_id, invoice_number)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fiş bulunamadı.")
+    if inv.get("invoice_type") != "sales":
+        raise HTTPException(status_code=400, detail="Yalnızca satış fişleri iade edilebilir.")
+    if inv.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="İptal edilmiş fiş iade edilemez.")
+    grand = float(inv.get("grand_total") or 0)
+    returned_prev = float(inv.get("returned_amount") or 0)
+    if returned_prev >= grand - 0.01 and grand > 0:
+        raise HTTPException(status_code=400, detail="Bu fiş zaten iade edilmiş.")
+
+    # Stok geri al
+    for item in inv.get("items", []):
+        pid, qty = _invoice_item_pid_qty(item)
+        if pid and qty:
+            await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+        await _apply_lot_delta(item, +1.0)
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    inv_count = await db.invoices.count_documents({"company_id": company_id})
+    ret_number = f"IAD{datetime.now(timezone.utc).strftime('%Y%m%d')}{str(inv_count + 1).zfill(5)}"
+    return_inv = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "invoice_type": "sales_return",
+        "e_type": "e_archive",
+        "invoice_number": ret_number,
+        "contact_id": inv.get("contact_id"),
+        "contact_name": inv.get("contact_name"),
+        "contact_tax_id": inv.get("contact_tax_id") or "",
+        "issue_date": today,
+        "due_date": today,
+        "currency": "TRY",
+        "fx_rate": 1,
+        "items": inv.get("items") or [],
+        "subtotal": inv.get("subtotal") or 0,
+        "vat_total": inv.get("vat_total") or 0,
+        "discount_total": 0,
+        "grand_total": grand,
+        "status": "approved",
+        "gib_status": "İade",
+        "payment_status": "refunded",
+        "paid_amount": grand,
+        "source_channel": "pos_return",
+        "original_invoice_id": inv["_id"],
+        "original_invoice_number": inv.get("invoice_number"),
+        "payment_method": inv.get("payment_method") or "cash",
+        "notes": f"POS iade ← {inv.get('invoice_number')}",
+        "effects_applied": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.invoices.insert_one(return_inv)
+    await db.invoices.update_one(
+        {"_id": inv["_id"]},
+        {"$set": {
+            "returned_amount": grand,
+            "return_invoice_id": return_inv["_id"],
+            "return_invoice_number": ret_number,
+            "returned_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    # Cari: satışta artış vardı; iadede düş
+    if inv.get("contact_id"):
+        await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": -grand}})
+
+    # Kasa çıkışı
+    accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(200)
+    cash = next((a for a in accounts if str(a.get("type") or "").lower() in ("cash", "cash_box", "kasa")), None)
+    cash = cash or next((a for a in accounts if re.search(r"kasa|nakit|cash", f"{a.get('account_name','')}{a.get('bank_name','')}", re.I)), None)
+    cash = cash or (accounts[0] if accounts else None)
+    payment_method = (inv.get("payment_method") or "cash").lower()
+    if cash and payment_method in ("cash", "card", "mixed", "transfer"):
+        try:
+            await bank_guard.assert_manual_allowed(db, cash["_id"])
+            await db.bank_accounts.update_one({"_id": cash["_id"]}, {"$inc": {"current_balance": -grand}})
+            await db.bank_transactions.insert_one({
+                "_id": str(uuid.uuid4()),
+                "company_id": company_id,
+                "account_id": cash["_id"],
+                "account_name": cash.get("account_name") or cash.get("bank_name"),
+                "type": "outflow",
+                "category": "POS İade",
+                "amount": grand,
+                "currency": "TRY",
+                "description": f"Hızlı satış iade {inv.get('invoice_number')} → {ret_number}",
+                "date": today,
+                "invoice_id": return_inv["_id"],
+                "source": "pos_return",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except HTTPException:
+            pass
+
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    return {
+        "status": "success",
+        "invoice": clean_doc(return_inv),
+        "original": clean_doc(await db.invoices.find_one({"_id": inv["_id"]})),
+        "receipt": {
+            "invoice_number": ret_number,
+            "company_name": company.get("name") or "",
+            "company_address": company.get("address") or "",
+            "company_tax": company.get("tax_number") or "",
+            "date": today,
+            "time": datetime.now(timezone.utc).strftime("%H:%M"),
+            "sector": "İade",
+            "payment_method": payment_method,
+            "items": [
+                {
+                    "name": l.get("name") or l.get("product_name"),
+                    "quantity": l.get("quantity"),
+                    "unit": l.get("unit") or "Adet",
+                    "unit_price": l.get("unit_price"),
+                    "total_incl": l.get("total_incl") or l.get("total"),
+                }
+                for l in (inv.get("items") or [])
+            ],
+            "subtotal": inv.get("subtotal") or 0,
+            "vat_total": inv.get("vat_total") or 0,
+            "grand_total": grand,
+            "is_return": True,
+            "original_invoice_number": inv.get("invoice_number"),
+        },
+        "message": f"İade tamamlandı: {grand:,.2f} ₺ ({inv.get('invoice_number')} → {ret_number})",
+    }
+
+
 @api_router.get("/products/{product_id}/purchase-costs")
 async def product_purchase_costs(product_id: str, company_id: Optional[str] = None):
     product = await db.products.find_one({"_id": product_id})
