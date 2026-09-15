@@ -321,7 +321,14 @@ async def login(req: LoginRequest, request: Request, response: Response):
 
 @api_router.put("/auth/me/preferences")
 async def update_preferences(req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    allowed = {k: v for k, v in req.items() if k in {"module_order", "hidden_modules", "theme"}}
+    allowed = {k: v for k, v in req.items() if k in {"module_order", "hidden_modules", "theme", "dashboard_layout"}}
+    # dashboard_layout: list of section ids (strings), max 32
+    if "dashboard_layout" in allowed:
+        layout = allowed["dashboard_layout"]
+        if not isinstance(layout, list):
+            raise HTTPException(status_code=400, detail="dashboard_layout liste olmalı.")
+        cleaned = [str(x) for x in layout[:32] if isinstance(x, (str, int))]
+        allowed["dashboard_layout"] = cleaned
     await db.users.update_one({"_id": user.get("_id", user.get("id"))}, {"$set": {f"preferences.{k}": v for k, v in allowed.items()}})
     u = await db.users.find_one({"_id": user.get("_id", user.get("id"))})
     return (u or {}).get("preferences", {})
