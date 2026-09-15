@@ -121,22 +121,23 @@ code {
   .no-print { display: none !important; }
 }
 
-/* Dedicated print barcode column — keep readable size (not inline-tiny) */
+/* Dedicated print barcode column — readable, scannable size */
 #print-area [data-testid^="print-item-barcode-"] {
   display: block;
   max-height: none;
   overflow: visible;
-  line-height: 1.1;
+  line-height: 1.15;
   vertical-align: middle;
+  min-width: 12rem;
 }
 #print-area [data-testid^="print-item-barcode-"] svg {
-  width: 7.5rem !important;
-  height: 2rem !important;
-  max-width: 9rem !important;
+  width: 12.5rem !important;
+  height: 3.25rem !important;
+  max-width: 14rem !important;
   display: block;
 }
 #print-area [data-testid^="print-item-image-"] img {
-  width: 3rem !important;
-  height: 3rem !important;
+  width: 4rem !important;
+  height: 4rem !important;
   object-fit: contain;
 }
