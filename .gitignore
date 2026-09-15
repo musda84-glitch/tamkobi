@@ -87,7 +87,17 @@ backend/data/*.json.tmp
 
 memory/test_credentials.md
 
-# Mobile development
+# Mobile (Expo / React Native)
+.expo/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/android/
+mobile/ios/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
 android-sdk/frontend/node_modules/.cache/default-development/4.pack
 frontend/node_modules/.cache/default-development/17.pack
 frontend/node_modules/.cache/default-development/11.pack

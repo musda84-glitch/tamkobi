@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "TamKobi",
+    "slug": "tamkobi",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": "tamkobi",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tamkobi.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Barkod okutmak ve stok/saha siparişinde ürün bulmak için kamera gerekir.",
+        "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.tamkobi.app",
+      "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Barkod okutmak için kameraya izin verin."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır."
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}
