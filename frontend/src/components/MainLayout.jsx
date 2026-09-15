@@ -6,6 +6,7 @@ import { useAuth, API_URL } from "../context/AuthContext";
 import { NotificationBell } from "./NotificationBell";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
+import { RadialQuickMenu } from "./RadialQuickMenu";
 import { isPublicPath } from "../utils/publicPath";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
@@ -192,6 +193,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
           <div className="flex items-center gap-2.5">
             <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+            <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             {feature("header_barcode") && (
               <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" data-testid="quick-barcode-scan-btn">
