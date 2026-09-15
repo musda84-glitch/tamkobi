@@ -121,19 +121,22 @@ code {
   .no-print { display: none !important; }
 }
 
-/* Invoice/order print lines: keep stock barcode inline and tiny next to the description. */
+/* Dedicated print barcode column — keep readable size (not inline-tiny) */
 #print-area [data-testid^="print-item-barcode-"] {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  max-height: 1.15rem;
-  overflow: hidden;
-  line-height: 0;
+  display: block;
+  max-height: none;
+  overflow: visible;
+  line-height: 1.1;
   vertical-align: middle;
 }
 #print-area [data-testid^="print-item-barcode-"] svg {
-  width: 3.25rem !important;
-  height: 0.85rem !important;
-  max-width: 3.25rem !important;
+  width: 7.5rem !important;
+  height: 2rem !important;
+  max-width: 9rem !important;
   display: block;
+}
+#print-area [data-testid^="print-item-image-"] img {
+  width: 3rem !important;
+  height: 3rem !important;
+  object-fit: contain;
 }
