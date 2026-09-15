@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning } from "lucide-react";
+import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
@@ -27,7 +27,7 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
         {r.status === "present" && <span className="text-slate-500">{r.hours || 0} sa</span>}
         {r.overtime_hours > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil günü)" : ""}</span>}
         {r.late_minutes > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}
-        {r.early_leave_minutes > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{r.early_leave_minutes} dk erken çıkış</span>}
+        {r.early_leave_minutes > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${r.early_leave_approved || r.early_leave_request?.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.early_leave_minutes} dk erken çıkış{r.early_leave_approved || r.early_leave_request?.status === "approved" ? " (onaylı)" : ""}</span>}{r.early_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">erken çıkış talebi</span>}
         <span className="ml-auto flex items-center gap-2">
           {r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Onaylandı</span>
             : <>
@@ -48,6 +48,9 @@ export default function MyAttendancePage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [earlyOpen, setEarlyOpen] = useState(false);
+  const [earlyReason, setEarlyReason] = useState("");
+  const [earlyTime, setEarlyTime] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => setData(r.data)).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
   const act = async (action) => {
@@ -65,6 +68,25 @@ export default function MyAttendancePage() {
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
   const dispute = async (r, note) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/dispute`, { note }, { withCredentials: true }); toast.success("İtirazınız yöneticiye iletildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } };
+  const requestEarly = async (e) => {
+    e.preventDefault();
+    setBusy("early");
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/early-leave-request`, { reason: earlyReason, planned_time: earlyTime || undefined }, { withCredentials: true });
+      toast.success(r.data.message || "Erken çıkış talebi gönderildi.");
+      setEarlyOpen(false); setEarlyReason(""); setEarlyTime("");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Talep gönderilemedi."); }
+    finally { setBusy(null); }
+  };
+  const cancelEarly = async () => {
+    setBusy("early-cancel");
+    try {
+      const r = await axios.delete(`${API_URL}/personnel/attendance/early-leave-request`, { withCredentials: true });
+      toast.success(r.data.message || "Talep iptal edildi."); load();
+    } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
+    finally { setBusy(null); }
+  };
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
@@ -104,7 +126,42 @@ export default function MyAttendancePage() {
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
             </div>
           ) : null}
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır.</div>
+          {t?.check_in && !t?.check_out && (
+            <div className="rounded-xl bg-white/10 border border-white/10 p-3 space-y-2" data-testid="my-att-early-leave">
+              {(() => {
+                const elr = t.early_leave_request || {};
+                if (elr.status === "pending") {
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-amber-200"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış talebi bekliyor</span>
+                      {elr.planned_time && <span className="font-mono text-slate-300">plan: {elr.planned_time}</span>}
+                      <span className="text-slate-300 truncate max-w-[280px]">{elr.reason}</span>
+                      <button type="button" onClick={cancelEarly} disabled={!!busy} className="ml-auto px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 font-semibold" data-testid="my-att-early-cancel">İptal</button>
+                    </div>
+                  );
+                }
+                if (elr.status === "approved" || t.early_leave_approved) {
+                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış yapabilirsiniz{elr.planned_time ? ` (plan ${elr.planned_time})` : ""}</div>;
+                }
+                if (elr.status === "rejected") {
+                  return <div className="text-xs text-rose-200" data-testid="my-att-early-rejected">Erken çıkış talebi reddedildi{elr.decision_note ? `: ${elr.decision_note}` : ""}. Yeniden talep edebilirsiniz.</div>;
+                }
+                return !earlyOpen ? (
+                  <button type="button" onClick={() => setEarlyOpen(true)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-500/90 hover:bg-amber-400 text-slate-900 font-bold text-sm" data-testid="my-att-early-open"><DoorOpen className="w-4 h-4" /> Erken çıkış talep et</button>
+                ) : (
+                  <form onSubmit={requestEarly} className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs" data-testid="my-att-early-form">
+                    <div className="sm:col-span-3"><label className="block text-[10px] text-slate-300 mb-0.5">Neden</label><input required minLength={3} value={earlyReason} onChange={(e) => setEarlyReason(e.target.value)} placeholder="Örn. doktor randevusu" className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-early-reason" /></div>
+                    <div className="sm:col-span-1"><label className="block text-[10px] text-slate-300 mb-0.5">Planlanan saat</label><input type="time" value={earlyTime} onChange={(e) => setEarlyTime(e.target.value)} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-early-time" /></div>
+                    <div className="sm:col-span-2 flex items-end gap-2">
+                      <button type="button" onClick={() => setEarlyOpen(false)} className="flex-1 px-3 py-2 rounded-lg border border-white/20 font-semibold" data-testid="my-att-early-dismiss">Vazgeç</button>
+                      <button type="submit" disabled={busy === "early" || earlyReason.trim().length < 3} className="flex-1 px-3 py-2 rounded-lg bg-amber-400 text-slate-900 font-bold disabled:opacity-50" data-testid="my-att-early-submit">{busy === "early" ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : null} Gönder</button>
+                    </div>
+                  </form>
+                );
+              })()}
+            </div>
+          )}
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin; yönetici onayından sonra çıkış yapın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
