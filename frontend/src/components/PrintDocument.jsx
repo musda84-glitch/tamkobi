@@ -1,10 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix } from "../utils/money";
 import { BarcodeRenderer } from "./BarcodeRenderer";
+
+const pickItemImage = (it = {}, prod = {}) => (
+  it.thumbnail_url || it.image_url
+  || prod.thumbnail_url || prod.image_url
+  || (Array.isArray(it.images) && it.images[0])
+  || (Array.isArray(prod.images) && prod.images[0])
+  || ""
+);
+
+const printThumbUrl = (raw) => {
+  const resolved = resolveImageUrl(raw);
+  if (!resolved) return "";
+  try {
+    const u = new URL(resolved, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    if (/unsplash\.com|images\.pexels\.com|cloudinary\.com/i.test(u.hostname) || u.searchParams.has("w")) {
+      u.searchParams.set("w", "128");
+      if (!u.searchParams.has("q") && /unsplash/i.test(u.hostname)) u.searchParams.set("q", "60");
+      return u.toString();
+    }
+  } catch { /* keep */ }
+  return resolved;
+};
+
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
@@ -27,7 +50,36 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const companyId = company?.id || "comp_nexus_main_01";
-  useEffect(() => { axios.get(`${API_URL}/products?company_id=${companyId}`).then((r) => { const m = {}; r.data.forEach((p) => { m[p.id || p._id] = p; }); setProdById(m); }).catch(() => {}); }, [companyId]);
+  const items = doc.items || [];
+  const productIds = useMemo(
+    () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
+    [items]
+  );
+  useEffect(() => {
+    const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
+    if (productIds.length) qs.set("ids", productIds.join(","));
+    let cancelled = false;
+    axios.get(`${API_URL}/products?${qs}`).then((r) => {
+      if (cancelled) return;
+      const m = {};
+      (r.data || []).forEach((p) => { m[p.id || p._id] = p; });
+      setProdById(m);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyId, productIds]);
+  useEffect(() => {
+    const urls = items
+      .map((it) => printThumbUrl(pickItemImage(it, prodById[it.product_id] || {})))
+      .filter(Boolean);
+    const loaders = urls.map((src) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.fetchPriority = "high";
+      img.src = src;
+      return img;
+    });
+    return () => { loaders.forEach((img) => { img.src = ""; }); };
+  }, [items, prodById]);
   useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   if (!tpl) return null;
@@ -35,7 +87,6 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const pickLayout = async (l) => { const next = { ...tpl, layout: l }; setTpl(next); try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, next); } catch { /* keep local */ } };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
-  const items = doc.items || [];
   const total = doc.grand_total ?? doc.total_amount ?? 0;
   const color = layout === "minimal" ? "#0f172a" : (tpl.primary_color || "#059669");
   const textSize = tpl.font_size === "xs" ? "text-[10px]" : tpl.font_size === "base" ? "text-sm" : "text-xs";
@@ -134,9 +185,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             <thead>
               <tr style={thStyle} className={thCls}>
                 {/* Resim / Açıklama / Barkod always separate for alignment */}
-                <th className={`p-2 w-14 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
+                <th className={`p-2 w-20 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
                 <th className="text-left p-2 min-w-[8rem]">Açıklama</th>
-                <th className="text-left p-2 w-36">Barkod</th>
+                <th className="text-left p-2 w-52">Barkod</th>
                 <th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>
                 {!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}
                 {!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}
@@ -148,22 +199,23 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
-              const img = it.image_url || prod.image_url || it.thumbnail_url || prod.thumbnail_url;
+              const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
                 <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`} data-testid={`print-item-row-${i}`}>
-                  <td className="p-1.5 align-middle" data-testid={`print-item-image-${i}`}>
+                  <td className="p-2 align-middle" data-testid={`print-item-image-${i}`}>
                     {img ? (
                       <img
-                        src={resolveImageUrl(img)}
+                        src={img}
                         alt=""
-                        width={48}
-                        height={48}
+                        width={64}
+                        height={64}
                         loading="eager"
                         decoding="async"
-                        className="w-12 h-12 object-contain rounded border bg-white"
+                        fetchPriority="high"
+                        className="w-16 h-16 object-contain rounded border bg-white"
                       />
-                    ) : <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50" />}
+                    ) : <div className="w-16 h-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
                   </td>
                   <td className="p-2 align-middle" data-testid={`print-item-name-${i}`}>
                     <div className="min-w-0">
@@ -177,9 +229,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                   </td>
                   <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
                     {code ? (
-                      <div className="flex flex-col items-start gap-0.5 min-w-[7.5rem]">
-                        <BarcodeRenderer code={String(code)} width={120} height={32} showText={false} compact={false} />
-                        <span className="font-mono text-[10px] text-slate-600 leading-none tracking-wide">{code}</span>
+                      <div className="flex flex-col items-start gap-1 min-w-[12rem] py-1">
+                        <BarcodeRenderer code={String(code)} width={200} height={52} showText={false} compact />
+                        <span className="font-mono text-[11px] text-slate-700 leading-none tracking-wide">{code}</span>
                       </div>
                     ) : <span className="text-slate-300">—</span>}
                   </td>

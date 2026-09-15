@@ -3190,8 +3190,15 @@ def _with_purchase_costs(product: dict, hist: list) -> dict:
 
 
 @api_router.get("/products")
-async def list_products(company_id: Optional[str] = "comp_nexus_main_01", category: Optional[str] = None, type: Optional[str] = None, b2b_only: bool = False, lite: bool = False):
-    """lite=1: teklif kalemi seçici — maliyet geçmişi hesaplanmaz."""
+async def list_products(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    category: Optional[str] = None,
+    type: Optional[str] = None,
+    b2b_only: bool = False,
+    lite: bool = False,
+    ids: Optional[str] = None,
+):
+    """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
     query = {"company_id": company_id}
     if b2b_only:
         query["show_in_b2b"] = {"$ne": False}
@@ -3202,8 +3209,18 @@ async def list_products(company_id: Optional[str] = "comp_nexus_main_01", catego
         query["category"] = category
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "sku": 1, "sale_price": 1, "vat_rate": 1, "unit": 1, "image_url": 1, "company_id": 1, "type": 1, "is_active": 1} if lite else None
-    products = await db.products.find(query, proj).to_list(5000 if lite else 10000)
+    id_list = [x.strip() for x in (ids or "").split(",") if x.strip()]
+    if id_list:
+        query["_id"] = {"$in": id_list}
+    # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
+    proj = {
+        "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
+        "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
+    } if lite else None
+    limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
+    if id_list and limit < 1:
+        return []
+    products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
     if lite:
         return clean_docs(products)
     cost_map = await _purchase_costs_by_product(company_id) if products else {}
