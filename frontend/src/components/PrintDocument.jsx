@@ -108,27 +108,35 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           )}
           <div className={isModern ? "px-10 pb-10" : ""}>
           {tpl.header_note && <p className="mt-3 text-slate-600 italic">{tpl.header_note}</p>}
-          <div className="mt-5 grid grid-cols-2 gap-6">
+          <div className="mt-5 grid grid-cols-2 gap-6" data-testid="print-party-grid">
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div>
               <div className="font-bold text-base">{customer}</div>
               {(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}
               {doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}
-              {(doc.customer_order_number || doc.po_number) && (
-                <div className="text-slate-700 mt-1.5 text-xs font-semibold" data-testid="print-customer-order-number">
-                  Müşteri sipariş no: <span className="font-mono">{doc.customer_order_number || doc.po_number}</span>
-                </div>
-              )}
+              {(() => {
+                const custNo = String(
+                  doc.customer_order_number || doc.po_number || doc.buyer_order_number
+                  || doc.external_order_number || doc.customer_po || ""
+                ).trim();
+                if (!custNo) return null;
+                return (
+                  <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900" data-testid="print-customer-order-number">
+                    Müşteri sipariş no: <span className="font-mono">{custNo}</span>
+                  </div>
+                );
+              })()}
               {(doc.incoterm || doc.country) && <div className="text-slate-500 mt-1" data-testid="print-trade-meta">{[doc.incoterm, doc.country, doc.customs_office, doc.regime_code && `Rejim ${doc.regime_code}`, doc.declaration_no && `Bey. ${doc.declaration_no}`, doc.bl_awb && `BL ${doc.bl_awb}`, doc.dab_no && `DAB ${doc.dab_no}`, doc.certificate, doc.trade_file_number].filter(Boolean).join(" · ")}</div>}
             </div>
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
-          <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
+          <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`} data-testid="print-items-table">
             <thead>
               <tr style={thStyle} className={thCls}>
-                {tpl.show_images !== false && <th className={`p-2 w-12 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>}
-                <th className="text-left p-2">Açıklama</th>
-                {tpl.show_barcode !== false && <th className="text-left p-2 w-24">Barkod</th>}
+                {/* Resim / Açıklama / Barkod always separate for alignment */}
+                <th className={`p-2 w-14 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>
+                <th className="text-left p-2 min-w-[8rem]">Açıklama</th>
+                <th className="text-left p-2 w-36">Barkod</th>
                 <th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>
                 {!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}
                 {!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}
@@ -140,35 +148,41 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
-              const img = it.image_url || prod.image_url;
+              const img = it.image_url || prod.image_url || it.thumbnail_url || prod.thumbnail_url;
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
-                <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
-                  {tpl.show_images !== false && (
-                    <td className="p-1 align-middle" data-testid={`print-item-image-${i}`}>
-                      {img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}
-                    </td>
-                  )}
-                  <td className="p-2 align-middle">
+                <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`} data-testid={`print-item-row-${i}`}>
+                  <td className="p-1.5 align-middle" data-testid={`print-item-image-${i}`}>
+                    {img ? (
+                      <img
+                        src={resolveImageUrl(img)}
+                        alt=""
+                        width={48}
+                        height={48}
+                        loading="eager"
+                        decoding="async"
+                        className="w-12 h-12 object-contain rounded border bg-white"
+                      />
+                    ) : <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50" />}
+                  </td>
+                  <td className="p-2 align-middle" data-testid={`print-item-name-${i}`}>
                     <div className="min-w-0">
-                      <span>
+                      <span className="font-semibold text-slate-900">
                         {it.name || it.product_name}
-                        {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
+                        {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600 font-normal">(%{it.discount_rate} isk.)</span>}
                       </span>
                       {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
                       {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                     </div>
                   </td>
-                  {tpl.show_barcode !== false && (
-                    <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
-                      {code ? (
-                        <div className="flex flex-col items-start gap-0.5">
-                          <BarcodeRenderer code={String(code)} width={72} height={18} showText={false} compact />
-                          <span className="font-mono text-[9px] text-slate-500 leading-none">{code}</span>
-                        </div>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                  )}
+                  <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
+                    {code ? (
+                      <div className="flex flex-col items-start gap-0.5 min-w-[7.5rem]">
+                        <BarcodeRenderer code={String(code)} width={120} height={32} showText={false} compact={false} />
+                        <span className="font-mono text-[10px] text-slate-600 leading-none tracking-wide">{code}</span>
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="p-2 text-right align-middle">{it.quantity} {it.unit || ""}</td>
                   {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
                   {!hideLine && !hideVat && <td className="p-2 text-right">{fmtM(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))}</td>}
