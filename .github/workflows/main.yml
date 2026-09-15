@@ -15,17 +15,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Peş peşe merge'lerde SSH handshake reset olabiliyor; birkaç deneme.
       - name: Deploy via SSH
+        id: deploy1
+        continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 30m
-          # script_stop kullanılmıyor: eylem, betiğin her satırından sonra bir çıkış
-          # kodu kontrolü enjekte ediyor ve bu, çok satırlı if/else ile for bloklarını
-          # bozuyor (appleboy/ssh-action#139, #335). Hata durumunda durmayı betiğin
-          # kendi "set -eu" satırı sağlıyor; eylemin önerdiği yol da bu.
+          timeout: 60s
+          # script_stop kullanılmıyor: eylem, betiğin her satırından sonra çıkış
+          # kodu kontrolü enjekte ediyor ve çok satırlı if/else ile for'u bozuyor
+          # (appleboy/ssh-action#139, #335). Durmayı betiğin "set -eu"sı sağlar.
           envs: DEPLOY_PATH
           script: |
             set -eu
@@ -35,9 +38,68 @@ jobs:
               echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
               exit 1
             fi
-            # Sunucuda leftover bir stub varsa onu çalıştırma — daima
-            # GitHub main'deki betiği kullan. /tmp world-writable olduğu için
-            # mktemp kök dizininde (700) oluşturulur.
+            umask 077
+            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
+            trap 'rm -f "$SCRIPT"' EXIT
+            git show origin/main:deploy/update-native.sh > "$SCRIPT"
+            sh "$SCRIPT"
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
+      - name: Wait before SSH retry
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 25
+
+      - name: Deploy via SSH (retry 2)
+        id: deploy2
+        if: steps.deploy1.outcome == 'failure'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 30m
+          timeout: 60s
+          envs: DEPLOY_PATH
+          script: |
+            set -eu
+            cd "$DEPLOY_PATH"
+            git fetch origin +refs/heads/main:refs/remotes/origin/main
+            if ! git cat-file -e origin/main:deploy/update-native.sh; then
+              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
+              exit 1
+            fi
+            umask 077
+            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
+            trap 'rm -f "$SCRIPT"' EXIT
+            git show origin/main:deploy/update-native.sh > "$SCRIPT"
+            sh "$SCRIPT"
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
+      - name: Wait before final SSH retry
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        run: sleep 40
+
+      - name: Deploy via SSH (retry 3)
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 30m
+          timeout: 60s
+          envs: DEPLOY_PATH
+          script: |
+            set -eu
+            cd "$DEPLOY_PATH"
+            git fetch origin +refs/heads/main:refs/remotes/origin/main
+            if ! git cat-file -e origin/main:deploy/update-native.sh; then
+              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
+              exit 1
+            fi
             umask 077
             SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
             trap 'rm -f "$SCRIPT"' EXIT
