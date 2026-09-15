@@ -287,7 +287,7 @@ class Invoice(BaseDocument):
 # Banka, Kasa, POS
 class BankAccount(BaseDocument):
     company_id: str
-    type: str = "bank"  # bank, cash_box, pos, credit_card
+    type: str = "bank"  # bank, cash_box, pos, okc_pos, credit_card
     bank_name: str
     account_name: str
     account_number: Optional[str] = None
@@ -299,6 +299,11 @@ class BankAccount(BaseDocument):
     card_last4: Optional[str] = None
     card_expiry: Optional[str] = None
     card_limit: Optional[float] = None
+    okc_brand: Optional[str] = None
+    okc_serial: Optional[str] = None
+    okc_terminal_id: Optional[str] = None
+    okc_api_url: Optional[str] = None
+    okc_api_key: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class BankTransaction(BaseDocument):

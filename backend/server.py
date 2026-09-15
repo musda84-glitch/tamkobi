@@ -5124,9 +5124,9 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
     acc = await db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
-    allowed_keys = ("bank_name", "account_name", "account_number", "iban", "currency", "type", "pos_commission_rate", "card_limit")
+    allowed_keys = ("bank_name", "account_name", "account_number", "iban", "currency", "type", "pos_commission_rate", "card_limit", "okc_brand", "okc_serial", "okc_terminal_id", "okc_api_url", "okc_api_key")
     allowed = {k: v for k, v in req.items() if k in allowed_keys and v is not None}
-    if "type" in allowed and allowed["type"] not in ("bank", "cash_box", "pos", "credit_card"):
+    if "type" in allowed and allowed["type"] not in ("bank", "cash_box", "pos", "okc_pos", "credit_card"):
         raise HTTPException(status_code=400, detail="Geçersiz hesap türü.")
     if "current_balance" in req:
         if await db.bank_transactions.count_documents({"$or": [{"account_id": account_id}, {"target_account_id": account_id}]}):
@@ -5135,8 +5135,9 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
     if not allowed:
         return clean_doc(acc)
     allowed_keys = {
-        "bank_name", "account_name", "iban", "account_number", "currency",
+        "bank_name", "account_name", "iban", "account_number", "currency", "type",
         "pos_commission_rate", "card_holder", "card_last4", "card_expiry", "card_limit",
+        "okc_brand", "okc_serial", "okc_terminal_id", "okc_api_url", "okc_api_key",
     }
     allowed = {k: req[k] for k in allowed_keys if k in req}
     if "pos_commission_rate" in allowed:

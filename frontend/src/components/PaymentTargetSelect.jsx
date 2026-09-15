@@ -4,10 +4,10 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
-const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", credit_card: "Kredi Kartı" };
+const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı" };
 /** Tahsilatta kredi kartı yok (backend reddeder); ödemede kart + ortaklar açık. */
-const COLLECT_TYPES = ["cash_box", "bank", "pos"];
-const SPEND_TYPES = ["cash_box", "bank", "pos", "credit_card"];
+const COLLECT_TYPES = ["cash_box", "bank", "pos", "okc_pos"];
+const SPEND_TYPES = ["cash_box", "bank", "pos", "okc_pos", "credit_card"];
 /** Eski kayıtlarda cash / kasa gibi alias'lar da kasa grubuna düşsün. */
 const TYPE_ALIAS = { cash: "cash_box", kasa: "cash_box", cashbox: "cash_box", nakit: "cash_box", cash_box: "cash_box" };
 const normalizeType = (t) => TYPE_ALIAS[String(t || "").toLowerCase()] || t;

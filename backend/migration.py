@@ -64,7 +64,7 @@ ENTITIES: Dict[str, Dict[str, Any]] = {
         "notes": ("Açıklama", False, "str", ["açıklama", "aciklama", "not", "notes", "description"])}},
     "bank_accounts": {"label": "Banka / Kasa Hesapları (açılış bakiyesi)", "collection": "bank_accounts", "key": "account_name", "fields": {
         "account_name": ("Hesap Adı", True, "str", ["hesap adı", "hesap adi", "hesap", "kasa adı", "ad", "account name", "name", "kasa"]),
-        "type": ("Tür (bank/cash_box/pos/credit_card)", False, "account_type", ["tür", "tip", "hesap türü", "hesap tipi", "type"]),
+        "type": ("Tür (bank/cash_box/pos/okc_pos/credit_card)", False, "account_type", ["tür", "tip", "hesap türü", "hesap tipi", "type"]),
         "bank_name": ("Banka Adı", False, "str", ["banka", "banka adı", "banka adi", "bank", "bank name"]),
         "iban": ("IBAN", False, "str", ["iban"]),
         "account_number": ("Hesap No", False, "str", ["hesap no", "hesap numarası", "account number", "şube/hesap"]),
@@ -165,7 +165,7 @@ def _cast(field_type: str, v: Any) -> Any:
     if field_type == "invoice_type":
         return "purchase" if any(k in n for k in ("alış", "alis", "purchase", "gelen", "alım")) else "sales"
     if field_type == "account_type":
-        return "cash_box" if ("kasa" in n or "cash" in n or "nakit" in n) else "pos" if "pos" in n else "credit_card" if ("kredi" in n or "kart" in n) else "bank"
+        return "cash_box" if ("kasa" in n or "cash" in n or "nakit" in n) else "okc_pos" if ("ökc" in n or "okc" in n or "ödeme kaydedici" in n) else "pos" if "pos" in n else "credit_card" if ("kredi" in n or "kart" in n) else "bank"
     if field_type == "payment_status":
         return "paid" if any(k in n for k in ("ödendi", "odendi", "paid", "tahsil", "kapalı", "kapali")) else "partially_paid" if "kısm" in n else "unpaid"
     return v
