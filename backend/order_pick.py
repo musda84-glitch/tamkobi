@@ -11,17 +11,19 @@ router = APIRouter(prefix="/api")
 _db = None
 _create_production_order = None
 _push_order_to_shopphp = None
+_create_draft_invoice_for_order = None
 
 PICKABLE = {"pending", "approved", "preparing", "new"}
 DONE_PICK = {"shipped", "completed", "cancelled", "returned", "partially_returned"}
 
 
 def init(db, deps: Optional[dict] = None):
-    global _db, _create_production_order, _push_order_to_shopphp
+    global _db, _create_production_order, _push_order_to_shopphp, _create_draft_invoice_for_order
     _db = db
     if deps:
         _create_production_order = deps.get("create_production_order")
         _push_order_to_shopphp = deps.get("push_order_to_shopphp")
+        _create_draft_invoice_for_order = deps.get("create_draft_invoice_for_order")
 
 
 def _now() -> str:
@@ -356,10 +358,36 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
     order_status = {"ready": "preparing", "partial": "preparing", "ship": "shipped"}[mode]
     await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"status": pick_status, "completed_at": _now(), "updated_at": _now(), "complete_mode": mode}})
     await _db.orders.update_one({"_id": order_id}, {"$set": {"pick_status": pick_status, "order_status": order_status, "picked_at": _now()}})
+    updated = await _db.orders.find_one({"_id": order_id}) or {**o, "order_status": order_status}
     if mode == "ship" and _push_order_to_shopphp:
         try:
-            await _push_order_to_shopphp({**o, "order_status": order_status}, reason="status")
+            await _push_order_to_shopphp(updated, reason="status")
         except Exception:
             pass
-    labels = {"ready": "Sipariş depoda hazır.", "partial": "Kısmi teslim kaydedildi; kalan kalemler sonra toplanabilir.", "ship": "Sipariş sevk edildi."}
-    return {**_public(ses, {**o, "order_status": order_status}), "message": labels[mode]}
+    draft = None
+    if mode == "ship" and _create_draft_invoice_for_order:
+        try:
+            draft = await _create_draft_invoice_for_order(updated)
+            if draft:
+                updated = await _db.orders.find_one({"_id": order_id}) or updated
+                await _db.order_pick_sessions.update_one(
+                    {"_id": ses["_id"]},
+                    {"$set": {"draft_invoice_id": draft.get("_id"), "draft_invoice_number": draft.get("invoice_number")}},
+                )
+        except Exception:
+            draft = None
+    labels = {
+        "ready": "Sipariş depoda hazır.",
+        "partial": "Kısmi teslim kaydedildi; kalan kalemler sonra toplanabilir.",
+        "ship": "Sipariş sevk edildi.",
+    }
+    msg = labels[mode]
+    if mode == "ship" and draft:
+        msg = f"Sipariş sevk edildi · taslak fatura {draft.get('invoice_number')} oluşturuldu."
+    elif mode == "ship" and updated.get("invoice_number"):
+        msg = f"Sipariş sevk edildi · mevcut fatura {updated.get('invoice_number')}."
+    out = {**_public(ses, updated), "message": msg}
+    if draft:
+        out["draft_invoice_id"] = draft.get("_id")
+        out["draft_invoice_number"] = draft.get("invoice_number")
+    return out
