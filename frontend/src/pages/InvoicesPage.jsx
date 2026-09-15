@@ -47,6 +47,7 @@ import {
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
+  if (inv._is_quote) return ["Teklif", "bg-indigo-50 text-indigo-700"];
   if (inv.trade_kind === "export" || inv.e_type === "e_export") return ["İhracat", "bg-sky-50 text-sky-800"];
   if (inv.trade_kind === "import") return ["İthalat", "bg-teal-50 text-teal-800"];
   if (inv.invoice_type === "proforma") return ["Proforma", "bg-violet-50 text-violet-700"];
@@ -55,6 +56,30 @@ const typeBadge = (inv) => {
   if (inv.invoice_type === "dispatch") return ["İrsaliye", "bg-fuchsia-50 text-fuchsia-700"];
   return ["Alış", "bg-amber-50 text-amber-700"];
 };
+
+/** Teklif kaydını fatura listesi satırına map'ler (Proforma & Teklif sekmesi). */
+const quoteAsInvoiceRow = (q) => ({
+  id: q.id || q._id,
+  _is_quote: true,
+  invoice_number: q.quote_number || q.number || "—",
+  invoice_type: "quote",
+  e_type: "quote",
+  contact_id: q.contact_id,
+  contact_name: q.contact_name,
+  contact_tax_id: q.contact_tax_id,
+  issue_date: q.issue_date || (q.created_at || "").slice(0, 10),
+  due_date: q.valid_until || null,
+  grand_total: q.grand_total,
+  local_total: q.grand_total,
+  currency: q.currency || "TRY",
+  status: q.status || "draft",
+  gib_status: q.status === "accepted" || q.approval?.status === "accepted" ? "Kabul" : q.status === "rejected" ? "Red" : q.status === "sent" ? "Gönderildi" : "Taslak",
+  payment_status: q.invoice_id ? "paid" : "unpaid",
+  source_channel: "quote",
+  title: q.title,
+  invoice_id: q.invoice_id,
+  project_id: q.project_id,
+});
 
 const moneyTry = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const buyPrice = (p, invoiceType) => (invoiceType === "sales" ? p.sale_price : (p.last_purchase_price || p.purchase_price));
@@ -171,14 +196,22 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       if (!silent) setLoading(true);
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-      const [invRows, cntRows, prodRows, bankRes, projRes] = await Promise.all([
-        cachedList("invoices", cid, { filter: invoiceTypeFilter(filterType), onCached: setInvoices }),
+      const [invRows, cntRows, prodRows, bankRes, projRes, quoteRes] = await Promise.all([
+        cachedList("invoices", cid, {
+          filter: invoiceTypeFilter(filterType),
+          // Proforma sekmesinde tekliflerle birleştiriyoruz; onCached yalnızca faturaları basmasın.
+          onCached: filterType === "proforma" ? undefined : setInvoices,
+        }),
         cachedList("contacts", cid, { onCached: setContacts }),
         cachedList("products", cid, { onCached: setProducts }),
         axios.get(`${API_URL}/banking/accounts?company_id=${cid}`),
         axios.get(`${API_URL}/projects?company_id=${cid}`),
+        filterType === "proforma"
+          ? axios.get(`${API_URL}/quotes`, { params: { company_id: cid, summary: 1 } }).catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
       ]);
-      setInvoices(invRows);
+      const quoteRows = filterType === "proforma" ? (quoteRes.data || []).map(quoteAsInvoiceRow) : [];
+      setInvoices([...quoteRows, ...(invRows || [])]);
       setContacts(cntRows);
       setProducts(prodRows);
       setProjects(projRes.data);
@@ -460,12 +493,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               {visibleInvoices.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="inv-empty">
-                    {invoices.length === 0 ? "Kayıtlı fatura bulunamadı." : "Filtreye uyan fatura yok."}
+                    {invoices.length === 0
+                      ? (filterType === "proforma" ? "Proforma veya teklif kaydı yok." : "Kayıtlı fatura bulunamadı.")
+                      : "Filtreye uyan kayıt yok."}
                   </td>
                 </tr>
               ) : (
                 pagedInvoices.map((inv) => (
-                  <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => openCtx(e, inv)} className={`hover:bg-slate-50/70 transition cursor-context-menu ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={`invoice-row-${inv.invoice_number}`}>
+                  <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => { if (!inv._is_quote) openCtx(e, inv); }} className={`hover:bg-slate-50/70 transition ${inv._is_quote ? "" : "cursor-context-menu"} ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -474,7 +509,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         </span>
                         <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
                         <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
-                          {E_TYPE_LABELS[inv.e_type] || 'İrsaliye'}
+                          {inv._is_quote ? "Teklif" : (E_TYPE_LABELS[inv.e_type] || "İrsaliye")}
                         </span>
                         {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
                       </div>
@@ -512,24 +547,52 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <div className="text-[10px] text-slate-400">{inv.invoice_type === 'dispatch' ? "KDV'siz (Sevk)" : 'KDV Dahil'}</div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {inv.invoice_type === 'dispatch' ? (
-                        <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${inv.converted_invoice_id ? 'bg-emerald-100 text-emerald-800' : 'bg-fuchsia-100 text-fuchsia-800'}`} data-testid={`dispatch-status-${inv.invoice_number}`}>
-                          {inv.converted_invoice_id ? `Faturalandı · ${inv.converted_invoice_number}` : inv.order_number ? `Sipariş ${inv.order_number}` : inv.invoice_ref_number ? `Fatura ${inv.invoice_ref_number}` : 'Faturalanmadı'}
+                      {inv._is_quote ? (
+                        <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
+                          inv.invoice_id ? "bg-emerald-100 text-emerald-800" : inv.status === "accepted" ? "bg-emerald-100 text-emerald-800" : inv.status === "rejected" ? "bg-rose-100 text-rose-800" : "bg-indigo-100 text-indigo-800"
+                        }`} data-testid={`quote-status-${inv.invoice_number}`}>
+                          {inv.invoice_id ? "Faturalandı" : inv.gib_status || inv.status || "Taslak"}
+                        </span>
+                      ) : inv.invoice_type === "dispatch" ? (
+                        <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${inv.converted_invoice_id ? "bg-emerald-100 text-emerald-800" : "bg-fuchsia-100 text-fuchsia-800"}`} data-testid={`dispatch-status-${inv.invoice_number}`}>
+                          {inv.converted_invoice_id ? `Faturalandı · ${inv.converted_invoice_number}` : inv.order_number ? `Sipariş ${inv.order_number}` : inv.invoice_ref_number ? `Fatura ${inv.invoice_ref_number}` : "Faturalanmadı"}
                         </span>
                       ) : (
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
-                        inv.payment_status === 'paid'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : inv.payment_status === 'partially_paid'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-rose-100 text-rose-800'
+                        inv.payment_status === "paid"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : inv.payment_status === "partially_paid"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-rose-100 text-rose-800"
                       }`}>
-                        {inv.payment_status === 'paid' ? 'Ödendi' : inv.payment_status === 'partially_paid' ? 'Kısmi Ödendi' : 'Ödenmedi'}
+                        {inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Ödenmedi"}
                       </span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-center w-[320px] min-w-[320px]">
-                      {(() => {
+                      {inv._is_quote ? (
+                        <div className="flex items-center justify-center gap-1.5" data-testid={`quote-actions-${inv.invoice_number}`}>
+                          <button type="button" onClick={() => navigate("/quotes")} className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 hover:bg-slate-50" data-testid={`quote-open-${inv.invoice_number}`}>Teklifler</button>
+                          {!inv.invoice_id && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const r = await axios.post(`${API_URL}/quotes/${inv.id}/convert-to-invoice`, {});
+                                  toast.success(r.data.message || "Fatura oluşturuldu.");
+                                  loadData();
+                                } catch (err) {
+                                  toast.error(err.response?.data?.detail || "Faturaya çevrilemedi.");
+                                }
+                              }}
+                              className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                              data-testid={`quote-to-invoice-${inv.invoice_number}`}
+                            >
+                              Faturaya Çevir
+                            </button>
+                          )}
+                        </div>
+                      ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
                       <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
