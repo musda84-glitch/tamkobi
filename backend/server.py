@@ -6399,8 +6399,8 @@ async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None):
     raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
 
 
-async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
-    """Sipariş onayında cari Faturalar sekmesinde görünen taslak satış faturası.
+async def _create_draft_invoice_for_order(order: dict, source: str = "approve") -> Optional[dict]:
+    """Sipariş onayında / sevkiyatta cari Faturalar sekmesinde görünen taslak satış faturası.
 
     Stok / cari bakiyesine dokunmaz. Siparişte fatura varsa yeniden oluşturmaz.
     """
@@ -6411,6 +6411,9 @@ async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
         existing = await db.invoices.find_one({"_id": existing_id})
         if existing:
             return existing
+    # Sevkiyatta müşteri adı yoksa sipariş no ile cari açılsın (taslak fatura kaçmasın).
+    if not (order.get("customer_name") or "").strip() and not order.get("contact_id"):
+        order = {**order, "customer_name": f"Sipariş {order.get('order_number') or order.get('_id')}"}
     contact = await _ensure_order_contact(order)
     if not contact:
         return None
@@ -6431,6 +6434,7 @@ async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
     discount_total = float(inv_totals.get("discount_total") or 0)
     grand_total = float(inv_totals.get("grand_total") or 0)
     term_days = int(contact.get("payment_term_days") or 14)
+    note_src = "sevkiyatında" if source == "ship" else "onayında"
     doc = {
         "_id": inv_id,
         "company_id": order.get("company_id"),
@@ -6453,7 +6457,7 @@ async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
         "gib_status": "Taslak",
         "payment_status": "unpaid",
         "paid_amount": 0.0,
-        "notes": f"Sipariş No: {order.get('order_number')} onayında oluşturuldu (taslak).",
+        "notes": f"Sipariş No: {order.get('order_number')} {note_src} oluşturuldu (taslak).",
         "source_channel": order.get("channel") or "b2b",
         "order_id": order["_id"],
         "order_number": order.get("order_number"),

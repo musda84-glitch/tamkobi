@@ -376,17 +376,25 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
         except Exception:
             pass
     draft = None
+    draft_error = None
     if mode == "ship" and _create_draft_invoice_for_order:
         try:
-            draft = await _create_draft_invoice_for_order(updated)
+            draft = await _create_draft_invoice_for_order(updated, source="ship")
             if draft:
                 updated = await _db.orders.find_one({"_id": order_id}) or updated
                 await _db.order_pick_sessions.update_one(
                     {"_id": ses["_id"]},
                     {"$set": {"draft_invoice_id": draft.get("_id"), "draft_invoice_number": draft.get("invoice_number")}},
                 )
-        except Exception:
+            else:
+                draft_error = "Taslak fatura oluşturulamadı (cari veya kalem eksik olabilir)."
+        except Exception as exc:
             draft = None
+            draft_error = str(exc)[:180] or "Taslak fatura oluşturulamadı."
+            import logging
+            logging.getLogger(__name__).exception("Sevkiyatta taslak fatura oluşturulamadı: %s", order_id)
+    elif mode == "ship" and not _create_draft_invoice_for_order:
+        draft_error = "Taslak fatura servisi bağlı değil."
     labels = {
         "ready": "Sipariş depoda hazır.",
         "partial": "Kısmi teslim kaydedildi; kalan kalemler sonra toplanabilir.",
@@ -397,8 +405,13 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
         msg = f"Sipariş sevk edildi · taslak fatura {draft.get('invoice_number')} oluşturuldu."
     elif mode == "ship" and updated.get("invoice_number"):
         msg = f"Sipariş sevk edildi · mevcut fatura {updated.get('invoice_number')}."
+        draft = {"_id": updated.get("invoice_id"), "invoice_number": updated.get("invoice_number")}
+    elif mode == "ship" and draft_error:
+        msg = f"Sipariş sevk edildi · {draft_error}"
     out = {**_public(ses, updated), "message": msg}
     if draft:
         out["draft_invoice_id"] = draft.get("_id")
         out["draft_invoice_number"] = draft.get("invoice_number")
+    if draft_error and not draft:
+        out["draft_invoice_error"] = draft_error
     return out

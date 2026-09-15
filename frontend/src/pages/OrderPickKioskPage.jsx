@@ -130,8 +130,12 @@ export default function OrderPickKioskPage() {
       if (r.data.items) setSes(r.data);
       const msg = r.data.message || ok;
       toast.success(msg);
-      if (path === "complete" && r.data.draft_invoice_number) {
-        toast.message(`Taslak fatura: ${r.data.draft_invoice_number}`, { duration: 5000 });
+      if (path === "complete" && body?.mode === "ship") {
+        if (r.data.draft_invoice_number) {
+          toast.message(`Taslak fatura: ${r.data.draft_invoice_number}`, { duration: 6000 });
+        } else if (r.data.draft_invoice_error) {
+          toast.error(r.data.draft_invoice_error, { duration: 7000 });
+        }
       }
       if (path === "complete") { back(); }
       return r.data;
