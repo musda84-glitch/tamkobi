@@ -114,3 +114,70 @@ class TestCompanyDataReset:
         s = _admin()
         r = s.get(f"{API}/system/companies/comp_no_such_reset/reset-preview", timeout=20)
         assert r.status_code == 404
+
+    def test_selective_scopes_invoices_only(self):
+        s = _admin()
+        cid, name, _email = _create_company(s)
+
+        prev = s.get(
+            f"{API}/system/companies/{cid}/reset-preview",
+            params={"scopes": "invoices"},
+            timeout=20,
+        )
+        assert prev.status_code == 200, prev.text
+        body = prev.json()
+        assert body["scopes"] == ["invoices"]
+        assert any(c["key"] == "invoices" for c in body["available_scopes"])
+        assert body["by_collection"].get("products", 0) == 0
+        inv_before = int(body["by_collection"].get("invoices") or 0)
+        assert inv_before >= 1
+
+        full = s.get(f"{API}/system/companies/{cid}/reset-preview", timeout=20)
+        assert full.status_code == 200, full.text
+        products_before = int(full.json()["by_collection"].get("products") or 0)
+        orders_before = int(full.json()["by_collection"].get("orders") or 0)
+        assert products_before >= 1
+
+        ok = s.post(
+            f"{API}/system/companies/{cid}/reset-data",
+            json={
+                "confirm_name": name,
+                "confirm_phrase": "VERİLERİ SIFIRLA",
+                "admin_password": ADMIN_PASS,
+                "scopes": ["invoices"],
+            },
+            timeout=60,
+        )
+        assert ok.status_code == 200, ok.text
+        result = ok.json()
+        assert result["scopes"] == ["invoices"]
+        assert result["total_deleted"] >= 1
+        assert "invoices" in result["deleted"]
+        assert "products" not in result["deleted"]
+
+        after = s.get(f"{API}/system/companies/{cid}/reset-preview", timeout=20)
+        assert after.status_code == 200, after.text
+        after_body = after.json()
+        assert int(after_body["by_collection"].get("invoices") or 0) == 0
+        assert int(after_body["by_collection"].get("products") or 0) == products_before
+        assert int(after_body["by_collection"].get("orders") or 0) == orders_before
+
+        company = s.get(f"{API}/system/companies/{cid}", timeout=20)
+        assert company.status_code == 200, company.text
+        assert company.json()["usage"]["invoices"] == 0
+        assert company.json()["usage"]["products"] == products_before
+
+    def test_invalid_scope_rejected(self):
+        s = _admin()
+        cid, name, _email = _create_company(s)
+        bad = s.post(
+            f"{API}/system/companies/{cid}/reset-data",
+            json={
+                "confirm_name": name,
+                "confirm_phrase": "VERİLERİ SIFIRLA",
+                "admin_password": ADMIN_PASS,
+                "scopes": ["not-a-scope"],
+            },
+            timeout=30,
+        )
+        assert bad.status_code == 400
