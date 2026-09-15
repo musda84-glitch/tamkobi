@@ -234,11 +234,16 @@ const UserEraseSection = () => {
   );
 };
 
+const DEFAULT_SCOPE_KEYS = ["invoices", "orders", "stock", "quotes"];
+
 const CompanyResetSection = () => {
   const [q, setQ] = useState("");
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [scopes, setScopes] = useState(DEFAULT_SCOPE_KEYS);
+  const [allScopes, setAllScopes] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [confirmName, setConfirmName] = useState("");
   const [confirmPhrase, setConfirmPhrase] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
@@ -273,26 +278,102 @@ const CompanyResetSection = () => {
     );
   });
 
+  const effectiveScopes = allScopes ? ["all"] : scopes;
+
+  const fetchPreview = async (companyId, nextScopes) => {
+    const params = {};
+    if (nextScopes?.length && !(nextScopes.length === 1 && nextScopes[0] === "all")) {
+      params.scopes = nextScopes.join(",");
+    } else if (nextScopes?.length === 1 && nextScopes[0] === "all") {
+      params.scopes = "all";
+    }
+    const r = await axios.get(`${API_URL}/system/companies/${companyId}/reset-preview`, { ...cred, params });
+    return r.data;
+  };
+
   const openPreview = async (c) => {
+    setPreviewLoading(true);
     try {
-      const r = await axios.get(`${API_URL}/system/companies/${c.id}/reset-preview`, cred);
-      setSelected(r.data);
+      const initialScopes = DEFAULT_SCOPE_KEYS;
+      const data = await fetchPreview(c.id, initialScopes);
+      setSelected(data);
+      setAllScopes(false);
+      const keys = (data.available_scopes || []).map((s) => s.key);
+      setScopes(keys.length ? keys : initialScopes);
       setConfirmName("");
       setConfirmPhrase("");
       setAdminPassword("");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Önizleme alınamadı.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const refreshPreview = async (nextAll, nextScopes) => {
+    if (!selected?.id) return;
+    setPreviewLoading(true);
+    try {
+      const payload = nextAll ? ["all"] : nextScopes;
+      const data = await fetchPreview(selected.id, payload.length ? payload : ["invoices"]);
+      setSelected(data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Önizleme yenilenemedi.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const toggleScope = (key) => {
+    if (allScopes) {
+      const next = DEFAULT_SCOPE_KEYS.filter((k) => k !== key);
+      setAllScopes(false);
+      setScopes(next.length ? next : [key]);
+      refreshPreview(false, next.length ? next : [key]);
+      return;
+    }
+    const has = scopes.includes(key);
+    const next = has ? scopes.filter((k) => k !== key) : [...scopes, key];
+    if (!next.length) {
+      toast.error("En az bir kapsam seçin.");
+      return;
+    }
+    setScopes(next);
+    refreshPreview(false, next);
+  };
+
+  const toggleAll = () => {
+    const next = !allScopes;
+    setAllScopes(next);
+    if (next) {
+      const keys = (selected?.available_scopes || []).map((s) => s.key);
+      setScopes(keys.length ? keys : DEFAULT_SCOPE_KEYS);
+      refreshPreview(true, ["all"]);
+    } else {
+      const keys = (selected?.available_scopes || []).map((s) => s.key);
+      const nextScopes = keys.length ? keys : DEFAULT_SCOPE_KEYS;
+      setScopes(nextScopes);
+      refreshPreview(false, nextScopes);
     }
   };
 
   const reset = async (e) => {
     e.preventDefault();
     if (!selected) return;
+    if (!allScopes && !scopes.length) {
+      toast.error("En az bir kapsam seçin.");
+      return;
+    }
     setBusy(true);
     try {
       const r = await axios.post(
         `${API_URL}/system/companies/${selected.id}/reset-data`,
-        { confirm_name: confirmName, confirm_phrase: confirmPhrase, admin_password: adminPassword },
+        {
+          confirm_name: confirmName,
+          confirm_phrase: confirmPhrase,
+          admin_password: adminPassword,
+          scopes: effectiveScopes,
+        },
         cred,
       );
       toast.success(r.data.message || "Şirket verileri sıfırlandı.");
@@ -307,11 +388,13 @@ const CompanyResetSection = () => {
 
   const ready =
     selected &&
+    (allScopes || scopes.length > 0) &&
     confirmName.trim() === (selected.name || "").trim() &&
     confirmPhrase.trim() === phrase &&
     adminPassword.length > 0;
 
   const usage = (c) => c.usage || {};
+  const scopeCards = selected?.available_scopes || [];
 
   return (
     <div className="space-y-4" data-testid="saas-company-reset">
@@ -320,7 +403,7 @@ const CompanyResetSection = () => {
           <Database className="w-4 h-4 text-amber-700" /> Şirket veritabanı sıfırlama
         </div>
         <p className="mt-1 text-[11px] leading-relaxed">
-          Seçilen şirketin faturalarını, siparişlerini, stoklarını, tekliflerini, carilerini ve diğer iş kayıtlarını siler.
+          Faturalar, siparişler, stoklar ve teklifleri ayrı ayrı veya toplu sıfırlayabilirsiniz.
           Şirket kaydı, lisans ve kullanıcı hesapları korunur. Onay: şirket adı, <b className="font-mono">{phrase}</b> ve yönetici şifresi.
         </p>
       </div>
@@ -392,12 +475,55 @@ const CompanyResetSection = () => {
               <h3 className="font-bold text-slate-900 text-sm">Veritabanı sıfırlama onayı</h3>
               <p className="text-[11px] text-slate-600 mt-0.5">
                 <b>{selected.name}</b> · <span className="font-mono">{selected.id}</span>
-                {" · "}toplam <b>{selected.total_docs || 0}</b> kayıt silinecek
+                {" · "}seçili kapsamda <b>{selected.total_docs || 0}</b> kayıt
+                {previewLoading ? " · güncelleniyor…" : ""}
               </p>
             </div>
             <button type="button" className="ml-auto text-slate-400 hover:text-slate-700 text-[11px]" onClick={() => setSelected(null)}>
               Vazgeç
             </button>
+          </div>
+
+          <div className="space-y-2" data-testid="sys-reset-scopes">
+            <div className="text-[11px] font-semibold text-slate-700">Sıfırlanacak kapsamlar</div>
+            <label className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allScopes}
+                onChange={toggleAll}
+                className="mt-0.5"
+                data-testid="sys-reset-scope-all"
+              />
+              <span className="text-[11px] text-slate-800">
+                <b>Tüm iş verileri</b>
+                <span className="block text-slate-500">Cari, banka, personel, proje vb. dahil tam sıfırlama</span>
+              </span>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {scopeCards.map((card) => {
+                const checked = allScopes || scopes.includes(card.key);
+                return (
+                  <label
+                    key={card.key}
+                    className={`flex items-start gap-2 rounded-xl border px-3 py-2 cursor-pointer ${checked ? "border-amber-300 bg-white" : "border-slate-200 bg-slate-50"}`}
+                    data-testid={`sys-reset-scope-${card.key}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleScope(card.key)}
+                      className="mt-0.5"
+                    />
+                    <span className="text-[11px] text-slate-800">
+                      <b>{card.label}</b>
+                      {" · "}
+                      <span className="font-mono">{card.count || 0}</span>
+                      <span className="block text-slate-500">{card.description}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
@@ -410,7 +536,7 @@ const CompanyResetSection = () => {
                 </div>
               ))}
             {!(selected.highlight || []).some((h) => h.count > 0) && (
-              <div className="col-span-2 text-slate-500">Silinecek iş kaydı görünmüyor (zaten boş olabilir).</div>
+              <div className="col-span-2 text-slate-500">Seçili kapsamda silinecek kayıt görünmüyor.</div>
             )}
           </div>
 
@@ -418,6 +544,7 @@ const CompanyResetSection = () => {
             Korunacak: kullanıcılar <b>{selected.kept?.users ?? "—"}</b>
             {" · "}roller <b>{selected.kept?.roles ?? "—"}</b>
             {" · "}şirket + lisans
+            {!allScopes ? " · seçilmeyen kapsamlardaki veriler" : ""}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -437,9 +564,9 @@ const CompanyResetSection = () => {
 
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setSelected(null)} className="px-3 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600">İptal</button>
-            <button type="submit" disabled={!ready || busy} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold inline-flex items-center gap-1.5 disabled:opacity-50" data-testid="sys-reset-submit">
+            <button type="submit" disabled={!ready || busy || previewLoading} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold inline-flex items-center gap-1.5 disabled:opacity-50" data-testid="sys-reset-submit">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-              Veritabanını sıfırla
+              Seçili kapsamı sıfırla
             </button>
           </div>
         </form>
