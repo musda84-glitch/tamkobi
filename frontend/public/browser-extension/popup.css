@@ -103,6 +103,25 @@ body {
   cursor: pointer;
 }
 
+.ghost {
+  margin-top: 8px;
+  width: 100%;
+  appearance: none;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ghost:hover {
+  border-color: #2f6f68;
+  color: #5eead4;
+}
+
 .status {
   margin: 8px 0 0;
   font-size: 11px;

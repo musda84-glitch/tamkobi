@@ -9,24 +9,29 @@
   <body>
     <header class="hdr">
       <div class="brand">TamKobi</div>
-      <div class="sub">Hızlı erişim</div>
+      <div class="sub">Panel hızlı erişim</div>
     </header>
 
-    <nav class="links" id="links">
+    <nav class="links" id="links" aria-label="Hızlı sayfalar">
       <button type="button" data-path="/panel">Panel</button>
       <button type="button" data-path="/hizli-satis">Hızlı Satış</button>
       <button type="button" data-path="/invoices">Faturalar</button>
       <button type="button" data-path="/stock">Stok</button>
-      <button type="button" data-path="/sistem">Sistem</button>
+      <button type="button" data-path="/orders">Siparişler</button>
+      <button type="button" data-path="/contacts">Cariler</button>
+      <button type="button" data-path="/reports">Raporlar</button>
+      <button type="button" data-path="/settings">Ayarlar</button>
+      <button type="button" data-path="/sistem" class="muted">Sistem</button>
       <button type="button" data-path="/web" class="muted">Web / paketler</button>
     </nav>
 
     <section class="cfg">
-      <label for="baseUrl">Kurulum adresi</label>
+      <label for="baseUrl">Kurulum adresi (panel kökü)</label>
       <div class="row">
         <input id="baseUrl" type="url" placeholder="https://tamkobi.com" spellcheck="false" />
         <button type="button" id="saveBase" class="save">Kaydet</button>
       </div>
+      <button type="button" id="useTab" class="ghost" hidden>Açık sekmeyi kullan</button>
       <p id="status" class="status" hidden></p>
     </section>
 
