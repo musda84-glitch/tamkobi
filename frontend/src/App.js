@@ -26,6 +26,7 @@ const WarehousePage = page(() => import("./pages/WarehousePage"));
 const ProductionPage = page(() => import("./pages/ProductionPage"));
 const PersonnelPage = page(() => import("./pages/PersonnelPage"));
 const MyAttendancePage = page(() => import("./pages/MyAttendancePage"));
+const MyPersonnelPage = page(() => import("./pages/MyPersonnelPage"));
 const AIAssistantPage = page(() => import("./pages/AIAssistantPage"));
 const CommunicationPage = page(() => import("./pages/CommunicationPage"));
 const SettingsPage = page(() => import("./pages/SettingsPage"));
@@ -100,6 +101,7 @@ export default function App() {
                   <Route path="/warehouses" element={<WarehousePage />} />
                   <Route path="/production" element={<ProductionPage />} />
                   <Route path="/personnel" element={<PersonnelPage />} />
+                  <Route path="/personelim" element={<MyPersonnelPage />} />
                   <Route path="/mesai" element={<MyAttendancePage />} />
                   <Route path="/ai-advisor" element={<AIAssistantPage />} />
                   <Route path="/communication" element={<CommunicationPage />} />

@@ -8595,6 +8595,117 @@ async def employee_card(emp_id: str):
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
             "balance": await _employee_receivable(emp, payrolls, bonuses, month)}
 
+
+@api_router.get("/personnel/me")
+async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Personel self-servis: görevler, iş emirleri, mesai özeti, ücret/prim/alacaklar."""
+    emp = await attendance.employee_for_user(user)
+    if not emp:
+        return {
+            "employee": None, "month": month or datetime.now(timezone.utc).strftime("%Y-%m"),
+            "attendance": attendance.summarize([]), "leaves": [], "leave_balance": None,
+            "payrolls": [], "bonuses": [], "balance": None, "compensation": None,
+            "tasks": [], "work_orders": [],
+        }
+    emp_id = emp["_id"]
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    company_id = emp.get("company_id")
+    payrolls = clean_docs(await db.payrolls.find({"employee_id": emp_id}).sort("period", -1).to_list(24))
+    bonuses = clean_docs(await db.bonus_payments.find({"employee_id": emp_id}).sort("created_at", -1).to_list(100))
+    leaves = clean_docs(await db.leave_requests.find({"employee_id": emp_id}).sort("start_date", -1).to_list(100))
+    att_rows = await db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
+    used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
+    annual = emp.get("annual_leave_days", 14)
+    used_n = used or emp.get("used_leave_days", 0)
+
+    tasks = []
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1},
+    ):
+        for t in (proj.get("tasks") or []):
+            if t.get("assignee_id") != emp_id:
+                continue
+            done = bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
+            tasks.append({
+                "id": t.get("id") or t.get("_id"),
+                "title": t.get("title") or t.get("name") or "Görev",
+                "done": done,
+                "due_date": t.get("due_date"),
+                "project_id": proj["_id"],
+                "project_name": proj.get("name"),
+                "project_number": proj.get("project_number"),
+                "project_status": proj.get("status"),
+            })
+    tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
+
+    wo_rows = clean_docs(await db.work_orders.find({
+        "company_id": company_id,
+        "assigned_to": emp_id,
+        "status": {"$nin": ["done", "completed", "cancelled", "canceled"]},
+    }).sort([("planned_date", 1), ("order_code", 1)]).to_list(100))
+    work_orders = [{
+        "id": w.get("id") or w.get("_id"),
+        "order_code": w.get("order_code") or w.get("code"),
+        "product_name": w.get("product_name") or w.get("name"),
+        "station": w.get("station"),
+        "step_no": w.get("step_no"),
+        "status": w.get("status"),
+        "planned_date": w.get("planned_date"),
+        "qty": w.get("qty") or w.get("quantity"),
+        "assigned_name": w.get("assigned_name"),
+    } for w in wo_rows]
+
+    safe_emp = {
+        "id": emp_id,
+        "full_name": emp.get("full_name"),
+        "department": emp.get("department"),
+        "position": emp.get("position"),
+        "phone": emp.get("phone"),
+        "email": emp.get("email"),
+        "start_date": emp.get("start_date"),
+        "photo_url": emp.get("photo_url"),
+        "iban": emp.get("iban"),
+    }
+    compensation = {
+        "salary": _emp_num(emp.get("payroll_salary"), _emp_num(emp.get("salary"))),
+        "second_salary": _emp_num(emp.get("second_salary")),
+        "meal_allowance": _emp_num(emp.get("meal_allowance")),
+        "transport_allowance": _emp_num(emp.get("transport_allowance")),
+        "overtime_method": emp.get("overtime_method"),
+        "overtime_hourly_rate": emp.get("overtime_hourly_rate"),
+    }
+    payroll_public = [{
+        "id": p.get("id") or p.get("_id"), "period": p.get("period"), "status": p.get("status"),
+        "net_salary": p.get("net_salary"), "final_payable": p.get("final_payable", p.get("net_salary")),
+        "overtime_hours": p.get("overtime_hours"), "overtime_pay": p.get("overtime_pay"),
+        "second_salary": p.get("second_salary"), "advance_payment": p.get("advance_payment"),
+        "paid_at": p.get("paid_at"),
+    } for p in payrolls]
+    bonus_public = [{
+        "id": b.get("id") or b.get("_id"), "type": b.get("type"), "amount": b.get("amount"),
+        "status": b.get("status"), "period": b.get("period"), "note": b.get("note") or b.get("description"),
+        "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
+    } for b in bonuses]
+
+    return {
+        "employee": safe_emp,
+        "month": month,
+        "compensation": compensation,
+        "attendance": attendance.summarize(att_rows),
+        "leaves": leaves[:20],
+        "leave_balance": {
+            "annual": annual, "used": used_n, "remaining": annual - used_n,
+            "pending": sum(1 for l in leaves if l.get("status") == "pending"),
+        },
+        "payrolls": payroll_public,
+        "bonuses": bonus_public,
+        "balance": await _employee_receivable(emp, payrolls, bonuses, month),
+        "tasks": tasks,
+        "work_orders": work_orders,
+    }
+
+
 @api_router.delete("/files/{file_id}")
 async def delete_file_record(file_id: str):
     r = await db.files.update_one({"_id": file_id}, {"$set": {"is_deleted": True}})

@@ -48,6 +48,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
     { label: "Personel & Bordro", path: "/personnel" },
+    { label: "Personelim", path: "/personelim", badge: "Self" },
     { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
     { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
@@ -56,7 +57,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/panel": "/", "/edoc-inbox": "/invoices", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices", "/saha": "/orders" };
+  const LICENSE_KEY = { "/panel": "/", "/edoc-inbox": "/invoices", "/b2b-yonetim": "/contacts", "/dis-ticaret": "/invoices", "/saha": "/orders", "/personelim": "/mesai" };
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");

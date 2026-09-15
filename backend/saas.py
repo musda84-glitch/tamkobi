@@ -28,6 +28,7 @@ PANEL_MODULE_FROM = {
     "/dis-ticaret": "/invoices",
     "/b2b-yonetim": "/contacts",
     "/saha": "/orders",
+    "/personelim": "/mesai",
 }
 CATEGORIES = {
     "/invoices": "Muhasebe", "/edoc-inbox": "Muhasebe", "/dis-ticaret": "Muhasebe", "/dispatches": "Muhasebe",

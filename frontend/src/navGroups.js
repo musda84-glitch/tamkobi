@@ -48,6 +48,7 @@ const PATH_GROUP = {
   "/ecommerce": "eticaret",
   "/cargo": "eticaret",
   "/personnel": "ik",
+  "/personelim": "ik",
   "/mesai": "ik",
   "/communication": "iletisim",
   "/support": "iletisim",
