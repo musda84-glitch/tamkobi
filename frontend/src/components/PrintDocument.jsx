@@ -109,34 +109,67 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           <div className={isModern ? "px-10 pb-10" : ""}>
           {tpl.header_note && <p className="mt-3 text-slate-600 italic">{tpl.header_note}</p>}
           <div className="mt-5 grid grid-cols-2 gap-6">
-            <div><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div><div className="font-bold text-base">{customer}</div>{(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}{doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}{(doc.incoterm || doc.country) && <div className="text-slate-500 mt-1" data-testid="print-trade-meta">{[doc.incoterm, doc.country, doc.customs_office, doc.regime_code && `Rejim ${doc.regime_code}`, doc.declaration_no && `Bey. ${doc.declaration_no}`, doc.bl_awb && `BL ${doc.bl_awb}`, doc.dab_no && `DAB ${doc.dab_no}`, doc.certificate, doc.trade_file_number].filter(Boolean).join(" · ")}</div>}</div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div>
+              <div className="font-bold text-base">{customer}</div>
+              {(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}
+              {doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}
+              {(doc.customer_order_number || doc.po_number) && (
+                <div className="text-slate-700 mt-1.5 text-xs font-semibold" data-testid="print-customer-order-number">
+                  Müşteri sipariş no: <span className="font-mono">{doc.customer_order_number || doc.po_number}</span>
+                </div>
+              )}
+              {(doc.incoterm || doc.country) && <div className="text-slate-500 mt-1" data-testid="print-trade-meta">{[doc.incoterm, doc.country, doc.customs_office, doc.regime_code && `Rejim ${doc.regime_code}`, doc.declaration_no && `Bey. ${doc.declaration_no}`, doc.bl_awb && `BL ${doc.bl_awb}`, doc.dab_no && `DAB ${doc.dab_no}`, doc.certificate, doc.trade_file_number].filter(Boolean).join(" · ")}</div>}
+            </div>
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`}>
-            <thead><tr style={thStyle} className={thCls}>{tpl.show_images !== false && <th className={`p-2 w-12 ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}></th>}<th className="text-left p-2">Açıklama</th><th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>{!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}{!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}{!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}{!hideLine && <th className="text-right p-2">Tutar Hariç</th>}{!hideLine && !hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar Dahil</th>}{!hideLine && hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}</tr></thead>
+            <thead>
+              <tr style={thStyle} className={thCls}>
+                {tpl.show_images !== false && <th className={`p-2 w-12 text-left ${isModern ? "rounded-l-xl" : isMinimal ? "" : "rounded-l"}`}>Resim</th>}
+                <th className="text-left p-2">Açıklama</th>
+                {tpl.show_barcode !== false && <th className="text-left p-2 w-24">Barkod</th>}
+                <th className={`text-right p-2 ${hideLine ? (isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r") : ""}`}>Miktar</th>
+                {!hideLine && <th className="text-right p-2">Birim (KDV'siz)</th>}
+                {!hideLine && !hideVat && <th className="text-right p-2">Birim (KDV'li)</th>}
+                {!hideLine && !hideVat && <th className="text-right p-2">KDV</th>}
+                {!hideLine && <th className="text-right p-2">Tutar Hariç</th>}
+                {!hideLine && !hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar Dahil</th>}
+                {!hideLine && hideVat && <th className={`text-right p-2 ${isModern ? "rounded-r-xl" : isMinimal ? "" : "rounded-r"}`}>Tutar</th>}
+              </tr>
+            </thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
               const img = it.image_url || prod.image_url;
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
                 <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`}>
-                  {tpl.show_images !== false && <td className="p-1">{img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}</td>}
-                  <td className="p-2">
-                    <div className="flex flex-nowrap items-center gap-1.5 min-w-0">
-                      <span className="min-w-0 truncate">
+                  {tpl.show_images !== false && (
+                    <td className="p-1 align-middle" data-testid={`print-item-image-${i}`}>
+                      {img ? <img src={resolveImageUrl(img)} alt="" className="w-8 h-8 object-cover rounded border" /> : null}
+                    </td>
+                  )}
+                  <td className="p-2 align-middle">
+                    <div className="min-w-0">
+                      <span>
                         {it.name || it.product_name}
                         {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600">(%{it.discount_rate} isk.)</span>}
                       </span>
-                      {tpl.show_barcode && code && (
-                        <span className="shrink-0" data-testid={`print-item-barcode-${i}`}>
-                          <BarcodeRenderer code={String(code)} width={52} height={14} showText={false} compact />
-                        </span>
-                      )}
+                      {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
+                      {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                     </div>
-                    {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
-                    {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                   </td>
-                  <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
+                  {tpl.show_barcode !== false && (
+                    <td className="p-2 align-middle" data-testid={`print-item-barcode-${i}`}>
+                      {code ? (
+                        <div className="flex flex-col items-start gap-0.5">
+                          <BarcodeRenderer code={String(code)} width={72} height={18} showText={false} compact />
+                          <span className="font-mono text-[9px] text-slate-500 leading-none">{code}</span>
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
+                    </td>
+                  )}
+                  <td className="p-2 text-right align-middle">{it.quantity} {it.unit || ""}</td>
                   {!hideLine && <td className="p-2 text-right">{fmtM(it.unit_price)}</td>}
                   {!hideLine && !hideVat && <td className="p-2 text-right">{fmtM(it.unit_price_incl ?? (Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100)))}</td>}
                   {!hideLine && !hideVat && <td className="p-2 text-right">%{it.vat_rate ?? 20}</td>}

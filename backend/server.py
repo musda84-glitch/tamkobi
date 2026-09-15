@@ -6457,6 +6457,7 @@ async def _create_draft_invoice_for_order(order: dict) -> Optional[dict]:
         "source_channel": order.get("channel") or "b2b",
         "order_id": order["_id"],
         "order_number": order.get("order_number"),
+        "customer_order_number": order.get("customer_order_number") or order.get("po_number") or "",
         "created_at": now.isoformat(),
     }
     await db.invoices.insert_one(doc)
