@@ -653,6 +653,34 @@ async def bh_test(req: Dict[str, Any]):
     return res
 
 
+def _bh_index_existing_products(docs: List[dict]) -> tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
+    """Tek geçişte bizimhesap_id / barkod / sku indeksi — N+1 find_one'ı önler."""
+    by_bh: Dict[str, dict] = {}
+    by_bc: Dict[str, dict] = {}
+    by_sku: Dict[str, dict] = {}
+    for d in docs or []:
+        bh = str(d.get("bizimhesap_id") or "").strip()
+        if bh and bh not in by_bh:
+            by_bh[bh] = d
+        bc = str(d.get("barcode") or "").strip().lower()
+        if bc and bc not in by_bc:
+            by_bc[bc] = d
+        sk = str(d.get("sku") or "").strip().lower()
+        if sk and sk not in by_sku:
+            by_sku[sk] = d
+    return by_bh, by_bc, by_sku
+
+
+def _bh_match_existing(by_bh, by_bc, by_sku, ext_id: str, barcode: str, code: str) -> Optional[dict]:
+    if ext_id and ext_id in by_bh:
+        return by_bh[ext_id]
+    if barcode and barcode.lower() in by_bc:
+        return by_bc[barcode.lower()]
+    if code and code.lower() in by_sku:
+        return by_sku[code.lower()]
+    return None
+
+
 @router.post("/migration/bizimhesap/import")
 async def bh_import(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
@@ -662,79 +690,107 @@ async def bh_import(req: Dict[str, Any]):
     products, _cached = await _bh_products(company_id, token, firm_id, force=bool(req.get("force")))
     stock: Dict[str, float] = {}
     warehouse_id = (req.get("warehouse_id") or "").strip() or None
+    stock_warning = None
     if req.get("with_stock", True) and warehouse_id:
-        for it in _unwrap(await _bh_get(f"/inventory/{warehouse_id}", token, firm_id, timeout=90.0)):
-            try:
-                q = float(str(_pick(it, "qty", "quantity", "stock", "amount", default=0) or 0).replace(",", "."))
-            except (TypeError, ValueError):
-                continue
-            for k in ("id", "productId", "product_id", "barcode", "code", "sku"):
-                v = str(it.get(k) or "").strip().lower()
-                if v:
-                    stock[v] = q
+        try:
+            for it in _unwrap(await _bh_get(f"/inventory/{warehouse_id}", token, firm_id, timeout=90.0)):
+                try:
+                    q = float(str(_pick(it, "qty", "quantity", "stock", "amount", default=0) or 0).replace(",", "."))
+                except (TypeError, ValueError):
+                    continue
+                for k in ("id", "productId", "product_id", "barcode", "code", "sku"):
+                    v = str(it.get(k) or "").strip().lower()
+                    if v:
+                        stock[v] = q
+        except HTTPException as e:
+            # Depo envanteri alınamazsa ürün kartlarını yine de aktar (önceki davranış tüm işi düşürüyordu).
+            stock_warning = e.detail if isinstance(e.detail, str) else "Depo stok miktarları alınamadı."
     batch = {"_id": str(uuid.uuid4()), "company_id": company_id, "entity": "products", "entity_label": ENTITIES["products"]["label"], "source": "bizimhesap", "filename": "BizimHesap API /products", "on_duplicate": on_dup, "inserted_ids": [], "updated": [], "skipped": 0, "failed": 0, "errors": [], "status": "done", "created_at": _now(), "with_images": 0, "with_stock_qty": 0}
     only_active = req.get("only_active", True)
+    # Mevcut kartları bir kez yükle — MySQL doküman deposunda her ürün için find_one O(n²) + timeout yapıyordu.
+    existing_docs = await _db.products.find(
+        {"company_id": company_id},
+        {"_id": 1, "bizimhesap_id": 1, "barcode": 1, "sku": 1},
+    ).to_list(100000)
+    by_bh, by_bc, by_sku = _bh_index_existing_products(existing_docs)
     for p in products:
-        if only_active and str(p.get("isActive", 1)) not in ("1", "True", "true"):
-            batch["skipped"] += 1; continue
-        name = _pick(p, "title", "name", "productName")
-        if not name:
-            batch["failed"] += 1; batch["errors"].append({"row": 0, "label": str(_pick(p, "id", default="?")), "errors": ["Ürün adı (title) yok"]}); continue
-        ext_id = str(_pick(p, "id", default="")).strip()
-        code = str(_pick(p, "code", "sku", default="") or "").strip()
-        barcode = str(_pick(p, "barcode", default="") or "").strip()
-        sku = code or (f"BH-{ext_id[:8]}" if ext_id else None)
-        data: Dict[str, Any] = {"name": str(name).strip()[:200], "sku": sku, "barcode": barcode or None, "category": str(p.get("category") or "").strip() or None, "unit": str(p.get("unit") or "").strip() or None,
-                                "brand": str(p.get("brand") or "").strip() or None, "description": str(p.get("description") or "").strip() or None, "variant_name": str(p.get("variantName") or "").strip() or None, "is_active": True}
-        for f, keys in (("sale_price", ("price", "salePrice")), ("purchase_price", ("buyingPrice", "purchasePrice")), ("vat_rate", ("tax", "taxRate", "vat"))):
-            v = _pick(p, *keys)
-            if v not in (None, ""):
-                try:
-                    data[f] = int(round(_to_money(v))) if f == "vat_rate" else _to_money(v)
-                except ValueError:
-                    pass
-        if str(p.get("currency") or "").upper() in ("USD", "EUR", "GBP"):
-            data["currency"] = str(p["currency"]).upper()
-        if with_images:
-            photo = _bh_photo_url(p)
-            if photo:
-                data["image_url"] = photo
-                data["images"] = [photo]
-                batch["with_images"] += 1
-        qty = None
-        for k in (ext_id.lower() if ext_id else None, barcode.lower() if barcode else None, code.lower() if code else None):
-            if k and k in stock:
-                qty = stock[k]; break
-        if qty is None and p.get("quantity") not in (None, "") and not stock:
-            try:
-                qty = float(str(p["quantity"]).replace(",", "."))
-            except (TypeError, ValueError):
-                qty = None
-        if qty is not None:
-            data["stock_quantity"] = qty
-            batch["with_stock_qty"] += 1
-        data = {k: v for k, v in data.items() if v is not None}
-        ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"barcode": barcode}] if barcode else []) + ([{"sku": code}] if code else [])
-        existing = await _db.products.find_one({"company_id": company_id, "$or": ors}) if ors else None
-        if existing:
-            if on_dup == "skip":
+        try:
+            if only_active and str(p.get("isActive", 1)) not in ("1", "True", "true"):
                 batch["skipped"] += 1; continue
-            upd = {**data, "bizimhesap_id": ext_id}
-            await _db.products.update_one({"_id": existing["_id"]}, {"$set": upd})
-            batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
-        else:
-            doc = _build_doc("products", company_id, data, batch["_id"]); doc["bizimhesap_id"] = ext_id; doc["source"] = "bizimhesap"
-            await _db.products.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
+            name = _pick(p, "title", "name", "productName")
+            if not name:
+                batch["failed"] += 1; batch["errors"].append({"row": 0, "label": str(_pick(p, "id", default="?")), "errors": ["Ürün adı (title) yok"]}); continue
+            ext_id = str(_pick(p, "id", default="")).strip()
+            code = str(_pick(p, "code", "sku", default="") or "").strip()
+            barcode = str(_pick(p, "barcode", default="") or "").strip()
+            sku = code or (f"BH-{ext_id[:8]}" if ext_id else None)
+            data: Dict[str, Any] = {"name": str(name).strip()[:200], "sku": sku, "barcode": barcode or None, "category": str(p.get("category") or "").strip() or None, "unit": str(p.get("unit") or "").strip() or None,
+                                    "brand": str(p.get("brand") or "").strip() or None, "description": str(p.get("description") or "").strip() or None, "variant_name": str(p.get("variantName") or "").strip() or None, "is_active": True}
+            for f, keys in (("sale_price", ("price", "salePrice")), ("purchase_price", ("buyingPrice", "purchasePrice")), ("vat_rate", ("tax", "taxRate", "vat"))):
+                v = _pick(p, *keys)
+                if v not in (None, ""):
+                    try:
+                        data[f] = int(round(_to_money(v))) if f == "vat_rate" else _to_money(v)
+                    except ValueError:
+                        pass
+            if str(p.get("currency") or "").upper() in ("USD", "EUR", "GBP"):
+                data["currency"] = str(p["currency"]).upper()
+            if with_images:
+                photo = _bh_photo_url(p)
+                if photo:
+                    data["image_url"] = photo
+                    data["images"] = [photo]
+                    batch["with_images"] += 1
+            qty = None
+            for k in (ext_id.lower() if ext_id else None, barcode.lower() if barcode else None, code.lower() if code else None):
+                if k and k in stock:
+                    qty = stock[k]; break
+            if qty is None and p.get("quantity") not in (None, "") and not stock:
+                try:
+                    qty = float(str(p["quantity"]).replace(",", "."))
+                except (TypeError, ValueError):
+                    qty = None
+            if qty is not None:
+                data["stock_quantity"] = qty
+                batch["with_stock_qty"] += 1
+            data = {k: v for k, v in data.items() if v is not None}
+            existing = _bh_match_existing(by_bh, by_bc, by_sku, ext_id, barcode, code)
+            if existing:
+                if on_dup == "skip":
+                    batch["skipped"] += 1; continue
+                upd = {**data, "bizimhesap_id": ext_id}
+                await _db.products.update_one({"_id": existing["_id"]}, {"$set": upd})
+                batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
+                # indeks güncelle
+                by_bh[ext_id] = {**existing, **upd} if ext_id else existing
+            else:
+                doc = _build_doc("products", company_id, data, batch["_id"]); doc["bizimhesap_id"] = ext_id; doc["source"] = "bizimhesap"
+                await _db.products.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
+                if ext_id:
+                    by_bh[ext_id] = doc
+                if barcode:
+                    by_bc[barcode.lower()] = doc
+                if code:
+                    by_sku[code.lower()] = doc
+        except Exception as e:
+            batch["failed"] += 1
+            batch["errors"].append({"row": 0, "label": str((p or {}).get("id") or (p or {}).get("title") or "?"), "errors": [str(e)[:160]]})
+            if len(batch["errors"]) > 500:
+                batch["errors"] = batch["errors"][:500]
     await _db.migration_batches.insert_one(batch)
     last = {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "with_images": batch["with_images"], "with_stock_qty": batch["with_stock_qty"], "warehouse_id": warehouse_id}
     await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": {"last_import": last}})
     parts = [f"BizimHesap: {len(products)} ürün okundu → {len(batch['inserted_ids'])} yeni stok kartı, {len(batch['updated'])} güncellendi, {batch['skipped']} atlandı"]
+    if batch["failed"]:
+        parts.append(f"{batch['failed']} ürün hatalı")
     if stock:
         parts.append(f"depodan {len(stock)} stok kaydı eşlendi ({batch['with_stock_qty']} karta yazıldı)")
+    elif stock_warning:
+        parts.append(f"stok miktarı atlandı ({stock_warning})")
     if with_images:
         parts.append(f"{batch['with_images']} üründe resim alındı")
     return {"status": "success", "batch_id": batch["_id"], "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "skipped": batch["skipped"], "failed": batch["failed"], "with_stock": bool(stock), "with_images": batch["with_images"], "with_stock_qty": batch["with_stock_qty"],
-            "message": "; ".join(parts) + "."}
+            "stock_warning": stock_warning, "message": "; ".join(parts) + "."}
 
 
 _BH_TYPE_FIELDS = ("type", "customertype", "caritype", "kind", "accounttype", "carituru")

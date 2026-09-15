@@ -27,21 +27,33 @@ const BizimHesapCard = ({ companyId, onImported }) => {
   const [stockOpt, setStockOpt] = useState({ with_stock: true, with_images: true, only_active: true });
   const [busy, setBusy] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/migration/bizimhesap/config?company_id=${companyId}`).then((r) => { setCfg(r.data); setFirmId(r.data.firm_id || ""); }).catch(() => {}), [companyId]);
+  const errDetail = (e, fallback) => {
+    const d = e?.response?.data?.detail;
+    if (Array.isArray(d)) return d.map((x) => x?.msg || x?.detail || JSON.stringify(x)).join("; ") || fallback;
+    return (typeof d === "string" && d) || fallback;
+  };
   const loadWarehouses = useCallback(async () => {
     try {
-      const r = await axios.get(`${API_URL}/migration/bizimhesap/warehouses`, { params: { company_id: companyId } });
+      const r = await axios.get(`${API_URL}/migration/bizimhesap/warehouses`, { params: { company_id: companyId }, timeout: 30000 });
       const list = r.data?.warehouses || [];
       setWarehouses(list);
       setWh((prev) => prev || list[0]?.id || "");
-    } catch { /* token yoksa sessiz */ }
+      if (!list.length) setErr((prev) => prev || "Depo listesi boş geldi. Bağlantıyı Test Et ile yeniden deneyin.");
+    } catch (e) {
+      setErr(errDetail(e, "Depolar alınamadı. Token/Firma ID kontrol edin."));
+    }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (cfg?.configured) loadWarehouses(); }, [cfg?.configured, loadWarehouses]);
-  const save = async () => { setBusy("save"); setErr(""); try { await axios.put(`${API_URL}/migration/bizimhesap/config`, { company_id: companyId, token, firm_id: firmId }); toast.success("BizimHesap bağlantı bilgileri kaydedildi."); setToken(""); load(); } catch (e) { const m = e.response?.data?.detail || "Kaydedilemedi."; setErr(m); toast.error(m); } finally { setBusy(""); } };
-  const runTest = async () => { setBusy("test"); setErr(""); setTest(null); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/test`, { company_id: companyId, token: token || undefined, firm_id: firmId || undefined }); setTest(r.data); setWarehouses(r.data.warehouses || []); if (r.data.warehouses?.[0]) setWh(r.data.warehouses[0].id); if (r.data.product_error) { setErr(r.data.product_error); toast.success(`Bağlantı kuruldu: ${r.data.warehouses.length} depo. Ürün listesi alınamadı.`); } else { toast.success(`Bağlantı başarılı: ${r.data.product_count} ürün${r.data.with_photo ? ` · ${r.data.with_photo} resimli` : ""}, ${r.data.warehouses.length} depo.`); } } catch (e) { const m = e.response?.data?.detail || "Bağlantı testi başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const save = async () => { setBusy("save"); setErr(""); try { await axios.put(`${API_URL}/migration/bizimhesap/config`, { company_id: companyId, token, firm_id: firmId }); toast.success("BizimHesap bağlantı bilgileri kaydedildi."); setToken(""); load(); } catch (e) { const m = errDetail(e, "Kaydedilemedi."); setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const runTest = async () => { setBusy("test"); setErr(""); setTest(null); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/test`, { company_id: companyId, token: token || undefined, firm_id: firmId || undefined }, { timeout: 120000 }); setTest(r.data); setWarehouses(r.data.warehouses || []); if (r.data.warehouses?.[0]) setWh(r.data.warehouses[0].id); if (r.data.product_error) { setErr(r.data.product_error); toast.success(`Bağlantı kuruldu: ${r.data.warehouses.length} depo. Ürün listesi alınamadı.`); } else { toast.success(`Bağlantı başarılı: ${r.data.product_count} ürün${r.data.with_photo ? ` · ${r.data.with_photo} resimli` : ""}, ${r.data.warehouses.length} depo.`); } } catch (e) { const m = errDetail(e, "Bağlantı testi başarısız."); setErr(m); toast.error(m); } finally { setBusy(""); } };
   const [custOpt, setCustOpt] = useState({ only_with_balance: false, invert_sign: false, contact_type: "auto" });
-  const importCustomers = async () => { if (!window.confirm("BizimHesap carileri (ünvan, VKN, iletişim, bakiye) aktarılsın mı? Mevcut cariler VKN/ünvan eşleşmesiyle güncellenir ve müşteri/tedarikçi türleri yeniden belirlenir; işlem Aktarım Günlüğü'nden geri alınabilir.")) return; setBusy("cust"); setErr(""); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/import-customers`, { company_id: companyId, ...custOpt, on_duplicate: "update" }); toast.success(r.data.message); load(); onImported(); } catch (e) { const m = e.response?.data?.detail || "Cari aktarımı başarısız."; setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const importCustomers = async () => { if (!window.confirm("BizimHesap carileri (ünvan, VKN, iletişim, bakiye) aktarılsın mı? Mevcut cariler VKN/ünvan eşleşmesiyle güncellenir ve müşteri/tedarikçi türleri yeniden belirlenir; işlem Aktarım Günlüğü'nden geri alınabilir.")) return; setBusy("cust"); setErr(""); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/import-customers`, { company_id: companyId, ...custOpt, on_duplicate: "update" }, { timeout: 180000 }); toast.success(r.data.message); load(); try { onImported?.(); } catch { /* ignore */ } } catch (e) { const m = errDetail(e, "Cari aktarımı başarısız."); setErr(m); toast.error(m); } finally { setBusy(""); } };
   const doImport = async () => {
+    if (stockOpt.with_stock && !wh) {
+      const m = whList.length ? "Stok miktarı için depo seçin." : "Depo listesi yok. Önce Bağlantıyı Test Et veya Depoları yenile; ya da ‘Stok miktarlarını çek’i kapatıp yalnızca kartları aktarın.";
+      setErr(m); toast.error(m); return;
+    }
     if (!window.confirm("BizimHesap stok kartları (ürün, miktar, resim) aktarılsın mı? Mevcut barkod/SKU eşleşen kartlar güncellenir.")) return;
     setBusy("import"); setErr("");
     try {
@@ -52,12 +64,13 @@ const BizimHesapCard = ({ companyId, onImported }) => {
         only_active: !!stockOpt.only_active,
         warehouse_id: stockOpt.with_stock ? (wh || null) : null,
         on_duplicate: "update",
-      });
-      toast.success(r.data.message);
+      }, { timeout: 300000 });
+      toast.success(r.data.message || "Stok aktarımı tamamlandı.");
+      if (r.data.stock_warning) toast.message(String(r.data.stock_warning));
       load();
-      onImported();
+      try { onImported?.(); } catch { /* ignore */ }
     } catch (e) {
-      const m = e.response?.data?.detail || "Stok aktarımı başarısız.";
+      const m = errDetail(e, e.code === "ECONNABORTED" ? "Aktarım zaman aşımına uğradı. Depo stokunu kapatıp tekrar deneyin." : "Stok aktarımı başarısız.");
       setErr(m); toast.error(m);
     } finally { setBusy(""); }
   };
@@ -95,10 +108,15 @@ const BizimHesapCard = ({ companyId, onImported }) => {
                 {whList.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </label>
-            <button onClick={doImport} disabled={busy === "import" || (stockOpt.with_stock && !wh && whList.length > 0)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import">
+            <button onClick={doImport} disabled={busy === "import" || (stockOpt.with_stock && !wh)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import">
               {busy === "import" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Stok Kartlarını Aktar
             </button>
           </div>
+          {stockOpt.with_stock && !wh && (
+            <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1" data-testid="bh-warehouse-hint">
+              Stok miktarı için depo seçin. Depo yoksa kutuyu kapatıp yalnızca ürün kartlarını aktarabilirsiniz.
+            </div>
+          )}
           {cfg?.last_import && (
             <div className="text-[10px] text-slate-400" data-testid="bh-last-import">
               Son stok aktarımı: {new Date(cfg.last_import.at).toLocaleString("tr-TR")} · {cfg.last_import.inserted} yeni, {cfg.last_import.updated} güncellendi
