@@ -53,6 +53,20 @@ class TestPreferences:
         # restore
         client.put(f"{BASE}/auth/me/preferences", json={"module_order": original or []}, timeout=30)
 
+    def test_update_and_persist_dashboard_layout(self, client):
+        original = client.get(f"{BASE}/auth/me", timeout=30).json()["user"].get("preferences", {}).get("dashboard_layout")
+        layout = ["charts", "alerts", "overview", "decision", "demo", "ai", "kpis", "bottom"]
+        r = client.put(f"{BASE}/auth/me/preferences", json={"dashboard_layout": layout}, timeout=30)
+        assert r.status_code == 200, r.text
+        assert r.json().get("dashboard_layout") == layout
+        me = client.get(f"{BASE}/auth/me", timeout=30).json()
+        assert me["user"]["preferences"]["dashboard_layout"] == layout
+        client.put(f"{BASE}/auth/me/preferences", json={"dashboard_layout": original or []}, timeout=30)
+
+    def test_dashboard_layout_must_be_list(self, client):
+        r = client.put(f"{BASE}/auth/me/preferences", json={"dashboard_layout": "alerts"}, timeout=30)
+        assert r.status_code == 400
+
     def test_disallowed_key_ignored(self, client):
         r = client.put(f"{BASE}/auth/me/preferences", json={"role": "superadmin"}, timeout=30)
         assert r.status_code == 200

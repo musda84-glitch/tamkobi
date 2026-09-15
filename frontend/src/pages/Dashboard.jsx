@@ -7,6 +7,7 @@ import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
 import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { OpsAlertsPanel } from "../components/OpsAlertsPanel";
+import { useDashboardLayout } from "../hooks/useDashboardLayout";
 
 import {
   TrendingUp,
@@ -38,10 +39,11 @@ import {
 
 export default function Dashboard() {
   const { activeCompany, addonOn } = useAuth();
+  const { order, wrap, toolbar } = useDashboardLayout();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const fetchStats = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
@@ -105,26 +107,26 @@ export default function Dashboard() {
     }
   ];
 
-  return (
-    <div className="space-y-8" data-testid="dashboard-view">
-      {/* Bildirimler üstte — personel talepleri ilk bakışta görünsün */}
+  const sections = {
+    alerts: (
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="dashboard-alerts-row">
         <PersonnelRequestsInbox companyId={companyId} />
         <OpsAlertsPanel companyId={companyId} />
       </div>
-      <OverviewPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-      {stats.decision?.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="dashboard-decision">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Yönetici karar özeti</div>
-          <div className="flex flex-wrap gap-2">
-            {stats.decision.map((d, i) => (
-              <Link key={i} to={d.path || "/reports"} className="text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 font-semibold text-slate-800" data-testid={`dashboard-decision-${i}`}>{d.text}</Link>
-            ))}
-          </div>
+    ),
+    overview: <OverviewPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />,
+    decision: stats.decision?.length > 0 ? (
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="dashboard-decision">
+        <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Yönetici karar özeti</div>
+        <div className="flex flex-wrap gap-2">
+          {stats.decision.map((d, i) => (
+            <Link key={i} to={d.path || "/reports"} className="text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 font-semibold text-slate-800" data-testid={`dashboard-decision-${i}`}>{d.text}</Link>
+          ))}
         </div>
-      )}
-      <DemoContentCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} variant="dashboard" />
-      {/* Top Banner / AI Fast Advisory */}
+      </div>
+    ) : null,
+    demo: <DemoContentCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} variant="dashboard" />,
+    ai: (
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden border border-slate-800">
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -154,8 +156,8 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-
-      {/* 4 Main KPI Cards */}
+    ),
+    kpis: (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => {
           const Icon = kpi.icon;
@@ -182,8 +184,8 @@ export default function Dashboard() {
           );
         })}
       </div>
-
-      {/* Charts Section: 6-Month Income vs Expense & Channels Pie */}
+    ),
+    charts: (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Revenue & Expense Area Chart */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
@@ -268,8 +270,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      {/* Bottom Grid: Recent Invoices & Critical Stock Alerts */}
+    ),
+    bottom: (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Invoices */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
@@ -331,6 +333,16 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+    ),
+  };
+
+  return (
+    <div className="space-y-6" data-testid="dashboard-view">
+      {toolbar}
+      <div className="space-y-8" data-testid="dashboard-sections">
+        {order.map((id) => wrap(id, sections[id]))}
+      </div>
     </div>
   );
+
 }
