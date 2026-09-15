@@ -5,6 +5,7 @@ import JsBarcode from "jsbarcode";
 import { QRCodeSVG } from "qrcode.react";
 import { Printer, X, Tag } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { isEan13 } from "../utils/barcodeFormat";
 
 const SIZES = [
   { key: "40x20", label: "40 × 20 mm (Raf)", w: 40, h: 20, img: false },
@@ -18,8 +19,6 @@ const Check = ({ k, label, opts, setOpts }) => (
   <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer"><input type="checkbox" checked={opts[k]} onChange={(e) => setOpts({ ...opts, [k]: e.target.checked })} className="rounded" data-testid={`label-opt-${k}`} /> {label}</label>
 );
 
-const isEan13 = (c) => /^\d{13}$/.test(c) && (10 - (c.slice(0, 12).split("").reduce((s, d, i) => s + Number(d) * (i % 2 ? 3 : 1), 0) % 10)) % 10 === Number(c[12]);
-
 export const Barcode = ({ value, height = 40, width = 1.6, fontSize = 11, displayValue = true, className = "max-w-full" }) => {
   const ref = useRef(null);
   const showText = displayValue && fontSize > 0;
@@ -29,7 +28,8 @@ export const Barcode = ({ value, height = 40, width = 1.6, fontSize = 11, displa
       JsBarcode(ref.current, String(value), {
         format: isEan13(String(value)) ? "EAN13" : "CODE128",
         height, width, fontSize: showText ? fontSize : 0,
-        margin: 0, displayValue: showText, textMargin: showText ? 1 : 0, font: "monospace"
+        margin: 8, displayValue: showText, textMargin: showText ? 1 : 0, font: "monospace",
+        background: "#ffffff", lineColor: "#0f172a",
       });
     } catch { /* invalid code */ }
   }, [value, height, width, fontSize, showText]);

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const barcodeSvg = (value) => {
-  try { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); JsBarcode(svg, String(value), { format: "CODE128", displayValue: true, height: 46, width: 1.6, fontSize: 11, margin: 0 }); return svg.outerHTML; }
+  try { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); JsBarcode(svg, String(value), { format: "CODE128", displayValue: true, height: 46, width: 1.6, fontSize: 11, margin: 10, background: "#ffffff" }); return svg.outerHTML; }
   catch { return `<div class="mono">${esc(value)}</div>`; }
 };
 
