@@ -101,7 +101,7 @@ export const HeaderFxRates = ({ companyId }) => {
   };
 
   return (
-    <div className="relative hidden md:block" ref={box}>
+    <div className="relative" ref={box} data-testid="header-fx-wrap">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
