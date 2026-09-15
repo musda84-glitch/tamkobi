@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -162,6 +162,41 @@ export default function ProjectsPage({ section } = {}) {
     setItems([{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]);
     ensureFormRefs();
   };
+  const openEditQuote = async (q) => {
+    await ensureFormRefs();
+    try {
+      const r = await axios.get(`${API_URL}/quotes/${q.id}`);
+      const full = r.data || q;
+      setForm({
+        id: full.id,
+        kind: "quote",
+        contact_id: full.contact_id || "",
+        contact_name: full.contact_name || "",
+        title: full.title || "",
+        name: "",
+        valid_until: full.valid_until || "",
+        notes: full.notes || "",
+        address: full.address || "",
+        budget: "",
+        start_date: "",
+        end_date: "",
+        survey_date: "",
+        measurements: [],
+        project_id: full.project_id || "",
+      });
+      const its = (full.items || []).filter((i) => i?.name);
+      setItems(its.length ? its.map((i) => ({
+        product_id: i.product_id || "",
+        name: i.name || "",
+        quantity: Number(i.quantity) || 1,
+        unit_price: Number(i.unit_price) || 0,
+        vat_rate: Number(i.vat_rate) || 20,
+        unit: i.unit || "Adet",
+      })) : [{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]);
+    } catch {
+      toast.error("Teklif yüklenemedi.");
+    }
+  };
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });
   const [newContact, setNewContact] = useState(null);
   const createContact = async (e) => {
@@ -175,10 +210,24 @@ export default function ProjectsPage({ section } = {}) {
   const save = async (e) => {
     e.preventDefault();
     try {
-      if (form.kind === "quote") await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, items: items.filter((i) => i.name) });
-      else if (form.kind === "project") await axios.post(`${API_URL}/projects`, { company_id: companyId, ...form, budget: Number(form.budget || 0) });
-      else await axios.post(`${API_URL}/surveys`, { company_id: companyId, ...form, measurements: items.filter((i) => i.name).map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit, unit_price: i.unit_price })) });
-      toast.success("Kaydedildi."); setForm(null); load();
+      const lineItems = items.filter((i) => i.name);
+      if (form.kind === "quote") {
+        if (form.id) {
+          await axios.put(`${API_URL}/quotes/${form.id}`, {
+            title: form.title,
+            contact_id: form.contact_id,
+            contact_name: form.contact_name,
+            valid_until: form.valid_until,
+            notes: form.notes,
+            project_id: form.project_id || undefined,
+            items: lineItems,
+          });
+        } else {
+          await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, items: lineItems });
+        }
+      } else if (form.kind === "project") await axios.post(`${API_URL}/projects`, { company_id: companyId, ...form, budget: Number(form.budget || 0) });
+      else await axios.post(`${API_URL}/surveys`, { company_id: companyId, ...form, measurements: lineItems.map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit, unit_price: i.unit_price })) });
+      toast.success(form.id ? "Güncellendi." : "Kaydedildi."); setForm(null); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
 
@@ -255,6 +304,7 @@ export default function ProjectsPage({ section } = {}) {
                 <ImageStrip entity="quote" doc={q} onUpdated={load} />
                 <div className="flex flex-wrap gap-1.5 pt-1 border-t">
                   <button onClick={() => openPrintQuote(q)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır"><Printer className="w-4 h-4" /></button>
+                  <button onClick={() => openEditQuote(q)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg" title="Düzenle" data-testid={`edit-quote-${q.quote_number}`}><Pencil className="w-4 h-4" /></button>
                   <button onClick={() => openApproval(q)} className={`px-2.5 py-1.5 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`}>{q.approval ? "Onay" : "Onaya Gönder"}</button>
                   <button onClick={() => setPlanQuote(q)} className="px-2.5 py-1.5 border rounded-lg font-semibold text-slate-600">Ödeme Planı</button>
                   {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2.5 py-1.5 border rounded-lg font-semibold">Gönderildi</button>}
@@ -278,6 +328,7 @@ export default function ProjectsPage({ section } = {}) {
                   <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.project_number && <div className="font-mono text-[10px] text-indigo-700">{q.project_number}</div>}{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
                   <td className="px-4 py-2"><div className="flex justify-end gap-1 flex-wrap">
                     <button onClick={() => openPrintQuote(q)} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır" data-testid={`print-quote-${q.quote_number}`}><Printer className="w-4 h-4" /></button>
+                    <button onClick={() => openEditQuote(q)} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Düzenle" data-testid={`edit-quote-${q.quote_number}`}><Pencil className="w-4 h-4" /></button>
                     <button onClick={() => openApproval(q)} className={`px-2 py-1 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`} data-testid={`approval-quote-${q.quote_number}`}>{q.approval ? "Onay Durumu" : "Onaya Gönder"}</button>
                     <button onClick={() => setPlanQuote(q)} className={`px-2 py-1 border rounded-lg font-semibold ${q.payment_plan ? "border-violet-300 text-violet-700 bg-violet-50" : "text-slate-600"}`} data-testid={`plan-quote-${q.quote_number}`}>{q.payment_plan ? `${q.payment_plan.rows.length} Taksit` : "Ödeme Planı"}</button>
                     {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`send-quote-${q.quote_number}`}>Gönderildi</button>}
@@ -385,7 +436,7 @@ export default function ProjectsPage({ section } = {}) {
       {form && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <form onSubmit={save} className="bg-white rounded-t-2xl sm:rounded-2xl max-w-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" data-testid={`${form.kind}-form`}>
-            <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? "Yeni Teklif" : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+            <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
               {form.kind === "quote" && <div><label className="block font-semibold mb-1">Başlık</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Fiyat Teklifi" data-testid="pf-title" /></div>}
