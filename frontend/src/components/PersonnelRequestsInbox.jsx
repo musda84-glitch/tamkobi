@@ -1,0 +1,159 @@
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import axios from "axios";
+import { toast } from "sonner";
+import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, X } from "lucide-react";
+import { API_URL } from "../context/AuthContext";
+import { useDataRefresh } from "../utils/dataRefresh";
+
+const KIND_META = {
+  leave: { label: "İzin", Icon: CalendarDays, chip: "bg-indigo-50 text-indigo-700 border-indigo-100" },
+  early_leave: { label: "Erken çıkış", Icon: Clock, chip: "bg-amber-50 text-amber-800 border-amber-100" },
+  dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
+};
+
+/** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
+export function PersonnelRequestsInbox({ companyId, onChanged }) {
+  const navigate = useNavigate();
+  const [items, setItems] = useState([]);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const r = await axios.get(`${API_URL}/personnel/pending-requests`, { params: { company_id: companyId } });
+      setItems(r.data?.items || []);
+      setCount(Number(r.data?.count || 0));
+    } catch {
+      /* sessiz — sayfa yine açılır */
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
+
+  useEffect(() => { setLoading(true); load(); }, [load]);
+  useDataRefresh(load, { companyId, scopes: ["personnel", "attendance"] });
+
+  const decideLeave = async (id, status) => {
+    setBusyId(id);
+    try {
+      await axios.post(`${API_URL}/personnel/leaves/${id}/decide`, { status });
+      toast.success(status === "approved" ? "İzin onaylandı." : "İzin reddedildi.");
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decideEarly = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="personnel-requests-inbox">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50/80">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="relative shrink-0">
+            <Bell className="w-4 h-4 text-amber-600" />
+            {count > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[1rem] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center" data-testid="personnel-requests-count">
+                {count > 99 ? "99+" : count}
+              </span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-slate-900 truncate">Personel Talepleri</h2>
+            <p className="text-[11px] text-slate-500 truncate">
+              {loading ? "Yükleniyor…" : count ? `${count} onay bekleyen talep` : "Bekleyen talep yok"}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => { setLoading(true); load(); }}
+          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-white hover:text-slate-800"
+          title="Yenile"
+          data-testid="personnel-requests-refresh"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {loading && items.length === 0 ? (
+        <div className="px-4 py-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" /> Talepler yükleniyor…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
+          Şu an onay bekleyen izin, erken çıkış veya puantaj itirazı yok.
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
+          {items.map((it) => {
+            const meta = KIND_META[it.kind] || KIND_META.leave;
+            const Icon = meta.Icon;
+            const busy = busyId === it.id;
+            return (
+              <li key={`${it.kind}-${it.id}`} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3" data-testid={`personnel-request-${it.kind}-${it.id}`}>
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold shrink-0 ${meta.chip}`}>
+                    <Icon className="w-3 h-3" /> {meta.label}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-900 truncate">{it.employee_name}</div>
+                    <div className="text-[11px] text-slate-600 font-semibold">{it.title}</div>
+                    <div className="text-[11px] text-slate-500 truncate" title={it.detail}>{it.detail}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                  {it.kind === "leave" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideLeave(it.id, "approved")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-leave-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideLeave(it.id, "rejected")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-leave-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "early_leave" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-early-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-early-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "dispute" && (
+                    <button type="button" onClick={() => navigate(it.link || "/personnel?tab=attendance")} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-50" data-testid={`inbox-view-dispute-${it.id}`}>
+                      Puantajda aç
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export default PersonnelRequestsInbox;

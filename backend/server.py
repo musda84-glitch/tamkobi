@@ -1810,7 +1810,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
-    invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, budgets = await asyncio.gather(
+    invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, early_leaves, budgets = await asyncio.gather(
         db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}},
                          {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1}).to_list(20000),
         db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1}).to_list(5000),
@@ -1820,6 +1820,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}),
         db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000),
         db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "early_leave_request.status": "pending"}),
         expenses.get_budgets(company_id),
     )
     def bucket(t):
@@ -1854,10 +1855,9 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         {"key": "drafts", "label": "Taslak fatura", "count": len(drafts), "path": "/invoices"},
         {"key": "quotes", "label": "Onay bekleyen teklif", "count": quotes, "path": "/projects"},
         {"key": "critical_stock", "label": "Kritik stok", "count": crit, "path": "/stock"},
-        {"key": "leaves", "label": "Bekleyen izin talebi", "count": leaves, "path": "/personnel"},
+        {"key": "leaves", "label": "Bekleyen personel talebi", "count": int(leaves or 0) + int(early_leaves or 0), "path": "/personnel"},
         {"key": "quotes", "label": "Onay bekleyen teklif", "count": await db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}), "path": "/quotes"},
         {"key": "critical_stock", "label": "Kritik stok", "count": len([p for p in await db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000) if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)]), "path": "/stock"},
-        {"key": "leaves", "label": "Bekleyen izin talebi", "count": await db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}), "path": "/personnel"},
     ]
     return {"date": today, "tasks": [t for t in tasks if t["count"]], "collections": bucket("sales"), "payments": bucket("purchase"),
             "drafts": {"count": len(drafts), "total": round(sum(float(i.get("grand_total", 0)) for i in drafts), 2)},
@@ -6171,6 +6171,70 @@ async def delete_stock_count(count_id: str):
     return {"status": "success", "message": "Sayım çöp kutusuna taşındı."}
 
 # ----------------- PERSONEL: İZİN, MAAŞ HESABI, PRİM -----------------
+_LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid": "Ücretsiz izin", "other": "Diğer izin"}
+
+
+@api_router.get("/personnel/pending-requests")
+async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış ve puantaj itirazları."""
+    leaves = await db.leave_requests.find({"company_id": company_id, "status": "pending"}).sort("created_at", -1).to_list(200)
+    early = await db.attendance.find(
+        {"company_id": company_id, "early_leave_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    disputes = await db.attendance.find(
+        {
+            "company_id": company_id,
+            "dispute_note": {"$exists": True, "$nin": [None, ""]},
+            "dispute_resolved": {"$ne": True},
+        }
+    ).sort("disputed_at", -1).to_list(100)
+    items = []
+    for lv in leaves:
+        kind_tr = _LEAVE_TYPE_TR.get(lv.get("type"), "İzin")
+        items.append({
+            "kind": "leave",
+            "id": lv.get("_id") or lv.get("id"),
+            "employee_id": lv.get("employee_id"),
+            "employee_name": lv.get("employee_name") or "—",
+            "title": f"{kind_tr} talebi",
+            "detail": f"{lv.get('start_date')} → {lv.get('end_date')} · {lv.get('days') or '?'} gün"
+                      + (f" · {lv.get('reason')}" if lv.get("reason") else ""),
+            "created_at": lv.get("created_at") or "",
+            "link": "/personnel?tab=leaves",
+            "meta": {"type": lv.get("type"), "start_date": lv.get("start_date"), "end_date": lv.get("end_date"), "days": lv.get("days")},
+        })
+    for att in early:
+        elr = att.get("early_leave_request") or {}
+        planned = elr.get("planned_time") or ""
+        items.append({
+            "kind": "early_leave",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Erken çıkış talebi",
+            "detail": f"{att.get('date') or ''}"
+                      + (f" · planlanan {planned}" if planned else "")
+                      + (f" · {elr.get('reason')}" if elr.get("reason") else ""),
+            "created_at": elr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {"date": att.get("date"), "planned_time": planned, "reason": elr.get("reason")},
+        })
+    for att in disputes:
+        items.append({
+            "kind": "dispute",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Puantaj itirazı",
+            "detail": f"{att.get('date') or ''} · {(att.get('dispute_note') or '')[:160]}",
+            "created_at": att.get("disputed_at") or att.get("updated_at") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {"date": att.get("date"), "dispute_note": att.get("dispute_note")},
+        })
+    items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return {"count": len(items), "items": items}
+
+
 @api_router.get("/personnel/leaves")
 async def list_leaves(company_id: Optional[str] = "comp_nexus_main_01", employee_id: Optional[str] = None):
     q = {"company_id": company_id}
