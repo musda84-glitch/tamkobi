@@ -1,9 +1,10 @@
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { CalendarCheck, ArrowDownCircle, ArrowUpCircle, FileText, Percent, AlertTriangle, ChevronRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -35,7 +36,12 @@ const RingCard = ({ title, icon: Icon, data, tone, path, testid }) => {
 export const OverviewPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
   const navigate = useNavigate();
-  useEffect(() => { axios.get(`${API_URL}/dashboard/overview?company_id=${companyId}`).then((r) => setD(r.data)).catch(() => {}); }, [companyId]);
+  const load = useCallback(() => {
+    if (!companyId) return;
+    axios.get(`${API_URL}/dashboard/overview?company_id=${companyId}`).then((r) => setD(r.data)).catch(() => {});
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  useDataRefresh(load, { companyId, scopes: ["orders", "notifications", "all"] });
   if (!d) return null;
   const inv = d.invoices;
   return (

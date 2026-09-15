@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { notifyDataChanged } from "../utils/dataRefresh";
 
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, RefreshCw, ScanLine, Truck,
@@ -204,12 +205,20 @@ export default function OrderPickKioskPage() {
   };
 
   const act = async (path, body, ok) => {
+    if (!ses?.order_id || busy) return;
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/${path}`, body || {});
       if (r.data.items) setSes(r.data);
       const msg = r.data.message || ok;
-      toast.success(msg);
+      if (path === "to-production" && Array.isArray(r.data.created) && r.data.created.length === 0) {
+        toast.error(msg || "Üretim emri açılamadı.");
+      } else {
+        toast.success(msg);
+      }
+      if (path === "notify-missing" || path === "to-production") {
+        await notifyDataChanged({ companyId, scopes: ["orders", "notifications", "all"] });
+      }
       if (path === "complete" && body?.mode === "ship") {
         if (r.data.draft_invoice_number) {
           toast.message(`Taslak fatura: ${r.data.draft_invoice_number}`, { duration: 6000 });
@@ -219,8 +228,10 @@ export default function OrderPickKioskPage() {
       }
       if (path === "complete") { back(); }
       return r.data;
-    } catch (e) { toast.error(e.response?.data?.detail || "İşlem başarısız."); }
-    finally { setBusy(false); }
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : d?.message || "İşlem başarısız.");
+    } finally { setBusy(false); }
   };
 
   const prog = ses?.progress || {};

@@ -4,6 +4,7 @@ import axios from "axios";
 import {
   AlertTriangle,
   Bell,
+  ClipboardList,
   ChevronRight,
   Factory,
   Loader2,
@@ -16,6 +17,7 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 const GROUP_META = {
+  pick_missing: { Icon: ClipboardList, tone: "text-amber-800 bg-amber-50 border-amber-100" },
   low_stock: { Icon: Package, tone: "text-amber-700 bg-amber-50 border-amber-100" },
   production: { Icon: Factory, tone: "text-indigo-700 bg-indigo-50 border-indigo-100" },
   shipped: { Icon: Truck, tone: "text-sky-700 bg-sky-50 border-sky-100" },
@@ -27,7 +29,7 @@ export function OpsAlertsPanel({ companyId }) {
   const [groups, setGroups] = useState([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState("new_orders");
+  const [active, setActive] = useState("pick_missing");
 
   const load = useCallback(async () => {
     if (!companyId) return;
