@@ -80,3 +80,4 @@ def test_clean_message_collapses_and_truncates():
 def test_rbac_skips_version_endpoint():
     import rbac
     assert "/api/version" in rbac.SKIP_PREFIXES
+    assert "/api/mobile" in rbac.SKIP_PREFIXES

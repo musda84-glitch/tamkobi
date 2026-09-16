@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "TamKobi",
+    "slug": "tamkobi",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "tamkobi",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tamkobi.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Barkod okutmak ve stok/saha siparişinde ürün bulmak için kamera gerekir.",
+        "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir."
+      }
+    },
+    "android": {
+      "package": "com.tamkobi.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0F172A",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 120
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Barkod okutmak için kameraya izin verin."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır."
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
