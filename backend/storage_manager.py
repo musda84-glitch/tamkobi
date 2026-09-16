@@ -28,6 +28,7 @@ STORAGE_AREAS = (
     {"key": "projects", "label": "Proje ekleri", "entity": "project", "icon": "briefcase"},
     {"key": "surveys", "label": "Keşif ekleri", "entity": "survey", "icon": "ruler"},
     {"key": "purchase_invoices", "label": "Alış fatura PDF", "entity": "purchase_invoice", "icon": "file-text"},
+    {"key": "sales_invoices", "label": "Satış fatura PDF/XML", "entity": "sales_invoice", "icon": "file-text"},
     {"key": "edocs", "label": "e-Belge arşivi", "entity": "edoc", "icon": "archive"},
     {"key": "misc", "label": "Diğer", "entity": "misc", "icon": "folder"},
 )
@@ -49,6 +50,7 @@ _AREA_BY_ENTITY.update({
     "project": "projects",
     "survey": "surveys",
     "purchase_invoice": "purchase_invoices",
+    "sales_invoice": "sales_invoices",
     "edoc": "edocs",
     "e_invoice": "edocs",
     "einvoice": "edocs",

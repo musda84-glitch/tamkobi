@@ -61,16 +61,41 @@ def ubl_root(data: bytes) -> ET.Element:
     return root
 
 
+def _party(party_el) -> Dict[str, Any]:
+    if party_el is None:
+        return {"name": "", "tax_id": "", "tax_office": "", "address": "", "city": "", "email": "", "phone": ""}
+    party_id = [
+        i for i in party_el.findall("PartyIdentification/ID")
+        if i.attrib.get("schemeID") in ("VKN", "TCKN") and (i.text or "").strip()
+    ]
+    return {
+        "name": _t(party_el, "PartyName/Name") or (_t(party_el, "Person/FirstName") + " " + _t(party_el, "Person/FamilyName")).strip(),
+        "tax_id": party_id[0].text.strip() if party_id else "",
+        "tax_office": _t(party_el, "PartyTaxScheme/TaxScheme/Name"),
+        "address": " ".join(
+            x for x in (
+                _t(party_el, "PostalAddress/StreetName"),
+                _t(party_el, "PostalAddress/BuildingNumber"),
+                _t(party_el, "PostalAddress/CitySubdivisionName"),
+            ) if x
+        ),
+        "city": _t(party_el, "PostalAddress/CityName"),
+        "email": _t(party_el, "Contact/ElectronicMail"),
+        "phone": _t(party_el, "Contact/Telephone"),
+    }
+
+
 def parse_ubl(data: bytes) -> Dict[str, Any]:
     root = ubl_root(data)
     kind = UBL_ROOTS.get(root.tag)
     if not kind:
         raise HTTPException(status_code=400, detail=f"Bu XML bir UBL-TR e-Fatura/e-İrsaliye değil (kök etiket: {root.tag[:40]}).")
-    sup = root.find("AccountingSupplierParty/Party") if kind == "invoice" else root.find("DespatchSupplierParty/Party")
-    party_id = [i for i in (sup.findall("PartyIdentification/ID") if sup is not None else []) if i.attrib.get("schemeID") in ("VKN", "TCKN") and (i.text or "").strip()]
-    supplier = {"name": _t(sup, "PartyName/Name") or (_t(sup, "Person/FirstName") + " " + _t(sup, "Person/FamilyName")).strip(), "tax_id": party_id[0].text.strip() if party_id else "", "tax_office": _t(sup, "PartyTaxScheme/TaxScheme/Name"),
-                "address": " ".join(x for x in (_t(sup, "PostalAddress/StreetName"), _t(sup, "PostalAddress/BuildingNumber"), _t(sup, "PostalAddress/CitySubdivisionName")) if x), "city": _t(sup, "PostalAddress/CityName"),
-                "email": _t(sup, "Contact/ElectronicMail"), "phone": _t(sup, "Contact/Telephone")}
+    if kind == "invoice":
+        supplier = _party(root.find("AccountingSupplierParty/Party"))
+        customer = _party(root.find("AccountingCustomerParty/Party"))
+    else:
+        supplier = _party(root.find("DespatchSupplierParty/Party"))
+        customer = _party(root.find("DeliveryCustomerParty/Party"))
     lines = []
     for ln in root.findall("InvoiceLine" if kind == "invoice" else "DespatchLine"):
         qty_el = ln.find("InvoicedQuantity" if kind == "invoice" else "DeliveredQuantity")
@@ -85,11 +110,69 @@ def parse_ubl(data: bytes) -> Dict[str, Any]:
         lines.append({"name": _t(item, "Name") or "Kalem", "sku": _t(item, "SellersItemIdentification/ID"), "barcode": next((i.text.strip() for i in (item.findall("AdditionalItemIdentification/ID") if item is not None else []) if i.text), "") or _t(item, "StandardItemIdentification/ID"),
                       "quantity": qty, "unit": (qty_el.attrib.get("unitCode", "C62") if qty_el is not None else "C62"), "unit_price": price or (round(total / qty, 4) if qty else 0), "total": total, "vat_rate": vat, "product_id": None})
     totals = root.find("LegalMonetaryTotal")
-    parsed = {"kind": kind, "number": _t(root, "ID"), "uuid": _t(root, "UUID"), "issue_date": _t(root, "IssueDate"), "profile": _t(root, "ProfileID"), "type_code": _t(root, "InvoiceTypeCode") or _t(root, "DespatchAdviceTypeCode"), "supplier": supplier, "lines": lines,
-              "subtotal": _f(totals, "LineExtensionAmount") or sum(l["total"] for l in lines), "vat_total": _f(root, "TaxTotal/TaxAmount"), "grand_total": _f(totals, "PayableAmount") or _f(totals, "TaxInclusiveAmount"), "notes": " | ".join(n.text.strip() for n in root.findall("Note") if n.text)[:500]}
+    currency = ""
+    pay_el = totals.find("PayableAmount") if totals is not None else None
+    if pay_el is not None:
+        currency = (pay_el.attrib.get("currencyID") or "").strip().upper()
+    parsed = {"kind": kind, "number": _t(root, "ID"), "uuid": _t(root, "UUID"), "issue_date": _t(root, "IssueDate"), "profile": _t(root, "ProfileID"), "type_code": _t(root, "InvoiceTypeCode") or _t(root, "DespatchAdviceTypeCode"), "supplier": supplier, "customer": customer, "lines": lines,
+              "subtotal": _f(totals, "LineExtensionAmount") or sum(l["total"] for l in lines), "vat_total": _f(root, "TaxTotal/TaxAmount"), "grand_total": _f(totals, "PayableAmount") or _f(totals, "TaxInclusiveAmount"), "currency": currency or "TRY", "notes": " | ".join(n.text.strip() for n in root.findall("Note") if n.text)[:500]}
     if not (parsed["number"] or parsed["uuid"] or lines):
         raise HTTPException(status_code=400, detail="UBL belgesinde fatura numarası, ETTN ve kalem yok; okunabilir bir e-belge değil.")
     return parsed
+
+
+def ubl_to_ai_draft(parsed: Dict[str, Any], invoice_type: str = "purchase") -> Dict[str, Any]:
+    """UBL parse sonucunu AI fatura taslağı şemasına çevirir (satış → müşteri, alış → tedarikçi)."""
+    inv_type = "sales" if invoice_type == "sales" else "purchase"
+    party_src = parsed.get("customer") if inv_type == "sales" else parsed.get("supplier")
+    party_src = party_src or {}
+    party = {
+        "name": party_src.get("name") or "",
+        "tax_number": party_src.get("tax_id") or None,
+        "tax_office": party_src.get("tax_office") or None,
+        "address": party_src.get("address") or None,
+        "phone": party_src.get("phone") or None,
+        "email": party_src.get("email") or None,
+    }
+    items = []
+    for ln in parsed.get("lines") or []:
+        q = float(ln.get("quantity") or 1)
+        p = float(ln.get("unit_price") or 0)
+        d = float(ln.get("discount_rate") or 0)
+        unit = ln.get("unit") or "Adet"
+        if unit in ("C62", "NIU"):
+            unit = "Adet"
+        items.append({
+            "name": str(ln.get("name") or "Kalem")[:200],
+            "quantity": q,
+            "unit": unit,
+            "unit_price": p,
+            "vat_rate": int(ln.get("vat_rate") if ln.get("vat_rate") is not None else 20),
+            "discount_rate": d,
+            "total": round(float(ln.get("total") or q * p * (1 - d / 100)), 2),
+            "sku": ln.get("sku") or "",
+            "barcode": ln.get("barcode") or "",
+            "product_id": ln.get("product_id"),
+        })
+    draft = {
+        "invoice_number": parsed.get("number") or None,
+        "issue_date": (parsed.get("issue_date") or "")[:10] or None,
+        "due_date": None,
+        "currency": parsed.get("currency") or "TRY",
+        "items": items,
+        "subtotal": float(parsed.get("subtotal") or 0),
+        "vat_total": float(parsed.get("vat_total") or 0),
+        "grand_total": float(parsed.get("grand_total") or 0),
+        "notes": parsed.get("notes") or None,
+        "confidence": 0.98,
+        "source": "ubl_xml",
+        "uuid": parsed.get("uuid") or None,
+    }
+    if inv_type == "sales":
+        draft["customer"] = party
+    else:
+        draft["supplier"] = party
+    return draft
 
 
 def _iso_date(value: str) -> str:

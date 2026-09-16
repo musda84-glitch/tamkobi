@@ -9719,74 +9719,139 @@ async def ai_product_confirm(req: Dict[str, Any]):
 
 
 @api_router.post("/ai/invoice-extract")
-async def ai_invoice_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
-    if file.content_type not in ("application/pdf", "text/plain"):
-        raise HTTPException(status_code=400, detail="Sadece PDF (veya düz metin) yükleyebilirsiniz.")
+async def ai_invoice_extract(
+    file: UploadFile = File(...),
+    company_id: str = Query("comp_nexus_main_01"),
+    invoice_type: str = Query("purchase"),
+):
+    inv_type = "sales" if invoice_type == "sales" else "purchase"
+    name = (file.filename or "").lower()
+    ctype = (file.content_type or "").lower()
+    is_xml = (
+        ctype in ("application/xml", "text/xml", "application/ubl+xml")
+        or name.endswith(".xml")
+    )
+    is_pdf = ctype in ("application/pdf",) or name.endswith(".pdf")
+    is_text = ctype in ("text/plain",) or name.endswith(".txt")
+    if not (is_xml or is_pdf or is_text):
+        raise HTTPException(status_code=400, detail="PDF, UBL-TR XML veya düz metin yükleyebilirsiniz.")
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
-    if file.content_type == "application/pdf":
+
+    source = "pdf"
+    parsed = None
+    text_out = ""
+    if is_xml:
+        source = "xml"
+        import edocs as _edocs
+        ubl = _edocs.parse_ubl(data)
+        if ubl.get("kind") != "invoice":
+            raise HTTPException(status_code=400, detail="Yalnızca e-Fatura UBL XML yüklenebilir (e-İrsaliye değil).")
+        parsed = _edocs.ubl_to_ai_draft(ubl, inv_type)
+        text_out = f"UBL {ubl.get('number') or ''} {ubl.get('uuid') or ''}"
+    elif is_pdf:
         from pypdf import PdfReader
         import io
         try:
             reader = PdfReader(io.BytesIO(data))
-            text = "\n".join((p.extract_text() or "") for p in reader.pages[:10])
+            text_out = "\n".join((p.extract_text() or "") for p in reader.pages[:10])
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
     else:
-        text = data.decode("utf-8", "ignore")
-    if len(text.strip()) < 30:
-        raise HTTPException(status_code=400, detail="PDF'de okunabilir metin bulunamadı (taranmış görüntü olabilir). Metin tabanlı e-Arşiv/e-Fatura PDF'i yükleyin.")
-    try:
-        parsed = await extract_invoice_from_text(text)
-    except Exception as e:
-        logger.error(f"AI invoice extract failed: {e}")
-        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
-    sup = parsed.get("supplier") or {}
+        text_out = data.decode("utf-8", "ignore")
+
+    if parsed is None:
+        if len(text_out.strip()) < 30:
+            raise HTTPException(status_code=400, detail="PDF'de okunabilir metin bulunamadı (taranmış görüntü olabilir). Metin tabanlı e-Arşiv/e-Fatura PDF'i yükleyin.")
+        try:
+            parsed = await extract_invoice_from_text(text_out, invoice_type=inv_type)
+        except Exception as e:
+            logger.error(f"AI invoice extract failed: {e}")
+            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+
+    party = (parsed.get("customer") if inv_type == "sales" else parsed.get("supplier")) or {}
     match = None
-    if sup.get("tax_number"):
-        match = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": str(sup["tax_number"]).strip()})
-    if not match and sup.get("name"):
+    tax = str(party.get("tax_number") or "").strip()
+    if tax:
+        match = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tax})
+    if not match and party.get("name"):
         import re as _re
-        match = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": _re.escape(sup["name"][:25]), "$options": "i"}})
+        match = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": _re.escape(str(party["name"])[:25]), "$options": "i"}})
+
+    entity = "sales_invoice" if inv_type == "sales" else "purchase_invoice"
+    store_ct = "application/xml" if is_xml else ("application/pdf" if is_pdf else "text/plain")
+    ext = "xml" if is_xml else ("pdf" if is_pdf else "txt")
     file_url = None
     try:
         try:
             import storage_manager
             await storage_manager.ensure_account_folders(company_id)
-            path = storage_manager.object_path(company_id, "purchase_invoice", "pdf")
-            area_key = storage_manager.area_for_entity("purchase_invoice")
+            path = storage_manager.object_path(company_id, entity, ext)
+            area_key = storage_manager.area_for_entity(entity)
         except Exception:
-            path = f"{APP_NAME}/purchase_invoice/{company_id}/{uuid.uuid4()}.pdf"
-            area_key = "purchase_invoices"
-        r = put_object(path, data, "application/pdf")
+            path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
+            area_key = "sales_invoices" if inv_type == "sales" else "purchase_invoices"
+        r = put_object(path, data, store_ct)
         file_url = f"/api/files/{r['path']}"
         await db.files.insert_one({
             "_id": str(uuid.uuid4()), "storage_path": r["path"], "original_filename": file.filename,
-            "content_type": file.content_type, "size": len(data), "company_id": company_id,
-            "entity": "purchase_invoice", "entity_id": "", "area_key": area_key,
+            "content_type": store_ct, "size": len(data), "company_id": company_id,
+            "entity": entity, "entity_id": "", "area_key": area_key,
             "is_deleted": False, "created_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
-        logger.error(f"PDF store failed: {e}")
-    products = {p.get("name", "").lower(): p for p in await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "unit": 1}).to_list(2000)}
-    for it in parsed["items"]:
-        hit = products.get((it.get("name") or "").lower())
+        logger.error(f"Invoice file store failed: {e}")
+
+    products = await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "unit": 1, "barcode": 1}).to_list(5000)
+    by_name = {str(p.get("name") or "").lower(): p for p in products}
+    by_sku = {str(p.get("sku") or "").lower(): p for p in products if p.get("sku")}
+    by_bc = {str(p.get("barcode") or "").lower(): p for p in products if p.get("barcode")}
+    for it in parsed.get("items") or []:
+        hit = by_bc.get(str(it.get("barcode") or "").lower()) or by_sku.get(str(it.get("sku") or "").lower()) or by_name.get((it.get("name") or "").lower())
         if hit:
-            it["product_id"] = hit["_id"]; it["matched_product"] = hit.get("name")
-    return {"draft": parsed, "matched_contact": clean_doc(match) if match else None, "file_url": file_url, "text_preview": text[:1200], "filename": file.filename}
+            it["product_id"] = hit["_id"]
+            it["matched_product"] = hit.get("name")
+    return {
+        "draft": parsed,
+        "invoice_type": inv_type,
+        "source": source,
+        "matched_contact": clean_doc(match) if match else None,
+        "file_url": file_url,
+        "text_preview": text_out[:1200],
+        "filename": file.filename,
+    }
 
 @api_router.post("/ai/invoice-extract/confirm")
 async def ai_invoice_confirm(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
+    inv_type = "sales" if req.get("invoice_type") == "sales" else "purchase"
     d = req.get("draft") or {}
-    sup = d.get("supplier") or {}
+    party = (d.get("customer") if inv_type == "sales" else d.get("supplier")) or {}
+    if not party and d.get("supplier"):
+        party = d.get("supplier") or {}
     contact_id = req.get("contact_id")
+    contact_kind = "customer" if inv_type == "sales" else "supplier"
     if not contact_id:
-        if not sup.get("name"):
-            raise HTTPException(status_code=400, detail="Tedarikçi adı gerekli.")
+        if not party.get("name"):
+            raise HTTPException(status_code=400, detail="Müşteri adı gerekli." if inv_type == "sales" else "Tedarikçi adı gerekli.")
         await saas.check_contact_limit(company_id)
-        c = Contact(company_id=company_id, name=sup["name"], type="supplier", tax_number_or_id=str(sup.get("tax_number") or ""), tax_office=sup.get("tax_office") or "", email=sup.get("email") or "", phone=sup.get("phone") or "", address=sup.get("address") or "", city=req.get("city") or "İstanbul", district="", credit_limit=0, category="Tedarikçi", is_e_invoice_user=True, notes="AI PDF aktarımından oluşturuldu")
+        c = Contact(
+            company_id=company_id,
+            name=party["name"],
+            type=contact_kind,
+            tax_number_or_id=str(party.get("tax_number") or ""),
+            tax_office=party.get("tax_office") or "",
+            email=party.get("email") or "",
+            phone=party.get("phone") or "",
+            address=party.get("address") or "",
+            city=req.get("city") or "İstanbul",
+            district="",
+            credit_limit=0,
+            category="Müşteri" if inv_type == "sales" else "Tedarikçi",
+            is_e_invoice_user=True,
+            notes=("AI satış faturası aktarımından oluşturuldu" if inv_type == "sales" else "AI PDF aktarımından oluşturuldu"),
+        )
         cd = c.to_mongo(); await db.contacts.insert_one(cd); contact_id = cd["_id"]; contact_name = c.name
     else:
         cc = await db.contacts.find_one({"_id": contact_id})
@@ -9796,12 +9861,37 @@ async def ai_invoice_confirm(req: Dict[str, Any]):
     items = [InvoiceItem(product_id=it.get("product_id"), name=it["name"], quantity=float(it["quantity"]), unit=it.get("unit") or "Adet", unit_price=float(it["unit_price"]), vat_rate=int(it.get("vat_rate", 20)), discount_rate=float(it.get("discount_rate") or 0), total=float(it["total"]), sku=it.get("sku") or "", barcode=it.get("barcode") or "") for it in d.get("items", []) if it.get("name")]
     if not items:
         raise HTTPException(status_code=400, detail="En az bir fatura kalemi gerekli.")
-    inv = Invoice(company_id=company_id, invoice_type="purchase", e_type="paper", contact_id=contact_id, contact_name=contact_name, contact_tax_id=str(sup.get("tax_number") or ""), issue_date=d.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                  due_date=d.get("due_date"), items=items, currency=d.get("currency") or "TRY", status="draft", notes=(f"Tedarikçi fatura no: {d.get('invoice_number')}. " if d.get("invoice_number") else "") + "AI PDF aktarımı ile oluşturuldu." + (f" Belge: {req.get('file_url')}" if req.get("file_url") else ""), source_channel="ai_pdf")
+    src_note = "XML" if (d.get("source") == "ubl_xml" or str(req.get("file_url") or "").endswith(".xml")) else "PDF"
+    if inv_type == "sales":
+        notes = (f"Belge no: {d.get('invoice_number')}. " if d.get("invoice_number") else "") + f"AI {src_note} aktarımı ile satış faturası oluşturuldu." + (f" Belge: {req.get('file_url')}" if req.get("file_url") else "")
+        inv = Invoice(
+            company_id=company_id, invoice_type="sales", e_type="paper",
+            contact_id=contact_id, contact_name=contact_name, contact_tax_id=str(party.get("tax_number") or ""),
+            issue_date=d.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            due_date=d.get("due_date"), items=items, currency=d.get("currency") or "TRY",
+            status="draft", notes=notes, source_channel="ai_pdf",
+        )
+    else:
+        notes = (f"Tedarikçi fatura no: {d.get('invoice_number')}. " if d.get("invoice_number") else "") + f"AI {src_note} aktarımı ile oluşturuldu." + (f" Belge: {req.get('file_url')}" if req.get("file_url") else "")
+        inv = Invoice(
+            company_id=company_id, invoice_type="purchase", e_type="paper",
+            contact_id=contact_id, contact_name=contact_name, contact_tax_id=str(party.get("tax_number") or ""),
+            issue_date=d.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            due_date=d.get("due_date"), items=items, currency=d.get("currency") or "TRY",
+            status="draft", notes=notes, source_channel="ai_pdf",
+        )
     created = await create_invoice(inv)
+    extra = {}
     if req.get("file_url"):
-        await db.invoices.update_one({"_id": created["id"]}, {"$set": {"attachment_url": req["file_url"], "supplier_invoice_number": d.get("invoice_number")}})
-    return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak alış faturası oluşturuldu: {created['invoice_number']}"}
+        extra["attachment_url"] = req["file_url"]
+    if inv_type == "purchase" and d.get("invoice_number"):
+        extra["supplier_invoice_number"] = d.get("invoice_number")
+    elif inv_type == "sales" and d.get("invoice_number"):
+        extra["external_invoice_number"] = d.get("invoice_number")
+    if extra:
+        await db.invoices.update_one({"_id": created["id"]}, {"$set": extra})
+    label = "satış" if inv_type == "sales" else "alış"
+    return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak {label} faturası oluşturuldu: {created['invoice_number']}"}
 
 @api_router.post("/ai/financial-advisor")
 async def ask_financial_ai(req: AIChatRequest):
