@@ -144,13 +144,13 @@ export const SmsCenter = ({ companyId, contacts }) => {
             </div>
             <div>
               <label className="block font-semibold mb-1">Gönderici Başlığı</label>
-              <input value={form.msgheader} onChange={(e) => setForm({ ...form, msgheader: e.target.value })} className={`${inputCls} uppercase`} placeholder="FIRMAADI" data-testid="sms-header-input" list="sms-approved-headers" />
+              <input value={form.msgheader} onChange={(e) => setForm({ ...form, msgheader: e.target.value })} className={`${inputCls} font-mono`} placeholder="FIRMAADI" data-testid="sms-header-input" list="sms-approved-headers" />
               {(settings?.approved_headers || []).length > 0 && (
                 <datalist id="sms-approved-headers">
                   {settings.approved_headers.map((h) => <option key={h} value={h} />)}
                 </datalist>
               )}
-              <p className="text-[10px] text-slate-400 mt-1">{meta?.header_hint || "Onaylı başlıkla birebir aynı olmalı (3–11 karakter)."}</p>
+              <p className="text-[10px] text-slate-400 mt-1">{meta?.header_hint || "Onaylı başlıkla birebir aynı olmalı (büyük/küçük harf dahil, 3–11 karakter)."}</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /><span className="font-semibold">Aktif</span></label>
             <div className="flex flex-wrap gap-2 pt-1">

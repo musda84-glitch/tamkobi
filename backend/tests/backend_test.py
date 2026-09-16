@@ -368,6 +368,41 @@ class TestBankConnections:
 
 
 # ---------------- COMM SMS ----------------
+class TestNetgsmPayload:
+    """Netgsm REST v2 gövde — canlı API yok; kod 70’ü tetikleyen alanları engelle."""
+
+    def test_minimal_payload_omits_iys_and_appname(self):
+        from comm_service import build_netgsm_send_payload
+        payload, err = build_netgsm_send_payload(
+            {"msgheader": "TAMKOBI"},
+            [{"no": "0532 111 22 33", "msg": "Merhaba"}],
+        )
+        assert err is None, err
+        assert payload["msgheader"] == "TAMKOBI"
+        assert payload["encoding"] == "TR"
+        assert payload["messages"] == [{"msg": "Merhaba", "no": "5321112233"}]
+        assert "iysfilter" not in payload
+        assert "appname" not in payload
+
+    def test_payload_rejects_empty_message(self):
+        from comm_service import build_netgsm_send_payload
+        payload, err = build_netgsm_send_payload(
+            {"msgheader": "TAMKOBI"},
+            [{"no": "5321112233", "msg": "  "}],
+        )
+        assert payload is None
+        assert err
+
+    def test_payload_optional_iysfilter(self):
+        from comm_service import build_netgsm_send_payload
+        payload, err = build_netgsm_send_payload(
+            {"msgheader": "TAMKOBI", "iysfilter": "0"},
+            [{"no": "5321112233", "msg": "x"}],
+        )
+        assert err is None
+        assert payload["iysfilter"] == "0"
+
+
 class TestCommSms:
     def test_providers_list(self, s):
         r = s.get(f"{BASE}/comm/sms/providers", timeout=30)

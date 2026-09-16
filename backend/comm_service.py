@@ -48,7 +48,7 @@ NETGSM_ERRORS = {
     "41": "Gönderici başlığı (msgheader) onaylı değil.",
     "50": "İYS kontrollü gönderim ayarları eksik.",
     "51": "İYS marka ayarları eksik.",
-    "70": "Eksik/hatalı parametre.",
+    "70": "Eksik/hatalı parametre — başlık (3–11), numara (5XXXXXXXXX) ve mesajı kontrol edin.",
     "80": "Gönderim limiti aşıldı.",
     "85": "Aynı numaraya kısa sürede çok fazla gönderim.",
     "100": "Netgsm sistem hatası — kısa süre sonra tekrar deneyin.",
@@ -131,21 +131,64 @@ def _parse_netgsm_body(r: httpx.Response) -> Dict[str, Any]:
     except Exception:
         return {"raw": (r.text or "")[:300]}
 
-async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+def _netgsm_clean_messages(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Sadece msg/no; numara 5XXXXXXXXX; boş mesaj/numara elenir (aksi halde Netgsm 70)."""
+    out: List[Dict[str, str]] = []
+    for m in messages or []:
+        no = normalize_phone(m.get("no") or "")
+        msg = (m.get("msg") or "").strip()
+        if not no or not msg:
+            continue
+        out.append({"msg": msg, "no": no})
+    return out
+
+def build_netgsm_send_payload(
+    creds: dict,
+    messages: List[Dict[str, str]],
+    encoding: str = "TR",
+) -> tuple:
+    """Resmi SDK minimal gövde: msgheader + encoding + messages (iysfilter/appname yok)."""
     header = normalize_msgheader(creds.get("msgheader") or "")
     herr = validate_msgheader(header)
     if herr:
+        return None, herr
+    clean = _netgsm_clean_messages(messages)
+    if not clean:
+        return None, "Geçerli alıcı numarası veya mesaj yok."
+    enc = (encoding or "TR").strip().upper()
+    if enc not in ("TR", "ASCII"):
+        enc = "TR"
+    payload: Dict[str, Any] = {
+        "msgheader": header,
+        "encoding": enc,
+        "messages": clean,
+    }
+    # İYS yalnızca açıkça istenirse (bilgilendirme SMS’te göndermeyin — bazı hesaplarda 70 üretir)
+    iys = (creds.get("iysfilter") or "").strip()
+    if iys in ("0", "11", "12"):
+        payload["iysfilter"] = iys
+    appname = (creds.get("appname") or "").strip()
+    if appname:
+        payload["appname"] = appname
+    return payload, None
+
+async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+    payload, herr = build_netgsm_send_payload(creds, messages, encoding)
+    if herr:
         return {"ok": False, "jobid": None, "code": "70", "error": herr, "raw": None}
-    payload = {"msgheader": header, "encoding": encoding or "TR", "iysfilter": "0", "appname": "TamKobi", "messages": messages}
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
         # Resmi REST v2: POST https://api.netgsm.com.tr/sms/rest/v2/send (Basic Auth)
+        # Temel örnek: { msgheader, encoding, messages } — iysfilter/appname opsiyonel
         r = await client.post(NETGSM_SEND_PATH, auth=_netgsm_auth(creds), json=payload)
     data = _parse_netgsm_body(r)
     code = str(data.get("code", "") or "")
     # HTTP 200 + 00/01/02 = kuyruğa alındı; HTTP 406 = Netgsm hata kodu
     ok = r.status_code == 200 and code in ("00", "01", "02")
     err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or (data.get("raw") if isinstance(data.get("raw"), str) else None) or f"HTTP {r.status_code}"
-    return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data}
+    if not ok and code == "70" and data.get("description"):
+        err = f"{err} ({data.get('description')})"
+    return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data, "payload_preview": {"msgheader": payload.get("msgheader"), "encoding": payload.get("encoding"), "count": len(payload.get("messages") or [])}}
+
 
 async def netgsm_balance(creds: dict) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=20) as client:
