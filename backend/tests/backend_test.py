@@ -384,9 +384,14 @@ class TestCommSms:
 
     def test_settings_normalizes_msgheader_spaces(self, s):
         r = s.put(f"{BASE}/comm/sms/settings",
-                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "MATEK LTD", "is_active": True}, timeout=30)
+                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "  TAMKOBI  ", "is_active": True}, timeout=30)
         assert r.status_code == 200, r.text[:300]
-        assert r.json()["msgheader"] == "MATEKLTD"
+        assert r.json()["msgheader"] == "TAMKOBI"
+
+    def test_settings_rejects_long_msgheader(self, s):
+        r = s.put(f"{BASE}/comm/sms/settings",
+                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "COKUZUNBASLIKX", "is_active": True}, timeout=30)
+        assert r.status_code == 400, r.text[:300]
 
     def test_balance_simulated(self, s):
         r = s.get(f"{BASE}/comm/sms/balance", timeout=30)

@@ -115,7 +115,7 @@ export const SmsCenter = ({ companyId, contacts }) => {
                   {settings.approved_headers.map((h) => <option key={h} value={h} />)}
                 </datalist>
               )}
-              <p className="text-[10px] text-slate-400 mt-1">Netgsm’de onaylı başlıkla birebir aynı olmalı (boşluksuz, örn. MATEKLTD).</p>
+              <p className="text-[10px] text-slate-400 mt-1">Netgsm’de onaylı başlıkla birebir aynı olmalı (3–11 karakter). Panel: SMS Hizmeti → Başlıklarım.</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /><span className="font-semibold">Aktif</span></label>
             <div className="flex flex-wrap gap-2 pt-1">

@@ -6085,6 +6085,9 @@ async def get_sms_settings(company_id: Optional[str] = "comp_nexus_main_01"):
 async def save_sms_settings(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     header = comm_service.normalize_msgheader(req.get("msgheader") or "")
+    herr = comm_service.validate_msgheader(header) if header else None
+    if herr:
+        raise HTTPException(status_code=400, detail=herr)
     update = {
         "usercode": (req.get("usercode") or "").strip(),
         "msgheader": header,

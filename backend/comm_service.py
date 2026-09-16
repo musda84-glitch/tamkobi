@@ -63,8 +63,16 @@ def normalize_phone(phone: str) -> Optional[str]:
     return digits if re.fullmatch(r"5\d{9}", digits) else None
 
 def normalize_msgheader(header: str) -> str:
-    """Netgsm başlıkları genelde boşluksuz; trim + iç boşlukları kaldır."""
-    return re.sub(r"\s+", "", (header or "").strip())
+    """Netgsm msgheader: trim. Dokümana göre 3–11 karakter; iç boşluk korunur."""
+    return (header or "").strip()
+
+def validate_msgheader(header: str) -> Optional[str]:
+    h = normalize_msgheader(header)
+    if not h:
+        return "Gönderici başlığı (msgheader) boş."
+    if len(h) < 3 or len(h) > 11:
+        return "Gönderici başlığı 3–11 karakter olmalı (Netgsm dokümanı)."
+    return None
 
 def _netgsm_auth(creds: dict):
     return (creds["usercode"], creds["password"])
@@ -78,14 +86,17 @@ def _parse_netgsm_body(r: httpx.Response) -> Dict[str, Any]:
 
 async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
     header = normalize_msgheader(creds.get("msgheader") or "")
-    if not header:
-        return {"ok": False, "jobid": None, "code": "70", "error": "Gönderici başlığı (msgheader) boş.", "raw": None}
-    payload = {"msgheader": header, "encoding": encoding, "messages": messages}
+    herr = validate_msgheader(header)
+    if herr:
+        return {"ok": False, "jobid": None, "code": "70", "error": herr, "raw": None}
+    payload = {"msgheader": header, "encoding": encoding or "TR", "iysfilter": "0", "appname": "TamKobi", "messages": messages}
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        # Resmi REST v2: POST https://api.netgsm.com.tr/sms/rest/v2/send (Basic Auth)
         r = await client.post(NETGSM_SEND_PATH, auth=_netgsm_auth(creds), json=payload)
     data = _parse_netgsm_body(r)
     code = str(data.get("code", "") or "")
-    ok = r.status_code < 400 and code in ("00", "01", "02")
+    # HTTP 200 + 00/01/02 = kuyruğa alındı; HTTP 406 = Netgsm hata kodu
+    ok = r.status_code == 200 and code in ("00", "01", "02")
     err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or (data.get("raw") if isinstance(data.get("raw"), str) else None) or f"HTTP {r.status_code}"
     return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data}
 
