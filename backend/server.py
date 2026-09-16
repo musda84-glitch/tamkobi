@@ -9066,6 +9066,16 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
     res = await db.employees.find_one({"_id": emp_id})
     return clean_doc(res)
 
+@api_router.delete("/personnel/employees/{emp_id}")
+async def delete_employee(emp_id: str):
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    label = emp.get("full_name") or emp_id
+    note = " · ".join(x for x in [emp.get("position"), emp.get("department"), emp.get("tc_kimlik")] if x)
+    await trash.soft_delete("employees", emp, "employee", label, note=note)
+    return {"status": "success", "message": "Personel çöp kutusuna taşındı."}
+
 @api_router.get("/personnel/employees/{emp_id}/card")
 async def employee_card(emp_id: str):
     emp = await db.employees.find_one({"_id": emp_id})
