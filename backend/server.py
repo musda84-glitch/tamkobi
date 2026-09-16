@@ -48,7 +48,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products
+from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import image_opt
 import bank_providers
@@ -9768,7 +9768,18 @@ async def ai_invoice_extract(
             parsed = await extract_invoice_from_text(text_out, invoice_type=inv_type)
         except Exception as e:
             logger.error(f"AI invoice extract failed: {e}")
-            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+            err = str(e)
+            try:
+                from ai_service import load_ai_settings
+                cfg = await load_ai_settings()
+                await ai_record_last_test(ok=False, reason=err[:220], model=cfg.get("extract_model") or "", provider=cfg.get("provider") or "")
+            except Exception:
+                pass
+            hint = ""
+            low = err.lower()
+            if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
+                hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
+            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {err[:160]}.{hint}")
 
     party = (parsed.get("customer") if inv_type == "sales" else parsed.get("supplier")) or {}
     match = None

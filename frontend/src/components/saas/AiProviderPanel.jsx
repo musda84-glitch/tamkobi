@@ -61,6 +61,23 @@ export const AiProviderPanel = () => {
       toast.success(r.data.has_key
         ? `AI ayarları kaydedildi. Anahtar saklandı (${maskedKeyLabel(r.data)}).`
         : "AI entegrasyonu kaydedildi.");
+      // Kayıttan sonra otomatik bağlantı testi — "yapılandırıldı ama çalışmıyor" durumunu yakala.
+      try {
+        const t = await axios.post(`${API_URL}/system/ai/test`, {
+          provider: r.data.provider,
+          advisor_model: r.data.advisor_model,
+          extract_model: r.data.extract_model,
+          base_url: custom ? (r.data.base_url || "") : "",
+        });
+        setD((prev) => ({
+          ...prev,
+          last_test: { ok: t.data.ok, reason: t.data.reason, model: t.data.model, provider: t.data.provider },
+          ready: t.data.ok,
+        }));
+        (t.data.ok ? toast.success : toast.error)(t.data.message);
+      } catch (te) {
+        toast.error(errText(te, "Bağlantı testi yapılamadı."));
+      }
     } catch (e) {
       toast.error(errText(e, "Kaydedilemedi."));
     } finally { setBusy(false); }
@@ -202,6 +219,17 @@ export const AiProviderPanel = () => {
           Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
           {d.has_key ? <> · anahtar <b data-testid="ai-badge-key">{maskedKeyLabel(d)}</b></> : null}
         </div>
+        {d.last_test && d.last_test.ok === false && (
+          <div className="rounded-xl bg-rose-50 text-rose-800 border border-rose-200 px-3 py-2 text-[11px]" data-testid="ai-last-test-fail">
+            Son bağlantı testi başarısız: <b>{d.last_test.reason || "bilinmeyen hata"}</b>
+            <span className="block mt-0.5 text-rose-700">Geçerli API anahtarını yazıp Kaydet → Bağlantıyı Test Et ile doğrulayın. Kayıtlı anahtar tek başına çalıştığı anlamına gelmez.</span>
+          </div>
+        )}
+        {d.last_test && d.last_test.ok === true && (
+          <div className="rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2 text-[11px]" data-testid="ai-last-test-ok">
+            Son bağlantı testi başarılı{d.last_test.model ? ` (${d.last_test.model})` : ""}.
+          </div>
+        )}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={test} disabled={busy || !canTest} className="px-4 py-2 border border-amber-300 text-amber-800 rounded-xl font-bold disabled:opacity-50 flex items-center gap-1.5" data-testid="ai-test"><PlugZap className="w-4 h-4" /> Bağlantıyı Test Et</button>
           <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="ai-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
