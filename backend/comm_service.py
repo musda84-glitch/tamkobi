@@ -48,7 +48,7 @@ NETGSM_ERRORS = {
     "41": "Gönderici başlığı (msgheader) onaylı değil.",
     "50": "İYS kontrollü gönderim ayarları eksik.",
     "51": "İYS marka ayarları eksik.",
-    "70": "Eksik/hatalı parametre — başlık (3–11), numara (5XXXXXXXXX) ve mesajı kontrol edin.",
+    "70": "Eksik/hatalı parametre.",
     "80": "Gönderim limiti aşıldı.",
     "85": "Aynı numaraya kısa sürede çok fazla gönderim.",
     "100": "Netgsm sistem hatası — kısa süre sonra tekrar deneyin.",
@@ -87,7 +87,7 @@ SMS_PROVIDERS = {
         "user_label": "Kullanıcı Adı (usercode)",
         "user_placeholder": "850XXXXXXX",
         "pass_label": "API Şifresi",
-        "header_hint": "Netgsm panelinde onaylı başlıkla birebir aynı olmalı (3–11 karakter). Panel: SMS Hizmeti → Başlıklarım.",
+        "header_hint": "Netgsm panelinde onaylı başlıkla birebir aynı olmalı (boşluk/büyük-küçük harf dahil, 3–11 karakter). Panel: SMS Hizmeti → Başlıklarım.",
         "help": "Netgsm panelinde API alt kullanıcısı oluşturup SMS API yetkisi verin. «BAĞLI» yalnızca Doğrula başarılıysa görünür.",
         "docs_url": "https://www.netgsm.com.tr/dokuman/#api-dokumani",
     },
@@ -185,14 +185,27 @@ async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str
     # HTTP 200 + 00/01/02 = kuyruğa alındı; HTTP 406 = Netgsm hata kodu
     ok = r.status_code == 200 and code in ("00", "01", "02")
     err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or (data.get("raw") if isinstance(data.get("raw"), str) else None) or f"HTTP {r.status_code}"
-    if not ok and code == "70" and data.get("description"):
-        err = f"{err} ({data.get('description')})"
+    if not ok and code == "70":
+        err = "Eksik/hatalı parametre — gönderici başlığı (3–11), numara (5XXXXXXXXX) ve mesajı kontrol edin."
+        if data.get("description"):
+            err = f"{err} ({data.get('description')})"
     return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data, "payload_preview": {"msgheader": payload.get("msgheader"), "encoding": payload.get("encoding"), "count": len(payload.get("messages") or [])}}
 
 
+def build_netgsm_balance_payload(creds: dict, stip: int = 3) -> dict:
+    """Resmi SDK: bakiye sorgusu Basic Auth değil; usercode/password gövdede."""
+    return {
+        "usercode": (creds.get("usercode") or "").strip(),
+        "password": creds.get("password") or "",
+        "stip": int(stip),
+    }
+
+
 async def netgsm_balance(creds: dict) -> Dict[str, Any]:
+    body = build_netgsm_balance_payload(creds, stip=3)
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=20) as client:
-        r = await client.post(NETGSM_BALANCE_PATH, auth=_netgsm_auth(creds), json={"stip": 3})
+        # POST /balance — SDK body auth (usercode/password/stip); Authorization header yok
+        r = await client.post(NETGSM_BALANCE_PATH, json=body)
     data = _parse_netgsm_body(r)
     code = str(data.get("code", "") or "")
     # stip=3 success often returns balance array without error code, or code 00
@@ -200,6 +213,8 @@ async def netgsm_balance(creds: dict) -> Dict[str, Any]:
     if not ok and r.status_code < 400 and code in ("", "00") and data.get("raw") is None:
         ok = True
     err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}"
+    if not ok and code == "70":
+        err = "Bakiye sorgusu parametre hatası — API kullanıcı adı/şifresini kontrol edin."
     return {"ok": ok, "code": code, "data": data, "error": err, "message": err}
 
 async def netgsm_headers(creds: dict) -> Dict[str, Any]:
@@ -223,19 +238,33 @@ async def netgsm_verify(creds: dict) -> Dict[str, Any]:
     hdr = await netgsm_headers(creds)
     configured = normalize_msgheader(creds.get("msgheader") or "")
     approved = hdr.get("headers") or []
-    header_ok = (not approved) or (configured.upper() in {h.upper() for h in approved}) or (configured in approved)
+    header_ok = True
     warn = None
-    if approved and configured and not header_ok:
-        warn = f"«{configured}» onaylı başlıklar arasında yok. Onaylı: {', '.join(approved[:8])}"
+    if approved:
+        exact = {h for h in approved}
+        upper_map = {h.upper(): h for h in approved}
+        header_ok = configured in exact or configured.upper() in upper_map
+        if configured and not header_ok:
+            compact = re.sub(r"\s+", "", configured).upper()
+            space_hint = None
+            for h in approved:
+                if re.sub(r"\s+", "", h).upper() == compact:
+                    space_hint = h
+                    break
+            if space_hint:
+                warn = f"«{configured}» yerine paneldeki birebir başlığı kullanın: «{space_hint}»"
+            else:
+                warn = f"«{configured}» onaylı başlıklar arasında yok. Onaylı: {', '.join(approved[:8])}"
     elif not configured:
         warn = "Gönderici başlığı boş — SMS gönderilemez."
+        header_ok = False
     return {
         "ok": True,
         "message": warn or "Netgsm bağlantısı doğrulandı.",
         "warning": warn,
         "balance": bal.get("data"),
         "headers": approved,
-        "header_ok": bool(configured) and (header_ok if approved else True),
+        "header_ok": bool(configured) and header_ok,
     }
 
 # ---------------- İLETİ MERKEZİ ----------------
