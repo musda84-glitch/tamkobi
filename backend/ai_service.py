@@ -291,15 +291,19 @@ def public_ai_status(cfg: dict) -> dict:
     extract = cfg.get("extract_model") or ""
     advisor_label = (models.get(advisor) or {}).get("label") or advisor
     extract_label = (models.get(extract) or {}).get("label") or extract
-    configured = bool(
-        cfg.get("has_key")
-        or cfg.get("has_env_key")
-        or cfg.get("api_key")
-        or cfg.get("api_key_enc")
-    )
+    # "configured" = çağrı için kullanılabilir anahtar/uç nokta var (yalnızca kayıtlı blob yetmez).
+    usable_key = bool(str(cfg.get("api_key") or "").strip())
+    custom_ok = is_custom(provider) and bool(cfg.get("base_url")) and bool(extract or advisor)
+    configured = usable_key or custom_ok
+    last_test = cfg.get("last_test") if isinstance(cfg.get("last_test"), dict) else None
+    test_ok = None if not last_test else bool(last_test.get("ok"))
+    enabled = bool(cfg.get("enabled", True))
+    # Son test başarısızsa ready=false — UI "yapılandırıldı ama çalışmıyor" göstersin.
+    ready = bool(enabled and configured and test_ok is not False)
     return {
-        "enabled": bool(cfg.get("enabled", True)),
+        "enabled": enabled,
         "configured": configured,
+        "ready": ready,
         "provider": provider,
         "provider_label": meta["label"],
         "advisor_model": advisor,
@@ -308,6 +312,8 @@ def public_ai_status(cfg: dict) -> dict:
         "extract_label": extract_label,
         "badge": f"{meta['label']} {advisor_label}".strip(),
         "extract_badge": f"{meta['label']} {extract_label}".strip(),
+        "last_test": last_test,
+        "decrypt_failed": bool(cfg.get("decrypt_failed")),
     }
 
 
@@ -320,12 +326,14 @@ async def load_ai_settings() -> dict:
         cfg = normalize_ai({})
     key = ""
     has_enc = bool(cfg.get("api_key_enc"))
+    decrypt_failed = False
     if has_enc:
         try:
             key = comm_service.decrypt(cfg["api_key_enc"])
         except Exception:
             logger.warning("Stored AI API key could not be decrypted — CREDENTIAL_ENCRYPTION_KEY may have changed.")
             key = ""
+            decrypt_failed = True
     provider = cfg.get("provider") or "emergent"
     # Ortam değişkeni sağlayıcıya özeldir: Gemini'ye Emergent anahtarı göndermeyelim.
     fallback = env_key(provider)
@@ -334,8 +342,31 @@ async def load_ai_settings() -> dict:
     cfg["has_key"] = has_enc
     cfg["has_env_key"] = bool(fallback)
     cfg["env_var"] = env_var_name(provider)
-    cfg["key_hint"] = (key[-4:] if len(key) >= 4 else ("****" if has_enc else ""))
+    cfg["key_hint"] = (key[-4:] if len(key) >= 4 else ("****" if has_enc and not decrypt_failed else ""))
+    cfg["decrypt_failed"] = decrypt_failed
     return cfg
+
+
+async def record_last_test(*, ok: bool, reason: str, model: str = "", provider: str = "") -> dict:
+    """PDF çıkarma / danışman hatalarında UI'nin 'çalışmıyor' bilgisini güncelle."""
+    from datetime import datetime, timezone
+    last = {
+        "ok": bool(ok),
+        "reason": str(reason or "")[:220],
+        "at": datetime.now(timezone.utc).isoformat(),
+        "provider": provider or "",
+        "model": model or "",
+    }
+    try:
+        import saas_billing
+        db = getattr(saas_billing, "_db", None)
+        if db is not None:
+            await db.platform_settings.update_one(
+                {"_id": "platform"}, {"$set": {"ai.last_test": last}}, upsert=True
+            )
+    except Exception:
+        logger.warning("AI last_test kaydı yazılamadı", exc_info=True)
+    return last
 
 
 async def make_chat(

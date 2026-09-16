@@ -15,15 +15,19 @@ const lineOf = (it) => computeLine(it);
 export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, invoiceType = "purchase" }) => {
   useEscape(onClose);
   const isSales = invoiceType === "sales";
-  const { extractLabel, configured, enabled, loading: aiLoading } = useAiStatus();
+  const { extractLabel, configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [draft, setDraft] = useState(null);
   const [contactId, setContactId] = useState("");
   const [saving, setSaving] = useState(false);
-  const modelBadge = aiLoading ? "…" : (extractLabel || (configured ? "AI" : "AI ayarı yok"));
-  const aiReady = configured && enabled;
+  const modelBadge = aiLoading
+    ? "…"
+    : (!aiReady
+      ? (lastTest && lastTest.ok === false ? "Anahtar geçersiz" : (configured ? "AI hazır değil" : "AI ayarı yok"))
+      : (extractLabel || "AI"));
+  const testFailed = !!(lastTest && lastTest.ok === false);
   const party = (isSales ? draft?.customer : draft?.supplier) || {};
   const setParty = (patch) => setDraft((d) => (
     isSales
@@ -81,8 +85,16 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
         </div>
         {!aiLoading && !aiReady && (
           <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="ai-invoice-settings-warn">
-            {!enabled ? "AI entegrasyonu kapalı." : "AI API anahtarı tanımlı değil."} Platform → AI Entegrasyonu ayarlarından sağlayıcı ve modeli kaydedin.
-            {isSales && <span className="block mt-1 text-slate-600">UBL XML için AI anahtarı gerekmez; PDF için gerekir.</span>}
+            {!enabled
+              ? "AI entegrasyonu kapalı."
+              : decryptFailed
+                ? "Kayıtlı API anahtarı çözülemedi (şifreleme anahtarı değişmiş olabilir). Platform → AI Entegrasyonu'ndan yeni anahtar kaydedin."
+                : testFailed
+                  ? `API bağlantı testi başarısız: ${lastTest?.reason || "geçersiz anahtar"}. Platform → AI Entegrasyonu'ndan geçerli anahtar kaydedip Bağlantıyı Test Et yapın.`
+                  : !configured
+                    ? "AI API anahtarı tanımlı değil. Platform → AI Entegrasyonu ayarlarından sağlayıcı ve modeli kaydedin."
+                    : "AI hazır değil. Platform → AI Entegrasyonu'ndan Bağlantıyı Test Et yapın."}
+            {isSales && <span className="block mt-1 text-slate-600">UBL XML için AI anahtarı gerekmez; PDF için geçerli anahtar gerekir.</span>}
           </div>
         )}
         {!draft ? (

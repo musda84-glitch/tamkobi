@@ -26,14 +26,36 @@ def test_public_ai_status_uses_extract_label_and_env_key():
         "extract_model": "gpt-4.1",
         "enabled": True,
     })
+    cfg["api_key"] = "sk-test"
     cfg["has_env_key"] = True
     st = ai_service.public_ai_status(cfg)
     assert st["provider"] == "openai"
     assert st["extract_label"] == "GPT-4.1"
     assert st["advisor_label"] == "GPT-4o"
     assert st["configured"] is True
+    assert st["ready"] is True
     assert "GPT-4.1" in st["extract_badge"]
     assert "Claude" not in st["extract_badge"]
+
+
+def test_public_ai_status_not_ready_when_last_test_failed():
+    cfg = ai_service.normalize_ai({"provider": "openai", "advisor_model": "gpt-4o", "extract_model": "gpt-4o"})
+    cfg["api_key"] = "sk-bad"
+    cfg["last_test"] = {"ok": False, "reason": "401 invalid key"}
+    st = ai_service.public_ai_status(cfg)
+    assert st["configured"] is True
+    assert st["ready"] is False
+    assert st["last_test"]["ok"] is False
+
+
+def test_public_ai_status_blob_alone_is_not_configured():
+    cfg = ai_service.normalize_ai({"provider": "openai"})
+    cfg["has_key"] = True
+    cfg["api_key_enc"] = "blob"
+    cfg["api_key"] = ""
+    st = ai_service.public_ai_status(cfg)
+    assert st["configured"] is False
+    assert st["ready"] is False
 
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")

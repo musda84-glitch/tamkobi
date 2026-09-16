@@ -5,6 +5,7 @@ import { API_URL } from "../context/AuthContext";
 /**
  * Platform AI ayarlarından genel durum (GET /ai/status).
  * Ayrıştırma ekranlarında extract_label, danışmanda badge kullanılır.
+ * ready=false → yapılandırılmış görünse bile son test başarısız / anahtar kullanılamıyor.
  */
 export function useAiStatus() {
   const [status, setStatus] = useState(undefined);
@@ -24,15 +25,24 @@ export function useAiStatus() {
     };
   }, []);
 
-  const ready = status && typeof status === "object";
+  const readyObj = status && typeof status === "object";
+  const lastTest = readyObj ? status.last_test || null : null;
+  const configured = readyObj ? !!status.configured : false;
+  const enabled = readyObj ? !!status.enabled : false;
+  const ready = readyObj
+    ? (typeof status.ready === "boolean" ? !!status.ready : configured && enabled && !(lastTest && lastTest.ok === false))
+    : false;
   return {
-    status: ready ? status : null,
+    status: readyObj ? status : null,
     loading: status === undefined,
-    enabled: ready ? !!status.enabled : false,
-    configured: ready ? !!status.configured : false,
-    extractLabel: ready ? status.extract_label || "" : "",
-    advisorLabel: ready ? status.advisor_label || "" : "",
-    badge: ready ? status.badge || "" : "",
-    providerLabel: ready ? status.provider_label || "" : "",
+    enabled,
+    configured,
+    ready,
+    lastTest,
+    decryptFailed: readyObj ? !!status.decrypt_failed : false,
+    extractLabel: readyObj ? status.extract_label || "" : "",
+    advisorLabel: readyObj ? status.advisor_label || "" : "",
+    badge: readyObj ? status.badge || "" : "",
+    providerLabel: readyObj ? status.provider_label || "" : "",
   };
 }
