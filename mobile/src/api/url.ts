@@ -1,5 +1,11 @@
 export const DEFAULT_API_BASE = "https://tamkobi.com";
 export const API_BASE_KEY = "tamkobi.apiBase";
+
+export function extraApiUrl(extra?: { apiUrl?: unknown } | null): string | undefined {
+  const raw = extra?.apiUrl;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+}
+
 export const TOKEN_KEY = "tamkobi.accessToken";
 export const REMEMBER_EMAIL_KEY = "tamkobi.rememberEmail";
 export const SESSION_KIND_KEY = "tamkobi.sessionKind";

@@ -1,4 +1,4 @@
-import { apiRoot, normalizeApiBase } from "./url";
+import { apiRoot, extraApiUrl, normalizeApiBase } from "./url";
 
 describe("normalizeApiBase", () => {
   it("defaults empty to production", () => {
@@ -14,6 +14,13 @@ describe("normalizeApiBase", () => {
 
   it("adds https when protocol is missing", () => {
     expect(normalizeApiBase("tamkobi.com")).toBe("https://tamkobi.com");
+  });
+
+  it("reads extra.apiUrl from app.json extra", () => {
+    expect(extraApiUrl({ apiUrl: "https://tamkobi.com" })).toBe("https://tamkobi.com");
+    expect(extraApiUrl({ apiUrl: "  https://tamkobi.com  " })).toBe("https://tamkobi.com");
+    expect(extraApiUrl({})).toBeUndefined();
+    expect(extraApiUrl(null)).toBeUndefined();
   });
 
   it("keeps localhost http", () => {
