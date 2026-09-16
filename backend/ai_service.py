@@ -289,16 +289,25 @@ def public_ai_status(cfg: dict) -> dict:
     models = {m["id"]: m for m in meta["models"]}
     advisor = cfg.get("advisor_model") or ""
     extract = cfg.get("extract_model") or ""
+    advisor_label = (models.get(advisor) or {}).get("label") or advisor
+    extract_label = (models.get(extract) or {}).get("label") or extract
+    configured = bool(
+        cfg.get("has_key")
+        or cfg.get("has_env_key")
+        or cfg.get("api_key")
+        or cfg.get("api_key_enc")
+    )
     return {
         "enabled": bool(cfg.get("enabled", True)),
-        "configured": bool(cfg.get("has_key") or cfg.get("api_key") or cfg.get("api_key_enc")),
+        "configured": configured,
         "provider": provider,
         "provider_label": meta["label"],
         "advisor_model": advisor,
         "extract_model": extract,
-        "advisor_label": (models.get(advisor) or {}).get("label") or advisor,
-        "extract_label": (models.get(extract) or {}).get("label") or extract,
-        "badge": f"{meta['label']} {(models.get(advisor) or {}).get('label') or advisor}".strip(),
+        "advisor_label": advisor_label,
+        "extract_label": extract_label,
+        "badge": f"{meta['label']} {advisor_label}".strip(),
+        "extract_badge": f"{meta['label']} {extract_label}".strip(),
     }
 
 

@@ -25,9 +25,12 @@ import {
   Tooltip,
   ResponsiveContainer
 } from "recharts";
+import { useAiStatus } from "../hooks/useAiStatus";
 
 export default function AIAssistantPage() {
   const { activeCompany } = useAuth();
+  const { badge } = useAiStatus();
+  const aiBadge = badge || "Yapay Zeka";
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -40,7 +43,6 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
   const [inputMessage, setInputMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [forecast, setForecast] = useState(null);
-  const [aiBadge, setAiBadge] = useState("Yapay Zeka Destekli");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -56,9 +58,6 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
     }
   }, [activeCompany]);
   useEffect(() => { loadForecast(); }, [loadForecast]);
-  useEffect(() => {
-    axios.get(`${API_URL}/ai/status`).then((r) => { if (r.data?.badge) setAiBadge(r.data.badge); }).catch(() => {});
-  }, []);
 
   const handleSendMessage = async (msgText) => {
     const textToSend = msgText || inputMessage;
