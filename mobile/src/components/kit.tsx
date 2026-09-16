@@ -32,8 +32,8 @@ export function Screen({ children, onRefresh, refreshing, padded = true }: {
   );
 }
 
-export function Card({ children, style }: ViewProps) {
-  return <View style={[styles.card, style]}>{children}</View>;
+export function Card({ children, style, ...rest }: ViewProps) {
+  return <View style={[styles.card, style]} {...rest}>{children}</View>;
 }
 
 export function H1({ children }: { children: React.ReactNode }) {

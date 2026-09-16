@@ -20,6 +20,10 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push({ pathname: "/orders/[id]", params: { id: String(params?.id || "") } });
     case "Settings":
       return router.push("/settings");
+    case "Mesai":
+      return router.push("/mesai");
+    case "Personelim":
+      return router.push("/personelim");
     default:
       return;
   }

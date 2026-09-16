@@ -18,6 +18,20 @@ export const STATUS_TR: Record<string, string> = {
   present: "Geldi",
   absent: "Gelmedi",
   leave: "İzinli",
+  in_progress: "Devam",
+  paused: "Duraklatıldı",
+  waiting: "Bekliyor",
+  ready: "Hazır",
+  planned: "Planlı",
+  advance: "Avans",
+  bonus: "Prim",
+};
+
+export const LEAVE_TYPE_TR: Record<string, string> = {
+  annual: "Yıllık",
+  sick: "Hastalık",
+  unpaid: "Ücretsiz",
+  other: "Diğer",
 };
 
 export const CHANNEL_TR: Record<string, string> = {
@@ -54,6 +68,7 @@ export function tr(map: Record<string, string>, value?: string | null): string {
 }
 
 export const statusTr = (v?: string | null) => tr(STATUS_TR, v);
+export const leaveTr = (v?: string | null) => tr(LEAVE_TYPE_TR, v);
 export const channelTr = (v?: string | null) => tr(CHANNEL_TR, v);
 export const invoiceTypeTr = (v?: string | null) => tr(INVOICE_TYPE_TR, v);
 export const eTypeTr = (v?: string | null) => tr(E_TYPE_TR, v);
