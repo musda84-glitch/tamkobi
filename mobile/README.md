@@ -26,13 +26,13 @@ Giriş: TamKobi e-posta/şifre. API varsayılanı `https://tamkobi.com` (giriş 
 
 ## Mağaza (EAS)
 
-EAS proje ID: `af1abb42-dd8a-4e13-8453-ad3224e2844d`
+EAS proje ID: `7141c868-a97d-4fd6-80ac-62d4991e669b`
 
 ```bash
 cd mobile
 npm install
 npx eas-cli login
-npx eas-cli init --id af1abb42-dd8a-4e13-8453-ad3224e2844d
+npx eas-cli@latest init --id 7141c868-a97d-4fd6-80ac-62d4991e669b
 npx eas-cli build --platform ios --profile production
 ```
 
