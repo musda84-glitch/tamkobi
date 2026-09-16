@@ -1,4 +1,8 @@
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
+
+export function goHref(href: string) {
+  return router.push(href as Href);
+}
 
 export function go(name: string, params?: Record<string, unknown>) {
   switch (name) {
@@ -24,6 +28,10 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/mesai");
     case "Personelim":
       return router.push("/personelim");
+    case "Stock":
+      return router.push("/stok");
+    case "Field":
+      return router.push("/saha");
     default:
       return;
   }
