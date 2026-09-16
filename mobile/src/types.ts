@@ -93,6 +93,8 @@ export type Invoice = {
   contact_name?: string;
   contact_id?: string;
   grand_total?: number;
+  subtotal?: number;
+  vat_total?: number;
   paid_amount?: number;
   status?: string;
   payment_status?: string;
@@ -100,6 +102,36 @@ export type Invoice = {
   due_date?: string;
   items?: Record<string, unknown>[];
   currency?: string;
+  notes?: string;
+  gib_status?: string;
+  gib_tracking_id?: string;
+  einvoice_state?: string;
+  withholding_rate?: number;
+  withholding_code?: string;
+  withholding_amount?: number;
+  price_mode?: string;
+  general_discount_rate?: number;
+  general_discount_amount?: number;
+  fx_rate?: number;
+  fx_source?: string;
+  trade_kind?: string;
+  incoterm?: string;
+  country?: string;
+  customs_office?: string;
+  project_id?: string;
+  project_number?: string;
+  regime_code?: string;
+  declaration_no?: string;
+  declaration_date?: string;
+  dab_no?: string;
+  bl_awb?: string;
+  certificate?: string;
+  trade_file_number?: string;
+  direction?: string;
+  source?: string;
+  edoc_id?: string;
+  gib_response?: string;
+  dispatch_id?: string;
 };
 
 export type Order = {
@@ -134,6 +166,19 @@ export type Product = {
   is_active?: boolean;
   price_includes_vat?: boolean;
   image_url?: string;
+  category?: string;
+  purchase_price?: number;
+  purchase_vat_rate?: number;
+  min_stock_alert?: number;
+  show_in_b2b?: boolean;
+  track_stock?: boolean;
+  vat_exemption_code?: string | null;
+  desi?: number | null;
+  weight?: number | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  package_count?: number | null;
 };
 
 export type Notification = {

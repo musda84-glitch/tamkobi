@@ -37,4 +37,17 @@ describe("request", () => {
       message: "E-posta adresi veya şifre hatalı.",
     } satisfies Partial<ApiHttpError>);
   });
+
+  it("sends DELETE without a JSON body", async () => {
+    const fetchMock = jest.fn(async (_url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+      expect(init?.method).toBe("DELETE");
+      expect(init?.body).toBeUndefined();
+      return { ok: true, status: 200, text: async () => JSON.stringify({ status: "success" }) };
+    });
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    const { del } = await import("./client");
+    const data = await del<{ status: string }>(client, "/products/prod_01");
+    expect(data.status).toBe("success");
+  });
 });

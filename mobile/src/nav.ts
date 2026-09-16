@@ -18,6 +18,13 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/invoices");
     case "InvoiceDetail":
       return router.push({ pathname: "/invoices/[id]", params: { id: String(params?.id || "") } });
+    case "InvoiceNew":
+      return router.push({
+        pathname: "/invoices/new",
+        params: { type: String(params?.type || "all") },
+      });
+    case "InvoiceEdit":
+      return router.push({ pathname: "/invoices/edit/[id]", params: { id: String(params?.id || "") } });
     case "Orders":
       return router.push("/orders");
     case "OrderDetail":
@@ -32,6 +39,10 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/stok");
     case "Field":
       return router.push("/saha");
+    case "StockNew":
+      return router.push("/stock/new");
+    case "StockDetail":
+      return router.push({ pathname: "/stock/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
     case "Banking":
       return router.push("/banking");
     case "BankingNew":
