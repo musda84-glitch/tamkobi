@@ -38,7 +38,11 @@ def decrypt(value: str) -> str:
 
 # ---------------- NETGSM ----------------
 NETGSM_BASE = "https://api.netgsm.com.tr"
+NETGSM_SEND_PATH = "/sms/rest/v2/send"
+NETGSM_HEADERS_PATH = "/sms/rest/v2/msgheader"
+NETGSM_BALANCE_PATH = "/balance"
 NETGSM_ERRORS = {
+    "20": "Mesaj metni hatalı veya çok uzun.",
     "30": "Kullanıcı adı/şifre hatalı veya API erişimi yok (IP kısıtı olabilir).",
     "40": "Gönderici başlığı (msgheader) onaylı değil.",
     "41": "Gönderici başlığı (msgheader) onaylı değil.",
@@ -47,6 +51,7 @@ NETGSM_ERRORS = {
     "70": "Eksik/hatalı parametre.",
     "80": "Gönderim limiti aşıldı.",
     "85": "Aynı numaraya kısa sürede çok fazla gönderim.",
+    "100": "Netgsm sistem hatası — kısa süre sonra tekrar deneyin.",
 }
 
 def normalize_phone(phone: str) -> Optional[str]:
@@ -57,26 +62,80 @@ def normalize_phone(phone: str) -> Optional[str]:
         digits = digits[1:]
     return digits if re.fullmatch(r"5\d{9}", digits) else None
 
-async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
-    payload = {"msgheader": creds["msgheader"], "encoding": encoding, "messages": messages}
-    async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-        r = await client.post("/sms/send", auth=(creds["usercode"], creds["password"]), json=payload)
+def normalize_msgheader(header: str) -> str:
+    """Netgsm başlıkları genelde boşluksuz; trim + iç boşlukları kaldır."""
+    return re.sub(r"\s+", "", (header or "").strip())
+
+def _netgsm_auth(creds: dict):
+    return (creds["usercode"], creds["password"])
+
+def _parse_netgsm_body(r: httpx.Response) -> Dict[str, Any]:
     try:
         data = r.json()
+        return data if isinstance(data, dict) else {"raw": data}
     except Exception:
-        data = {"raw": r.text}
-    code = str(data.get("code", "")) if isinstance(data, dict) else ""
-    ok = r.status_code < 400 and code in ("00", "01", "02", "")
-    return {"ok": ok, "jobid": data.get("jobid") if isinstance(data, dict) else None, "code": code,
-            "error": None if ok else NETGSM_ERRORS.get(code, data.get("description") if isinstance(data, dict) else r.text[:200]), "raw": data}
+        return {"raw": (r.text or "")[:300]}
+
+async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+    header = normalize_msgheader(creds.get("msgheader") or "")
+    if not header:
+        return {"ok": False, "jobid": None, "code": "70", "error": "Gönderici başlığı (msgheader) boş.", "raw": None}
+    payload = {"msgheader": header, "encoding": encoding, "messages": messages}
+    async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        r = await client.post(NETGSM_SEND_PATH, auth=_netgsm_auth(creds), json=payload)
+    data = _parse_netgsm_body(r)
+    code = str(data.get("code", "") or "")
+    ok = r.status_code < 400 and code in ("00", "01", "02")
+    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or (data.get("raw") if isinstance(data.get("raw"), str) else None) or f"HTTP {r.status_code}"
+    return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data}
 
 async def netgsm_balance(creds: dict) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=20) as client:
-        r = await client.post("/balance", auth=(creds["usercode"], creds["password"]), json={"stip": 3})
-    try:
-        return {"ok": r.status_code < 400, "data": r.json()}
-    except Exception:
-        return {"ok": False, "data": {"raw": r.text[:200]}}
+        r = await client.post(NETGSM_BALANCE_PATH, auth=_netgsm_auth(creds), json={"stip": 3})
+    data = _parse_netgsm_body(r)
+    code = str(data.get("code", "") or "")
+    # stip=3 success often returns balance array without error code, or code 00
+    ok = r.status_code < 400 and code in ("", "00") and "balance" in data
+    if not ok and r.status_code < 400 and code in ("", "00") and data.get("raw") is None:
+        ok = True
+    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}"
+    return {"ok": ok, "code": code, "data": data, "error": err, "message": err}
+
+async def netgsm_headers(creds: dict) -> Dict[str, Any]:
+    """Onaylı gönderici başlıklarını listele."""
+    async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=20) as client:
+        r = await client.get(NETGSM_HEADERS_PATH, auth=_netgsm_auth(creds))
+    data = _parse_netgsm_body(r)
+    headers = data.get("msgheaders") or data.get("msgheader") or []
+    if isinstance(headers, str):
+        headers = [headers]
+    code = str(data.get("code", "") or "")
+    ok = r.status_code < 400 and isinstance(headers, list) and (code in ("", "00") or bool(headers))
+    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}"
+    return {"ok": ok, "headers": [str(h).strip() for h in headers if h], "code": code, "error": err, "raw": data}
+
+async def netgsm_verify(creds: dict) -> Dict[str, Any]:
+    """Kimlik bilgilerini bakiye + başlık sorgusu ile doğrula."""
+    bal = await netgsm_balance(creds)
+    if not bal.get("ok"):
+        return {"ok": False, "message": bal.get("error") or bal.get("message") or "Netgsm bağlantısı başarısız.", "balance": bal, "headers": []}
+    hdr = await netgsm_headers(creds)
+    configured = normalize_msgheader(creds.get("msgheader") or "")
+    approved = hdr.get("headers") or []
+    header_ok = (not approved) or (configured.upper() in {h.upper() for h in approved}) or (configured in approved)
+    warn = None
+    if approved and configured and not header_ok:
+        warn = f"«{configured}» onaylı başlıklar arasında yok. Onaylı: {', '.join(approved[:8])}"
+    elif not configured:
+        warn = "Gönderici başlığı boş — SMS gönderilemez."
+    return {
+        "ok": True,
+        "message": warn or "Netgsm bağlantısı doğrulandı.",
+        "warning": warn,
+        "balance": bal.get("data"),
+        "headers": approved,
+        "header_ok": bool(configured) and (header_ok if approved else True),
+    }
 
 # ---------------- MAIL (IMAP / SMTP) ----------------
 MAIL_PRESETS = {
