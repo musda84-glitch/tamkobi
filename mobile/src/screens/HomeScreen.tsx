@@ -1,20 +1,70 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Badge, Card, ErrorBanner, H1, Kpi, Muted, Row, Screen } from "../components/kit";
-import { go } from "../nav";
+import { go, goHref } from "../nav";
 import { colors } from "../theme";
 import type { Notification, Overview } from "../types";
 import { fmtMoney } from "../utils/money";
+import { QUICK_TONE_COLORS, resolveMobilePath, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
+
+function QuickTileButton({ tile }: { tile: QuickTile }) {
+  const tone = QUICK_TONE_COLORS[tile.tone];
+  return (
+    <Pressable
+      onPress={() => goHref(tile.href)}
+      testID={`home-quick-${tile.id}`}
+      style={{
+        width: "25%",
+        padding: 6,
+      }}
+    >
+      <View
+        style={{
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 16,
+          paddingVertical: 14,
+          paddingHorizontal: 6,
+          alignItems: "center",
+          gap: 8,
+          minHeight: 96,
+        }}
+      >
+        <View
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 16,
+            backgroundColor: tone.bg,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Ionicons name={tile.icon as keyof typeof Ionicons.glyphMap} size={24} color={tone.fg} />
+        </View>
+        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12, textAlign: "center" }} numberOfLines={2}>
+          {tile.label}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
 
 export function HomeScreen() {
-  const { client, companyId, user, activeCompany } = useAuth();
+  const { client, companyId, user, activeCompany, license } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  const tiles = useMemo(
+    () => visibleQuickTiles(user, license),
+    [user, license]
+  );
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -52,6 +102,15 @@ export function HomeScreen() {
         </Pressable>
       </Row>
       <ErrorBanner message={error} />
+
+      <View testID="home-quick-menu">
+        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16, marginBottom: 4 }}>Hızlı menü</Text>
+        <Muted>Modüllere ve sık kullanılan işlemlere tek dokunuş.</Muted>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -6, marginTop: 8 }}>
+          {tiles.map((tile) => <QuickTileButton key={tile.id} tile={tile} />)}
+        </View>
+      </View>
+
       <Row>
         <Kpi label="Tahsilat" value={fmtMoney(overview?.collections.total)} sub={`Gecikmiş ${fmtMoney(overview?.collections.overdue)}`} />
         <Kpi label="Ödeme" value={fmtMoney(overview?.payments.total)} sub={`Gecikmiş ${fmtMoney(overview?.payments.overdue)}`} />
@@ -62,12 +121,21 @@ export function HomeScreen() {
       </Row>
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
-        {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => (
-          <Row key={t.key} style={{ justifyContent: "space-between", paddingVertical: 6 }}>
-            <Text style={{ color: colors.text, flex: 1 }}>{t.label}{t.extra ? ` · ${t.extra}` : ""}</Text>
-            <Badge label={String(t.count)} tone={t.count ? "amber" : "slate"} />
-          </Row>
-        ))}
+        {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {
+          const href = resolveMobilePath(t.path);
+          const row = (
+            <Row style={{ justifyContent: "space-between", paddingVertical: 6 }}>
+              <Text style={{ color: colors.text, flex: 1 }}>{t.label}{t.extra ? ` · ${t.extra}` : ""}</Text>
+              <Badge label={String(t.count)} tone={t.count ? "amber" : "slate"} />
+            </Row>
+          );
+          if (!href) return <View key={t.key}>{row}</View>;
+          return (
+            <Pressable key={t.key} onPress={() => goHref(href)} testID={`home-task-${t.key}`}>
+              {row}
+            </Pressable>
+          );
+        })}
       </Card>
     </Screen>
   );

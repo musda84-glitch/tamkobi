@@ -1,4 +1,4 @@
-import { channelTr, contactTypeTr, leaveTr, paymentMethodTr, productTypeTr, statusTr } from "./labels";
+import { channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, leaveTr, paymentMethodTr, productTypeTr, statusTr, tradeKindTr } from "./labels";
 
 describe("labels", () => {
   it("maps known statuses", () => {
@@ -29,5 +29,11 @@ describe("labels", () => {
   it("maps product types", () => {
     expect(productTypeTr("raw_material")).toBe("Hammadde");
     expect(productTypeTr("finished_good")).toBe("Mamul");
+  });
+
+  it("maps invoice and e-belge types", () => {
+    expect(invoiceTypeTr("dispatch")).toBe("İrsaliye");
+    expect(eTypeTr("e_export")).toBe("e-İhracat");
+    expect(tradeKindTr("import")).toBe("İthalat");
   });
 });

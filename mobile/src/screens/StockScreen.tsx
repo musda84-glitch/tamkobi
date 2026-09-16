@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
@@ -13,12 +13,18 @@ import { fmtMoney, idOf } from "../utils/money";
 export function StockScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/stock", "edit");
+  const params = useLocalSearchParams<{ scan?: string | string[] }>();
   const [rows, setRows] = useState<Product[]>([]);
   const [q, setQ] = useState("");
   const [scan, setScan] = useState(false);
   const [hit, setHit] = useState<Product | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    const flag = Array.isArray(params.scan) ? params.scan[0] : params.scan;
+    if (flag === "1" || flag === "true") setScan(true);
+  }, [params.scan]);
 
   const load = useCallback(async () => {
     setRefreshing(true);

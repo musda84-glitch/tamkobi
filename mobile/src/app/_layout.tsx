@@ -44,6 +44,8 @@ function RootStack() {
         <Stack.Screen name="contacts/index" options={{ title: "Cariler" }} />
         <Stack.Screen name="contacts/[id]" options={{ title: "Cari" }} />
         <Stack.Screen name="invoices/index" options={{ title: "Faturalar" }} />
+        <Stack.Screen name="invoices/new" options={{ title: "Yeni fatura" }} />
+        <Stack.Screen name="invoices/edit/[id]" options={{ title: "Taslak düzenle" }} />
         <Stack.Screen name="invoices/[id]" options={{ title: "Fatura" }} />
         <Stack.Screen name="orders/index" options={{ title: "Siparişler" }} />
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />

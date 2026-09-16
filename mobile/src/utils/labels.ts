@@ -60,6 +60,12 @@ export const E_TYPE_TR: Record<string, string> = {
   e_archive: "E-Arşiv",
   paper: "Kağıt Fatura",
   e_dispatch: "E-İrsaliye",
+  e_export: "e-İhracat",
+};
+
+export const TRADE_KIND_TR: Record<string, string> = {
+  export: "İhracat",
+  import: "İthalat",
 };
 
 export const CONTACT_TYPE_TR: Record<string, string> = {
@@ -104,3 +110,4 @@ export const contactTypeTr = (v?: string | null) => tr(CONTACT_TYPE_TR, v);
 export const paymentMethodTr = (v?: string | null) => tr(PAYMENT_METHOD_TR, v);
 export const riskStatusTr = (v?: string | null) => tr(RISK_STATUS_TR, v);
 export const productTypeTr = (v?: string | null) => tr(PRODUCT_TYPE_TR, v);
+export const tradeKindTr = (v?: string | null) => tr(TRADE_KIND_TR, v);

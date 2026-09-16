@@ -1,4 +1,8 @@
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
+
+export function goHref(href: string) {
+  return router.push(href as Href);
+}
 
 export function go(name: string, params?: Record<string, unknown>) {
   switch (name) {
@@ -14,6 +18,13 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/invoices");
     case "InvoiceDetail":
       return router.push({ pathname: "/invoices/[id]", params: { id: String(params?.id || "") } });
+    case "InvoiceNew":
+      return router.push({
+        pathname: "/invoices/new",
+        params: { type: String(params?.type || "all") },
+      });
+    case "InvoiceEdit":
+      return router.push({ pathname: "/invoices/edit/[id]", params: { id: String(params?.id || "") } });
     case "Orders":
       return router.push("/orders");
     case "OrderDetail":
@@ -24,6 +35,10 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/mesai");
     case "Personelim":
       return router.push("/personelim");
+    case "Stock":
+      return router.push("/stok");
+    case "Field":
+      return router.push("/saha");
     case "StockNew":
       return router.push("/stock/new");
     case "StockDetail":
