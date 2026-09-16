@@ -6,22 +6,24 @@ import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 
 function AuthRedirect() {
-  const { ready, user } = useAuth();
+  const { ready, user, b2bToken } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
     if (!ready) return;
     const onLogin = segments[0] === "login";
-    if (!user && !onLogin) router.replace("/login");
-    else if (user && onLogin) router.replace("/");
-  }, [ready, user, segments, router]);
+    const onB2b = segments[0] === "b2b";
+    if (!user && !b2bToken && !onLogin) router.replace("/login");
+    else if (user && (onLogin || onB2b)) router.replace("/");
+    else if (b2bToken && !user && !onB2b) router.replace("/b2b");
+  }, [ready, user, b2bToken, segments, router]);
 
   return null;
 }
 
 function RootStack() {
-  const { ready, user } = useAuth();
+  const { ready, user, b2bToken } = useAuth();
   if (!ready) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.ink }}>
@@ -29,11 +31,13 @@ function RootStack() {
       </View>
     );
   }
+  const initial = user ? "(tabs)" : b2bToken ? "b2b" : "login";
   return (
     <>
       <AuthRedirect />
-      <Stack initialRouteName={user ? "(tabs)" : "login"} screenOptions={{ headerTitleStyle: { fontWeight: "800", color: colors.text }, headerBackTitle: "Geri", headerTintColor: colors.primary, headerStyle: { backgroundColor: colors.surface } }}>
+      <Stack initialRouteName={initial} screenOptions={{ headerTitleStyle: { fontWeight: "800", color: colors.text }, headerBackTitle: "Geri", headerTintColor: colors.primary, headerStyle: { backgroundColor: colors.surface } }}>
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="b2b" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="search" options={{ title: "Ara" }} />
         <Stack.Screen name="notifications" options={{ title: "Bildirimler" }} />

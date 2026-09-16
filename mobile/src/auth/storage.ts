@@ -1,5 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { API_BASE_KEY, DEFAULT_API_BASE, REMEMBER_EMAIL_KEY, TOKEN_KEY, normalizeApiBase } from "../api/url";
+import {
+  API_BASE_KEY,
+  B2B_NAME_KEY,
+  B2B_TOKEN_KEY,
+  DEFAULT_API_BASE,
+  REMEMBER_B2B_EMAIL_KEY,
+  REMEMBER_EMAIL_KEY,
+  SESSION_KIND_KEY,
+  TOKEN_KEY,
+  normalizeApiBase,
+} from "../api/url";
+import type { SessionKind } from "../types";
 
 async function secureGet(key: string): Promise<string | null> {
   try {
@@ -68,4 +79,45 @@ export async function loadRememberedEmail(): Promise<string> {
 export async function saveRememberedEmail(email: string | null): Promise<void> {
   if (email) await AsyncStorage.setItem(REMEMBER_EMAIL_KEY, email);
   else await AsyncStorage.removeItem(REMEMBER_EMAIL_KEY);
+}
+
+export async function loadSessionKind(): Promise<SessionKind | null> {
+  const v = await AsyncStorage.getItem(SESSION_KIND_KEY);
+  return v === "erp" || v === "b2b" ? v : null;
+}
+
+export async function saveSessionKind(kind: SessionKind | null): Promise<void> {
+  if (kind) await AsyncStorage.setItem(SESSION_KIND_KEY, kind);
+  else await AsyncStorage.removeItem(SESSION_KIND_KEY);
+}
+
+export async function loadB2bToken(): Promise<string | null> {
+  return secureGet(B2B_TOKEN_KEY);
+}
+
+export async function saveB2bToken(token: string): Promise<void> {
+  await secureSet(B2B_TOKEN_KEY, token);
+}
+
+export async function loadB2bName(): Promise<string> {
+  return (await AsyncStorage.getItem(B2B_NAME_KEY)) || "";
+}
+
+export async function saveB2bName(name: string | null): Promise<void> {
+  if (name) await AsyncStorage.setItem(B2B_NAME_KEY, name);
+  else await AsyncStorage.removeItem(B2B_NAME_KEY);
+}
+
+export async function clearB2bSession(): Promise<void> {
+  await secureDel(B2B_TOKEN_KEY);
+  await AsyncStorage.removeItem(B2B_NAME_KEY);
+}
+
+export async function loadRememberedB2bEmail(): Promise<string> {
+  return (await AsyncStorage.getItem(REMEMBER_B2B_EMAIL_KEY)) || "";
+}
+
+export async function saveRememberedB2bEmail(email: string | null): Promise<void> {
+  if (email) await AsyncStorage.setItem(REMEMBER_B2B_EMAIL_KEY, email);
+  else await AsyncStorage.removeItem(REMEMBER_B2B_EMAIL_KEY);
 }
