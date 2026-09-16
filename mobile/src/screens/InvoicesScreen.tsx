@@ -1,22 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, Row, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
+import { createInvoiceButtonLabel, INVOICE_FILTERS } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 
-const FILTERS = [
-  { key: "all", label: "Tümü" },
-  { key: "sales", label: "Satış" },
-  { key: "purchase", label: "Alış" },
-];
-
 export function InvoicesScreen() {
-  const { client, companyId } = useAuth();
+  const { client, companyId, can } = useAuth();
+  const canEdit = can("/invoices", "edit");
   const [rows, setRows] = useState<Invoice[]>([]);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
@@ -36,7 +33,7 @@ export function InvoicesScreen() {
     }
   }, [client, companyId, type]);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -48,18 +45,38 @@ export function InvoicesScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <Row>
-        {FILTERS.map((f) => (
-          <Pressable key={f.key} onPress={() => setType(f.key)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: type === f.key ? colors.primary : "#fff", borderWidth: 1, borderColor: type === f.key ? colors.primary : colors.border }}>
-            <Text style={{ color: type === f.key ? "#fff" : colors.text, fontWeight: "700" }}>{f.label}</Text>
+      {canEdit ? (
+        <PrimaryButton
+          title={createInvoiceButtonLabel(type)}
+          onPress={() => go("InvoiceNew", { type })}
+          color={colors.primary}
+          testID="create-new-invoice-btn"
+        />
+      ) : null}
+      <Row style={{ flexWrap: "wrap" }}>
+        {INVOICE_FILTERS.map((f) => (
+          <Pressable
+            key={f.key}
+            testID={`filter-tab-${f.key}`}
+            onPress={() => setType(f.key)}
+            style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: type === f.key ? colors.primary : "#fff", borderWidth: 1, borderColor: type === f.key ? colors.primary : colors.border }}
+          >
+            <Text style={{ color: type === f.key ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>{f.label}</Text>
           </Pressable>
         ))}
       </Row>
-      <Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" />
+      <Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" testID="inv-search" />
       <ErrorBanner message={error} />
-      {!filtered.length ? <Empty icon="document-outline" title="Fatura yok" /> : filtered.map((inv) => (
+      {!filtered.length ? (
+        <Empty
+          icon="document-outline"
+          title="Fatura yok"
+          hint={canEdit ? "Yeni fatura kesin veya taslak düzenleyin." : "Aramayı veya filtreyi değiştirin."}
+        />
+      ) : filtered.map((inv) => (
         <ListRow
           key={idOf(inv)}
+          testID={`inv-row-${idOf(inv)}`}
           title={inv.invoice_number || "Fatura"}
           subtitle={`${invoiceTypeTr(inv.invoice_type)} · ${eTypeTr(inv.e_type)} · ${statusTr(inv.status)} · ${fmtDate(inv.issue_date)}`}
           right={fmtMoney(inv.grand_total, inv.currency)}
