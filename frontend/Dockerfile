@@ -2,6 +2,11 @@ FROM node:20-bookworm-slim AS build
 
 WORKDIR /app
 
+# pack-browser-extension.mjs prefers `zip`, then falls back to python3
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zip \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json ./
 # Private visual-edits tarball is optional; CRA/craco already degrades without it.
 RUN node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); if(p.devDependencies) delete p.devDependencies['@emergentbase/visual-edits']; fs.writeFileSync('package.json', JSON.stringify(p,null,2));"
