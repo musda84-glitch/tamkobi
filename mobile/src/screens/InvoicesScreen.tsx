@@ -50,7 +50,7 @@ export function InvoicesScreen() {
     <Screen onRefresh={load} refreshing={refreshing}>
       <Row>
         {FILTERS.map((f) => (
-          <Pressable key={f.key} onPress={() => setType(f.key)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: type === f.key ? colors.secondary : "#fff", borderWidth: 1, borderColor: colors.border }}>
+          <Pressable key={f.key} onPress={() => setType(f.key)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: type === f.key ? colors.primary : "#fff", borderWidth: 1, borderColor: type === f.key ? colors.primary : colors.border }}>
             <Text style={{ color: type === f.key ? "#fff" : colors.text, fontWeight: "700" }}>{f.label}</Text>
           </Pressable>
         ))}

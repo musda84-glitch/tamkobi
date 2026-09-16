@@ -36,7 +36,7 @@ export function LoginScreen() {
     <View style={styles.wrap} testID="login-page">
       <View style={styles.card}>
         <Image source={require("../../assets/icon.png")} style={styles.mark} />
-        <Text style={styles.brand}>Tam<Text style={{ color: colors.accent }}>Kobi</Text></Text>
+        <Text style={styles.brand}>Tam<Text style={{ color: colors.primary }}>Kobi</Text></Text>
         <Text style={styles.hint}>ERP hesabınızla giriş yapın. Web ile aynı kullanıcı.</Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <Field label="E-posta" testID="login-email" autoCapitalize="none" keyboardType="email-address" autoComplete="email" value={email} onChangeText={setEmail} />
@@ -54,7 +54,7 @@ export function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", padding: 24 },
+  wrap: { flex: 1, backgroundColor: colors.ink, alignItems: "center", justifyContent: "center", padding: 24 },
   card: { width: "100%", maxWidth: 400, backgroundColor: "#fff", borderRadius: 24, padding: 24 },
   mark: { width: 56, height: 56, borderRadius: 14, marginBottom: 12 },
   brand: { fontSize: 28, fontWeight: "900", color: colors.text },

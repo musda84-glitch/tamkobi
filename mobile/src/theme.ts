@@ -1,10 +1,16 @@
+/**
+ * Web (tamkobi.com) Tailwind paleti:
+ * emerald-600 CTA / aktif menü, slate-950 giriş, slate-900 chrome, indigo-600 marka.
+ */
 export const colors = {
-  primary: "#6366F1",
-  primaryHover: "#4F46E5",
+  primary: "#059669",
+  primaryHover: "#047857",
+  accent: "#059669",
+  indigo: "#4F46E5",
   secondary: "#0F172A",
-  accent: "#10B981",
+  ink: "#020617",
   warning: "#F59E0B",
-  danger: "#EF4444",
+  danger: "#E11D48",
   background: "#F8FAFC",
   surface: "#FFFFFF",
   border: "#E2E8F0",
@@ -14,6 +20,11 @@ export const colors = {
   slate100: "#F1F5F9",
   slate200: "#E2E8F0",
   slate800: "#1E293B",
+  emerald50: "#ECFDF5",
+  emerald100: "#D1FAE5",
+  rose50: "#FFF1F2",
+  amber50: "#FFFBEB",
+  indigo50: "#EEF2FF",
 };
 
 export const spacing = {

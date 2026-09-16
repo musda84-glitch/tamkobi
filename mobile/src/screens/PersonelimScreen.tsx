@@ -84,9 +84,9 @@ function Chip({
         paddingVertical: 8,
         paddingHorizontal: 12,
         borderRadius: 999,
-        backgroundColor: active ? colors.secondary : "#fff",
+        backgroundColor: active ? colors.primary : "#fff",
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: active ? colors.primary : colors.border,
       }}
     >
       <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>{label}</Text>
