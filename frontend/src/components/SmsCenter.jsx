@@ -1,5 +1,4 @@
-
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { MessageSquare, Settings, Send, Loader2, Wallet, CheckCircle2, AlertCircle, FlaskConical, ShieldCheck } from "lucide-react";
@@ -10,17 +9,33 @@ const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
 export const SmsCenter = ({ companyId, contacts }) => {
   const [settings, setSettings] = useState(null);
-  const [form, setForm] = useState({ usercode: "", password: "", msgheader: "", is_active: true });
+  const [form, setForm] = useState({ provider: "netgsm", usercode: "", password: "", msgheader: "", is_active: true });
   const [balance, setBalance] = useState(null);
   const [logs, setLogs] = useState([]);
   const [single, setSingle] = useState({ contact_id: "", phone: "", message: "" });
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
+  const providers = settings?.providers || [];
+  const meta = useMemo(() => {
+    const list = providers.length ? providers : [
+      { id: "netgsm", name: "Netgsm", user_label: "Kullanıcı Adı (usercode)", user_placeholder: "850XXXXXXX", pass_label: "API Şifresi", header_hint: "", help: "" },
+    ];
+    return list.find((p) => p.id === form.provider) || list[0];
+  }, [providers, form.provider]);
+
   const load = useCallback(async () => {
     try {
       const [s, l] = await Promise.all([axios.get(`${API_URL}/comm/sms/settings?company_id=${companyId}`), axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`)]);
-      setSettings(s.data); setForm({ usercode: s.data.usercode || "", password: "", msgheader: s.data.msgheader || "", is_active: s.data.is_active ?? true }); setLogs(l.data);
+      setSettings(s.data);
+      setForm({
+        provider: s.data.provider || "netgsm",
+        usercode: s.data.usercode || "",
+        password: "",
+        msgheader: s.data.msgheader || "",
+        is_active: s.data.is_active ?? true,
+      });
+      setLogs(l.data);
     } catch { toast.error("SMS verileri yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -30,14 +45,13 @@ export const SmsCenter = ({ companyId, contacts }) => {
     try {
       const saved = await axios.put(`${API_URL}/comm/sms/settings`, { company_id: companyId, ...form });
       setSettings(saved.data);
-      toast.success("Netgsm ayarları kaydedildi. Bağlantıyı doğrulayın.");
-      // Kaydet sonrası otomatik doğrula (şifre boşsa kayıtlı olan kullanılır)
+      toast.success(`${meta?.name || "SMS"} ayarları kaydedildi. Bağlantıyı doğrulayın.`);
       setVerifying(true);
       try {
         const v = await axios.post(`${API_URL}/comm/sms/verify`, { company_id: companyId });
         setSettings(v.data);
-        if (v.data.verified) toast.success(v.data.verify_message || "Netgsm bağlantısı doğrulandı.");
-        else toast.error(v.data.verify_message || v.data.verify?.message || "Netgsm doğrulanamadı.");
+        if (v.data.verified) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
+        else toast.error(v.data.verify_message || v.data.verify?.message || "Doğrulanamadı.");
       } catch (err) {
         toast.error(err.response?.data?.detail || "Doğrulama yapılamadı.");
       } finally {
@@ -52,8 +66,8 @@ export const SmsCenter = ({ companyId, contacts }) => {
     try {
       const v = await axios.post(`${API_URL}/comm/sms/verify`, { company_id: companyId });
       setSettings(v.data);
-      if (v.data.verified) toast.success(v.data.verify_message || "Netgsm bağlantısı doğrulandı.");
-      else toast.error(v.data.verify_message || v.data.verify?.message || "Netgsm doğrulanamadı.");
+      if (v.data.verified) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
+      else toast.error(v.data.verify_message || v.data.verify?.message || "Doğrulanamadı.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Doğrulama yapılamadı.");
     } finally {
@@ -89,50 +103,71 @@ export const SmsCenter = ({ companyId, contacts }) => {
 
   const configured = settings?.usercode && settings?.has_password;
   const connected = configured && settings?.verified && settings?.is_active;
+  const providerName = settings?.provider_name || meta?.name || "SMS";
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5" data-testid="sms-center">
       <div className="space-y-5 lg:col-span-1">
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-sm">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Settings className="w-4 h-4 text-slate-500" /> Netgsm Ayarları</h3>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Settings className="w-4 h-4 text-slate-500" /> SMS Ayarları</h3>
             {connected ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md px-2 py-0.5" data-testid="netgsm-status-connected"><CheckCircle2 className="w-3 h-3" /> BAĞLI</span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md px-2 py-0.5" data-testid="sms-status-connected"><CheckCircle2 className="w-3 h-3" /> BAĞLI</span>
             ) : configured ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md px-2 py-0.5" data-testid="netgsm-status-saved"><AlertCircle className="w-3 h-3" /> KAYITLI</span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md px-2 py-0.5" data-testid="sms-status-saved"><AlertCircle className="w-3 h-3" /> KAYITLI</span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded-md px-2 py-0.5" data-testid="netgsm-status-simulate"><FlaskConical className="w-3 h-3" /> SİMÜLE</span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded-md px-2 py-0.5" data-testid="sms-status-simulate"><FlaskConical className="w-3 h-3" /> SİMÜLE</span>
             )}
           </div>
           <form onSubmit={saveSettings} className="space-y-2 text-xs">
-            <div><label className="block font-semibold mb-1">Kullanıcı Adı (usercode)</label><input value={form.usercode} onChange={(e) => setForm({ ...form, usercode: e.target.value })} className={`${inputCls} font-mono`} placeholder="850XXXXXXX" data-testid="netgsm-usercode-input" /></div>
-            <div><label className="block font-semibold mb-1">API Şifresi {settings?.has_password && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için girin)</span>}</label><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} data-testid="netgsm-password-input" autoComplete="new-password" /></div>
             <div>
-              <label className="block font-semibold mb-1">Gönderici Başlığı (msgheader)</label>
-              <input value={form.msgheader} onChange={(e) => setForm({ ...form, msgheader: e.target.value })} className={`${inputCls} uppercase`} placeholder="FIRMAADI" data-testid="netgsm-header-input" list="netgsm-approved-headers" />
+              <label className="block font-semibold mb-1">SMS Operatörü</label>
+              <select
+                value={form.provider}
+                onChange={(e) => setForm({ ...form, provider: e.target.value, verified: false })}
+                className={inputCls}
+                data-testid="sms-provider-select"
+              >
+                {(providers.length ? providers : [{ id: "netgsm", name: "Netgsm" }, { id: "iletimerkezi", name: "İleti Merkezi" }, { id: "verimor", name: "Verimor" }]).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 mt-1">BizimHesap benzeri: çalıştığınız SMS firmasını seçin.</p>
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">{meta?.user_label || "Kullanıcı / API Key"}</label>
+              <input value={form.usercode} onChange={(e) => setForm({ ...form, usercode: e.target.value })} className={`${inputCls} font-mono`} placeholder={meta?.user_placeholder || ""} data-testid="sms-usercode-input" />
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">{meta?.pass_label || "API Şifresi"} {settings?.has_password && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için girin)</span>}</label>
+              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} data-testid="sms-password-input" autoComplete="new-password" />
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">Gönderici Başlığı</label>
+              <input value={form.msgheader} onChange={(e) => setForm({ ...form, msgheader: e.target.value })} className={`${inputCls} uppercase`} placeholder="FIRMAADI" data-testid="sms-header-input" list="sms-approved-headers" />
               {(settings?.approved_headers || []).length > 0 && (
-                <datalist id="netgsm-approved-headers">
+                <datalist id="sms-approved-headers">
                   {settings.approved_headers.map((h) => <option key={h} value={h} />)}
                 </datalist>
               )}
-              <p className="text-[10px] text-slate-400 mt-1">Netgsm’de onaylı başlıkla birebir aynı olmalı (3–11 karakter). Panel: SMS Hizmeti → Başlıklarım.</p>
+              <p className="text-[10px] text-slate-400 mt-1">{meta?.header_hint || "Onaylı başlıkla birebir aynı olmalı (3–11 karakter)."}</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} /><span className="font-semibold">Aktif</span></label>
             <div className="flex flex-wrap gap-2 pt-1">
-              <button type="submit" className="flex-1 min-w-[5.5rem] px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold" data-testid="save-netgsm-btn">Kaydet</button>
-              <button type="button" onClick={verifyConnection} disabled={verifying || !configured} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50 disabled:opacity-50" data-testid="netgsm-verify-btn">
+              <button type="submit" className="flex-1 min-w-[5.5rem] px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold" data-testid="save-sms-btn">Kaydet</button>
+              <button type="button" onClick={verifyConnection} disabled={verifying || !configured} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50 disabled:opacity-50" data-testid="sms-verify-btn">
                 {verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} Doğrula
               </button>
-              <button type="button" onClick={checkBalance} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50" data-testid="netgsm-balance-btn"><Wallet className="w-3.5 h-3.5" /> Bakiye</button>
+              <button type="button" onClick={checkBalance} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50" data-testid="sms-balance-btn"><Wallet className="w-3.5 h-3.5" /> Bakiye</button>
             </div>
           </form>
           {settings?.verify_message && (
-            <div className={`text-[11px] rounded-lg p-2 ${settings.verified ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`} data-testid="netgsm-verify-message">
+            <div className={`text-[11px] rounded-lg p-2 ${settings.verified ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`} data-testid="sms-verify-message">
               {settings.verify_message}
             </div>
           )}
-          {balance && <div className={`text-[11px] rounded-lg p-2 ${balance.ok ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`} data-testid="netgsm-balance-result">{balance.ok ? JSON.stringify(balance.data) : (balance.message || "Bakiye alınamadı")}</div>}
-          <p className="text-[10px] text-slate-400">Netgsm panelinde API alt kullanıcısı oluşturup SMS API yetkisi verin; onaylı gönderici başlığınızı girin. «BAĞLI» yalnızca Doğrula başarılıysa görünür.</p>
+          {balance && <div className={`text-[11px] rounded-lg p-2 ${balance.ok ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`} data-testid="sms-balance-result">{balance.ok ? JSON.stringify(balance.data) : (balance.message || "Bakiye alınamadı")}</div>}
+          <p className="text-[10px] text-slate-400">{meta?.help || `${providerName} paneline API yetkisi verin. «BAĞLI» yalnızca Doğrula başarılıysa görünür.`}</p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-sm">

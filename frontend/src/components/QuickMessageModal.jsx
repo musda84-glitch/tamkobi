@@ -62,7 +62,7 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
           <button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <button type="button" onClick={() => setTab("sms")} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1.5 ${tab === "sms" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white"}`} data-testid="qm-tab-sms"><MessageSquare className="w-4 h-4" /> SMS (Netgsm)</button>
+          <button type="button" onClick={() => setTab("sms")} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1.5 ${tab === "sms" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white"}`} data-testid="qm-tab-sms"><MessageSquare className="w-4 h-4" /> SMS</button>
           <button type="button" onClick={() => setTab("email")} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1.5 ${tab === "email" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="qm-tab-email"><Mail className="w-4 h-4" /> E-posta</button>
         </div>
         <form onSubmit={send} className="space-y-3 text-xs">

@@ -369,18 +369,35 @@ class TestBankConnections:
 
 # ---------------- COMM SMS ----------------
 class TestCommSms:
+    def test_providers_list(self, s):
+        r = s.get(f"{BASE}/comm/sms/providers", timeout=30)
+        assert r.status_code == 200, r.text[:300]
+        ids = {p["id"] for p in r.json()}
+        assert {"netgsm", "iletimerkezi", "verimor"} <= ids
+
     def test_settings_roundtrip_no_password_leak(self, s):
         r = s.put(f"{BASE}/comm/sms/settings",
-                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "TAMKOBI", "is_active": True}, timeout=30)
+                  json={"company_id": COMPANY, "provider": "netgsm", "usercode": "TEST8503", "msgheader": "TAMKOBI", "is_active": True}, timeout=30)
         assert r.status_code == 200, r.text[:300]
         d = r.json()
         assert d["usercode"] == "TEST8503"
+        assert d.get("provider") == "netgsm"
+        assert d.get("provider_name") == "Netgsm"
         assert "password" not in d and "password_enc" not in d
         assert d["has_password"] is False
         assert d.get("verified") is False
         g = s.get(f"{BASE}/comm/sms/settings", timeout=30).json()
         assert g["msgheader"] == "TAMKOBI"
         assert "password" not in g
+        assert len(g.get("providers") or []) >= 3
+
+    def test_settings_provider_iletimerkezi(self, s):
+        r = s.put(f"{BASE}/comm/sms/settings",
+                  json={"company_id": COMPANY, "provider": "iletimerkezi", "usercode": "KEY123", "msgheader": "TAMKOBI", "is_active": True}, timeout=30)
+        assert r.status_code == 200, r.text[:300]
+        d = r.json()
+        assert d["provider"] == "iletimerkezi"
+        assert d["provider_name"] == "İleti Merkezi"
 
     def test_settings_normalizes_msgheader_spaces(self, s):
         r = s.put(f"{BASE}/comm/sms/settings",

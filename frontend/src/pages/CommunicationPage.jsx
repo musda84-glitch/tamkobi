@@ -11,7 +11,7 @@ import { BulkCampaign } from "../components/BulkCampaign";
 
 const TABS = [
   { key: "mail", label: "E-posta (Outlook)", icon: Mail },
-  { key: "sms", label: "SMS (Netgsm)", icon: MessageSquare },
+  { key: "sms", label: "SMS", icon: MessageSquare },
   { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
   { key: "campaign", label: "Toplu Kampanya", icon: Megaphone }
 ];
@@ -29,7 +29,7 @@ export default function CommunicationPage() {
     <div className="space-y-6" data-testid="communication-page">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">İletişim Merkezi</h1>
-        <p className="text-xs sm:text-sm text-slate-500">E-posta kutunuz, Netgsm SMS, WhatsApp görüşmeleri ve toplu kampanyalar tek ekranda</p>
+        <p className="text-xs sm:text-sm text-slate-500">E-posta kutunuz, SMS (Netgsm / İleti Merkezi / Verimor), WhatsApp görüşmeleri ve toplu kampanyalar tek ekranda</p>
       </div>
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
         {TABS.map(({ key, label, icon: Icon }) => (

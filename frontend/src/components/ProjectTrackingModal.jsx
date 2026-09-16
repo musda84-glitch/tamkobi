@@ -115,7 +115,7 @@ export const ProjectTrackingModal = ({ project, contact, onClose, onSent }) => {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <Ch k="sms" icon={MessageSquare} label="SMS" sub="Netgsm ile" ok={!!phone} />
+          <Ch k="sms" icon={MessageSquare} label="SMS" sub="Operatör ile" ok={!!phone} />
           <Ch k="email" icon={Mail} label="E-posta" sub="Mail hesabı gerekir" ok={!!email} />
           <Ch k="whatsapp" icon={Phone} label="WhatsApp" sub="Cloud API / wa.me" ok={!!phone} />
         </div>
