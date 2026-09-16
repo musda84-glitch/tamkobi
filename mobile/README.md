@@ -24,11 +24,18 @@ Giriş: TamKobi e-posta/şifre. API varsayılanı `https://tamkobi.com` (giriş 
 
 Özet, saha sipariş, stok/barkod, Mesaim, cariler, faturalar, siparişler, bildirimler, arama.
 
-## Mağaza
+## Mağaza (EAS)
+
+EAS proje ID: `af1abb42-dd8a-4e13-8453-ad3224e2844d`
 
 ```bash
-eas build --platform android
-eas build --platform ios
+cd mobile
+npm install
+npx eas-cli login
+npx eas-cli init --id af1abb42-dd8a-4e13-8453-ad3224e2844d
+npx eas-cli build --platform ios --profile production
 ```
+
+`create-expo-app tamkobi` çalıştırmayın; uygulama zaten `mobile/` içinde.
 
 Paket: `com.tamkobi.app`.
