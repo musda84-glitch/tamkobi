@@ -9972,6 +9972,7 @@ async def mobile_manifest():
                 "stock",
                 "barcode",
                 "attendance",
+                "personelim",
                 "notifications",
             ],
             "version": stamp,

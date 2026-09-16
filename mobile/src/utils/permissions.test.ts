@@ -21,4 +21,11 @@ describe("permissions", () => {
     expect(moduleOn({ modules: { "/saha": false } }, "/saha")).toBe(false);
     expect(visibleModules(user, { modules: { "/saha": false } }).map((m) => m.key)).not.toContain("saha");
   });
+
+  it("aliases Personelim to the Mesaim license/role key", () => {
+    expect(moduleOn({ modules: { "/mesai": false } }, "/personelim")).toBe(false);
+    expect(can({ role: "sales", permissions: { "/mesai": "none" } }, "/personelim")).toBe(false);
+    expect(visibleModules({ role: "admin" }, null).some((m) => m.key === "personelim")).toBe(true);
+    expect(visibleModules({ role: "admin" }, { modules: { "/mesai": false } }).map((m) => m.key)).not.toContain("personelim");
+  });
 });
