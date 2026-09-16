@@ -166,6 +166,19 @@ export type Product = {
   is_active?: boolean;
   price_includes_vat?: boolean;
   image_url?: string;
+  category?: string;
+  purchase_price?: number;
+  purchase_vat_rate?: number;
+  min_stock_alert?: number;
+  show_in_b2b?: boolean;
+  track_stock?: boolean;
+  vat_exemption_code?: string | null;
+  desi?: number | null;
+  weight?: number | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  package_count?: number | null;
 };
 
 export type Notification = {

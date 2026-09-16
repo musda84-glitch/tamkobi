@@ -1,4 +1,4 @@
-import { channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, leaveTr, paymentMethodTr, statusTr, tradeKindTr } from "./labels";
+import { channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, leaveTr, paymentMethodTr, productTypeTr, statusTr, tradeKindTr } from "./labels";
 
 describe("labels", () => {
   it("maps known statuses", () => {
@@ -24,6 +24,11 @@ describe("labels", () => {
     expect(contactTypeTr("supplier")).toBe("Tedarikçi");
     expect(contactTypeTr("both")).toBe("Müşteri & Tedarikçi");
     expect(paymentMethodTr("transfer")).toBe("Havale/EFT");
+  });
+
+  it("maps product types", () => {
+    expect(productTypeTr("raw_material")).toBe("Hammadde");
+    expect(productTypeTr("finished_good")).toBe("Mamul");
   });
 
   it("maps invoice and e-belge types", () => {
