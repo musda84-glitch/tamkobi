@@ -40,6 +40,11 @@ export const MOBILE_MODULES: MobileModule[] = [
   { key: "contacts", path: "/contacts", label: "Cariler" },
   { key: "invoices", path: "/invoices", label: "Faturalar" },
   { key: "orders", path: "/orders", label: "Siparişler" },
+  { key: "banking", path: "/banking", label: "Kasa & Banka" },
+  { key: "expenses", path: "/expenses", label: "Masraflar" },
+  { key: "quotes", path: "/quotes", label: "Teklifler" },
+  { key: "surveys", path: "/surveys", label: "Keşifler" },
+  { key: "projects", path: "/projects", label: "Projeler" },
   { key: "notifications", path: "/", label: "Bildirimler" },
 ];
 

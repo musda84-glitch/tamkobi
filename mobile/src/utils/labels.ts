@@ -23,6 +23,11 @@ export const STATUS_TR: Record<string, string> = {
   waiting: "Bekliyor",
   ready: "Hazır",
   planned: "Planlı",
+  planning: "Planlama",
+  active: "Devam Ediyor",
+  on_hold: "Beklemede",
+  quoted: "Teklife Dönüştü",
+  done: "Yapıldı",
   advance: "Avans",
   bonus: "Prim",
 };

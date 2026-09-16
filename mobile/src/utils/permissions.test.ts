@@ -28,4 +28,9 @@ describe("permissions", () => {
     expect(visibleModules({ role: "admin" }, null).some((m) => m.key === "personelim")).toBe(true);
     expect(visibleModules({ role: "admin" }, { modules: { "/mesai": false } }).map((m) => m.key)).not.toContain("personelim");
   });
+
+  it("includes finance and sales modules", () => {
+    const keys = visibleModules({ role: "admin" }, null).map((m) => m.key);
+    expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects"]));
+  });
 });

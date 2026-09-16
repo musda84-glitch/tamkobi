@@ -60,5 +60,6 @@ export const post = <T,>(c: ApiClient, path: string, body?: unknown, query?: Que
   request<T>(c, "POST", path, { body: body ?? {}, query });
 export const put = <T,>(c: ApiClient, path: string, body?: unknown, query?: Query) =>
   request<T>(c, "PUT", path, { body: body ?? {}, query });
+export const del = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "DELETE", path, { query });
 
 export { normalizeApiBase, apiRoot };
