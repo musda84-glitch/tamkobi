@@ -48,6 +48,27 @@ export const E_TYPE_TR: Record<string, string> = {
   e_dispatch: "E-İrsaliye",
 };
 
+export const CONTACT_TYPE_TR: Record<string, string> = {
+  customer: "Müşteri",
+  supplier: "Tedarikçi",
+  both: "Müşteri & Tedarikçi",
+};
+
+export const PAYMENT_METHOD_TR: Record<string, string> = {
+  cash: "Nakit",
+  transfer: "Havale/EFT",
+  card: "Kredi Kartı",
+  check: "Çek",
+  note: "Senet",
+  open_account: "Açık Hesap",
+};
+
+export const RISK_STATUS_TR: Record<string, string> = {
+  normal: "Normal",
+  watch: "Takipte",
+  blocked: "Bloke",
+};
+
 export function tr(map: Record<string, string>, value?: string | null): string {
   if (value == null || value === "") return "—";
   return map[value] || map[String(value).toLowerCase()] || String(value);
@@ -57,3 +78,6 @@ export const statusTr = (v?: string | null) => tr(STATUS_TR, v);
 export const channelTr = (v?: string | null) => tr(CHANNEL_TR, v);
 export const invoiceTypeTr = (v?: string | null) => tr(INVOICE_TYPE_TR, v);
 export const eTypeTr = (v?: string | null) => tr(E_TYPE_TR, v);
+export const contactTypeTr = (v?: string | null) => tr(CONTACT_TYPE_TR, v);
+export const paymentMethodTr = (v?: string | null) => tr(PAYMENT_METHOD_TR, v);
+export const riskStatusTr = (v?: string | null) => tr(RISK_STATUS_TR, v);

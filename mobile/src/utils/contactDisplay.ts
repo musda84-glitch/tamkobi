@@ -1,0 +1,158 @@
+import { contactTypeTr, paymentMethodTr, riskStatusTr } from "./labels";
+import { fmtMoney } from "./money";
+
+export type InfoRow = { key: string; label: string; value: string };
+
+const SECRET_OR_INTERNAL = new Set([
+  "id",
+  "_id",
+  "company_id",
+  "user_id",
+  "name",
+  "type",
+  "balance",
+  "b2b_token",
+  "b2b_password",
+  "b2b_password_hash",
+  "has_b2b_password",
+  "legal_accept",
+  "created_at",
+  "updated_at",
+  "latitude",
+  "longitude",
+  "location_url",
+  "source",
+]);
+
+/** Web cari kartındaki alan sırası. */
+export const CONTACT_FIELD_DEFS: { key: string; label: string; kind?: "money" | "bool" | "percent" | "days" | "pay" | "risk" | "tags" | "einv" }[] = [
+  { key: "company_title", label: "Ticari ünvan" },
+  { key: "category", label: "Kategori" },
+  { key: "contact_person", label: "Yetkili kişi" },
+  { key: "contact_person_phone", label: "Yetkili telefon" },
+  { key: "phone", label: "Telefon" },
+  { key: "email", label: "E-posta" },
+  { key: "website", label: "Web sitesi" },
+  { key: "sales_rep", label: "Satış temsilcisi" },
+  { key: "tax_number_or_id", label: "VKN / TCKN" },
+  { key: "tax_office", label: "Vergi dairesi" },
+  { key: "is_e_invoice_user", label: "e-Belge", kind: "einv" },
+  { key: "currency", label: "Para birimi" },
+  { key: "payment_method", label: "Ödeme şekli", kind: "pay" },
+  { key: "address", label: "Adres" },
+  { key: "district", label: "İlçe" },
+  { key: "city", label: "İl" },
+  { key: "credit_limit", label: "Kredi limiti", kind: "money" },
+  { key: "payment_term_days", label: "Vade", kind: "days" },
+  { key: "late_fee_rate", label: "Gecikme faizi", kind: "percent" },
+  { key: "default_discount", label: "Varsayılan iskonto", kind: "percent" },
+  { key: "risk_status", label: "Risk", kind: "risk" },
+  { key: "bank_name", label: "Banka" },
+  { key: "iban", label: "IBAN" },
+  { key: "cheque_bond_balance", label: "Çek / senet", kind: "money" },
+  { key: "b2b_enabled", label: "B2B portal", kind: "bool" },
+  { key: "b2b_discount", label: "B2B iskonto", kind: "percent" },
+  { key: "b2b_login_email", label: "B2B giriş e-posta" },
+  { key: "sms_opt_in", label: "SMS bildirimi", kind: "bool" },
+  { key: "email_opt_in", label: "E-posta bildirimi", kind: "bool" },
+  { key: "kvkk_accepted", label: "KVKK onayı", kind: "bool" },
+  { key: "tags", label: "Etiketler", kind: "tags" },
+  { key: "notes", label: "Notlar" },
+];
+
+function isEmpty(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === "string" && value.trim() === "") return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  return false;
+}
+
+export function formatContactField(kind: string | undefined, value: unknown): string | null {
+  if (kind === "bool") return value ? "Evet" : "Hayır";
+  if (kind === "einv") return value ? "e-Fatura mükellefi" : "e-Arşiv / kağıt";
+  if (kind === "money") {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return null;
+    return fmtMoney(n);
+  }
+  if (kind === "percent") {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return null;
+    return `%${n}`;
+  }
+  if (kind === "days") {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n === 0) return null;
+    return `${n} gün`;
+  }
+  if (kind === "pay") return value ? paymentMethodTr(String(value)) : null;
+  if (kind === "risk") {
+    if (!value || value === "normal") return null;
+    return riskStatusTr(String(value));
+  }
+  if (kind === "tags") {
+    const tags = Array.isArray(value) ? value : String(value).split(",").map((t) => t.trim()).filter(Boolean);
+    return tags.length ? tags.join(", ") : null;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value === 0) return null;
+    return String(value);
+  }
+  if (typeof value === "boolean") return value ? "Evet" : "Hayır";
+  const text = String(value).trim();
+  return text || null;
+}
+
+export function contactInfoRows(contact: Record<string, unknown> | null | undefined): InfoRow[] {
+  if (!contact) return [];
+  const rows: InfoRow[] = [];
+  const seen = new Set<string>();
+  for (const def of CONTACT_FIELD_DEFS) {
+    seen.add(def.key);
+    const raw = contact[def.key];
+    if (def.kind === "bool" || def.kind === "einv") {
+      if (raw === undefined || raw === null) continue;
+      if (def.kind === "bool" && !raw && def.key !== "sms_opt_in" && def.key !== "email_opt_in") continue;
+    } else if (isEmpty(raw)) {
+      continue;
+    }
+    const value = formatContactField(def.kind, raw);
+    if (!value) continue;
+    rows.push({ key: def.key, label: def.label, value });
+  }
+  for (const [key, raw] of Object.entries(contact)) {
+    if (seen.has(key) || SECRET_OR_INTERNAL.has(key)) continue;
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) continue;
+    if (isEmpty(raw)) continue;
+    const value = formatContactField(undefined, raw);
+    if (!value) continue;
+    rows.push({ key, label: key, value });
+  }
+  return rows;
+}
+
+export function contactTypeLabel(type?: string | null): string {
+  return contactTypeTr(type || "customer");
+}
+
+export function balanceHint(balance: unknown): { label: string; tone: "green" | "red" | "slate" } {
+  const n = Number(balance) || 0;
+  if (n > 0) return { label: "Alacak — müşteri size borçlu", tone: "green" };
+  if (n < 0) return { label: "Borç — siz bu cariye borçlusunuz", tone: "red" };
+  return { label: "Hesap denk", tone: "slate" };
+}
+
+export function contactSummaryRows(summary: Record<string, unknown> | null | undefined): InfoRow[] {
+  if (!summary) return [];
+  const n = (k: string) => Number(summary[k]) || 0;
+  const rows: InfoRow[] = [
+    { key: "invoice_count", label: "Fatura", value: String(n("invoice_count")) },
+    { key: "draft_count", label: "Taslak", value: String(n("draft_count")) },
+    { key: "order_count", label: "Sipariş", value: String(n("order_count")) },
+    { key: "overdue_count", label: "Gecikmiş fatura", value: String(n("overdue_count")) },
+    { key: "total_invoiced", label: "Satış faturaları", value: fmtMoney(n("total_invoiced")) },
+    { key: "total_paid", label: "Tahsil edilen", value: fmtMoney(n("total_paid")) },
+    { key: "open_amount", label: "Kalan alacak", value: fmtMoney(n("open_amount")) },
+  ];
+  return rows.filter((r) => r.value !== "0" && r.value !== fmtMoney(0));
+}
