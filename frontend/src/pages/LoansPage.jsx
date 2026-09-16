@@ -8,6 +8,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { useAiStatus } from "../hooks/useAiStatus";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -17,6 +18,8 @@ const Stat = ({ label, value, cls = "", testid }) => <div className="bg-white ro
 const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
   useEscape(onClose);
   const { addonOn } = useAuth();
+  const { extractLabel } = useAiStatus();
+  const aiModelName = extractLabel || "AI";
   const [d, setD] = useState({ name: "", bank: "", loan_type: "ticari", principal: "", interest_rate: "", term_months: 12, start_date: new Date().toISOString().slice(0, 10), monthly_payment: "", installments: [], account_id: "", credit_to_account: false });
   const [busy, setBusy] = useState(null);
   const upload = async (file) => {
@@ -33,7 +36,7 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold flex items-center gap-2"><Landmark className="w-5 h-5 text-indigo-600" /> Yeni Kredi</h3><button type="button" onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button></div>
         {addonOn("ai.finance_docs") && (
         <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl p-4 cursor-pointer text-xs ${busy === "ai" ? "opacity-60" : "hover:bg-violet-50/40 hover:border-violet-400"}`} data-testid="loan-ai-dropzone">
-          {busy === "ai" ? <Loader2 className="w-6 h-6 animate-spin text-violet-600" /> : <Sparkles className="w-6 h-6 text-violet-600" />}<div><b>Bankanın ödeme planı PDF'ini yükleyin</b> — AI (Claude Sonnet 4.6) taksitleri, faizi ve KKDF/BSMV'yi otomatik çıkarır.<div className="text-slate-400">veya aşağıdan elle girip "Plan Oluştur" ile eşit taksit hesaplayın</div></div>
+          {busy === "ai" ? <Loader2 className="w-6 h-6 animate-spin text-violet-600" /> : <Sparkles className="w-6 h-6 text-violet-600" />}<div><b>Bankanın ödeme planı PDF'ini yükleyin</b> — AI ({aiModelName}) taksitleri, faizi ve KKDF/BSMV'yi otomatik çıkarır.<div className="text-slate-400">veya aşağıdan elle girip "Plan Oluştur" ile eşit taksit hesaplayın</div></div>
           <input type="file" accept="application/pdf" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="loan-ai-file" /><Upload className="w-4 h-4 text-slate-400 ml-auto" />
         </label>
         )}

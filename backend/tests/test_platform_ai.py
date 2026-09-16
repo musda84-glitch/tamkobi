@@ -19,6 +19,23 @@ def test_gemini_sdk_vendor_is_gemini_not_google():
     assert ai_service.sdk_vendor("anthropic", "claude-sonnet-4-6") == "anthropic"
 
 
+def test_public_ai_status_uses_extract_label_and_env_key():
+    cfg = ai_service.normalize_ai({
+        "provider": "openai",
+        "advisor_model": "gpt-4o",
+        "extract_model": "gpt-4.1",
+        "enabled": True,
+    })
+    cfg["has_env_key"] = True
+    st = ai_service.public_ai_status(cfg)
+    assert st["provider"] == "openai"
+    assert st["extract_label"] == "GPT-4.1"
+    assert st["advisor_label"] == "GPT-4o"
+    assert st["configured"] is True
+    assert "GPT-4.1" in st["extract_badge"]
+    assert "Claude" not in st["extract_badge"]
+
+
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
 API = BASE_URL + "/api"
 ADMIN_EMAIL = "admin@nexus.com"
