@@ -24,7 +24,7 @@ function RootStack() {
   const { ready, user } = useAuth();
   if (!ready) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.secondary }}>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.ink }}>
         <ActivityIndicator color="#fff" />
       </View>
     );
@@ -32,7 +32,7 @@ function RootStack() {
   return (
     <>
       <AuthRedirect />
-      <Stack initialRouteName={user ? "(tabs)" : "login"} screenOptions={{ headerTitleStyle: { fontWeight: "800" }, headerBackTitle: "Geri" }}>
+      <Stack initialRouteName={user ? "(tabs)" : "login"} screenOptions={{ headerTitleStyle: { fontWeight: "800", color: colors.text }, headerBackTitle: "Geri", headerTintColor: colors.primary, headerStyle: { backgroundColor: colors.surface } }}>
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="search" options={{ title: "Ara" }} />

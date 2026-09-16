@@ -9,9 +9,12 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerTitleStyle: { fontWeight: "800" },
+        headerTitleStyle: { fontWeight: "800", color: colors.text },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        headerStyle: { backgroundColor: colors.surface },
+        headerTintColor: colors.text,
         tabBarLabelStyle: { fontWeight: "700", fontSize: 10 },
       }}
     >
