@@ -4,6 +4,7 @@ import {
   B2B_NAME_KEY,
   B2B_TOKEN_KEY,
   DEFAULT_API_BASE,
+  extraApiUrl,
   REMEMBER_B2B_EMAIL_KEY,
   REMEMBER_EMAIL_KEY,
   SESSION_KIND_KEY,
@@ -11,6 +12,15 @@ import {
   normalizeApiBase,
 } from "../api/url";
 import type { SessionKind } from "../types";
+
+function readExpoExtra(): { apiUrl?: unknown } | undefined {
+  try {
+    const Constants = require("expo-constants").default as { expoConfig?: { extra?: { apiUrl?: unknown } } };
+    return Constants?.expoConfig?.extra;
+  } catch {
+    return undefined;
+  }
+}
 
 async function secureGet(key: string): Promise<string | null> {
   try {
@@ -51,7 +61,7 @@ async function secureDel(key: string): Promise<void> {
 export async function loadApiBase(): Promise<string> {
   const stored = await AsyncStorage.getItem(API_BASE_KEY);
   const env = typeof process !== "undefined" ? process.env.EXPO_PUBLIC_API_URL : undefined;
-  return normalizeApiBase(stored || env || DEFAULT_API_BASE);
+  return normalizeApiBase(stored || env || extraApiUrl(readExpoExtra()) || DEFAULT_API_BASE);
 }
 
 export async function saveApiBase(value: string): Promise<string> {

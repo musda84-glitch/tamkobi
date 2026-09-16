@@ -1,26 +1,8 @@
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { colors } from "@/theme";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
-
-function AuthRedirect() {
-  const { ready, user, b2bToken } = useAuth();
-  const router = useRouter();
-  const segments = useSegments();
-
-  useEffect(() => {
-    if (!ready) return;
-    const onLogin = segments[0] === "login";
-    const onB2b = segments[0] === "b2b";
-    if (!user && !b2bToken && !onLogin) router.replace("/login");
-    else if (user && (onLogin || onB2b)) router.replace("/");
-    else if (b2bToken && !user && !onB2b) router.replace("/b2b");
-  }, [ready, user, b2bToken, segments, router]);
-
-  return null;
-}
 
 function RootStack() {
   const { ready, user, b2bToken } = useAuth();
@@ -31,13 +13,18 @@ function RootStack() {
       </View>
     );
   }
-  const initial = user ? "(tabs)" : b2bToken ? "b2b" : "login";
+  const signedIn = !!user;
+  const onB2b = !signedIn && !!b2bToken;
   return (
-    <>
-      <AuthRedirect />
-      <Stack initialRouteName={initial} screenOptions={{ headerTitleStyle: { fontWeight: "800", color: colors.text }, headerBackTitle: "Geri", headerTintColor: colors.primary, headerStyle: { backgroundColor: colors.surface } }}>
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="b2b" options={{ headerShown: false }} />
+    <Stack
+      screenOptions={{
+        headerTitleStyle: { fontWeight: "800", color: colors.text },
+        headerBackTitle: "Geri",
+        headerTintColor: colors.primary,
+        headerStyle: { backgroundColor: colors.surface },
+      }}
+    >
+      <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="search" options={{ title: "Ara" }} />
         <Stack.Screen name="notifications" options={{ title: "Bildirimler" }} />
@@ -52,8 +39,14 @@ function RootStack() {
         <Stack.Screen name="stock/new" options={{ title: "Yeni stok kartı" }} />
         <Stack.Screen name="stock/[id]" options={{ title: "Stok kartı" }} />
         <Stack.Screen name="settings" options={{ title: "Ayarlar" }} />
-      </Stack>
-    </>
+      </Stack.Protected>
+      <Stack.Protected guard={onB2b}>
+        <Stack.Screen name="b2b" options={{ headerShown: false }} />
+      </Stack.Protected>
+      <Stack.Protected guard={!signedIn && !onB2b}>
+        <Stack.Screen name="login" options={{ headerShown: false }} />
+      </Stack.Protected>
+    </Stack>
   );
 }
 

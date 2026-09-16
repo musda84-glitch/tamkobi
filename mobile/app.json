@@ -22,7 +22,11 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "output": "static",
@@ -50,7 +54,11 @@
           "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -58,8 +66,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "7141c868-a97d-4fd6-80ac-62d4991e669b"
-      }
+        "projectId": "af1abb42-dd0a-4e13-8453-ad3224e2044d"
+      },
+      "apiUrl": "https://tamkobi.com"
     }
   }
 }

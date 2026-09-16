@@ -3,6 +3,10 @@ import { colors } from "@/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 
+function tabIconColor(color: unknown): string {
+  return typeof color === "string" && color ? color : colors.muted;
+}
+
 export default function TabsLayout() {
   const { can, moduleOn } = useAuth();
   const show = (path: string) => can(path) && moduleOn(path);
@@ -22,7 +26,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Özet",
-          tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -30,7 +34,7 @@ export default function TabsLayout() {
         options={{
           title: "Saha",
           href: show("/saha") ? undefined : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="phone-portrait" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="phone-portrait" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -38,7 +42,7 @@ export default function TabsLayout() {
         options={{
           title: "Stok",
           href: show("/stock") ? undefined : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="barcode" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="barcode" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -46,7 +50,7 @@ export default function TabsLayout() {
         options={{
           title: "Mesaim",
           href: show("/mesai") ? undefined : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="time" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="time" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -54,14 +58,14 @@ export default function TabsLayout() {
         options={{
           title: "Personelim",
           href: show("/personelim") ? undefined : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="person" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen
         name="daha"
         options={{
           title: "Daha",
-          tabBarIcon: ({ color, size }) => <Ionicons name="ellipsis-horizontal" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="ellipsis-horizontal" color={tabIconColor(color)} size={size} />,
         }}
       />
     </Tabs>
