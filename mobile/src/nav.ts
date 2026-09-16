@@ -43,6 +43,40 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/stock/new");
     case "StockDetail":
       return router.push({ pathname: "/stock/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
+    case "Banking":
+      return router.push("/banking");
+    case "BankingNew":
+      return router.push("/banking/new");
+    case "BankingVirman":
+      return router.push("/banking/virman");
+    case "BankingAccount":
+      return router.push({ pathname: "/banking/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
+    case "BankingEdit":
+      return router.push({ pathname: "/banking/edit/[id]", params: { id: String(params?.id || "") } });
+    case "Expenses":
+      return router.push("/expenses");
+    case "ExpenseNew":
+      return router.push("/expenses/new");
+    case "ExpenseDetail":
+      return router.push({ pathname: "/expenses/[id]", params: { id: String(params?.id || "") } });
+    case "Quotes":
+      return router.push("/quotes");
+    case "QuoteNew":
+      return router.push("/quotes/new");
+    case "QuoteDetail":
+      return router.push({ pathname: "/quotes/[id]", params: { id: String(params?.id || "") } });
+    case "Projects":
+      return router.push("/projects");
+    case "ProjectNew":
+      return router.push("/projects/new");
+    case "ProjectDetail":
+      return router.push({ pathname: "/projects/[id]", params: { id: String(params?.id || "") } });
+    case "Surveys":
+      return router.push("/surveys");
+    case "SurveyNew":
+      return router.push("/surveys/new");
+    case "SurveyDetail":
+      return router.push({ pathname: "/surveys/[id]", params: { id: String(params?.id || "") } });
     default:
       return;
   }

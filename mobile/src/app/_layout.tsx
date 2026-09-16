@@ -38,6 +38,23 @@ function RootStack() {
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />
         <Stack.Screen name="stock/new" options={{ title: "Yeni stok kartı" }} />
         <Stack.Screen name="stock/[id]" options={{ title: "Stok kartı" }} />
+        <Stack.Screen name="banking/index" options={{ title: "Kasa & Banka" }} />
+        <Stack.Screen name="banking/new" options={{ title: "Yeni hesap" }} />
+        <Stack.Screen name="banking/virman" options={{ title: "Virman" }} />
+        <Stack.Screen name="banking/edit/[id]" options={{ title: "Hesabı düzenle" }} />
+        <Stack.Screen name="banking/[id]" options={{ title: "Hesap" }} />
+        <Stack.Screen name="expenses/index" options={{ title: "Masraflar" }} />
+        <Stack.Screen name="expenses/new" options={{ title: "Yeni masraf" }} />
+        <Stack.Screen name="expenses/[id]" options={{ title: "Masraf" }} />
+        <Stack.Screen name="quotes/index" options={{ title: "Teklifler" }} />
+        <Stack.Screen name="quotes/new" options={{ title: "Yeni teklif" }} />
+        <Stack.Screen name="quotes/[id]" options={{ title: "Teklif" }} />
+        <Stack.Screen name="projects/index" options={{ title: "Projeler" }} />
+        <Stack.Screen name="projects/new" options={{ title: "Yeni proje" }} />
+        <Stack.Screen name="projects/[id]" options={{ title: "Proje" }} />
+        <Stack.Screen name="surveys/index" options={{ title: "Keşifler" }} />
+        <Stack.Screen name="surveys/new" options={{ title: "Yeni keşif" }} />
+        <Stack.Screen name="surveys/[id]" options={{ title: "Keşif" }} />
         <Stack.Screen name="settings" options={{ title: "Ayarlar" }} />
       </Stack.Protected>
       <Stack.Protected guard={onB2b}>

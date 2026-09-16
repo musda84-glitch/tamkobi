@@ -18,6 +18,8 @@ describe("labels", () => {
     expect(leaveTr("sick")).toBe("Hastalık");
     expect(statusTr("advance")).toBe("Avans");
     expect(statusTr("in_progress")).toBe("Devam");
+    expect(statusTr("planning")).toBe("Planlama");
+    expect(statusTr("quoted")).toBe("Teklife Dönüştü");
   });
 
   it("maps cari type and payment method", () => {
