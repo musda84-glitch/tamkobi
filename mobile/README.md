@@ -1,6 +1,6 @@
 # TamKobi Mobil
 
-`npx create-expo-app@latest` (Expo SDK 57, expo-router) üzerine TamKobi ERP istemcisi.
+`npx create-expo-app@latest` (Expo SDK 58 beta, expo-router) üzerine TamKobi ERP istemcisi.
 
 Web ile aynı hesaba bağlanır: `POST /api/auth/login` → `Authorization: Bearer`.
 
@@ -12,7 +12,7 @@ npm install
 npx expo start
 ```
 
-Telefonda [Expo Go](https://expo.dev/go) ile QR’ı okutun. Farklı ağdaysanız:
+Telefonda [Expo Go](https://expo.dev/go) ile QR’ı okutun. SDK 58 henüz mağaza Expo Go’da yok; CLI/`eas go` ile SDK 58 Expo Go kullanın. Farklı ağdaysanız:
 
 ```bash
 npx expo start --tunnel
