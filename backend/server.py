@@ -6070,52 +6070,119 @@ async def delete_match_rule(rule_id: str):
 async def get_sms_settings(company_id: Optional[str] = "comp_nexus_main_01"):
     s = await db.sms_settings.find_one({"company_id": company_id})
     if not s:
-        return {"company_id": company_id, "usercode": "", "msgheader": "", "is_active": False, "has_password": False}
-    return {"id": str(s["_id"]), "company_id": company_id, "usercode": s.get("usercode", ""), "msgheader": s.get("msgheader", ""),
-            "is_active": s.get("is_active", False), "has_password": bool(s.get("password_enc"))}
+        return {"company_id": company_id, "usercode": "", "msgheader": "", "is_active": False, "has_password": False, "verified": False}
+    return {
+        "id": str(s["_id"]), "company_id": company_id, "usercode": s.get("usercode", ""),
+        "msgheader": s.get("msgheader", ""), "is_active": s.get("is_active", False),
+        "has_password": bool(s.get("password_enc")),
+        "verified": bool(s.get("verified")),
+        "verified_at": s.get("verified_at"),
+        "verify_message": s.get("verify_message") or "",
+        "approved_headers": s.get("approved_headers") or [],
+    }
 
 @api_router.put("/comm/sms/settings")
 async def save_sms_settings(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    update = {"usercode": (req.get("usercode") or "").strip(), "msgheader": (req.get("msgheader") or "").strip(),
-              "is_active": bool(req.get("is_active", True)), "updated_at": datetime.now(timezone.utc).isoformat()}
+    header = comm_service.normalize_msgheader(req.get("msgheader") or "")
+    herr = comm_service.validate_msgheader(header) if header else None
+    if herr:
+        raise HTTPException(status_code=400, detail=herr)
+    update = {
+        "usercode": (req.get("usercode") or "").strip(),
+        "msgheader": header,
+        "is_active": bool(req.get("is_active", True)),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        # Kimlik değişince doğrulamayı sıfırla; istemci /verify çağırabilir.
+        "verified": False,
+        "verify_message": "",
+    }
     if req.get("password"):
         update["password_enc"] = comm_service.encrypt(req["password"])
-    await db.sms_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    await db.sms_settings.update_one(
+        {"company_id": company_id},
+        {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}},
+        upsert=True,
+    )
     return await get_sms_settings(company_id)
 
 async def _sms_creds(company_id: str) -> Optional[dict]:
     s = await db.sms_settings.find_one({"company_id": company_id})
     if not s or not s.get("is_active") or not s.get("usercode") or not s.get("password_enc"):
         return None
-    return {"usercode": s["usercode"], "password": comm_service.decrypt(s["password_enc"]), "msgheader": s.get("msgheader", "")}
+    try:
+        password = comm_service.decrypt(s["password_enc"])
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Kayıtlı API şifresi okunamadı (şifreleme anahtarı değişmiş olabilir). Lütfen API şifresini yeniden girip kaydedin.",
+        )
+    return {
+        "usercode": s["usercode"],
+        "password": password,
+        "msgheader": comm_service.normalize_msgheader(s.get("msgheader") or ""),
+    }
 
 @api_router.get("/comm/sms/balance")
 async def sms_balance(company_id: Optional[str] = "comp_nexus_main_01"):
-    creds = await _sms_creds(company_id)
+    try:
+        creds = await _sms_creds(company_id)
+    except HTTPException as e:
+        return {"ok": False, "simulated": False, "message": e.detail}
     if not creds:
         return {"ok": False, "simulated": True, "message": "Netgsm bilgileri girilmedi — SİMÜLE mod."}
     try:
         res = await comm_service.netgsm_balance(creds)
-        return {**res, "simulated": False}
+        return {**res, "simulated": False, "message": res.get("error") or res.get("message")}
     except Exception as e:
         return {"ok": False, "simulated": False, "message": f"Netgsm'e erişilemedi: {str(e)[:120]}"}
 
+@api_router.post("/comm/sms/verify")
+async def sms_verify(req: Dict[str, Any]):
+    """Netgsm kullanıcı/şifre + onaylı başlık doğrulaması. Başarılıysa BAĞLI işaretlenir."""
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    try:
+        creds = await _sms_creds(company_id)
+    except HTTPException as e:
+        return {"ok": False, "message": e.detail}
+    if not creds:
+        return {"ok": False, "message": "Önce kullanıcı adı, API şifresi ve gönderici başlığını kaydedin."}
+    try:
+        res = await comm_service.netgsm_verify(creds)
+    except Exception as e:
+        res = {"ok": False, "message": f"Netgsm'e erişilemedi: {str(e)[:160]}"}
+    patch = {
+        "verified": bool(res.get("ok")),
+        "verified_at": datetime.now(timezone.utc).isoformat() if res.get("ok") else None,
+        "verify_message": res.get("message") or res.get("warning") or "",
+        "approved_headers": res.get("headers") or [],
+    }
+    await db.sms_settings.update_one({"company_id": company_id}, {"$set": patch})
+    out = await get_sms_settings(company_id)
+    out["verify"] = res
+    return out
+
 async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], message: str, context: str, ref_id: Optional[str]) -> Dict[str, Any]:
-    creds = await _sms_creds(company_id)
+    try:
+        creds = await _sms_creds(company_id)
+    except HTTPException as e:
+        return {"status": "failed", "sent": 0, "failed": len(recipients) or 1, "simulated": False, "message": e.detail, "error": e.detail}
     valid, invalid = [], []
     for r in recipients:
         num = comm_service.normalize_phone(r.get("phone", ""))
         (valid if num else invalid).append({**r, "no": num})
     logs, sent, failed = [], 0, 0
+    last_error = None
     if valid:
         if creds:
             try:
                 res = await comm_service.netgsm_send(creds, [{"no": v["no"], "msg": v.get("message") or message} for v in valid])
                 status_val = "sent" if res["ok"] else "failed"
                 jobid, error = res.get("jobid"), res.get("error")
+                last_error = error
             except Exception as e:
                 status_val, jobid, error = "failed", None, f"Netgsm'e erişilemedi: {str(e)[:120]}"
+                last_error = error
         else:
             status_val, jobid, error = "simulated", f"SIM-{uuid.uuid4().hex[:8].upper()}", None
         for v in valid:
@@ -6129,11 +6196,17 @@ async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], messag
                      contact_id=r.get("contact_id"), contact_name=r.get("contact_name"), context=context, ref_id=ref_id)
         logs.append(log.to_mongo())
         failed += 1
+        last_error = last_error or "Geçersiz GSM numarası"
     if logs:
         await db.sms_logs.insert_many(logs)
     simulated = creds is None
-    return {"status": "success" if failed == 0 else "partial", "sent": sent, "failed": failed, "simulated": simulated,
-            "message": f"{sent} SMS gönderildi{', ' + str(failed) + ' başarısız' if failed else ''}." + (" [SİMÜLE — Netgsm bilgisi girilmedi]" if simulated else "")}
+    msg = f"{sent} SMS gönderildi{', ' + str(failed) + ' başarısız' if failed else ''}."
+    if simulated:
+        msg += " [SİMÜLE — Netgsm bilgisi girilmedi]"
+    elif last_error and failed:
+        msg += f" {last_error}"
+    return {"status": "success" if failed == 0 else ("failed" if sent == 0 else "partial"), "sent": sent, "failed": failed, "simulated": simulated,
+            "message": msg, "error": last_error if failed else None}
 
 @api_router.post("/comm/sms/send")
 async def send_sms(req: Dict[str, Any]):

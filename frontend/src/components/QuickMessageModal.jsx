@@ -28,7 +28,12 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
     try {
       if (tab === "sms") {
         const r = await axios.post(`${API_URL}/comm/sms/send`, { company_id: companyId, phone, message, contact_id: recipient.contact_id, contact_name: recipient.name, context, ref_id: refId });
-        toast.success(r.data.message);
+        if (r.data.status === "failed" || (r.data.failed > 0 && r.data.sent === 0)) {
+          toast.error(r.data.error || r.data.message || "SMS gönderilemedi.");
+          return;
+        }
+        if (r.data.failed > 0) toast.warning(r.data.message);
+        else toast.success(r.data.message);
       } else {
         const fd = new FormData();
         fd.append("company_id", companyId); fd.append("to", email); fd.append("subject", subject); fd.append("body", message);

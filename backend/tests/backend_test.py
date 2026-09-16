@@ -377,9 +377,21 @@ class TestCommSms:
         assert d["usercode"] == "TEST8503"
         assert "password" not in d and "password_enc" not in d
         assert d["has_password"] is False
+        assert d.get("verified") is False
         g = s.get(f"{BASE}/comm/sms/settings", timeout=30).json()
         assert g["msgheader"] == "TAMKOBI"
         assert "password" not in g
+
+    def test_settings_normalizes_msgheader_spaces(self, s):
+        r = s.put(f"{BASE}/comm/sms/settings",
+                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "  TAMKOBI  ", "is_active": True}, timeout=30)
+        assert r.status_code == 200, r.text[:300]
+        assert r.json()["msgheader"] == "TAMKOBI"
+
+    def test_settings_rejects_long_msgheader(self, s):
+        r = s.put(f"{BASE}/comm/sms/settings",
+                  json={"company_id": COMPANY, "usercode": "TEST8503", "msgheader": "COKUZUNBASLIKX", "is_active": True}, timeout=30)
+        assert r.status_code == 400, r.text[:300]
 
     def test_balance_simulated(self, s):
         r = s.get(f"{BASE}/comm/sms/balance", timeout=30)
