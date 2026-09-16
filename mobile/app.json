@@ -58,8 +58,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "7141c868-a97d-4fd6-80ac-62d4991e669b"
-      }
+        "projectId": "af1abb42-dd0a-4e13-8453-ad3224e2044d"
+      },
+      "apiUrl": "https://tamkobi.com"
     }
   }
 }
