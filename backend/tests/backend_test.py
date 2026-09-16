@@ -402,6 +402,12 @@ class TestNetgsmPayload:
         assert err is None
         assert payload["iysfilter"] == "0"
 
+    def test_balance_payload_uses_body_auth(self):
+        from comm_service import build_netgsm_balance_payload
+        body = build_netgsm_balance_payload({"usercode": "8503090297", "password": "secret"}, stip=3)
+        assert body == {"usercode": "8503090297", "password": "secret", "stip": 3}
+        assert "auth" not in body
+
 
 class TestCommSms:
     def test_providers_list(self, s):
