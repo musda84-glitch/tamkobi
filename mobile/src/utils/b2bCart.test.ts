@@ -1,8 +1,8 @@
-import { addCartLine, cartCount, lineKey, normalizeNote, parseStoredCart, setCartLineQty } from "./b2bCart";
+import { addCartLine, cartCount, lineKey, normalizeNote, parseStoredCart, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
-    let cart = {};
+    let cart: B2BCart = {};
     cart = addCartLine(cart, "prod_01", 1, "kırmızı kutu");
     cart = addCartLine(cart, "prod_01", 2, "mavi kutu");
     expect(Object.keys(cart)).toHaveLength(2);

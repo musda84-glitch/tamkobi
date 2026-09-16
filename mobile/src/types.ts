@@ -80,6 +80,7 @@ export type Order = {
   id?: string;
   _id?: string;
   order_number?: string;
+  customer_order_number?: string;
   customer_name?: string;
   customer_phone?: string;
   channel?: string;
