@@ -1,17 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, Kpi, Muted, Row, Screen } from "../components/ui";
+import { Badge, Card, ErrorBanner, H1, Kpi, Muted, Row, Screen } from "../components/kit";
+import { go } from "../nav";
 import { colors } from "../theme";
 import type { Notification, Overview } from "../types";
 import { fmtMoney } from "../utils/money";
 
 export function HomeScreen() {
   const { client, companyId, user, activeCompany } = useAuth();
-  const navigation = useNavigation<any>();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -44,10 +43,10 @@ export function HomeScreen() {
           <H1>Merhaba{user?.name ? `, ${user.name.split(" ")[0]}` : ""}</H1>
           <Muted>{activeCompany?.name || "TamKobi"}</Muted>
         </View>
-        <Pressable onPress={() => navigation.navigate("Search")} style={{ padding: 8 }} testID="home-search">
+        <Pressable onPress={() => go("Search")} style={{ padding: 8 }} testID="home-search">
           <Ionicons name="search" size={22} color={colors.text} />
         </Pressable>
-        <Pressable onPress={() => navigation.navigate("Notifications")} style={{ padding: 8 }} testID="home-bell">
+        <Pressable onPress={() => go("Notifications")} style={{ padding: 8 }} testID="home-bell">
           <Ionicons name="notifications" size={22} color={colors.text} />
           {unread ? <Badge label={String(unread)} tone="red" /> : null}
         </Pressable>

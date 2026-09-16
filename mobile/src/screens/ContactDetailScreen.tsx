@@ -1,28 +1,28 @@
-import { useRoute } from "@react-navigation/native";
+import { useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, Muted, PrimaryButton, Screen } from "../components/ui";
+import { Badge, Card, ErrorBanner, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { fmtMoney } from "../utils/money";
 
 export function ContactDetailScreen() {
   const { client } = useAuth();
-  const route = useRoute<any>();
+  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const ov = await get<any>(client, `/contacts/${route.params.id}/overview`);
+      const ov = await get<any>(client, `/contacts/${id}/overview`);
       setData(ov);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Cari detayı yüklenemedi."));
     }
-  }, [client, route.params.id]);
+  }, [client, id]);
 
   useEffect(() => { load(); }, [load]);
   const c = data?.contact || data || {};
@@ -30,7 +30,7 @@ export function ContactDetailScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <H1>{c.name || route.params.name || "Cari"}</H1>
+      <H1>{c.name || name || "Cari"}</H1>
       <Muted>{c.tax_number_or_id || ""} {c.city ? `· ${c.city}` : ""}</Muted>
       <ErrorBanner message={error} />
       <Card>

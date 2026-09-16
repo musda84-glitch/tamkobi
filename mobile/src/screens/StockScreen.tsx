@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/ui";
+import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import type { Product } from "../types";
 import { fmtMoney, idOf } from "../utils/money";
 

@@ -2,7 +2,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors, radius } from "../theme";
-import { PrimaryButton } from "./ui";
+import { PrimaryButton } from "./kit";
 
 export function BarcodeScannerModal({
   visible,

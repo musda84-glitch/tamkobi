@@ -1,9 +1,9 @@
-import { useNavigation } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, Row, Screen } from "../components/ui";
+import { Empty, ErrorBanner, Field, ListRow, Row, Screen } from "../components/kit";
+import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { eTypeTr, invoiceTypeTr, statusTr } from "../utils/labels";
@@ -17,7 +17,6 @@ const FILTERS = [
 
 export function InvoicesScreen() {
   const { client, companyId } = useAuth();
-  const navigation = useNavigation<any>();
   const [rows, setRows] = useState<Invoice[]>([]);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
@@ -64,7 +63,7 @@ export function InvoicesScreen() {
           title={inv.invoice_number || "Fatura"}
           subtitle={`${invoiceTypeTr(inv.invoice_type)} · ${eTypeTr(inv.e_type)} · ${statusTr(inv.status)} · ${fmtDate(inv.issue_date)}`}
           right={fmtMoney(inv.grand_total, inv.currency)}
-          onPress={() => navigation.navigate("InvoiceDetail", { id: idOf(inv), invoice: inv })}
+          onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
         />
       ))}
     </Screen>

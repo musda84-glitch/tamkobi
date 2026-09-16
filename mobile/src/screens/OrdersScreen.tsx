@@ -1,15 +1,14 @@
-import { useNavigation } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/ui";
+import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { go } from "../nav";
 import type { Order } from "../types";
 import { channelTr, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 
 export function OrdersScreen() {
   const { client, companyId } = useAuth();
-  const navigation = useNavigation<any>();
   const [rows, setRows] = useState<Order[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +44,7 @@ export function OrdersScreen() {
           title={o.order_number || "Sipariş"}
           subtitle={`${o.customer_name} · ${channelTr(o.channel)} · ${statusTr(o.order_status)} · ${fmtDate(o.order_date)}`}
           right={fmtMoney(o.grand_total || o.total_amount)}
-          onPress={() => navigation.navigate("OrderDetail", { id: idOf(o) })}
+          onPress={() => go("OrderDetail", { id: idOf(o) })}
         />
       ))}
     </Screen>

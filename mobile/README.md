@@ -1,21 +1,10 @@
-# TamKobi Mobil (iOS + Android)
+# TamKobi Mobil
 
-Yeni Expo (React Native) uygulaması. Web ERP ile **aynı TamKobi API**’ye Bearer JWT ile bağlanır (`POST /api/auth/login` → `Authorization: Bearer`).
+`npx create-expo-app@latest` (Expo SDK 57, expo-router) üzerine TamKobi ERP istemcisi.
 
-## Ne işe yarar?
+Web ile aynı hesaba bağlanır: `POST /api/auth/login` → `Authorization: Bearer`.
 
-Sahada ve cepte kullanılan temel akışlar:
-
-- Giriş, çoklu şirket, API adresi (varsayılan `https://tamkobi.com`)
-- Özet: tahsilat / ödeme / KDV / bugünkü işler
-- Saha sipariş: cari seç, barkod, sepet, `channel=saha`
-- Stok ve barkod sorgusu
-- Mesaim: konumlu giriş / çıkış (`/personnel/attendance/self`)
-- Cariler, faturalar, siparişler, bildirimler, genel arama
-
-Masaüstü modüllerinin tamamı (e-fatura kesme, banka eşleme, üretim reçetesi vb.) web uygulamasında kalır.
-
-## Geliştirme
+## Önizleme
 
 ```bash
 cd mobile
@@ -23,34 +12,23 @@ npm install
 npx expo start
 ```
 
-Telefonda [Expo Go](https://expo.dev/go) ile QR kodu okutun. iOS Simulator / Android Emulator:
+Telefonda [Expo Go](https://expo.dev/go) ile QR’ı okutun. Farklı ağdaysanız:
 
 ```bash
-npx expo start --ios
-npx expo start --android
+npx expo start --tunnel
 ```
 
-API adresi giriş ekranından veya `EXPO_PUBLIC_API_URL` ile verilir (ör. `http://127.0.0.1:8000`). Emülatörden host makineye Android’de `http://10.0.2.2:8000` kullanın.
+Giriş: TamKobi e-posta/şifre. API varsayılanı `https://tamkobi.com` (giriş ekranında **Sunucu** satırı).
 
-## Mağaza derlemesi
+## Ekranlar
 
-[EAS Build](https://docs.expo.dev/build/setup/):
+Özet, saha sipariş, stok/barkod, Mesaim, cariler, faturalar, siparişler, bildirimler, arama.
+
+## Mağaza
 
 ```bash
-npm i -g eas-cli
-eas login
-eas build:configure
 eas build --platform android
 eas build --platform ios
 ```
 
-`app.json` içinde `ios.bundleIdentifier` ve `android.package` = `com.tamkobi.app`.
-
-## Test
-
-```bash
-cd mobile
-npm test
-```
-
-Backend sözleşmesi: `GET /api/mobile/manifest` (oturum gerekmez), `GET /api/invoices/{id}`.
+Paket: `com.tamkobi.app`.

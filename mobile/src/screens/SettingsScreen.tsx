@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Pressable, Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/ui";
+import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { idOf } from "../utils/money";
 

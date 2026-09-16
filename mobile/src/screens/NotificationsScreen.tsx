@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, ListRow, Screen } from "../components/ui";
+import { Empty, ErrorBanner, ListRow, Screen } from "../components/kit";
 import type { Notification } from "../types";
 import { fmtDate, idOf } from "../utils/money";
 

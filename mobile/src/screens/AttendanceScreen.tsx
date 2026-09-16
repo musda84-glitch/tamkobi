@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/ui";
+import { Badge, Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 
 type AttendancePayload = {

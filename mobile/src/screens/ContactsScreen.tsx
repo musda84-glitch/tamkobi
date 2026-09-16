@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigation } from "@react-navigation/native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/ui";
+import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { go } from "../nav";
 import type { Contact } from "../types";
 import { fmtMoney, idOf } from "../utils/money";
 
 export function ContactsScreen() {
   const { client, companyId } = useAuth();
-  const navigation = useNavigation<any>();
   const [rows, setRows] = useState<Contact[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +44,7 @@ export function ContactsScreen() {
           title={c.name}
           subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
           right={fmtMoney(c.balance)}
-          onPress={() => navigation.navigate("ContactDetail", { id: idOf(c), name: c.name })}
+          onPress={() => go("ContactDetail", { id: idOf(c), name: c.name })}
         />
       ))}
     </Screen>

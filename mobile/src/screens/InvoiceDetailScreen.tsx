@@ -1,9 +1,9 @@
-import { useRoute } from "@react-navigation/native";
+import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/ui";
+import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { eTypeTr, invoiceTypeTr, statusTr } from "../utils/labels";
@@ -11,19 +11,19 @@ import { fmtDate, fmtMoney } from "../utils/money";
 
 export function InvoiceDetailScreen() {
   const { client } = useAuth();
-  const route = useRoute<any>();
-  const [inv, setInv] = useState<Invoice | null>(route.params.invoice || null);
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [inv, setInv] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const data = await get<Invoice>(client, `/invoices/${route.params.id}`);
+      const data = await get<Invoice>(client, `/invoices/${id}`);
       setInv(data);
       setError(null);
     } catch (err) {
-      if (!route.params.invoice) setError(apiErrorMessage(err, "Fatura yüklenemedi."));
+      setError(apiErrorMessage(err, "Fatura yüklenemedi."));
     }
-  }, [client, route.params.id, route.params.invoice]);
+  }, [client, id]);
 
   useEffect(() => { load(); }, [load]);
   if (!inv) return <Screen><ErrorBanner message={error || "Fatura bulunamadı."} /></Screen>;

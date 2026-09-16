@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { loadRememberedEmail, saveRememberedEmail } from "../auth/storage";
-import { Field, PrimaryButton } from "../components/ui";
+import { Field, PrimaryButton } from "../components/kit";
 import { colors } from "../theme";
 
 export function LoginScreen() {
