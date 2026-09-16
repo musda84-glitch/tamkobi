@@ -65,6 +65,15 @@ export function canDeleteInvoice(inv) {
   return true;
 }
 
+/** Onaylı faturalar iptal edilebilir (silinmez); taslaklar silinir, ödemeliler engellenir. */
+export function canCancelInvoice(inv) {
+  if (!inv) return false;
+  if (inv.status === "cancelled" || inv.status === "draft") return false;
+  if (Number(inv.paid_amount || 0) > 0.01) return false;
+  if (["paid", "partially_paid", "partial", "cancelled"].includes(String(inv.payment_status || ""))) return false;
+  return true;
+}
+
 const ISSUE_OPTIONS = [
   { key: "e_invoice", label: "E-Fatura olarak kes", sub: "GİB Portal (mükellef alıcı)", icon: FileCheck2, color: "text-emerald-600" },
   { key: "e_archive", label: "E-Arşiv olarak kes", sub: "Nihai tüketici / mükellef olmayan", icon: Archive, color: "text-blue-600" },
@@ -74,7 +83,7 @@ const ISSUE_OPTIONS = [
 
 export const InvoiceContextMenu = (props) => {
   const {
-    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete,
+    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel,
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
@@ -100,8 +109,9 @@ export const InvoiceContextMenu = (props) => {
   const pending = isIncomingPurchasePending(inv);
   const issued = isGibIssued(inv);
   const deletable = canDeleteInvoice(inv);
+  const cancellable = canCancelInvoice(inv);
   const left = Math.min(menu.x, window.innerWidth - 280);
-  const top = Math.min(menu.y, window.innerHeight - 360);
+  const top = Math.min(menu.y, window.innerHeight - 420);
   const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (
     <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition" data-testid={testId}>
       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${color}`} />
@@ -158,13 +168,20 @@ export const InvoiceContextMenu = (props) => {
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
       )}
-      {inv.payment_status !== "paid" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
-      {onInstallments && (
+      {inv.payment_status !== "paid" && inv.status !== "cancelled" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
+      {onInstallments && inv.status !== "cancelled" && (
         <Item icon={CalendarClock} color="text-violet-600" label={inv.installment_plan ? `Taksitler (${inv.installment_plan.paid_count}/${inv.installment_plan.count})` : "Taksitlendir"} sub={inv.installment_plan ? "Planı gör, tahsil et" : "Ödeme planı oluştur"} onClick={() => onInstallments(inv)} testId="ctx-installments" />
       )}
-      {onDelete && deletable && (
-        <Item icon={Trash2} color="text-rose-600" label={inv.status === "draft" ? "Taslağı Sil" : "Kağıt Faturayı Sil"} sub="Çöp kutusuna taşınır (30 gün)" onClick={() => onDelete(inv)} testId="ctx-delete" />
-      )}
+      {(onDelete && deletable) || (onCancel && cancellable) ? (
+        <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-danger-actions">
+          {onCancel && cancellable && (
+            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub="Cari/stok geri alınır; kayıt listede kalır" onClick={() => onCancel(inv)} testId="ctx-cancel" />
+          )}
+          {onDelete && deletable && (
+            <Item icon={Trash2} color="text-rose-600" label={inv.status === "draft" ? "Taslağı Sil" : "Kağıt Faturayı Sil"} sub="Çöp kutusuna taşınır (30 gün)" onClick={() => onDelete(inv)} testId="ctx-delete" />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 };

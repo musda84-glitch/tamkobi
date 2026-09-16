@@ -4639,6 +4639,64 @@ async def delete_invoice(invoice_id: str):
         "message": f"{kind} çöp kutusuna taşındı (30 gün içinde geri alınabilir).",
     }
 
+
+def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
+    """None = iptal edilebilir. Taslaklar silinir; ödemesi olanlar önce tahsilat geri alınır."""
+    if not inv:
+        return "Fatura bulunamadı."
+    if inv.get("status") == "cancelled":
+        return "Fatura zaten iptal edilmiş."
+    if inv.get("status") == "draft":
+        return "Taslak fatura iptal edilmez; silin (çöp kutusu)."
+    if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
+        return "Ödemesi olan fatura iptal edilemez. Önce tahsilatı / ödemeyi geri alın."
+    return None
+
+
+@api_router.post("/invoices/{invoice_id}/cancel")
+async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
+    """Onaylı faturayı iptal et: cari/stok etkilerini geri al, kaydı cancelled bırak (silmez)."""
+    req = req or {}
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    reason = _invoice_cancel_block_reason(inv)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    paid_inst = await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"})
+    if paid_inst:
+        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan fatura iptal edilemez. Önce taksit tahsilatlarını geri alın.")
+    applied = bool(inv.get("effects_applied")) or inv.get("status") in ("approved", "sent_to_gib", "paid")
+    if applied:
+        await _reverse_invoice_effects(inv)
+    await _unlink_orders_from_invoice(invoice_id)
+    await _cancel_promissory_for_query({"invoice_id": invoice_id})
+    now = datetime.now(timezone.utc).isoformat()
+    note = (req.get("reason") or "").strip()[:300]
+    updates = {
+        "status": "cancelled",
+        "effects_applied": False,
+        "cancelled_at": now,
+        "cancel_reason": note,
+        "gib_status": "İptal edildi",
+        "payment_status": "cancelled",
+    }
+    # Gelen e-fatura: ticari ret değil; yerel iptal (onay sonrası düzeltme).
+    if _is_incoming_purchase_invoice(inv):
+        updates["gib_status"] = "Gelen E-Fatura İptal"
+        if inv.get("edoc_id"):
+            await db.incoming_edocs.update_one(
+                {"_id": inv["edoc_id"]},
+                {"$set": {"status": "cancelled", "cancelled_at": now, "cancel_reason": note}},
+            )
+    elif inv.get("e_type") and inv.get("e_type") != "paper":
+        updates["einvoice_state"] = "cancelled"
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
+    msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı."
+    if inv.get("e_type") not in (None, "paper") and not _is_incoming_purchase_invoice(inv):
+        msg += " GİB e-belge iptali ayrı süreçtir; gerekirse entegratörden iptal/iade düzenleyin."
+    return {"status": "success", "message": msg}
+
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     """GİB'e e-belge gönderimi — e_invoice.issue_invoice üzerinden."""
