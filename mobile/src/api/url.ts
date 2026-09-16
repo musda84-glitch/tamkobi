@@ -2,6 +2,10 @@ export const DEFAULT_API_BASE = "https://tamkobi.com";
 export const API_BASE_KEY = "tamkobi.apiBase";
 export const TOKEN_KEY = "tamkobi.accessToken";
 export const REMEMBER_EMAIL_KEY = "tamkobi.rememberEmail";
+export const SESSION_KIND_KEY = "tamkobi.sessionKind";
+export const B2B_TOKEN_KEY = "tamkobi.b2bToken";
+export const B2B_NAME_KEY = "tamkobi.b2bName";
+export const REMEMBER_B2B_EMAIL_KEY = "tamkobi.rememberB2bEmail";
 
 /** Origin only, no trailing slash, no /api suffix. */
 export function normalizeApiBase(input: string | null | undefined, fallback = DEFAULT_API_BASE): string {

@@ -80,6 +80,7 @@ export type Order = {
   id?: string;
   _id?: string;
   order_number?: string;
+  customer_order_number?: string;
   customer_name?: string;
   customer_phone?: string;
   channel?: string;
@@ -118,4 +119,107 @@ export type Notification = {
   is_read?: boolean;
   created_at?: string;
   type?: string;
+};
+
+export type SessionKind = "erp" | "b2b";
+
+export type B2BLoginResult = {
+  token: string;
+  name?: string;
+  redirect?: string;
+  status?: string;
+  message?: string;
+};
+
+export type B2BForgotResult = {
+  status?: string;
+  message?: string;
+  mail_status?: string;
+  detail?: string;
+  reset_url?: string;
+  reset_token?: string;
+};
+
+export type B2BProduct = {
+  id: string;
+  name: string;
+  sku?: string;
+  barcode?: string;
+  category?: string | null;
+  unit?: string;
+  image_url?: string | null;
+  tags?: string[];
+  list_price?: number | null;
+  price?: number | null;
+  list_price_gross?: number | null;
+  price_gross?: number | null;
+  price_includes_vat?: boolean;
+  vat_rate?: number;
+  in_stock?: boolean;
+  stock_quantity?: number | null;
+};
+
+export type B2BContact = {
+  name?: string;
+  balance?: number;
+  discount?: number;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  has_password?: boolean;
+};
+
+export type B2BCompany = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  logo_url?: string | null;
+  iban?: string;
+  bank_name?: string;
+};
+
+export type B2BSettings = {
+  show_stock?: boolean;
+  show_prices?: boolean;
+  allow_orders?: boolean;
+  show_statement?: boolean;
+  show_installments?: boolean;
+  allow_ai_cart?: boolean;
+  min_order_amount?: number;
+  welcome_note?: string;
+};
+
+export type B2BInvoice = {
+  invoice_number?: string;
+  issue_date?: string;
+  due_date?: string;
+  grand_total?: number;
+  paid_amount?: number;
+  payment_status?: string;
+  e_type?: string;
+};
+
+export type B2BInstallment = {
+  id?: string;
+  _id?: string;
+  invoice_number?: string;
+  label?: string;
+  no?: number;
+  amount?: number;
+  paid_amount?: number;
+  due_date?: string;
+  status?: string;
+  is_overdue?: boolean;
+  days_left?: number | null;
+};
+
+export type B2BPortal = {
+  contact: B2BContact;
+  company: B2BCompany;
+  products: B2BProduct[];
+  orders: Order[];
+  invoices: B2BInvoice[];
+  installments: B2BInstallment[];
+  settings: B2BSettings;
 };
