@@ -40,7 +40,7 @@ export const QuoteSendApprovalModal = ({ quote, contact, onClose, onSent }) => {
       <div className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-4 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="quote-approval-modal">
         <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Send className="w-4 h-4 text-emerald-600" /> Onaya Gönder — {quote.quote_number}</h3><p className="text-slate-500">{quote.contact_name} • Müşteri linke tıklayıp tek tıkla onaylar/reddeder, sonuç teklife işlenir.</p></div><button onClick={onClose} className="text-slate-400" data-testid="approval-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-3 gap-2">
-          <Ch k="sms" icon={MessageSquare} label="SMS" sub="Netgsm ile" ok={!!phone} />
+          <Ch k="sms" icon={MessageSquare} label="SMS" sub="Operatör ile" ok={!!phone} />
           <Ch k="email" icon={Mail} label="E-posta" sub="Mail hesabı gerekir (Ayarlar)" ok={!!email} />
           <Ch k="whatsapp" icon={Phone} label="WhatsApp" sub="Cloud API / wa.me" ok={!!phone} />
         </div>

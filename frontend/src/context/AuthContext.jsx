@@ -52,7 +52,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Personel & Bordro", path: "/personnel" },
     { label: "Personelim", path: "/personelim", badge: "Self" },
     { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
-    { label: "İletişim: Mail & SMS", path: "/communication", badge: "Netgsm" },
+    { label: "İletişim: Mail & SMS", path: "/communication", badge: "SMS" },
     { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
     { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
     { label: "Firma Ayarları", path: "/settings" },

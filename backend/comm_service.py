@@ -71,8 +71,55 @@ def validate_msgheader(header: str) -> Optional[str]:
     if not h:
         return "Gönderici başlığı (msgheader) boş."
     if len(h) < 3 or len(h) > 11:
-        return "Gönderici başlığı 3–11 karakter olmalı (Netgsm dokümanı)."
+        return "Gönderici başlığı 3–11 karakter olmalı."
     return None
+
+def phone_tr90(no: str) -> str:
+    """5XXXXXXXXX → 905XXXXXXXXX (İleti Merkezi / Verimor)."""
+    n = (no or "").strip()
+    return n if n.startswith("90") else f"90{n}"
+
+# BizimHesap tarzı SMS operatör kataloğu
+SMS_PROVIDERS = {
+    "netgsm": {
+        "id": "netgsm",
+        "name": "Netgsm",
+        "user_label": "Kullanıcı Adı (usercode)",
+        "user_placeholder": "850XXXXXXX",
+        "pass_label": "API Şifresi",
+        "header_hint": "Netgsm panelinde onaylı başlıkla birebir aynı olmalı (3–11 karakter). Panel: SMS Hizmeti → Başlıklarım.",
+        "help": "Netgsm panelinde API alt kullanıcısı oluşturup SMS API yetkisi verin. «BAĞLI» yalnızca Doğrula başarılıysa görünür.",
+        "docs_url": "https://www.netgsm.com.tr/dokuman/#api-dokumani",
+    },
+    "iletimerkezi": {
+        "id": "iletimerkezi",
+        "name": "İleti Merkezi",
+        "user_label": "API Anahtarı (key)",
+        "user_placeholder": "API key",
+        "pass_label": "API Hash",
+        "header_hint": "İleti Merkezi’nde onaylı sender ile birebir aynı (3–11 karakter). Panel: get-sender / Başlıklar.",
+        "help": "panel.iletimerkezi.com → Ayarlar → Güvenlik: API kullanımına izin verin; key + hash oluşturun.",
+        "docs_url": "https://www.iletimerkezi.com/docs/api/send-sms",
+    },
+    "verimor": {
+        "id": "verimor",
+        "name": "Verimor",
+        "user_label": "Kullanıcı Adı",
+        "user_placeholder": "90850XXXXXXX",
+        "pass_label": "API Şifresi",
+        "header_hint": "Verimor’da onaylı source_addr / başlık (3–11 karakter).",
+        "help": "sms.verimor.com.tr API kullanıcısı ve onaylı gönderici başlığı gerekir.",
+        "docs_url": "https://developer.verimor.com.tr/smsapi",
+    },
+}
+DEFAULT_SMS_PROVIDER = "netgsm"
+
+def normalize_sms_provider(provider: Optional[str]) -> str:
+    p = (provider or DEFAULT_SMS_PROVIDER).strip().lower()
+    return p if p in SMS_PROVIDERS else DEFAULT_SMS_PROVIDER
+
+def list_sms_providers() -> List[Dict[str, Any]]:
+    return [dict(v) for v in SMS_PROVIDERS.values()]
 
 def _netgsm_auth(creds: dict):
     return (creds["usercode"], creds["password"])
@@ -147,6 +194,236 @@ async def netgsm_verify(creds: dict) -> Dict[str, Any]:
         "headers": approved,
         "header_ok": bool(configured) and (header_ok if approved else True),
     }
+
+# ---------------- İLETİ MERKEZİ ----------------
+ILETIMERKEZI_BASE = "https://api.iletimerkezi.com"
+
+def _im_auth(creds: dict) -> dict:
+    return {"key": creds["usercode"], "hash": creds["password"]}
+
+def _im_parse(r: httpx.Response) -> Dict[str, Any]:
+    try:
+        data = r.json()
+        return data if isinstance(data, dict) else {"raw": data}
+    except Exception:
+        return {"raw": (r.text or "")[:300]}
+
+def _im_status(data: dict) -> tuple:
+    resp = data.get("response") if isinstance(data.get("response"), dict) else {}
+    status = resp.get("status") if isinstance(resp.get("status"), dict) else {}
+    code = status.get("code")
+    try:
+        code_i = int(code) if code is not None else 0
+    except (TypeError, ValueError):
+        code_i = 0
+    msg = status.get("message") or ""
+    return code_i, msg, resp
+
+async def iletimerkezi_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+    header = normalize_msgheader(creds.get("msgheader") or "")
+    herr = validate_msgheader(header)
+    if herr:
+        return {"ok": False, "jobid": None, "code": "70", "error": herr, "raw": None}
+    # Aynı metin → tek order; farklı metinler → sırayla gönder
+    by_text: Dict[str, List[str]] = {}
+    for m in messages:
+        by_text.setdefault(m.get("msg") or "", []).append(phone_tr90(m["no"]))
+    last: Dict[str, Any] = {"ok": False, "jobid": None, "code": "", "error": "Alıcı yok", "raw": None}
+    async with httpx.AsyncClient(base_url=ILETIMERKEZI_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        for text, numbers in by_text.items():
+            payload = {
+                "request": {
+                    "authentication": _im_auth(creds),
+                    "order": {
+                        "sender": header,
+                        "iys": "0",
+                        "message": {"text": text, "receipents": {"number": numbers}},
+                    },
+                }
+            }
+            r = await client.post("/v1/send-sms/json", json=payload)
+            data = _im_parse(r)
+            code_i, msg, resp = _im_status(data)
+            ok = r.status_code == 200 and code_i == 200
+            order = resp.get("order") if isinstance(resp.get("order"), dict) else {}
+            last = {
+                "ok": ok,
+                "jobid": str(order.get("id") or "") or None,
+                "code": str(code_i),
+                "error": None if ok else (msg or f"HTTP {r.status_code}"),
+                "raw": data,
+            }
+            if not ok:
+                return last
+    return last
+
+async def iletimerkezi_balance(creds: dict) -> Dict[str, Any]:
+    payload = {"request": {"authentication": _im_auth(creds)}}
+    async with httpx.AsyncClient(base_url=ILETIMERKEZI_BASE, timeout=20) as client:
+        r = await client.post("/v1/get-balance/json", json=payload)
+    data = _im_parse(r)
+    code_i, msg, resp = _im_status(data)
+    bal = resp.get("balance") if isinstance(resp.get("balance"), dict) else None
+    ok = r.status_code == 200 and code_i == 200 and bal is not None
+    err = None if ok else (msg or f"HTTP {r.status_code}")
+    return {"ok": ok, "code": str(code_i), "data": bal or data, "error": err, "message": err}
+
+async def iletimerkezi_headers(creds: dict) -> Dict[str, Any]:
+    payload = {"request": {"authentication": _im_auth(creds)}}
+    async with httpx.AsyncClient(base_url=ILETIMERKEZI_BASE, timeout=20) as client:
+        r = await client.post("/v1/get-sender/json", json=payload)
+    data = _im_parse(r)
+    code_i, msg, resp = _im_status(data)
+    senders = resp.get("senders") if isinstance(resp.get("senders"), dict) else {}
+    headers = senders.get("sender") or []
+    if isinstance(headers, str):
+        headers = [headers]
+    ok = r.status_code == 200 and code_i == 200 and isinstance(headers, list)
+    err = None if ok else (msg or f"HTTP {r.status_code}")
+    return {"ok": ok, "headers": [str(h).strip() for h in headers if h], "code": str(code_i), "error": err, "raw": data}
+
+async def iletimerkezi_verify(creds: dict) -> Dict[str, Any]:
+    bal = await iletimerkezi_balance(creds)
+    if not bal.get("ok"):
+        return {"ok": False, "message": bal.get("error") or "İleti Merkezi bağlantısı başarısız.", "balance": bal, "headers": []}
+    hdr = await iletimerkezi_headers(creds)
+    configured = normalize_msgheader(creds.get("msgheader") or "")
+    approved = hdr.get("headers") or []
+    header_ok = (not approved) or (configured in approved) or (configured.upper() in {h.upper() for h in approved})
+    warn = None
+    if approved and configured and not header_ok:
+        warn = f"«{configured}» onaylı başlıklar arasında yok. Onaylı: {', '.join(approved[:8])}"
+    elif not configured:
+        warn = "Gönderici başlığı boş — SMS gönderilemez."
+    return {
+        "ok": True,
+        "message": warn or "İleti Merkezi bağlantısı doğrulandı.",
+        "warning": warn,
+        "balance": bal.get("data"),
+        "headers": approved,
+        "header_ok": bool(configured) and (header_ok if approved else True),
+    }
+
+# ---------------- VERIMOR ----------------
+VERIMOR_BASE = "https://sms.verimor.com.tr"
+
+async def verimor_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+    header = normalize_msgheader(creds.get("msgheader") or "")
+    herr = validate_msgheader(header)
+    if herr:
+        return {"ok": False, "jobid": None, "code": "70", "error": herr, "raw": None}
+    payload = {
+        "username": creds["usercode"],
+        "password": creds["password"],
+        "source_addr": header,
+        "datacoding": 1 if (encoding or "TR").upper() == "TR" else 0,
+        "messages": [{"msg": m.get("msg") or "", "dest": phone_tr90(m["no"])} for m in messages],
+    }
+    async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        r = await client.post("/v2/send.json", json=payload)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": (r.text or "")[:300]}
+    # Başarıda kampanya id (string/int); hatalarda JSON message
+    if r.status_code == 200 and not isinstance(data, dict):
+        return {"ok": True, "jobid": str(data), "code": "00", "error": None, "raw": data}
+    if r.status_code == 200 and isinstance(data, (int, float, str)):
+        return {"ok": True, "jobid": str(data), "code": "00", "error": None, "raw": data}
+    if r.status_code == 200 and isinstance(data, dict) and data.get("campaign_id"):
+        return {"ok": True, "jobid": str(data.get("campaign_id")), "code": "00", "error": None, "raw": data}
+    # Bazı yanıtlarda düz metin kampanya id
+    text = (r.text or "").strip()
+    if r.status_code == 200 and text and text.isdigit():
+        return {"ok": True, "jobid": text, "code": "00", "error": None, "raw": text}
+    err = None
+    if isinstance(data, dict):
+        err = data.get("message") or data.get("error") or data.get("raw")
+    err = err or text[:200] or f"HTTP {r.status_code}"
+    return {"ok": False, "jobid": None, "code": str(r.status_code), "error": str(err), "raw": data}
+
+async def verimor_balance(creds: dict) -> Dict[str, Any]:
+    async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=20) as client:
+        r = await client.get("/v2/balance", params={"username": creds["usercode"], "password": creds["password"]})
+    text = (r.text or "").strip()
+    try:
+        data = r.json()
+    except Exception:
+        data = text
+    if r.status_code == 200:
+        # düz sayı veya JSON
+        if isinstance(data, (int, float)) or (isinstance(data, str) and data.replace(".", "", 1).isdigit()):
+            return {"ok": True, "code": "00", "data": {"balance": data if not isinstance(data, str) else float(data) if "." in data else int(data)}, "error": None, "message": None}
+        if isinstance(data, dict) and ("balance" in data or "credit" in data):
+            return {"ok": True, "code": "00", "data": data, "error": None, "message": None}
+        if text.isdigit():
+            return {"ok": True, "code": "00", "data": {"balance": int(text)}, "error": None, "message": None}
+    err = data.get("message") if isinstance(data, dict) else (text[:160] or f"HTTP {r.status_code}")
+    return {"ok": False, "code": str(r.status_code), "data": data, "error": str(err), "message": str(err)}
+
+async def verimor_headers(creds: dict) -> Dict[str, Any]:
+    async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=20) as client:
+        r = await client.get("/v2/headers", params={"username": creds["usercode"], "password": creds["password"]}, headers={"accept": "application/json"})
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": (r.text or "")[:300]}
+    headers = data if isinstance(data, list) else (data.get("headers") if isinstance(data, dict) else [])
+    if isinstance(headers, str):
+        headers = [headers]
+    ok = r.status_code == 200 and isinstance(headers, list)
+    err = None if ok else (data.get("message") if isinstance(data, dict) else f"HTTP {r.status_code}")
+    return {"ok": ok, "headers": [str(h).strip() for h in (headers or []) if h], "code": str(r.status_code), "error": err, "raw": data}
+
+async def verimor_verify(creds: dict) -> Dict[str, Any]:
+    bal = await verimor_balance(creds)
+    if not bal.get("ok"):
+        return {"ok": False, "message": bal.get("error") or "Verimor bağlantısı başarısız.", "balance": bal, "headers": []}
+    hdr = await verimor_headers(creds)
+    configured = normalize_msgheader(creds.get("msgheader") or "")
+    approved = hdr.get("headers") or []
+    header_ok = (not approved) or (configured in approved) or (configured.upper() in {h.upper() for h in approved})
+    warn = None
+    if approved and configured and not header_ok:
+        warn = f"«{configured}» onaylı başlıklar arasında yok. Onaylı: {', '.join(approved[:8])}"
+    elif not configured:
+        warn = "Gönderici başlığı boş — SMS gönderilemez."
+    return {
+        "ok": True,
+        "message": warn or "Verimor bağlantısı doğrulandı.",
+        "warning": warn,
+        "balance": bal.get("data"),
+        "headers": approved,
+        "header_ok": bool(configured) and (header_ok if approved else True),
+    }
+
+# ---------------- SMS DISPATCH ----------------
+async def sms_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
+    provider = normalize_sms_provider(creds.get("provider"))
+    if provider == "iletimerkezi":
+        return await iletimerkezi_send(creds, messages, encoding)
+    if provider == "verimor":
+        return await verimor_send(creds, messages, encoding)
+    return await netgsm_send(creds, messages, encoding)
+
+async def sms_balance(creds: dict) -> Dict[str, Any]:
+    provider = normalize_sms_provider(creds.get("provider"))
+    if provider == "iletimerkezi":
+        return await iletimerkezi_balance(creds)
+    if provider == "verimor":
+        return await verimor_balance(creds)
+    return await netgsm_balance(creds)
+
+async def sms_verify(creds: dict) -> Dict[str, Any]:
+    provider = normalize_sms_provider(creds.get("provider"))
+    if provider == "iletimerkezi":
+        return await iletimerkezi_verify(creds)
+    if provider == "verimor":
+        return await verimor_verify(creds)
+    return await netgsm_verify(creds)
+
+def provider_display_name(provider: Optional[str]) -> str:
+    return SMS_PROVIDERS.get(normalize_sms_provider(provider), SMS_PROVIDERS[DEFAULT_SMS_PROVIDER])["name"]
 
 # ---------------- MAIL (IMAP / SMTP) ----------------
 MAIL_PRESETS = {
