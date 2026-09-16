@@ -9,10 +9,13 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerTitleStyle: { fontWeight: "800" },
+        headerTitleStyle: { fontWeight: "800", color: colors.text },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
-        tabBarLabelStyle: { fontWeight: "700", fontSize: 11 },
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        headerStyle: { backgroundColor: colors.surface },
+        headerTintColor: colors.text,
+        tabBarLabelStyle: { fontWeight: "700", fontSize: 10 },
       }}
     >
       <Tabs.Screen
@@ -44,6 +47,14 @@ export default function TabsLayout() {
           title: "Mesaim",
           href: show("/mesai") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="time" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="personelim"
+        options={{
+          title: "Personelim",
+          href: show("/personelim") ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="person" color={color} size={size} />,
         }}
       />
       <Tabs.Screen

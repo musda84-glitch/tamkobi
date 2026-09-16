@@ -49,8 +49,8 @@ export function Row({ children, style }: ViewProps) {
 }
 
 export function Badge({ label, tone = "slate" }: { label: string; tone?: "slate" | "green" | "red" | "amber" | "indigo" }) {
-  const bg = { slate: "#F1F5F9", green: "#D1FAE5", red: "#FEE2E2", amber: "#FEF3C7", indigo: "#E0E7FF" }[tone];
-  const fg = { slate: "#334155", green: "#047857", red: "#B91C1C", amber: "#B45309", indigo: "#3730A3" }[tone];
+  const bg = { slate: colors.slate100, green: colors.emerald100, red: colors.rose50, amber: colors.amber50, indigo: colors.indigo50 }[tone];
+  const fg = { slate: "#334155", green: colors.primaryHover, red: "#BE123C", amber: "#B45309", indigo: "#3730A3" }[tone];
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
       <Text style={[styles.badgeText, { color: fg }]}>{label}</Text>
@@ -185,8 +185,8 @@ const styles = StyleSheet.create({
   },
   empty: { alignItems: "center", paddingVertical: 28, gap: 8 },
   emptyTitle: { fontWeight: "700", color: colors.text },
-  error: { backgroundColor: "#FEE2E2", borderRadius: radius.md, padding: 12 },
-  errorText: { color: "#B91C1C", fontWeight: "600" },
+  error: { backgroundColor: colors.rose50, borderRadius: radius.md, padding: 12 },
+  errorText: { color: "#BE123C", fontWeight: "600" },
   listRow: {
     flexDirection: "row",
     alignItems: "center",

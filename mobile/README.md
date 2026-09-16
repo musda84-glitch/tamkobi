@@ -22,7 +22,7 @@ Giriş: TamKobi e-posta/şifre. API varsayılanı `https://tamkobi.com` (giriş 
 
 ## Ekranlar
 
-Özet, saha sipariş, stok/barkod, Mesaim, cariler, faturalar, siparişler, bildirimler, arama.
+Özet, saha sipariş, stok/barkod, Mesaim, Personelim, cariler, faturalar, siparişler, bildirimler, arama.
 
 ## Mağaza (EAS)
 
