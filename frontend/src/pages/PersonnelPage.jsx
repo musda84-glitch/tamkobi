@@ -17,15 +17,15 @@ import {
   Plus,
   DollarSign,
   Calculator,
-  Calendar,
   CheckCircle2,
   Clock,
-  Building,
   Phone,
   Mail,
   X,
-  CreditCard
-  , CalendarDays, Gift
+  Pencil,
+  Trash2,
+  CalendarDays,
+  Gift,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -41,15 +41,15 @@ export default function PersonnelPage() {
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingEmp, setEditingEmp] = useState(null);
   const [cardEmp, setCardEmp] = useState(null);
   const [quickPay, setQuickPay] = useState(null);
   const openQuickPay = (p, type) => setQuickPay({ p, type });
 
-  const [showPayrollModal, setShowPayrollModal] = useState(false);
   const [payPayrollItem, setPayPayrollItem] = useState(null);
   const [selectedBankId, setSelectedBankId] = useState("");
 
-  const [newEmployee, setNewEmployee] = useState({
+  const emptyEmployee = {
     full_name: "",
     tc_kimlik: "",
     department: "Satış & Pazarlama",
@@ -57,8 +57,33 @@ export default function PersonnelPage() {
     phone: "",
     email: "",
     salary: 35000,
-    start_date: new Date().toISOString().split("T")[0]
-  });
+    start_date: new Date().toISOString().split("T")[0],
+  };
+  const [newEmployee, setNewEmployee] = useState(emptyEmployee);
+
+  const openAddEmployee = () => {
+    setEditingEmp(null);
+    setNewEmployee({ ...emptyEmployee, start_date: new Date().toISOString().split("T")[0] });
+    setShowAddModal(true);
+  };
+  const openEditEmployee = (emp) => {
+    setEditingEmp(emp);
+    setNewEmployee({
+      full_name: emp.full_name || "",
+      tc_kimlik: emp.tc_kimlik || "",
+      department: emp.department || "",
+      position: emp.position || "",
+      phone: emp.phone || "",
+      email: emp.email || "",
+      salary: emp.salary ?? 0,
+      start_date: emp.start_date || new Date().toISOString().split("T")[0],
+    });
+    setShowAddModal(true);
+  };
+  const closeEmployeeModal = () => {
+    setShowAddModal(false);
+    setEditingEmp(null);
+  };
 
   const loadPersonnelData = useCallback(async () => {
     try {
@@ -88,17 +113,34 @@ export default function PersonnelPage() {
       toast.error("Lütfen ad soyad ve TC kimlik no girin.");
       return;
     }
+    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+    const body = { ...newEmployee, salary: Number(newEmployee.salary) };
     try {
-      await axios.post(`${API_URL}/personnel/employees`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
-        ...newEmployee,
-        salary: Number(newEmployee.salary)
-      });
-      toast.success("Personel başarıyla kaydedildi.");
-      setShowAddModal(false);
+      if (editingEmp) {
+        const id = editingEmp.id || editingEmp._id;
+        await axios.put(`${API_URL}/personnel/employees/${id}`, body);
+        toast.success("Personel güncellendi.");
+      } else {
+        await axios.post(`${API_URL}/personnel/employees`, { company_id: companyId, ...body });
+        toast.success("Personel başarıyla kaydedildi.");
+      }
+      closeEmployeeModal();
       loadPersonnelData();
     } catch (err) {
-      toast.error("Personel kaydedilemedi.");
+      toast.error(err.response?.data?.detail || (editingEmp ? "Personel güncellenemedi." : "Personel kaydedilemedi."));
+    }
+  };
+
+  const handleDeleteEmployee = async (emp) => {
+    if (!window.confirm(`${emp.full_name} personel kaydı silinsin mi? (Çöp kutusuna taşınır)`)) return;
+    try {
+      const id = emp.id || emp._id;
+      await axios.delete(`${API_URL}/personnel/employees/${id}`);
+      toast.success("Personel çöp kutusuna taşındı.");
+      if (cardEmp && (cardEmp.id || cardEmp._id) === id) setCardEmp(null);
+      loadPersonnelData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Personel silinemedi.");
     }
   };
 
@@ -153,7 +195,7 @@ export default function PersonnelPage() {
             <span>Aylık Bordro Hesapla</span>
           </button>
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={openAddEmployee}
             className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition"
             data-testid="add-employee-btn"
           >
@@ -190,15 +232,35 @@ export default function PersonnelPage() {
             data-testid={`employee-card-${emp.tc_kimlik}`}
           >
             <div className="space-y-2">
-              <div className="flex items-start justify-between">
-                <div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
                   <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
                 </div>
-                <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
-                  Aktif
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openEditEmployee(emp)}
+                    className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                    title="Düzenle"
+                    data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteEmployee(emp)}
+                    className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
+                    title="Sil"
+                    data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
+                    Aktif
+                  </span>
+                </div>
               </div>
 
               <div className="text-xs text-slate-600 space-y-1 pt-2 border-t border-slate-100">
@@ -337,13 +399,13 @@ export default function PersonnelPage() {
         </div>
       )}
 
-      {/* ADD EMPLOYEE MODAL */}
+      {/* ADD / EDIT EMPLOYEE MODAL */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="employee-form-modal">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-base font-bold text-slate-900">Yeni Personel Ekle</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400">
+              <h3 className="text-base font-bold text-slate-900">{editingEmp ? "Personeli Düzenle" : "Yeni Personel Ekle"}</h3>
+              <button onClick={closeEmployeeModal} className="text-slate-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -368,6 +430,7 @@ export default function PersonnelPage() {
                     value={newEmployee.tc_kimlik}
                     onChange={(e) => setNewEmployee({ ...newEmployee, tc_kimlik: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
+                    data-testid="employee-tc-input"
                   />
                 </div>
                 <div>
@@ -389,6 +452,7 @@ export default function PersonnelPage() {
                     value={newEmployee.department}
                     onChange={(e) => setNewEmployee({ ...newEmployee, department: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="employee-department-input"
                   />
                 </div>
                 <div>
@@ -398,6 +462,7 @@ export default function PersonnelPage() {
                     value={newEmployee.position}
                     onChange={(e) => setNewEmployee({ ...newEmployee, position: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="employee-position-input"
                   />
                 </div>
               </div>
@@ -410,6 +475,7 @@ export default function PersonnelPage() {
                     value={newEmployee.phone}
                     onChange={(e) => setNewEmployee({ ...newEmployee, phone: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="employee-phone-input"
                   />
                 </div>
                 <div>
@@ -420,13 +486,14 @@ export default function PersonnelPage() {
                     value={newEmployee.email}
                     onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="employee-email-input"
                   />
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={closeEmployeeModal}
                   className="px-3 py-1.5 border rounded-lg text-xs"
                 >
                   İptal
@@ -436,7 +503,7 @@ export default function PersonnelPage() {
                   className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
                   data-testid="save-employee-btn"
                 >
-                  Personeli Kaydet
+                  {editingEmp ? "Güncelle" : "Personeli Kaydet"}
                 </button>
               </div>
             </form>
@@ -444,8 +511,6 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
-      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
-      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCardEmp(null)} />}
       {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} allowances={(() => { const emp = employees.find((x) => (x.id || x._id) === quickPay.p.employee_id); return { meal: emp?.meal_allowance, transport: emp?.transport_allowance }; })()} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
     </div>
   );
