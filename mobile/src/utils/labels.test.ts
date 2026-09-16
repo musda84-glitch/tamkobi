@@ -1,4 +1,4 @@
-import { channelTr, leaveTr, statusTr } from "./labels";
+import { channelTr, contactTypeTr, leaveTr, paymentMethodTr, statusTr } from "./labels";
 
 describe("labels", () => {
   it("maps known statuses", () => {
@@ -18,5 +18,11 @@ describe("labels", () => {
     expect(leaveTr("sick")).toBe("Hastalık");
     expect(statusTr("advance")).toBe("Avans");
     expect(statusTr("in_progress")).toBe("Devam");
+  });
+
+  it("maps cari type and payment method", () => {
+    expect(contactTypeTr("supplier")).toBe("Tedarikçi");
+    expect(contactTypeTr("both")).toBe("Müşteri & Tedarikçi");
+    expect(paymentMethodTr("transfer")).toBe("Havale/EFT");
   });
 });
