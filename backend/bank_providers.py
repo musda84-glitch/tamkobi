@@ -29,7 +29,7 @@ PROVIDERS = {
         "token_path": "/oauth2/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["client_id", "client_secret", "access_token", "refresh_token", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. Hesap hareketleri api.enpara.com üzerinden çekilir. Developer portalındaki Access Token / Refresh Token değerlerini yapıştırın.",
+        "hint": "Enpara QNB'den ayrıdır. api.enpara.com Access/Refresh Token + IBAN ile bağlanır. Hareket çekimi için Hesap No/IBAN zorunlu.",
     },
     "qnb": {
         "name": "QNB Open Banking",
