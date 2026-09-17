@@ -5793,10 +5793,34 @@ def _mask_connection(doc: dict) -> dict:
 async def list_bank_providers():
     return [{"code": k, **{kk: vv for kk, vv in v.items() if kk != "token_path"}} for k, v in bank_providers.PROVIDERS.items()]
 
+def _linked_account_label(acc: dict) -> str:
+    bank = (acc.get("bank_name") or "").strip()
+    name = (acc.get("account_name") or "").strip() or "—"
+    typ = acc.get("type") or "bank"
+    type_tr = {"bank": "Banka", "pos": "POS", "okc_pos": "ÖKC"}.get(typ, typ)
+    if bank and bank != name:
+        return f"{bank} — {name} ({type_tr})"
+    return f"{name} ({type_tr})"
+
+def _enrich_connection(doc: dict, acc: Optional[dict] = None) -> dict:
+    out = _mask_connection(doc)
+    if acc:
+        out["linked_account_name"] = _linked_account_label(acc)
+        out["linked_account_bank"] = acc.get("bank_name")
+        out["linked_account_type"] = acc.get("type")
+    return out
+
 @api_router.get("/banking/connections")
 async def list_bank_connections(company_id: Optional[str] = "comp_nexus_main_01"):
     conns = await db.bank_connections.find({"company_id": company_id}).sort("created_at", -1).to_list(100)
-    return [_mask_connection(c) for c in conns]
+    acc_ids = [c.get("linked_account_id") for c in conns if c.get("linked_account_id")]
+    accs = {}
+    if acc_ids:
+        for a in await db.bank_accounts.find({"_id": {"$in": acc_ids}}).to_list(2000):
+            accs[a["_id"]] = a
+            if a.get("id"):
+                accs[a["id"]] = a
+    return [_enrich_connection(c, accs.get(c.get("linked_account_id"))) for c in conns]
 
 @api_router.post("/banking/connections")
 async def create_bank_connection(conn: BankConnection):
@@ -5805,14 +5829,16 @@ async def create_bank_connection(conn: BankConnection):
     acc = await db.bank_accounts.find_one({"_id": conn.linked_account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Bağlanacak banka hesabı bulunamadı.")
+    if acc.get("type") not in ("bank", "pos", "okc_pos"):
+        raise HTTPException(status_code=400, detail="Yalnızca banka, POS veya ÖKC hesabı bağlanabilir.")
     conn.provider_name = bank_providers.PROVIDERS[conn.provider]["name"]
-    conn.linked_account_name = acc.get("account_name")
+    conn.linked_account_name = _linked_account_label(acc)
     doc = conn.to_mongo()
     test = await bank_providers.test_connection(doc)
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]
     await db.bank_connections.insert_one(doc)
-    return {**_mask_connection(doc), "test_result": test}
+    return {**_enrich_connection(doc, acc), "test_result": test}
 
 @api_router.put("/banking/connections/{conn_id}")
 async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
@@ -5828,16 +5854,21 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Desteklenmeyen banka sağlayıcısı.")
     if "provider" in allowed:
         allowed["provider_name"] = bank_providers.PROVIDERS[allowed["provider"]]["name"]
+    linked_acc = None
     if "linked_account_id" in allowed:
-        acc = await db.bank_accounts.find_one({"_id": allowed["linked_account_id"]})
-        if not acc:
+        linked_acc = await db.bank_accounts.find_one({"_id": allowed["linked_account_id"]})
+        if not linked_acc:
             raise HTTPException(status_code=404, detail="Banka hesabı bulunamadı.")
-        allowed["linked_account_name"] = acc.get("account_name")
+        if linked_acc.get("type") not in ("bank", "pos", "okc_pos"):
+            raise HTTPException(status_code=400, detail="Yalnızca banka, POS veya ÖKC hesabı bağlanabilir.")
+        allowed["linked_account_name"] = _linked_account_label(linked_acc)
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": allowed})
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
-    return _mask_connection(doc)
+    if linked_acc is None and doc.get("linked_account_id"):
+        linked_acc = await db.bank_accounts.find_one({"_id": doc["linked_account_id"]})
+    return _enrich_connection(doc, linked_acc)
 
 @api_router.delete("/banking/connections/{conn_id}")
 async def delete_bank_connection(conn_id: str):

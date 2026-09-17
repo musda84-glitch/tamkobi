@@ -495,7 +495,6 @@ export default function BankingPage() {
                   </div>
                   <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                     <div>
-                      <div className="text-[10px] text-slate-400 uppercase font-semibold">Mevcut Bakiye</div>
                       <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
                       <div className="text-lg font-bold text-slate-900 tracking-tight">{money(acc.current_balance)} ₺</div>
                     </div>
