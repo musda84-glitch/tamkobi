@@ -5916,11 +5916,19 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
     acc = await db.bank_accounts.find_one({"_id": doc.get("linked_account_id")})
     if not acc:
         raise HTTPException(status_code=404, detail="Bağlı banka hesabı bulunamadı.")
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    # Enpara/QNB için bağlı hesabın IBAN'ını kullan (bağlantıda boşsa)
+    filled_iban = ""
+    if not (doc.get("bank_account_number") or "").strip():
+        filled_iban = (acc.get("iban") or acc.get("account_number") or "").strip().replace(" ", "")
+        if filled_iban and filled_iban != "-":
+            doc = {**doc, "bank_account_number": filled_iban}
+        else:
+            filled_iban = ""
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, min(days, 90)))
     try:
         result = await bank_providers.fetch_transactions(doc, since)
     except Exception as e:
-        msg = f"Senkronizasyon hatası: {str(e)[:160]}"
+        msg = f"Senkronizasyon hatası: {str(e)[:220]}"
         await db.bank_connections.update_one({"_id": conn_id}, {"$set": {"status": "error", "last_error": msg}})
         raise HTTPException(status_code=502, detail=msg)
 
@@ -5949,18 +5957,55 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         await db.bank_transactions.insert_one(tx_doc)
         new_txs.append(tx_doc)
         inserted += 1
-    if balance_delta:
+
+    acc_patch: Dict[str, Any] = {}
+    bank_balance = result.get("balance")
+    if bank_balance is not None:
+        try:
+            acc_patch["current_balance"] = float(bank_balance)
+        except (TypeError, ValueError):
+            bank_balance = None
+    if bank_balance is None and balance_delta:
         await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": balance_delta}})
+    elif acc_patch:
+        await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$set": acc_patch})
+
     auto_matched = 0
     if doc.get("auto_match") and new_txs:
         auto_matched, _ = await _auto_match_by_rules(doc["company_id"], new_txs, via="auto")
     now = datetime.now(timezone.utc).isoformat()
+    conn_set: Dict[str, Any] = {
+        "status": "simulated" if result["simulated"] else "connected",
+        "last_synced_at": now,
+        "last_error": None,
+    }
+    if result.get("access_token"):
+        conn_set["access_token"] = result["access_token"]
+    if filled_iban:
+        conn_set["bank_account_number"] = filled_iban
     await db.bank_connections.update_one({"_id": conn_id}, {
-        "$set": {"status": "simulated" if result["simulated"] else "connected", "last_synced_at": now, "last_error": None},
+        "$set": conn_set,
         "$inc": {"synced_count": inserted, "auto_matched_count": auto_matched}
     })
-    return {"status": "success", "simulated": result["simulated"], "inserted": inserted, "skipped": skipped, "auto_matched": auto_matched, "balance_delta": balance_delta,
-            "message": f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı)." + (f" {auto_matched} hareket öğrenilen kurallarla otomatik işlendi." if auto_matched else "") + (" [SİMÜLE VERİ]" if result["simulated"] else "")}
+    bal_note = ""
+    if bank_balance is not None:
+        bal_note = f" Güncel bakiye: {float(bank_balance):,.2f} ₺."
+    elif balance_delta:
+        bal_note = f" Bakiye farkı: {balance_delta:+,.2f} ₺."
+    return {
+        "status": "success",
+        "simulated": result["simulated"],
+        "inserted": inserted,
+        "skipped": skipped,
+        "auto_matched": auto_matched,
+        "balance_delta": balance_delta,
+        "balance": bank_balance,
+        "message": (
+            f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı).{bal_note}"
+            + (f" {auto_matched} hareket öğrenilen kurallarla otomatik işlendi." if auto_matched else "")
+            + (" [SİMÜLE VERİ]" if result["simulated"] else "")
+        ),
+    }
 
 @api_router.post("/banking/sync-all")
 async def sync_all_connections(company_id: Optional[str] = "comp_nexus_main_01"):
