@@ -390,6 +390,15 @@ export default function BankingPage() {
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
                   <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
+                  {g.items.some((a) => a.is_integrated) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {g.items.filter((a) => a.is_integrated).slice(0, 3).map((a) => (
+                        <span key={a.id || a._id} className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5" data-testid={`group-integrated-${a.id || a._id}`}>
+                          <Link2 className="w-2.5 h-2.5" /> {a.integration_provider || "Entegre"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
@@ -436,7 +445,22 @@ export default function BankingPage() {
                         <button type="button" onClick={(e) => handleDeleteAccount(acc, e)} disabled={acc.is_integrated} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30" title={acc.is_integrated ? "Entegre hesap silinemez" : "Sil"} data-testid={`delete-account-${accId}`}><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
-                    {acc.is_integrated && <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2 py-0.5 w-fit" data-testid={`integrated-badge-${accId}`}><Link2 className="w-3 h-3" /> ENTEGRE · {acc.integration_provider}</div>}
+                    {acc.is_integrated && (
+                      <div
+                        className={`flex items-center gap-1 text-[10px] font-bold rounded-md px-2 py-0.5 w-fit border ${
+                          acc.integration_status === "connected"
+                            ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                            : acc.integration_status === "error"
+                              ? "text-rose-800 bg-rose-50 border-rose-200"
+                              : "text-blue-700 bg-blue-50 border-blue-200"
+                        }`}
+                        data-testid={`integrated-badge-${accId}`}
+                      >
+                        <Link2 className="w-3 h-3" />
+                        ENTEGRE · {acc.integration_provider || "Banka API"}
+                        {acc.integration_status === "connected" ? " · CANLI" : acc.integration_status === "error" ? " · HATA" : acc.integration_status === "simulated" ? " · SİMÜLE" : ""}
+                      </div>
+                    )}
                     {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
                     {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {acc.iban && acc.iban !== "-" && <div className="text-[11px] font-mono text-slate-400 truncate">{acc.iban}</div>}
