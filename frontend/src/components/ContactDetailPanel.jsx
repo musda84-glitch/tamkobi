@@ -59,10 +59,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const colState = useSortableColumns();
   const sortedInvoices = useSortedRows(data?.invoices || [], colState.sort);
   const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
-  // Menü sağ tıkla imleçten açılıyor; düğmeden açıldığında düğmenin altına
-  // hizalanıyor. Genişliği kadar sola kaydırılıyor ki satırın sağ kenarından
-  // taşmasın; ekran dışına çıkma durumunu menü kendisi kırpıyor.
-  const openInvCtxFromButton = (e, inv) => { const r = e.currentTarget.getBoundingClientRect(); setInvCtx({ x: r.left - 240, y: r.bottom + 4, inv }); };
+  // Fatura işlemleri ⋮ düğmesinden açılır (sağ tık hızlı menüye ayrıldı).
+  const openInvCtxFromButton = (e, inv) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setInvCtx({ x: Math.max(8, r.right - 256), y: r.bottom + 4, inv });
+  };
   const [balancePlan, setBalancePlan] = useState(false);
   const [insts, setInsts] = useState([]);
   const contactCompanyId = data?.contact?.company_id;
@@ -260,7 +263,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
                     payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi"}</span></td>,
                   }; return (
-                  <tr key={inv.id} onContextMenu={(e) => { e.preventDefault(); setInvCtx({ x: e.clientX, y: e.clientY, inv }); }} className={`cursor-context-menu ${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} title={incoming ? "Sağ tık: gelen e-fatura onayla / reddet" : "Sağ tık: fatura kes / yazdır / tahsilat"} data-testid={`detail-inv-${inv.invoice_number}`}>
+                  <tr key={inv.id} className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
                     {colState.cols.map((k) => cells[k])}
                     <td className="py-2">
                       <div className="flex items-center justify-end gap-0.5">
@@ -275,7 +278,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                                                 {canDeleteInvoice(inv) && (
                           <button onClick={() => deleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`detail-inv-delete-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         )}
-<button onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+<button type="button" onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -286,7 +289,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           {tab === "installments" && (
             <div className="space-y-3" data-testid="detail-installments">
               <div className="flex items-center justify-between text-xs"><span className="text-slate-500">{insts.filter((i) => i.status !== "paid").length} bekleyen • {insts.filter((i) => i.is_overdue).length} vadesi geçen • Kalan <b className="text-slate-900">{fmt(insts.filter((i) => i.status !== "paid").reduce((s, i) => s + i.amount - (i.paid_amount || 0), 0))} ₺</b></span><button onClick={() => setBalancePlan(true)} disabled={!c.balance} className="px-3 py-1.5 border border-violet-200 text-violet-700 rounded-lg font-semibold hover:bg-violet-50 disabled:opacity-40" data-testid="detail-inst-new-plan">+ Bakiyeyi Taksitlendir</button></div>
-              {insts.length === 0 && <div className="text-center text-xs text-slate-400 py-8">Bu cariye ait taksit yok. Faturaya sağ tıklayıp "Taksitlendir" veya "Bakiyeyi Taksitlendir" ile plan oluşturun.</div>}
+              {insts.length === 0 && <div className="text-center text-xs text-slate-400 py-8">Bu cariye ait taksit yok. Fatura satırındaki ⋮ menüden "Taksitlendir" veya "Bakiyeyi Taksitlendir" ile plan oluşturun.</div>}
               {Object.entries(insts.reduce((acc, r) => { const k = r.invoice_id || "bal"; (acc[k] = acc[k] || []).push(r); return acc; }, {})).map(([k, list]) => (
                 <div key={k} className="border border-slate-200 rounded-xl p-3 space-y-2" data-testid={`detail-inst-group-${list[0].invoice_number}`}>
                   <div className="flex items-center gap-2 text-xs"><span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${list[0].direction === "receivable" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{list[0].direction === "receivable" ? "ALACAK" : "BORÇ"}</span><span className="font-mono font-bold">{list[0].invoice_number}</span><span className="text-slate-400">{list.filter((r) => r.status === "paid").length}/{list[0].total_count} ödendi</span></div>
