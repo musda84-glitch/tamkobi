@@ -510,21 +510,33 @@ async def extract_invoice_from_text(text: str, invoice_type: str = "purchase") -
     inv_type = "sales" if invoice_type == "sales" else "purchase"
     system = SALES_INVOICE_SYSTEM if inv_type == "sales" else INVOICE_SYSTEM
     label = "SATIŞ FATURASI METNİ" if inv_type == "sales" else "FATURA METNİ"
-    chat = await make_chat(f"inv-extract-{inv_type}-{abs(hash(text[:200]))}", system, purpose="extract")
-    raw = await chat.send_message(UserMessage(text=f"{label}:\n\n{text[:20000]}"))
-    raw = str(raw).strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        raw = raw[raw.find("{"):]
-    start, end = raw.find("{"), raw.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError("AI yanıtı JSON içermiyor.")
-    data = json.loads(raw[start:end + 1])
-    data = _normalize_invoice_items(data)
-    if inv_type == "sales" and not data.get("customer") and data.get("supplier"):
-        # Model alış şemasına kayarsa müşteri alanına taşı
-        data["customer"] = data.pop("supplier")
-    return data
+    prompt = f"{label}:\n\n{text[:20000]}"
+    last_err = None
+    # Geçici JSON / boş kalem hatalarında bir kez daha dene (kullanıcının defalarca yüklemesini azaltır).
+    for attempt in range(2):
+        try:
+            chat = await make_chat(f"inv-extract-{inv_type}-{abs(hash(text[:200]))}-{attempt}", system, purpose="extract")
+            raw = str(await chat.send_message(UserMessage(text=prompt))).strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                raw = raw[raw.find("{"):]
+            start, end = raw.find("{"), raw.rfind("}")
+            if start == -1 or end == -1:
+                raise ValueError("AI yanıtı JSON içermiyor.")
+            data = json.loads(raw[start:end + 1])
+            data = _normalize_invoice_items(data)
+            if inv_type == "sales" and not data.get("customer") and data.get("supplier"):
+                # Model alış şemasına kayarsa müşteri alanına taşı
+                data["customer"] = data.pop("supplier")
+            if not (data.get("items") or []):
+                raise ValueError("AI fatura kalemi döndürmedi.")
+            return data
+        except (ValueError, json.JSONDecodeError) as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            raise
+    raise last_err or ValueError("AI fatura çıkarımı başarısız.")
 
 
 ORDER_SYSTEM = """Sen bir e-ticaret/toptan sipariş belgesi ayrıştırıcısısın. Sana verilen metin (PDF, Excel/CSV tablo dökümü veya e-posta) içinden SİPARİŞLERİ çıkar. Yalnızca geçerli JSON döndür:

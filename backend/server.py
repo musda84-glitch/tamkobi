@@ -9727,11 +9727,17 @@ async def ai_invoice_extract(
     inv_type = "sales" if invoice_type == "sales" else "purchase"
     name = (file.filename or "").lower()
     ctype = (file.content_type or "").lower()
+    # Bazı tarayıcılar XML/PDF'i application/octet-stream gönderir; uzantıya güven.
     is_xml = (
         ctype in ("application/xml", "text/xml", "application/ubl+xml")
         or name.endswith(".xml")
+        or (ctype in ("application/octet-stream", "") and name.endswith(".xml"))
     )
-    is_pdf = ctype in ("application/pdf",) or name.endswith(".pdf")
+    is_pdf = (
+        ctype in ("application/pdf",)
+        or name.endswith(".pdf")
+        or (ctype in ("application/octet-stream", "") and name.endswith(".pdf"))
+    )
     is_text = ctype in ("text/plain",) or name.endswith(".txt")
     if not (is_xml or is_pdf or is_text):
         raise HTTPException(status_code=400, detail="PDF, UBL-TR XML veya düz metin yükleyebilirsiniz.")
