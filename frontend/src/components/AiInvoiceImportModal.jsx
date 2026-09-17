@@ -6,22 +6,30 @@ import { X, Sparkles, Upload, Loader2, FileText, Plus, Trash2, CheckCircle2 } fr
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { SearchSelect } from "./SearchSelect";
-import { computeLine, emptyLine, fmtMoney, VAT_OPTIONS } from "../utils/documentLines";
+import { computeLine, emptyLine, fmtMoney, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import { useAiStatus } from "../hooks/useAiStatus";
 
 const fmt = (n) => fmtMoney(n);
 const lineOf = (it) => computeLine(it);
 
+function normalizeDraft(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const items = Array.isArray(raw.items) ? raw.items.map((it) => hydrateLine(it)) : [];
+  return { ...raw, items };
+}
+
 export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, invoiceType = "purchase" }) => {
-  useEscape(onClose);
   const isSales = invoiceType === "sales";
   const { extractLabel, configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
   const ref = useRef(null);
+  const suppressBackdropUntil = useRef(0);
+  const backdropArmed = useRef(false);
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [draft, setDraft] = useState(null);
   const [contactId, setContactId] = useState("");
   const [saving, setSaving] = useState(false);
+  useEscape(() => { if (!busy && !saving) onClose(); });
   const modelBadge = aiLoading
     ? "…"
     : (!aiReady
@@ -36,23 +44,90 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
   ));
   const contactOptions = contacts.filter((c) => (isSales ? c.type !== "supplier" : c.type !== "customer"));
 
+  const armFilePickerGuard = () => {
+    // Dosya seçici kapanınca tarayıcı bazen backdrop'a click yollar; modalın kapanmasını engelle.
+    suppressBackdropUntil.current = Date.now() + 1200;
+  };
+
+  const tryClose = () => {
+    if (busy || saving) return;
+    if (Date.now() < suppressBackdropUntil.current) return;
+    onClose();
+  };
+
+  const onBackdropPointerDown = (e) => {
+    backdropArmed.current = e.target === e.currentTarget;
+  };
+
+  const onBackdropClick = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (!backdropArmed.current) return;
+    backdropArmed.current = false;
+    tryClose();
+  };
+
+  const resetFileInput = () => {
+    if (ref.current) ref.current.value = "";
+  };
+
   const upload = async (file) => {
-    if (!file) return;
+    if (!file || busy) return;
+    if (!companyId) {
+      toast.error("Firma henüz yüklenmedi. Bir saniye bekleyip tekrar deneyin.");
+      resetFileInput();
+      return;
+    }
     setBusy(true);
     try {
-      const fd = new FormData(); fd.append("file", file);
-      const r = await axios.post(`${API_URL}/ai/invoice-extract?company_id=${companyId}&invoice_type=${isSales ? "sales" : "purchase"}`, fd);
-      setRes(r.data); setDraft(r.data.draft); setContactId(r.data.matched_contact?.id || "");
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/ai/invoice-extract?company_id=${encodeURIComponent(companyId)}&invoice_type=${isSales ? "sales" : "purchase"}`,
+        fd,
+        { timeout: 180000 },
+      );
+      const next = normalizeDraft(r.data.draft);
+      if (!next || !next.items?.length) {
+        toast.error("Belgeden fatura kalemi çıkarılamadı. Farklı bir PDF/XML deneyin veya kalemleri elle ekleyin.");
+        // Yine de düzenlenebilir boş taslak göster (akış kopmasın)
+        setRes(r.data);
+        setDraft(next || { items: [emptyLine()], confidence: 0, ...(isSales ? { customer: {} } : { supplier: {} }) });
+        setContactId(r.data.matched_contact?.id || "");
+        return;
+      }
+      setRes(r.data);
+      setDraft(next);
+      setContactId(r.data.matched_contact?.id || "");
       const src = r.data.source === "xml" ? "XML" : "PDF";
-      toast.success(`AI ${src} faturayı okudu (güven: %${Math.round((r.data.draft.confidence || 0) * 100)}). Kontrol edip onaylayın.`);
-    } catch (err) { toast.error(err.response?.data?.detail || "Dosya işlenemedi."); } finally { setBusy(false); }
+      toast.success(`AI ${src} faturayı okudu (güven: %${Math.round((next.confidence || 0) * 100)}). Kontrol edip onaylayın.`);
+    } catch (err) {
+      const detail = err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı. Tekrar deneyin." : null) || "Dosya işlenemedi.";
+      toast.error(detail);
+    } finally {
+      setBusy(false);
+      resetFileInput();
+    }
   };
+
+  const openFilePicker = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (busy) return;
+    armFilePickerGuard();
+    ref.current?.click();
+  };
+
   const setItem = (i, k, v) => setDraft((d) => { const items = d.items.map((it, j) => (j === i ? computeLine({ ...it, [k]: v }, k) : it)); return { ...d, items }; });
   const addItem = () => setDraft((d) => ({ ...d, items: [...d.items, emptyLine()] }));
   const rmItem = (i) => setDraft((d) => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const sub = draft ? draft.items.reduce((s, it) => s + lineOf(it).total, 0) : 0;
   const vat = draft ? draft.items.reduce((s, it) => s + lineOf(it).vat_amount, 0) : 0;
   const confirm = async () => {
+    if (saving || busy) return;
+    if (!draft?.items?.length) {
+      toast.error("En az bir fatura kalemi gerekli.");
+      return;
+    }
     setSaving(true);
     try {
       const r = await axios.post(`${API_URL}/ai/invoice-extract/confirm`, {
@@ -61,9 +136,15 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
         draft,
         contact_id: contactId || null,
         file_url: res?.file_url,
-      });
-      toast.success(r.data.message); onDone?.(r.data.invoice); onClose();
-    } catch (err) { toast.error(err.response?.data?.detail || "Fatura oluşturulamadı."); } finally { setSaving(false); }
+      }, { timeout: 120000 });
+      toast.success(r.data.message);
+      onDone?.(r.data.invoice);
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Fatura oluşturulamadı.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const title = isSales
@@ -77,11 +158,16 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
     : "Metin tabanlı e-Arşiv / e-Fatura PDF · max 10 MB. Tedarikçi, kalemler, KDV ve toplamlar otomatik çıkarılır.";
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="ai-invoice-modal">
+    <div
+      className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+      onPointerDown={onBackdropPointerDown}
+      onClick={onBackdropClick}
+      data-testid="ai-invoice-backdrop"
+    >
+      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} data-testid="ai-invoice-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Sparkles className="w-5 h-5 text-violet-600" /> {title} <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-800"}`} data-testid="ai-invoice-model-badge">{modelBadge}</span></h3>
-          <button onClick={onClose} className="text-slate-400" data-testid="ai-invoice-close"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={tryClose} className="text-slate-400" data-testid="ai-invoice-close" disabled={busy || saving}><X className="w-5 h-5" /></button>
         </div>
         {!aiLoading && !aiReady && (
           <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="ai-invoice-settings-warn">
@@ -98,10 +184,28 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
           </div>
         )}
         {!draft ? (
-          <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-2xl p-10 cursor-pointer text-sm text-slate-600 ${busy ? "opacity-60" : "hover:bg-violet-50/40 hover:border-violet-400"}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); upload(e.dataTransfer.files?.[0]); }} data-testid="ai-invoice-dropzone">
+          <div
+            role="button"
+            tabIndex={0}
+            className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-2xl p-10 text-sm text-slate-600 ${busy ? "opacity-60 pointer-events-none" : "cursor-pointer hover:bg-violet-50/40 hover:border-violet-400"}`}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDrop={(e) => { e.preventDefault(); e.stopPropagation(); armFilePickerGuard(); upload(e.dataTransfer.files?.[0]); }}
+            onClick={openFilePicker}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") openFilePicker(e); }}
+            data-testid="ai-invoice-dropzone"
+          >
+            <input
+              ref={ref}
+              type="file"
+              accept={isSales ? "application/pdf,application/xml,text/xml,.xml,.pdf" : "application/pdf"}
+              className="hidden"
+              onClick={(e) => { e.stopPropagation(); armFilePickerGuard(); }}
+              onChange={(e) => { armFilePickerGuard(); upload(e.target.files?.[0]); }}
+              disabled={busy}
+              data-testid="ai-invoice-file"
+            />
             {busy ? <><Loader2 className="w-8 h-8 animate-spin text-violet-600" /><span>Belge okunuyor ve analiz ediliyor…</span></> : <><Upload className="w-8 h-8 text-violet-600" /><span className="font-semibold">{dropHint}</span><span className="text-xs text-slate-400">{dropSub}</span></>}
-            <input ref={ref} type="file" accept={isSales ? "application/pdf,application/xml,text/xml,.xml,.pdf" : "application/pdf"} className="hidden" onChange={(e) => upload(e.target.files?.[0])} disabled={busy} data-testid="ai-invoice-file" />
-          </label>
+          </div>
         ) : (
           <div className="space-y-4 text-xs">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -140,19 +244,19 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
                     <td><input type="number" step="any" value={it.discount_rate || 0} onChange={(e) => setItem(i, "discount_rate", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
                     <td className="text-right font-semibold">{fmt(line.total)}</td>
                     <td className="text-right font-bold">{fmt(line.total_incl)}</td>
-                    <td><button onClick={() => rmItem(i)} className="p-1 text-rose-600" data-testid={`ai-item-rm-${i}`}><Trash2 className="w-3.5 h-3.5" /></button></td>
+                    <td><button type="button" onClick={() => rmItem(i)} className="p-1 text-rose-600" data-testid={`ai-item-rm-${i}`}><Trash2 className="w-3.5 h-3.5" /></button></td>
                   </tr>
                   );
                 })}
               </tbody>
             </table>
             <div className="flex items-start justify-between">
-              <button onClick={addItem} className="flex items-center gap-1 px-2.5 py-1.5 border rounded-lg" data-testid="ai-item-add"><Plus className="w-3.5 h-3.5" /> Kalem ekle</button>
+              <button type="button" onClick={addItem} className="flex items-center gap-1 px-2.5 py-1.5 border rounded-lg" data-testid="ai-item-add"><Plus className="w-3.5 h-3.5" /> Kalem ekle</button>
               <div className="text-right space-y-0.5"><div>Ara Toplam (KDV Hariç): <b>{fmt(sub)} ₺</b></div><div>KDV: <b>{fmt(vat)} ₺</b></div><div className="text-sm">Genel Toplam (KDV Dahil): <b data-testid="ai-grand-total">{fmt(sub + vat)} ₺</b>{Math.abs(sub + vat - Number(draft.grand_total || 0)) > 1 && <span className="ml-2 text-[10px] text-amber-700 font-semibold">Belge toplamından farklı ({fmt(draft.grand_total)})</span>}</div></div>
             </div>
             <div className="flex justify-between items-center border-t pt-3">
-              <button onClick={() => { setDraft(null); setRes(null); }} className="px-3 py-1.5 border rounded-lg" data-testid="ai-restart">Başka dosya</button>
-              <button onClick={confirm} disabled={saving || !draft.items.length} className="flex items-center gap-1.5 px-5 py-2 bg-emerald-600 text-white rounded-xl font-bold" data-testid="ai-confirm">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} {isSales ? "Taslak Satış Faturası Oluştur" : "Taslak Alış Faturası Oluştur"}</button>
+              <button type="button" onClick={() => { setDraft(null); setRes(null); resetFileInput(); }} className="px-3 py-1.5 border rounded-lg" data-testid="ai-restart" disabled={saving}>Başka dosya</button>
+              <button type="button" onClick={confirm} disabled={saving || !draft.items.length} className="flex items-center gap-1.5 px-5 py-2 bg-emerald-600 text-white rounded-xl font-bold disabled:opacity-50" data-testid="ai-confirm">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} {isSales ? "Taslak Satış Faturası Oluştur" : "Taslak Alış Faturası Oluştur"}</button>
             </div>
           </div>
         )}
