@@ -10,6 +10,8 @@ import { ReceiptPrint } from "./ReceiptPrint";
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
 export function isLockedTx(tx) {
+  // Simüle banka hareketleri demo veridir; silme/düzenlemeye açıktır.
+  if (tx?.source === "bank_sync" && tx?.is_simulated) return false;
   return LOCKED_TX_SOURCES.has(tx?.source);
 }
 
@@ -87,7 +89,8 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
       return;
     }
     setOpen(false);
-    if (!window.confirm(`${(tx.amount || 0).toLocaleString("tr-TR")} ₺ tutarındaki ${txKindLabel(tx)} silinsin mi? Bakiyeler geri alınır.`)) return;
+    const kind = tx.is_simulated ? "simüle (demo) hareket" : txKindLabel(tx);
+    if (!window.confirm(`${(tx.amount || 0).toLocaleString("tr-TR")} ₺ tutarındaki ${kind} silinsin mi? Bakiyeler geri alınır.`)) return;
     try {
       const r = await axios.delete(`${API_URL}/banking/transactions/${txId}`);
       toast.success(r.data.message || "Hareket çöp kutusuna taşındı.");
