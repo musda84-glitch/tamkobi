@@ -8,7 +8,16 @@ import { BankMatchRow } from "./BankMatchRow";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const FIELD_LABELS = { client_id: "Client ID", client_secret: "Client Secret", api_key: "API Key", customer_number: "Müşteri Numarası", base_url: "API Base URL" };
+const FIELD_LABELS = {
+  client_id: "Client ID",
+  client_secret: "Client Secret",
+  access_token: "Access Token",
+  refresh_token: "Refresh Token",
+  api_key: "API Key",
+  customer_number: "Müşteri Numarası",
+  base_url: "API Base URL",
+  token_url: "Token URL",
+};
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -27,7 +36,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [unmatched, setUnmatched] = useState([]);
   const [busy, setBusy] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
+  const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
+  const [editConn, setEditConn] = useState(null);
+  const [editForm, setEditForm] = useState({ client_id: "", client_secret: "", access_token: "", refresh_token: "", customer_number: "", bank_account_number: "", mode: "live" });
   const [rules, setRules] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
@@ -79,6 +90,34 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     setBusy("all");
     try { const r = await axios.post(`${API_URL}/banking/sync-all?company_id=${companyId}`); toast.success(`${r.data.results.length} bağlantı senkronize edildi.`); load(); onSynced?.(); }
     catch { toast.error("Toplu senkronizasyon başarısız."); } finally { setBusy(null); }
+  };
+
+  const openEdit = (c) => {
+    setEditConn(c);
+    setEditForm({
+      client_id: c.client_id || "",
+      client_secret: "",
+      access_token: "",
+      refresh_token: "",
+      customer_number: c.customer_number || "",
+      bank_account_number: c.bank_account_number || "",
+      mode: c.mode || "live",
+    });
+  };
+
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    if (!editConn) return;
+    try {
+      const payload = { ...editForm };
+      Object.keys(payload).forEach((k) => { if (payload[k] === "" || payload[k] == null) delete payload[k]; });
+      await axios.put(`${API_URL}/banking/connections/${editConn.id}`, payload);
+      toast.success("Kimlik bilgileri güncellendi.");
+      setEditConn(null);
+      const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
+      toast[r.data.ok ? "success" : "error"](r.data.message);
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
 
   const remove = async (id) => {
@@ -143,7 +182,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi (Client ID/Secret) girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır ve örnek hareket üretir. Kuveyt Türk API Market (developer.kuveytturk.com.tr) veya QNB/Enpara Developer Portal (developer.qnb.com.tr) üzerinden aldığınız kurumsal anahtarları girdiğinizde aynı ekrandan canlı veri çekilir.
+        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrı bir bankadır — <code className="font-mono">api.enpara.com</code> Access Token / Refresh Token ile bağlanır (developer portal). QNB için ayrı <b>QNB Open Banking</b> sağlayıcısını seçin. Kuveyt Türk: developer.kuveytturk.com.tr.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -173,11 +212,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
               <button onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.id}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
               <button onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.id}`}>Bağlantıyı Test Et</button>
+              <button onClick={() => openEdit(c)} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`edit-conn-btn-${c.id}`}><Settings2 className="w-3.5 h-3.5 inline mr-1" />Anahtarlar</button>
               <button onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.id}`}><Trash2 className="w-4 h-4" /></button>
             </div>
           </div>
         ))}
-        {connections.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">Henüz banka bağlantısı yok. "Banka Bağla" ile Kuveyt Türk, Enpara/QNB veya Finfree bağlayın.</div>}
+        {connections.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">Henüz banka bağlantısı yok. "Banka Bağla" ile Kuveyt Türk, Enpara, QNB veya Finfree bağlayın.</div>}
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
@@ -273,6 +313,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div><label className="block font-semibold mb-1">Sağlayıcı</label>
                 <select className={inputCls} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} data-testid="conn-provider-select">{providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select>
                 {provider?.docs && <a href={provider.docs} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 hover:underline">Geliştirici portalı: {provider.docs}</a>}
+                {provider?.hint && <p className="text-[10px] text-slate-500 mt-1">{provider.hint}</p>}
+                {provider?.live_url && <p className="text-[10px] font-mono text-slate-400 mt-0.5">API: {provider.live_url}</p>}
               </div>
               <div><label className="block font-semibold mb-1">Bağlanacak Hesap (TamKobi)</label>
                 <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} data-testid="conn-account-select">{accounts.filter((a) => a.type === "bank" && !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
@@ -283,12 +325,44 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <button type="button" onClick={() => setForm({ ...form, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${form.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="conn-mode-live">Canlı</button>
               </div>
               {(provider?.fields || []).map((f) => (
-                <div key={f}><label className="block font-semibold mb-1">{FIELD_LABELS[f] || f} <span className="text-slate-400 font-normal">(opsiyonel — boşsa simüle)</span></label>
-                  <input type={f === "client_secret" || f === "api_key" ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} /></div>
+                <div key={f}><label className="block font-semibold mb-1">{FIELD_LABELS[f] || f} <span className="text-slate-400 font-normal">{f === "access_token" ? "(Enpara için önerilir)" : "(opsiyonel — boşsa simüle)"}</span></label>
+                  <input type={["client_secret", "api_key", "access_token", "refresh_token"].includes(f) ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" /></div>
               ))}
               <div><label className="block font-semibold mb-1">Banka Hesap No / IBAN <span className="text-slate-400 font-normal">(opsiyonel)</span></label><input className={`${inputCls} font-mono`} value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} /></div>
               <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.auto_sync} onChange={(e) => setForm({ ...form, auto_sync: e.target.checked })} /><span className="font-semibold">Otomatik senkronizasyona dahil et</span></label>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setShowAdd(false)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-bank-connection-btn">Bağla & Test Et</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editConn && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="edit-bank-connection-modal">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-base font-bold text-slate-900">Anahtarları Güncelle — {editConn.provider_name}</h3>
+              <button type="button" onClick={() => setEditConn(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            {editConn.provider === "enpara" && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                Enpara API hostu <b>api.enpara.com</b> (QNB değil). Developer portalındaki <b>Access Token</b> ve isteğe bağlı <b>Refresh Token</b> değerlerini yapıştırın; ardından Bağlantıyı Test Et.
+              </p>
+            )}
+            <form onSubmit={saveEdit} className="space-y-3 text-xs">
+              <div><label className="block font-semibold mb-1">Client ID</label><input className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="off" /></div>
+              <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="off" /></div>
+              <div><label className="block font-semibold mb-1">Access Token</label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" /></div>
+              <div><label className="block font-semibold mb-1">Refresh Token</label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" /></div>
+              <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} /></div>
+              <div><label className="block font-semibold mb-1">Hesap No / IBAN</label><input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`}>Sandbox</button>
+                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`}>Canlı</button>
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button type="button" onClick={() => setEditConn(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
+                <button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-edit-conn-btn">Kaydet & Test Et</button>
+              </div>
             </form>
           </div>
         </div>

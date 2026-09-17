@@ -5741,9 +5741,9 @@ async def reject_cash_request(req_id: str, request: Request):
 # ----------------- BANKA CANLI VERİ BAĞLANTILARI -----------------
 def _mask_connection(doc: dict) -> dict:
     doc = clean_doc(doc)
-    for key in ("client_secret", "api_key"):
+    for key in ("client_secret", "api_key", "access_token", "refresh_token"):
         if doc.get(key):
-            doc[key] = "••••" + doc[key][-4:]
+            doc[key] = "••••" + str(doc[key])[-4:]
     return doc
 
 @api_router.get("/banking/providers")
@@ -5773,11 +5773,18 @@ async def create_bank_connection(conn: BankConnection):
 
 @api_router.put("/banking/connections/{conn_id}")
 async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"client_id", "client_secret", "api_key", "customer_number", "bank_account_number", "base_url", "mode", "auto_sync", "auto_match", "linked_account_id"}}
-    if allowed.get("client_secret", None) and allowed["client_secret"].startswith("••••"):
-        allowed.pop("client_secret")
-    if allowed.get("api_key", None) and allowed["api_key"].startswith("••••"):
-        allowed.pop("api_key")
+    allowed = {k: v for k, v in updated.items() if k in {
+        "client_id", "client_secret", "access_token", "refresh_token", "token_url",
+        "api_key", "customer_number", "bank_account_number", "base_url", "mode",
+        "auto_sync", "auto_match", "linked_account_id", "provider",
+    }}
+    for secret_key in ("client_secret", "api_key", "access_token", "refresh_token"):
+        if allowed.get(secret_key) and str(allowed[secret_key]).startswith("••••"):
+            allowed.pop(secret_key)
+    if "provider" in allowed and allowed["provider"] not in bank_providers.PROVIDERS:
+        raise HTTPException(status_code=400, detail="Desteklenmeyen banka sağlayıcısı.")
+    if "provider" in allowed:
+        allowed["provider_name"] = bank_providers.PROVIDERS[allowed["provider"]]["name"]
     if "linked_account_id" in allowed:
         acc = await db.bank_accounts.find_one({"_id": allowed["linked_account_id"]})
         if not acc:
@@ -5799,9 +5806,16 @@ async def test_bank_connection(conn_id: str):
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
+    # Eski "Enpara / QNB" etiketi → güncel sağlayıcı adı
+    meta = bank_providers.PROVIDERS.get(doc.get("provider") or "")
+    patch = {}
+    if meta and doc.get("provider_name") != meta["name"]:
+        patch["provider_name"] = meta["name"]
     test = await bank_providers.test_connection(doc)
     status_val = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
-    await db.bank_connections.update_one({"_id": conn_id}, {"$set": {"status": status_val, "last_error": None if test["ok"] else test["message"]}})
+    patch.update({"status": status_val, "last_error": None if test["ok"] else test["message"]})
+    # Probe sırasında yenilenen access token'ı sakla (yalnızca dönen token_preview değil; refresh helper yazmaz — UI'dan gelir)
+    await db.bank_connections.update_one({"_id": conn_id}, {"$set": patch})
     return {**test, "status": status_val}
 
 async def _suggest_contact(company_id: str, counterparty: str, description: str):

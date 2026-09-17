@@ -241,6 +241,8 @@ class TestBankConnections:
         assert len(d) == 4, len(d)
         codes = {p["code"] for p in d}
         assert {"kuveytturk", "enpara", "finfree"} <= codes, codes
+        assert "qnb" in codes
+        assert any(p["code"] == "enpara" and "api.enpara.com" in (p.get("live_url") or "") for p in r.json())
 
     def test_create_connection_simulated(self, s):
         r = s.post(f"{BASE}/banking/connections",

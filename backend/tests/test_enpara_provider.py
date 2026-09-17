@@ -1,0 +1,112 @@
+"""Enpara, QNB'den ayrı provider; api.enpara.com account-statement."""
+import asyncio
+from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+
+import bank_providers as bp
+
+
+def test_providers_split_enpara_and_qnb():
+    assert "enpara" in bp.PROVIDERS
+    assert "qnb" in bp.PROVIDERS
+    assert bp.PROVIDERS["enpara"]["live_url"] == "https://api.enpara.com"
+    assert "qnb.com" not in bp.PROVIDERS["enpara"]["live_url"]
+    assert "Enpara" in bp.PROVIDERS["enpara"]["name"]
+    assert "QNB" in bp.PROVIDERS["qnb"]["name"]
+    assert "access_token" in bp.PROVIDERS["enpara"]["fields"]
+
+
+def test_has_credentials_enpara_access_token_only():
+    assert bp.has_credentials({"provider": "enpara", "access_token": "eyJabc"})
+    assert not bp.has_credentials({"provider": "enpara"})
+    assert bp.has_credentials({"provider": "enpara", "client_id": "a", "client_secret": "b"})
+
+
+def test_err_text_empty_exception():
+    class E(Exception):
+        def __str__(self):
+            return ""
+    assert bp._err_text(E()) == "E"
+
+
+def test_enpara_probe_ok_with_access_token():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "[]"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is True
+    assert out["simulated"] is False
+    assert "Enpara" in out["message"]
+    args, kwargs = mock_client.get.await_args
+    assert args[0] == "https://api.enpara.com/v1/account-statement/list"
+    assert kwargs["headers"]["Authorization"] == "Bearer tok123"
+
+
+def test_enpara_probe_invalid_token():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "bad"}
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.text = '{"error":"Invalid Access Token"}'
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    assert "Access Token" in out["message"] or "geçersiz" in out["message"].lower()
+
+
+def test_enpara_fetch_normalizes_rows():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR00"}
+    since = datetime.now(timezone.utc) - timedelta(days=3)
+
+    ticket_resp = MagicMock()
+    ticket_resp.status_code = 200
+    ticket_resp.json = MagicMock(return_value={"ticketId": "T1"})
+
+    list_resp = MagicMock()
+    list_resp.status_code = 200
+    list_resp.json = MagicMock(return_value={
+        "transactions": [
+            {"transactionId": "X1", "amount": 100.5, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-10"},
+            {"id": "X2", "amount": -40, "explanation": "Giden", "date": "2026-09-11"},
+        ]
+    })
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=ticket_resp)
+    mock_client.get = AsyncMock(return_value=list_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["simulated"] is False
+    assert len(out["transactions"]) == 2
+    assert out["transactions"][0]["external_id"] == "X1"
+    assert out["transactions"][0]["direction"] == "credit"
+    assert out["transactions"][1]["direction"] == "debit"
