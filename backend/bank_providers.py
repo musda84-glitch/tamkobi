@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import random
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -29,7 +30,7 @@ PROVIDERS = {
         "token_path": "/oauth2/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["client_id", "client_secret", "access_token", "refresh_token", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. api.enpara.com Access/Refresh Token + IBAN ile bağlanır. Hareket çekimi için Hesap No/IBAN zorunlu.",
+        "hint": "Enpara QNB'den ayrıdır. Access/Refresh Token + Client ID/Secret (JWT aud ile aynı Client ID) + IBAN. Production sunucu IP’si portalda izinli olmalı. Hareket: ticket → list.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -409,46 +410,108 @@ def _ticket_ready(data: Any) -> Optional[bool]:
 
 def _enpara_account_ref(conn: dict) -> str:
     for key in ("bank_account_number", "iban", "account_number"):
-        v = (conn.get(key) or "").strip().replace(" ", "")
-        if v:
+        v = (conn.get(key) or "").strip().replace(" ", "").upper()
+        if v and v != "-":
             return v
     return ""
 
 
 def _enpara_headers(token: str, conn: dict) -> Dict[str, str]:
-    headers = {
+    # Bearer yeterli; ekstra client_id header'ları bazı Apigee kurallarında 400 üretebiliyor
+    return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    cid = (conn.get("client_id") or "").strip()
-    if cid:
-        headers["x-apikey"] = cid
-        headers["X-Client-Id"] = cid
-        headers["client_id"] = cid
-    return headers
 
 
-def _enpara_date_payloads(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
+def _is_iban(ref: str) -> bool:
+    r = (ref or "").strip().upper()
+    return len(r) >= 15 and r.startswith("TR") and r[2:].replace(" ", "").isalnum()
+
+
+def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
+    """Öncelikli, sade gövdeler (Enpara 400-1: fazla/yanlış alan).
+
+    Sıra: en olası şemalar önce; toplam ~25 deneme ile sınırlı.
+    """
     start_iso, end_iso = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
     start_tr, end_tr = start.strftime("%d.%m.%Y"), end.strftime("%d.%m.%Y")
-    start_dt, end_dt = f"{start_iso}T00:00:00", f"{end_iso}T23:59:59"
-    bases = [
-        {"startDate": start_iso, "endDate": end_iso},
-        {"beginDate": start_iso, "endDate": end_iso},
-        {"fromDate": start_iso, "toDate": end_iso},
-        {"baslangicTarihi": start_tr, "bitisTarihi": end_tr},
-        {"startDate": start_dt, "endDate": end_dt},
-    ]
-    out = []
-    for b in bases:
-        p = dict(b)
-        if account:
-            p.update({"accountNumber": account, "iban": account, "hesapNo": account, "accountNo": account})
+    start_compact, end_compact = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+    start_dt_z = f"{start_iso}T00:00:00+03:00"
+    end_dt_z = f"{end_iso}T23:59:59+03:00"
+    acc = account
+    variants: List[Dict[str, Any]] = []
+
+    def add(p: Dict[str, Any]):
+        variants.append(p)
+
+    if acc and _is_iban(acc):
+        add({"iban": acc, "startDate": start_iso, "endDate": end_iso})
+        add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
+        add({"iban": acc, "beginDate": start_iso, "endDate": end_iso})
+        add({"iban": acc, "fromDate": start_iso, "toDate": end_iso})
+        add({"iban": acc, "startDate": start_compact, "endDate": end_compact})
+        add({"iban": acc, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
+        add({"iban": acc, "startDate": start_dt_z, "endDate": end_dt_z})
+        add({"ibanNumber": acc, "startDate": start_iso, "endDate": end_iso})
+        add({"IBAN": acc, "StartDate": start_iso, "EndDate": end_iso})
+        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso})
+        add({"accountInfo": {"iban": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
+        add({"account": {"iban": acc}, "startDate": start_iso, "endDate": end_iso})
+        add({"queryStartDate": start_iso, "queryEndDate": end_iso, "iban": acc})
         if customer:
-            p.update({"customerNumber": customer, "musteriNo": customer})
-        out.append(p)
-    return out
+            add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "customerNumber": customer})
+            add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "musteriNo": customer})
+    elif acc:
+        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso})
+        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
+        add({"hesapNo": acc, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
+        add({"accountNo": acc, "beginDate": start_iso, "endDate": end_iso})
+        add({"accountInfo": {"accountNumber": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
+        if customer:
+            add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso, "customerNumber": customer})
+    else:
+        add({"startDate": start_iso, "endDate": end_iso})
+
+    # Yinelenenleri ayıkla, sırayı koru
+    seen = set()
+    uniq = []
+    for p in variants:
+        key = json.dumps(p, sort_keys=True, ensure_ascii=False, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+    return uniq[:28]
+
+
+
+def _api_error_detail(resp) -> str:
+    text = (getattr(resp, "text", None) or "")[:400]
+    try:
+        data = resp.json()
+    except Exception:
+        return text
+    if not isinstance(data, dict):
+        return text
+    parts = []
+    if data.get("message"):
+        parts.append(str(data["message"]))
+    if data.get("code"):
+        parts.append(f"code={data['code']}")
+    errs = data.get("errors") or data.get("error") or []
+    if isinstance(errs, dict):
+        errs = [errs]
+    if isinstance(errs, list):
+        for e in errs[:3]:
+            if isinstance(e, dict):
+                msg = e.get("message") or e.get("msg") or e.get("detail") or e.get("m")
+                code = e.get("code")
+                parts.append(f"{code}: {msg}" if code and msg else str(msg or code or e))
+            else:
+                parts.append(str(e))
+    return " | ".join(parts) if parts else text
 
 
 async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]:
@@ -461,11 +524,15 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     account = _enpara_account_ref(conn)
     customer = (conn.get("customer_number") or "").strip()
     end = datetime.now(timezone.utc)
-    payloads = _enpara_date_payloads(since, end, account, customer)
+    # Enpara genelde kısa aralık ister; aşırı uzun aralık 400 verebilir
+    if (end - since).days > 30:
+        since = end - timedelta(days=30)
+    payloads = _enpara_payload_variants(since, end, account, customer)
     last_detail = ""
     got_ok_empty = False
     balance: Optional[float] = None
     refreshed_token: Optional[str] = None
+    start_iso, end_iso = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
     async with httpx.AsyncClient(timeout=45) as client:
         async def _maybe_refresh(resp):
@@ -473,123 +540,216 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             if resp.status_code not in (401, 403):
                 return resp
             if not ((conn.get("refresh_token") or conn.get("client_secret")) and (conn.get("client_id") or conn.get("access_token"))):
-                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin.")
+                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin. {_api_error_detail(resp)}")
             token = await _enpara_refresh_access_token(conn)
             refreshed_token = token
             headers = _enpara_headers(token, conn)
-            return None  # caller retries
+            return None
 
-        # 1) Ticket oluştur — birkaç payload şekli dene
-        ticket_id = None
-        for payload in payloads:
-            tr = await client.post(f"{base}/v1/account-statement/ticket", headers=headers, json=payload)
-            retried = await _maybe_refresh(tr)
+        async def _send(method: str, path: str, *, params=None, json_body=None):
+            url = f"{base}{path}"
+            if method == "GET":
+                resp = await client.get(url, headers=headers, params=params or {})
+            else:
+                resp = await client.post(url, headers=headers, json=json_body or {})
+            retried = await _maybe_refresh(resp)
             if retried is None:
-                tr = await client.post(f"{base}/v1/account-statement/ticket", headers=headers, json=payload)
+                if method == "GET":
+                    resp = await client.get(url, headers=headers, params=params or {})
+                else:
+                    resp = await client.post(url, headers=headers, json=json_body or {})
+            return resp
+
+        def _consume(data: Any) -> Optional[Dict[str, Any]]:
+            nonlocal balance, got_ok_empty
+            bal = _extract_balance(data)
+            if bal is not None:
+                balance = bal
+            rows = _normalize_tx_rows(data)
+            if rows:
+                return {"transactions": rows, "balance": balance, "access_token": refreshed_token}
+            ready = _ticket_ready(data)
+            if ready is False:
+                return None
+            if isinstance(data, (dict, list)):
+                got_ok_empty = True
+            if ready is True:
+                return {"transactions": [], "balance": balance, "access_token": refreshed_token}
+            return None
+
+        # 1) Ticket — sade gövdelerle (doğrudan POST /account-statement tarih ile genelde 400)
+        ticket_id = None
+        best_400 = ""
+        for payload in payloads:
+            tr = await _send("POST", "/v1/account-statement/ticket", json_body=payload)
             if tr.status_code in (401, 403):
-                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {tr.status_code}). Access Token'ı yenileyin.")
-            last_detail = f"ticket HTTP {tr.status_code}: {(tr.text or '')[:160]}"
+                detail = _api_error_detail(tr)
+                if "IP" in detail or "not allowed" in detail.lower() or "proxy" in detail.lower():
+                    raise RuntimeError(
+                        "Enpara API IP kısıtı: sunucu IP’niz portalda izinli değil. "
+                        f"Enpara developer portalına production sunucu IP’nizi ekleyin. ({detail[:160]})"
+                    )
+                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {tr.status_code}). {_api_error_detail(tr)}")
+            last_detail = f"ticket HTTP {tr.status_code}: {_api_error_detail(tr)}"
             if tr.status_code >= 400:
+                if tr.status_code == 400 and not best_400:
+                    best_400 = last_detail
                 continue
             try:
                 td = tr.json()
             except Exception:
                 td = {}
             ticket_id = _ticket_id_from(td)
-            bal = _extract_balance(td)
-            if bal is not None:
-                balance = bal
+            out = _consume(td)
+            if out and out.get("transactions"):
+                return out
             if ticket_id:
                 break
-            # Ticket gerekmeden doğrudan hareket dönmüş olabilir
-            rows = _normalize_tx_rows(td)
-            if rows:
-                return {"transactions": rows, "balance": balance, "access_token": refreshed_token}
-            if isinstance(td, (dict, list)):
-                got_ok_empty = True
 
-        # 2) Liste / ekstre — ticket varsa poll et
-        attempts = 8 if ticket_id else 1
-        for attempt in range(attempts):
-            if attempt and ticket_id:
-                await asyncio.sleep(1.5)
-            for path, method in (
-                ("/v1/account-statement/list", "GET"),
-                ("/v1/account-statement", "GET"),
-                ("/v1/account-statement", "POST"),
-            ):
-                params: Dict[str, Any] = {
-                    "startDate": since.strftime("%Y-%m-%d"),
-                    "endDate": end.strftime("%Y-%m-%d"),
-                }
-                if ticket_id:
-                    params["ticketId"] = ticket_id
-                if account:
-                    params["accountNumber"] = account
-                    params["iban"] = account
-                body = {**payloads[0]}
-                if ticket_id:
-                    body["ticketId"] = ticket_id
-
-                if method == "GET":
-                    resp = await client.get(f"{base}{path}", headers=headers, params=params)
-                else:
-                    resp = await client.post(f"{base}{path}", headers=headers, json=body)
-                retried = await _maybe_refresh(resp)
-                if retried is None:
-                    if method == "GET":
-                        resp = await client.get(f"{base}{path}", headers=headers, params=params)
-                    else:
-                        resp = await client.post(f"{base}{path}", headers=headers, json=body)
-                if resp.status_code in (401, 403):
-                    raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin.")
-                last_detail = f"{method} {path} HTTP {resp.status_code}: {(resp.text or '')[:160]}"
-                if resp.status_code >= 400:
-                    continue
+        # Ticket hiç oluşmadıysa önce GET list (açık ticket’lar) dene
+        if not ticket_id:
+            resp = await _send("GET", "/v1/account-statement/list", params={})
+            last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code < 400:
                 try:
                     data = resp.json()
                 except Exception:
-                    continue
-                bal = _extract_balance(data)
-                if bal is not None:
-                    balance = bal
-                ready = _ticket_ready(data)
-                rows = _normalize_tx_rows(data)
-                if rows:
-                    return {"transactions": rows, "balance": balance, "access_token": refreshed_token}
-                if ready is False:
-                    got_ok_empty = False
-                    continue
-                # 200 + parse edilebilir ama boş → dönem boş olabilir
-                got_ok_empty = True
-                if ready is True:
-                    return {"transactions": [], "balance": balance, "access_token": refreshed_token}
+                    data = None
+                if data is not None:
+                    out = _consume(data)
+                    if out and out.get("transactions"):
+                        return out
+                    # listedeki ilk ticketId
+                    rows = data if isinstance(data, list) else _dig_list(data, ("value", "data", "items", "tickets", "list")) or []
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if isinstance(row, dict):
+                                tid = _ticket_id_from(row)
+                                if tid:
+                                    ticket_id = tid
+                                    break
 
-        # 3) Bakiye uçları (hareket boş olsa bile)
-        if balance is None and account:
-            for path in ("/v1/accounts/balance", "/v1/account/balance", "/v1/accounts", "/v1/balance"):
-                resp = await client.get(
-                    f"{base}{path}",
-                    headers=headers,
-                    params={"accountNumber": account, "iban": account},
-                )
-                if resp.status_code >= 400:
+
+        # 2) Ticket ile liste / ekstre (GET öncelikli; POST yalnız ticketId)
+        if ticket_id:
+            for attempt in range(10):
+                if attempt:
+                    await asyncio.sleep(1.5)
+                pending = False
+                for method, path, params in (
+                    ("GET", "/v1/account-statement/list", {"ticketId": ticket_id}),
+                    ("GET", "/v1/account-statement", {"ticketId": ticket_id}),
+                    ("GET", "/v1/account-statement/list", {"ticketId": ticket_id, "startDate": start_iso, "endDate": end_iso}),
+                ):
+                    resp = await _send(method, path, params=params)
+                    last_detail = f"{method} {path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                    if resp.status_code in (401, 403):
+                        raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {_api_error_detail(resp)}")
+                    if resp.status_code >= 400:
+                        continue
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        continue
+                    if _ticket_ready(data) is False:
+                        pending = True
+                        break
+                    out = _consume(data)
+                    if out is not None:
+                        return out
+                if pending:
                     continue
+                resp = await _send("POST", "/v1/account-statement", json_body={"ticketId": ticket_id})
+                last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                if resp.status_code < 400:
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = None
+                    if data is not None:
+                        if _ticket_ready(data) is False:
+                            continue
+                        out = _consume(data)
+                        if out is not None:
+                            return out
+
+        # 3) Ticket olmadan doğrudan ekstre — az sayıda sade gövde (POST tarih ile sık 400)
+        for payload in payloads[:6]:
+            resp = await _send("GET", "/v1/account-statement", params={
+                k: v for k, v in payload.items() if not isinstance(v, dict)
+            })
+            last_detail = f"GET /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code < 400:
                 try:
-                    bal = _extract_balance(resp.json())
+                    data = resp.json()
                 except Exception:
-                    bal = None
-                if bal is not None:
-                    balance = bal
+                    data = None
+                if data is not None:
+                    out = _consume(data)
+                    if out and out.get("transactions"):
+                        return out
+                    if out is not None and _ticket_ready(data) is True:
+                        return out
+
+            resp = await _send("POST", "/v1/account-statement", json_body=payload)
+            last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code in (401, 403):
+                detail = _api_error_detail(resp)
+                if "IP" in detail or "not allowed" in detail.lower():
+                    raise RuntimeError(
+                        "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
+                        f"({detail[:160]})"
+                    )
+                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {detail}")
+            if resp.status_code >= 400:
+                if resp.status_code == 400 and not best_400:
+                    best_400 = last_detail
+                continue
+            try:
+                data = resp.json()
+            except Exception:
+                continue
+            out = _consume(data)
+            if out and out.get("transactions"):
+                return out
+            if out is not None and _ticket_ready(data) is True:
+                return out
+
+        # 4) Bakiye
+        if balance is None and account:
+            bal_params_list = [
+                {"iban": account} if _is_iban(account) else {"accountNumber": account},
+                {"accountNumber": account},
+                {"iban": account},
+            ]
+            for path in ("/v1/accounts/balance", "/v1/account/balance", "/v1/accounts", "/v1/balance"):
+                for bal_params in bal_params_list:
+                    resp = await _send("GET", path, params=bal_params)
+                    if resp.status_code >= 400:
+                        continue
+                    try:
+                        bal = _extract_balance(resp.json())
+                    except Exception:
+                        bal = None
+                    if bal is not None:
+                        balance = bal
+                        break
+                if balance is not None:
                     break
 
     if got_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": refreshed_token}
 
+    if best_400:
+        last_detail = best_400
     hint = " Access Token, IBAN/hesap no ve account-statement yetkisini kontrol edin."
     if not account:
-        hint = " Bağlı TamKobi hesabına IBAN/hesap no girin veya Düzenle → Banka Hesap No/IBAN alanını doldurun."
-    raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:180]}")
+        hint = " Düzenle → Hesap No/IBAN alanına Enpara IBAN’ınızı girin (bağlı hesapta da IBAN olmalı)."
+    elif "400" in last_detail:
+        hint = " İstek reddedildi (400). IBAN’ın Enpara’ya ait olduğundan emin olun; portal API dokümanındaki alan adlarını doğrulayın."
+    elif "IP" in last_detail or "not allowed" in last_detail.lower():
+        hint = " Sunucu IP’si Enpara portalında izinli değil."
+    raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:280]}")
 
 
 async def _fetch_live_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
