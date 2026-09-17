@@ -5181,8 +5181,18 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
     conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):
-        conn = conns.get(a["id"])
-        out.append({**a, "is_integrated": bool(conn), "integration_provider": conn.get("provider_name") if conn else None, "connection_id": conn["_id"] if conn else None})
+        conn = conns.get(a["id"]) or conns.get(a.get("_id"))
+        if not conn:
+            # id eşleşmesi kaçarsa string normalize dene
+            aid = str(a.get("id") or "")
+            conn = next((c for lid, c in conns.items() if str(lid) == aid), None)
+        out.append({
+            **a,
+            "is_integrated": bool(conn),
+            "integration_provider": (conn.get("provider_name") if conn else None),
+            "integration_status": (conn.get("status") if conn else None),
+            "connection_id": (conn.get("_id") if conn else None),
+        })
     return out
 
 @api_router.post("/banking/accounts")
