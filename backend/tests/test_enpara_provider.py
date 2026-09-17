@@ -162,3 +162,29 @@ def test_enpara_fetch_empty_completed_is_success():
     out = asyncio.run(_run())
     assert out["transactions"] == []
     assert out["balance"] == 10.0
+
+
+def test_payload_variants_are_lean_single_schema():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    variants = bp._enpara_payload_variants(start, end, "TR330011100000000000000001", "")
+    assert variants
+    for p in variants:
+        # Aynı anda iban + accountNumber + hesapNo yığılmamalı
+        acc_keys = [k for k in p if k.lower() in ("iban", "accountnumber", "accountno", "hesapno")]
+        assert len(acc_keys) == 1, p
+        date_keys = [k for k in p if "date" in k.lower() or "tarih" in k.lower()]
+        assert len(date_keys) == 2, p
+
+
+def test_api_error_detail_parses_enpara_400():
+    resp = MagicMock()
+    resp.text = '{"code":"400","message":"Bad Request","errors":[{"code":"400-1","message":"Invalid iban"}]}'
+    resp.json = MagicMock(return_value={
+        "code": "400",
+        "message": "Bad Request",
+        "errors": [{"code": "400-1", "message": "Invalid iban"}],
+    })
+    detail = bp._api_error_detail(resp)
+    assert "Invalid iban" in detail
+    assert "400-1" in detail
