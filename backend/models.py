@@ -413,13 +413,16 @@ class MailLog(BaseDocument):
 # Banka Canlı Veri Bağlantıları
 class BankConnection(BaseDocument):
     company_id: str
-    provider: str  # kuveytturk, enpara, finfree, other
+    provider: str  # kuveytturk, enpara, qnb, finfree, other
     provider_name: str = ""
     linked_account_id: str
     linked_account_name: Optional[str] = None
     mode: str = "sandbox"  # sandbox, live
     client_id: Optional[str] = ""
     client_secret: Optional[str] = ""
+    access_token: Optional[str] = ""
+    refresh_token: Optional[str] = ""
+    token_url: Optional[str] = ""
     api_key: Optional[str] = ""
     customer_number: Optional[str] = ""
     bank_account_number: Optional[str] = ""
