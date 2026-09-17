@@ -51,7 +51,7 @@ export default function InstallmentsPage() {
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
         {FILTERS.map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition ${filter === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`inst-filter-${k}`}>{l}</button>)}
       </div>
-      {Object.keys(grouped).length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400" data-testid="inst-empty"><CalendarClock className="w-8 h-8 mx-auto mb-2 text-slate-300" />Bu filtrede taksit yok. Faturalar sayfasında bir faturaya sağ tıklayıp "Taksitlendir" ile plan oluşturabilirsiniz.</div>}
+      {Object.keys(grouped).length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400" data-testid="inst-empty"><CalendarClock className="w-8 h-8 mx-auto mb-2 text-slate-300" />Bu filtrede taksit yok. Faturalar sayfasında satırdaki ⋮ menüden "Taksitlendir" ile plan oluşturabilirsiniz.</div>}
       <div className="space-y-3">
         {Object.entries(grouped).map(([invId, list]) => {
           const f = list[0];

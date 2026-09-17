@@ -151,8 +151,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [ctxMenu, setCtxMenu] = useState(null);
   const [installmentInv, setInstallmentInv] = useState(null);
   const closeCtx = React.useCallback(() => setCtxMenu(null), []);
-  const openCtx = (e, inv) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, inv }); };
-  const openCtxFromButton = (e, inv) => { const r = e.currentTarget.getBoundingClientRect(); setCtxMenu({ x: r.left - 240, y: r.bottom + 4, inv }); };
+  const openCtxFromButton = (e, inv) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setCtxMenu({ x: Math.max(8, r.right - 256), y: r.bottom + 4, inv });
+  };
   const handleConvertDispatch = async (inv) => {
     if (!window.confirm(`${inv.invoice_number} irsaliyesinden satış faturası oluşturulsun mu?`)) return;
     try { const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/convert-to-invoice`, {}); toast.success(r.data.message); loadData(); }
@@ -512,7 +516,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           </div>
         )}
         <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50/70 border-b border-slate-100 text-[11px] text-slate-500" data-testid="ctx-hint">
-          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını <b>sağ tıklayarak</b> E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır.
+          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını satırdaki <b>⋮</b> menüden E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır. Boş alana sağ tık hızlı menüyü açar.
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1200px] text-left text-xs text-slate-600">
@@ -542,7 +546,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </tr>
               ) : (
                 pagedInvoices.map((inv) => (
-                  <tr key={inv.id || inv._id || inv.invoice_number} onContextMenu={(e) => { if (!inv._is_quote) openCtx(e, inv); }} className={`hover:bg-slate-50/70 transition ${inv._is_quote ? "" : "cursor-context-menu"} ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
+                  <tr key={inv.id || inv._id || inv.invoice_number} className={`hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium">
                       <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -697,7 +701,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <Send className="w-4 h-4" />
                           </button>
                         ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
-                        <button onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+                        <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === 'dispatch' ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
                         ) : inv.payment_status !== 'paid' && inv.status !== 'cancelled' ? (
