@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2 } from "lucide-react";
+import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2, Pencil } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
 
@@ -38,7 +38,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
   const [editConn, setEditConn] = useState(null);
-  const [editForm, setEditForm] = useState({ client_id: "", client_secret: "", access_token: "", refresh_token: "", customer_number: "", bank_account_number: "", mode: "live" });
+  const [editForm, setEditForm] = useState({ provider: "enpara", client_id: "", client_secret: "", access_token: "", refresh_token: "", customer_number: "", bank_account_number: "", mode: "live" });
   const [rules, setRules] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
@@ -95,6 +95,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const openEdit = (c) => {
     setEditConn(c);
     setEditForm({
+      provider: c.provider || "enpara",
       client_id: c.client_id || "",
       client_secret: "",
       access_token: "",
@@ -112,7 +113,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       const payload = { ...editForm };
       Object.keys(payload).forEach((k) => { if (payload[k] === "" || payload[k] == null) delete payload[k]; });
       await axios.put(`${API_URL}/banking/connections/${editConn.id}`, payload);
-      toast.success("Kimlik bilgileri güncellendi.");
+      toast.success("Bağlantı güncellendi.");
       setEditConn(null);
       const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
       toast[r.data.ok ? "success" : "error"](r.data.message);
@@ -209,11 +210,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
             </button>
             <div className="text-[10px] text-slate-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Bu hesaba manuel gelir/gider/virman girişi kapalıdır; hareketler bankadan gelir.</div>
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.id}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
-              <button onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.id}`}>Bağlantıyı Test Et</button>
-              <button onClick={() => openEdit(c)} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`edit-conn-btn-${c.id}`}><Settings2 className="w-3.5 h-3.5 inline mr-1" />Anahtarlar</button>
-              <button onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.id}`}><Trash2 className="w-4 h-4" /></button>
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+              <button type="button" onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.id}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
+              <button type="button" onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.id}`}>Bağlantıyı Test Et</button>
+              <button type="button" onClick={() => openEdit(c)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-emerald-200 bg-emerald-50 text-emerald-800 rounded-lg text-[11px] font-semibold hover:bg-emerald-100" data-testid={`edit-conn-btn-${c.id}`} title="Sağlayıcı, token ve hesap bilgilerini düzenle"><Pencil className="w-3.5 h-3.5" /> Düzenle</button>
+              <button type="button" onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.id}`}><Trash2 className="w-4 h-4" /></button>
             </div>
           </div>
         ))}
@@ -340,24 +341,31 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="edit-bank-connection-modal">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-base font-bold text-slate-900">Anahtarları Güncelle — {editConn.provider_name}</h3>
-              <button type="button" onClick={() => setEditConn(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Pencil className="w-4 h-4 text-emerald-600" /> Bağlantıyı Düzenle</h3>
+              <button type="button" onClick={() => setEditConn(null)} className="text-slate-400" data-testid="edit-conn-close"><X className="w-5 h-5" /></button>
             </div>
-            {editConn.provider === "enpara" && (
+            <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
+            {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Enpara API hostu <b>api.enpara.com</b> (QNB değil). Developer portalındaki <b>Access Token</b> ve isteğe bağlı <b>Refresh Token</b> değerlerini yapıştırın; ardından Bağlantıyı Test Et.
+                Enpara QNB'den ayrıdır. API: <b>api.enpara.com</b>. Developer portalındaki <b>Access Token</b> / <b>Refresh Token</b> değerlerini yapıştırın.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold mb-1">Sağlayıcı</label>
+                <select className={inputCls} value={editForm.provider} onChange={(e) => setEditForm({ ...editForm, provider: e.target.value })} data-testid="edit-conn-provider">
+                  {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+                </select>
+              </div>
               <div><label className="block font-semibold mb-1">Client ID</label><input className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="off" /></div>
               <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="off" /></div>
-              <div><label className="block font-semibold mb-1">Access Token</label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" /></div>
+              <div><label className="block font-semibold mb-1">Access Token</label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Portalden Access Token yapıştırın" /></div>
               <div><label className="block font-semibold mb-1">Refresh Token</label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" /></div>
-              <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Hesap No / IBAN</label><input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} /></div>
+              <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
+              <div><label className="block font-semibold mb-1">Hesap No / IBAN</label><input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} data-testid="edit-conn-iban" /></div>
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`}>Sandbox</button>
-                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`}>Canlı</button>
+                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="edit-conn-mode-sandbox">Sandbox</button>
+                <button type="button" onClick={() => setEditForm({ ...editForm, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="edit-conn-mode-live">Canlı</button>
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button type="button" onClick={() => setEditConn(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
