@@ -6,6 +6,47 @@ import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConic
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
 
+const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
+const PROVIDER_BANK_HINTS = {
+  enpara: ["enpara"],
+  kuveytturk: ["kuveyt", "kt"],
+  qnb: ["qnb", "finansbank"],
+  finfree: ["finfree"],
+};
+
+function linkableAccounts(accounts, { currentId, provider } = {}) {
+  const hints = PROVIDER_BANK_HINTS[provider] || [];
+  const rank = (a) => {
+    const hay = `${a.bank_name || ""} ${a.account_name || ""}`.toLowerCase();
+    const hintHit = hints.some((h) => hay.includes(h));
+    if (a.type === "bank" && hintHit) return 0;
+    if (a.type === "bank") return 1;
+    if (hintHit) return 2;
+    return 3;
+  };
+  return (accounts || [])
+    .filter((a) => {
+      const id = a.id || a._id;
+      if (!LINKABLE_ACCOUNT_TYPES.has(a.type)) return false;
+      if (currentId && id === currentId) return true;
+      return !a.is_integrated;
+    })
+    .sort((a, b) => rank(a) - rank(b) || String(a.bank_name || "").localeCompare(String(b.bank_name || ""), "tr"));
+}
+
+function accountOptionLabel(a) {
+  const typeLabel = a.type === "pos" ? "POS" : a.type === "okc_pos" ? "ÖKC" : "Banka";
+  return `${a.bank_name || "—"} — ${a.account_name || "—"} (${typeLabel})`;
+}
+
+function linkedAccountLooksMismatched(c) {
+  const hints = PROVIDER_BANK_HINTS[c?.provider] || [];
+  if (!hints.length) return false;
+  const hay = `${c.linked_account_bank || ""} ${c.linked_account_name || ""}`.toLowerCase();
+  if (!hay.trim()) return false;
+  return !hints.some((h) => hay.includes(h));
+}
+
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const FIELD_LABELS = {
@@ -38,7 +79,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
   const [editConn, setEditConn] = useState(null);
-  const [editForm, setEditForm] = useState({ provider: "enpara", client_id: "", client_secret: "", access_token: "", refresh_token: "", customer_number: "", bank_account_number: "", mode: "live" });
+  const [editForm, setEditForm] = useState({ provider: "enpara", linked_account_id: "", client_id: "", client_secret: "", access_token: "", refresh_token: "", customer_number: "", bank_account_number: "", mode: "live" });
   const [rules, setRules] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
@@ -67,10 +108,16 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const save = async (e) => {
     e.preventDefault();
+    const linkables = linkableAccounts(accounts, { provider: form.provider });
+    const linked = form.linked_account_id || linkables[0]?.id || linkables[0]?._id;
+    if (!linked) {
+      toast.error("Bağlanacak banka/POS hesabı seçin. Önce Hesaplar sekmesinden Enpara/Kuveyt hesabı ekleyin.");
+      return;
+    }
     try {
-      const res = await axios.post(`${API_URL}/banking/connections`, { company_id: companyId, provider_name: "", ...form, linked_account_id: form.linked_account_id || accounts[0]?.id });
+      const res = await axios.post(`${API_URL}/banking/connections`, { company_id: companyId, provider_name: "", ...form, linked_account_id: linked });
       toast[res.data.test_result?.ok ? "success" : "error"](res.data.test_result?.message);
-      setShowAdd(false); load();
+      setShowAdd(false); load(); onSynced?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı eklenemedi."); }
   };
 
@@ -96,6 +143,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     setEditConn(c);
     setEditForm({
       provider: c.provider || "enpara",
+      linked_account_id: c.linked_account_id || "",
       client_id: c.client_id || "",
       client_secret: "",
       access_token: "",
@@ -118,11 +166,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
       toast[r.data.ok ? "success" : "error"](r.data.message);
       load();
+      onSynced?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
 
   const remove = async (id) => {
-    try { await axios.delete(`${API_URL}/banking/connections/${id}`); toast.success("Bağlantı kaldırıldı."); load(); } catch { toast.error("Silinemedi."); }
+    try { await axios.delete(`${API_URL}/banking/connections/${id}`); toast.success("Bağlantı kaldırıldı."); load(); onSynced?.(); } catch { toast.error("Silinemedi."); }
   };
 
   const acceptSuggestion = async (sg) => {
@@ -178,7 +227,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         </div>
         <div className="flex items-center gap-2">
           <button onClick={syncAll} disabled={busy === "all" || !connections.length} className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-50" data-testid="sync-all-btn">{busy === "all" ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Tümünü Senkronize Et</button>
-          <button onClick={() => { setForm({ ...form, linked_account_id: accounts[0]?.id || "" }); setShowAdd(true); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-bank-connection-btn"><Plus className="w-4 h-4" /> Banka Bağla</button>
+          <button onClick={() => { const linkables = linkableAccounts(accounts, { provider: form.provider }); setForm({ ...form, linked_account_id: linkables[0]?.id || linkables[0]?._id || "" }); setShowAdd(true); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-bank-connection-btn"><Plus className="w-4 h-4" /> Banka Bağla</button>
         </div>
       </div>
 
@@ -193,6 +242,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div>
                 <div className="font-bold text-slate-900 text-sm">{c.provider_name}</div>
                 <div className="text-[11px] text-slate-500">→ {c.linked_account_name}</div>
+                {linkedAccountLooksMismatched(c) && (
+                  <div className="mt-1 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1" data-testid={`conn-link-mismatch-${c.id}`}>
+                    Bağlı hesap bu sağlayıcıya ait gibi görünmüyor. <b>Düzenle</b> ile doğru banka hesabını seçin; Hesaplar sekmesinde <b>ENTEGRE</b> rozeti o hesapta (Kuveyt gibi) görünür.
+                  </div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-1">
                 <StatusBadge status={c.status} />
@@ -312,14 +366,21 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </div>
             <form onSubmit={save} className="space-y-3 text-xs">
               <div><label className="block font-semibold mb-1">Sağlayıcı</label>
-                <select className={inputCls} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} data-testid="conn-provider-select">{providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select>
+                <select className={inputCls} value={form.provider} onChange={(e) => {
+                  const next = e.target.value;
+                  const linkables = linkableAccounts(accounts, { provider: next });
+                  setForm({ ...form, provider: next, linked_account_id: linkables[0]?.id || linkables[0]?._id || "" });
+                }} data-testid="conn-provider-select">{providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}</select>
                 {provider?.docs && <a href={provider.docs} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 hover:underline">Geliştirici portalı: {provider.docs}</a>}
                 {provider?.hint && <p className="text-[10px] text-slate-500 mt-1">{provider.hint}</p>}
                 {provider?.live_url && <p className="text-[10px] font-mono text-slate-400 mt-0.5">API: {provider.live_url}</p>}
               </div>
               <div><label className="block font-semibold mb-1">Bağlanacak Hesap (TamKobi)</label>
-                <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} data-testid="conn-account-select">{accounts.filter((a) => a.type === "bank" && !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
-                <p className="text-[10px] text-amber-700 mt-1">Bağlanan hesaba manuel işlem kapatılır; hareketler yalnızca bankadan çekilir.</p>
+                <select className={inputCls} value={form.linked_account_id} onChange={(e) => setForm({ ...form, linked_account_id: e.target.value })} required data-testid="conn-account-select">
+                  <option value="">Hesap seçin…</option>
+                  {linkableAccounts(accounts, { provider: form.provider }).map((a) => <option key={a.id || a._id} value={a.id || a._id}>{accountOptionLabel(a)}</option>)}
+                </select>
+                <p className="text-[10px] text-amber-700 mt-1">Banka hesabı seçin (POS de mümkün). Bağlanan hesapta Hesaplar sekmesinde ENTEGRE rozeti görünür. Enpara için Enpara banka hesabı oluşturmanız önerilir.</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setForm({ ...form, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${form.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="conn-mode-sandbox">Sandbox / Test</button>
@@ -356,6 +417,15 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <select className={inputCls} value={editForm.provider} onChange={(e) => setEditForm({ ...editForm, provider: e.target.value })} data-testid="edit-conn-provider">
                   {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Bağlı TamKobi Hesabı</label>
+                <select className={inputCls} value={editForm.linked_account_id} onChange={(e) => setEditForm({ ...editForm, linked_account_id: e.target.value })} data-testid="edit-conn-account" required>
+                  {linkableAccounts(accounts, { currentId: editConn.linked_account_id, provider: editForm.provider }).map((a) => (
+                    <option key={a.id || a._id} value={a.id || a._id}>{accountOptionLabel(a)}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">Hesaplar sekmesinde bu hesapta <b>ENTEGRE</b> rozeti görünür (Kuveyt örneği gibi). Enpara bağlantısını Enpara banka hesabına bağlayın.</p>
               </div>
               <div><label className="block font-semibold mb-1">Client ID</label><input className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="off" /></div>
               <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="off" /></div>
