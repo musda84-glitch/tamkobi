@@ -289,8 +289,36 @@ export default function BankingPage() {
     : groupIds
       ? transactions.filter(tx => groupIds.includes(tx.account_id) || groupIds.includes(tx.target_account_id))
       : transactions;
+  const simulatedVisible = visibleTx.filter((tx) => tx.source === "bank_sync" && tx.is_simulated);
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
+
+  const clearSimulated = async () => {
+    if (!simulatedVisible.length) {
+      toast.info("Görünen listede simüle hareket yok.");
+      return;
+    }
+    if (!window.confirm(`${simulatedVisible.length} simüle (demo) banka hareketi silinsin mi? Bakiyeler geri alınır.`)) return;
+    try {
+      if (selectedAccountId) {
+        const r = await axios.delete(`${API_URL}/banking/transactions/simulated`, { params: { company_id: companyId, account_id: selectedAccountId } });
+        toast.success(r.data.message);
+      } else if (groupIds?.length) {
+        let removed = 0;
+        for (const aid of groupIds) {
+          const r = await axios.delete(`${API_URL}/banking/transactions/simulated`, { params: { company_id: companyId, account_id: aid } });
+          removed += Number(r.data.removed || 0);
+        }
+        toast.success(`${removed} simüle (demo) banka hareketi çöp kutusuna taşındı.`);
+      } else {
+        const r = await axios.delete(`${API_URL}/banking/transactions/simulated`, { params: { company_id: companyId } });
+        toast.success(r.data.message);
+      }
+      await bumpCashData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Simüle hareketler silinemedi.");
+    }
+  };
 
   return (
     <div className="space-y-6" data-testid="banking-page">
@@ -476,6 +504,17 @@ export default function BankingPage() {
             <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
           )}
           <div className="flex flex-wrap items-center gap-2">
+            {simulatedVisible.length > 0 && (
+              <button
+                type="button"
+                onClick={clearSimulated}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                data-testid="clear-simulated-tx-btn"
+                title="Banka entegrasyonundan gelen simüle (demo) hareketleri sil"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Simüleleri Sil ({simulatedVisible.length})
+              </button>
+            )}
             <button
               type="button"
               onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}

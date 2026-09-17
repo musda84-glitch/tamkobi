@@ -5267,11 +5267,44 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
 
-def _assert_editable_tx(tx: Dict[str, Any]):
+def _assert_editable_tx(tx: Dict[str, Any], *, allow_simulated_bank_sync: bool = True):
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
-    if tx.get("source") in ("bank_sync", "partner", "bank_match", "cheque", "cheque_bank"):
+    src = tx.get("source")
+    # Simüle banka senkron hareketleri demo veridir; silinebilir / düzenlenebilir.
+    if allow_simulated_bank_sync and src == "bank_sync" and tx.get("is_simulated"):
+        return
+    if src in ("bank_sync", "partner", "bank_match", "cheque", "cheque_bank"):
         raise HTTPException(status_code=400, detail="Banka entegrasyonu, ortaklar hesabı veya çek/senet kaynaklı hareketler buradan düzenlenemez veya silinemez. Çek için Çek/Senet modülünü kullanın.")
+
+
+@api_router.delete("/banking/transactions/simulated")
+async def delete_simulated_bank_transactions(company_id: Optional[str] = Query("comp_nexus_main_01"), account_id: Optional[str] = None):
+    """Demo/simüle banka senkron hareketlerini toplu sil (bakiyeleri geri al)."""
+    q: Dict[str, Any] = {"company_id": company_id, "source": "bank_sync", "is_simulated": True}
+    if account_id:
+        q["account_id"] = account_id
+    txs = await db.bank_transactions.find(q).to_list(5000)
+    removed = 0
+    for tx in txs:
+        try:
+            await _reverse_tx_effects(tx, -1)
+        except Exception:
+            pass
+        await trash.soft_delete(
+            "bank_transactions",
+            tx,
+            "bank_transaction",
+            f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
+            note=f"simüle · {tx.get('account_name')} · {tx.get('date')}",
+        )
+        removed += 1
+    return {
+        "status": "success",
+        "removed": removed,
+        "message": f"{removed} simüle (demo) banka hareketi çöp kutusuna taşındı." if removed else "Silinecek simüle hareket yok.",
+    }
+
 
 @api_router.put("/banking/transactions/{tx_id}")
 async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
