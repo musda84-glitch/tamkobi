@@ -169,10 +169,14 @@ def test_payload_variants_are_lean_single_schema():
     end = datetime(2026, 9, 17, tzinfo=timezone.utc)
     variants = bp._enpara_payload_variants(start, end, "TR330011100000000000000001", "")
     assert variants
+    assert len(variants) <= 28
     for p in variants:
-        # Aynı anda iban + accountNumber + hesapNo yığılmamalı
-        acc_keys = [k for k in p if k.lower() in ("iban", "accountnumber", "accountno", "hesapno")]
-        assert len(acc_keys) == 1, p
+        # Aynı anda birden fazla düz hesap alanı yığılmamalı
+        flat_acc = [k for k, v in p.items() if not isinstance(v, dict) and k.lower() in (
+            "iban", "ibannumber", "accountnumber", "accountno", "hesapno"
+        )]
+        nested_acc = [k for k, v in p.items() if isinstance(v, dict) and k.lower() in ("accountinfo", "account", "hesap")]
+        assert len(flat_acc) + len(nested_acc) == 1, p
         date_keys = [k for k in p if "date" in k.lower() or "tarih" in k.lower()]
         assert len(date_keys) == 2, p
 
