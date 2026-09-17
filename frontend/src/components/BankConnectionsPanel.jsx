@@ -141,6 +141,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
       toast[r.data.ok ? "success" : "error"](r.data.message);
       load();
+      onSynced?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
 
