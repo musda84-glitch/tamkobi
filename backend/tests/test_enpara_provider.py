@@ -31,6 +31,24 @@ def test_err_text_empty_exception():
     assert bp._err_text(E()) == "E"
 
 
+def test_normalize_tr_fields_and_dates():
+    rows = bp._normalize_tx_rows({
+        "hareketler": [
+            {"fisNo": "F1", "tutar": "1.250,50", "borcAlacak": "A", "aciklama": "Gelen", "islemTarihi": "10.09.2026"},
+            {"referansNo": "R2", "borc": "40,00", "Aciklama": "Giden", "tarih": "11/09/2026"},
+        ],
+        "bakiye": "9.876,54",
+    })
+    assert len(rows) == 2
+    assert rows[0]["external_id"] == "F1"
+    assert rows[0]["direction"] == "credit"
+    assert rows[0]["amount"] == 1250.5
+    assert rows[0]["date"] == "2026-09-10"
+    assert rows[1]["direction"] == "debit"
+    assert rows[1]["amount"] == 40.0
+    assert bp._extract_balance({"bakiye": "9.876,54"}) == 9876.54
+
+
 def test_enpara_probe_ok_with_access_token():
     conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
 
@@ -84,10 +102,14 @@ def test_enpara_fetch_normalizes_rows():
     ticket_resp = MagicMock()
     ticket_resp.status_code = 200
     ticket_resp.json = MagicMock(return_value={"ticketId": "T1"})
+    ticket_resp.text = '{"ticketId":"T1"}'
 
     list_resp = MagicMock()
     list_resp.status_code = 200
+    list_resp.text = "{}"
     list_resp.json = MagicMock(return_value={
+        "status": "completed",
+        "bakiye": 1500.25,
         "transactions": [
             {"transactionId": "X1", "amount": 100.5, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-10"},
             {"id": "X2", "amount": -40, "explanation": "Giden", "date": "2026-09-11"},
@@ -110,3 +132,33 @@ def test_enpara_fetch_normalizes_rows():
     assert out["transactions"][0]["external_id"] == "X1"
     assert out["transactions"][0]["direction"] == "credit"
     assert out["transactions"][1]["direction"] == "debit"
+    assert out["balance"] == 1500.25
+
+
+def test_enpara_fetch_empty_completed_is_success():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR00"}
+    since = datetime.now(timezone.utc) - timedelta(days=3)
+
+    ticket_resp = MagicMock()
+    ticket_resp.status_code = 200
+    ticket_resp.json = MagicMock(return_value={"ticketId": "T2"})
+    ticket_resp.text = "{}"
+
+    list_resp = MagicMock()
+    list_resp.status_code = 200
+    list_resp.text = "{}"
+    list_resp.json = MagicMock(return_value={"status": "completed", "transactions": [], "bakiye": 10})
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=ticket_resp)
+    mock_client.get = AsyncMock(return_value=list_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"] == []
+    assert out["balance"] == 10.0
