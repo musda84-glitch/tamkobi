@@ -5,6 +5,7 @@ import { Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -27,69 +28,24 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 type Cat = { name?: string };
 
-function PaymentSelect({
-  accounts,
-  partners,
-  value,
-  onChange,
-  allowEmpty,
-  testID,
-}: {
-  accounts: BankAccount[];
-  partners: Partner[];
-  value: string;
-  onChange: (id: string) => void;
-  allowEmpty?: boolean;
-  testID?: string;
-}) {
-  const groups = groupedAccounts(accounts);
-  return (
-    <Card testID={testID}>
-      {allowEmpty ? (
-        <Chip label="Ödenmedi — borç olarak kaydet" active={!value} testID="exp-pay-none" onPress={() => onChange("")} />
-      ) : null}
-      {!groups.length && !partners.length ? <Muted>Kasa / banka / ortak bulunamadı. Kasa & Banka ekranından hesap ekleyin.</Muted> : null}
-      {groups.map((g) => (
-        <React.Fragment key={g.key}>
-          <Muted>{g.label}</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {g.items.map((a) => {
-              const id = idOf(a);
-              return (
-                <Chip
-                  key={id}
-                  label={`${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`}
-                  active={value === id}
-                  testID={`exp-pay-acc-${id}`}
-                  onPress={() => onChange(value === id && allowEmpty ? "" : id)}
-                />
-              );
-            })}
-          </Row>
-        </React.Fragment>
-      ))}
-      {partners.length ? (
-        <>
-          <Muted>Ortaklar</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {partners.map((p) => {
-              const id = `partner:${idOf(p)}`;
-              return (
-                <Chip
-                  key={id}
-                  label={`${p.name || "Ortak"} · ${fmtMoney(p.balance)}`}
-                  active={value === id}
-                  testID={`exp-pay-partner-${idOf(p)}`}
-                  color="#B45309"
-                  onPress={() => onChange(value === id && allowEmpty ? "" : id)}
-                />
-              );
-            })}
-          </Row>
-        </>
-      ) : null}
-    </Card>
-  );
+function paymentGroups(accounts: BankAccount[], partners: Partner[]) {
+  const groups = groupedAccounts(accounts).map((g) => ({
+    label: g.label,
+    options: g.items.map((a) => ({
+      value: idOf(a),
+      label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`,
+    })),
+  }));
+  if (partners.length) {
+    groups.push({
+      label: "Ortaklar",
+      options: partners.map((p) => ({
+        value: `partner:${idOf(p)}`,
+        label: `${p.name || "Ortak"} · ${fmtMoney(p.balance)}`,
+      })),
+    });
+  }
+  return groups;
 }
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
@@ -216,12 +172,13 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
       <Field label="Tarih" testID="exp-date" value={draft.date} onChangeText={(v) => set("date", v)} placeholder="YYYY-MM-DD" editable={canEdit} />
-      <Muted>Kategori</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {categories.map((c) => (
-          <Chip key={c} label={c} active={draft.category === c} testID={`exp-cat-${c}`} onPress={() => canEdit && set("category", c)} />
-        ))}
-      </Row>
+      <GroupedSelect
+        label="Kategori"
+        testID="exp-category-select"
+        value={draft.category}
+        onChange={(v) => canEdit && set("category", v)}
+        groups={[{ label: "Kategoriler", options: categories.map((c) => ({ value: c, label: c })) }]}
+      />
       <Field
         label="Yeni kategori"
         testID="exp-category-custom"
@@ -266,14 +223,13 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       </Card>
       {isNew ? (
         <>
-          <Muted>Ödeme (opsiyonel) — kasa, banka, kart veya ortak</Muted>
-          <PaymentSelect
+          <GroupedSelect
+            label="Ödeme (opsiyonel) — kasa, banka, kart veya ortak"
             testID="exp-pay-select"
-            accounts={accounts}
-            partners={partners}
             value={draft.account_id}
             onChange={(id) => set("account_id", id)}
-            allowEmpty
+            emptyLabel="Ödenmedi — borç olarak kaydet"
+            groups={paymentGroups(accounts, partners)}
           />
           {draft.account_id ? <Muted>Seçili hesapla kaydedince masraf ödenmiş olur.</Muted> : <Muted>Boş bırakırsanız borç olarak kaydedilir.</Muted>}
         </>
@@ -297,13 +253,13 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       {!isNew && loaded?.payment_status !== "paid" && canEdit ? (
         <Card>
           <Text style={{ fontWeight: "800" }}>Öde</Text>
-          <Muted>Kasa / banka / kart / ortak</Muted>
-          <PaymentSelect
+          <GroupedSelect
+            label="Kasa / banka / kart / ortak"
             testID="exp-pay-select-edit"
-            accounts={accounts}
-            partners={partners}
             value={payAcc}
             onChange={setPayAcc}
+            emptyLabel="Hesap seçin"
+            groups={paymentGroups(accounts, partners)}
           />
           <PrimaryButton title="Masrafı öde" onPress={payTarget} loading={busy} color={colors.primary} testID="exp-pay" />
         </Card>
