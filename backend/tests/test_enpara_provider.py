@@ -1,11 +1,23 @@
 """Enpara, QNB'den ayrı provider; api.enpara.com account-statement."""
 import asyncio
+import base64
+import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
 import bank_providers as bp
+
+
+def _jwt(exp_offset_sec: int) -> str:
+    payload = {"exp": int(datetime.now(timezone.utc).timestamp()) + exp_offset_sec, "sub": "enpara"}
+
+    def b64url(obj):
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{b64url({'alg': 'none', 'typ': 'JWT'})}.{b64url(payload)}.sig"
 
 
 def test_providers_split_enpara_and_qnb():
@@ -16,6 +28,7 @@ def test_providers_split_enpara_and_qnb():
     assert "Enpara" in bp.PROVIDERS["enpara"]["name"]
     assert "QNB" in bp.PROVIDERS["qnb"]["name"]
     assert "access_token" in bp.PROVIDERS["enpara"]["fields"]
+    assert "api_key" in bp.PROVIDERS["enpara"]["fields"]
 
 
 def test_has_credentials_enpara_access_token_only():
@@ -365,4 +378,152 @@ def test_enpara_ip_block_does_not_refresh():
     except RuntimeError as e:
         assert "IP" in str(e)
     mock_client.post.assert_not_called()
+
+
+def test_jwt_expired_helper():
+    assert bp._jwt_expired("not-a-jwt") is None
+    assert bp._jwt_expired(_jwt(3600)) is False
+    assert bp._jwt_expired(_jwt(-120)) is True
+    assert bp._jwt_expired(_jwt(10)) is True  # skew_sec=30
+
+
+def test_api_error_detail_oauth_access_denied():
+    resp = MagicMock()
+    resp.text = '{"error":"access_denied"}'
+    resp.json = MagicMock(return_value={"error": "access_denied"})
+    assert "access_denied" in bp._api_error_detail(resp)
+
+
+def test_enpara_headers_include_gravitee_api_key():
+    h = bp._enpara_headers("tok", {"api_key": "gk-1"}, for_get=True)
+    assert h["Authorization"] == "Bearer tok"
+    assert h["X-Gravitee-Api-Key"] == "gk-1"
+    assert "Content-Type" not in h
+    h2 = bp._enpara_headers("tok", {}, for_get=False)
+    assert "X-Gravitee-Api-Key" not in h2
+    assert h2["Content-Type"] == "application/json"
+
+
+def test_enpara_unexpired_jwt_access_denied_does_not_refresh():
+    token = _jwt(3600)
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": token,
+        "client_id": "cid", "client_secret": "sec",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    denied = MagicMock()
+    denied.status_code = 401
+    denied.text = '{"error":"access_denied"}'
+    denied.json = MagicMock(return_value={"error": "access_denied"})
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=denied)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected access_denied"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "access_denied" in msg
+        assert "IP" in msg
+        assert "Account Statement" in msg
+    mock_client.post.assert_not_called()
+
+
+def test_enpara_expired_jwt_refreshes_then_fetches():
+    expired = _jwt(-120)
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": expired,
+        "client_id": "cid", "client_secret": "sec",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+
+    tok_ok = MagicMock()
+    tok_ok.status_code = 200
+    tok_ok.content = b'{"access_token":"NEWJWT"}'
+    tok_ok.text = '{"access_token":"NEWJWT"}'
+    tok_ok.json = MagicMock(return_value={"access_token": "NEWJWT"})
+
+    stmt_resp = MagicMock()
+    stmt_resp.status_code = 200
+    stmt_resp.text = "{}"
+    stmt_resp.json = MagicMock(return_value={
+        "status": "completed",
+        "bakiye": 12,
+        "transactions": [{"transactionId": "R1", "amount": 5, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-10"}],
+    })
+
+    async def _post(url, **kwargs):
+        assert "oauth" in str(url) or "token" in str(url)
+        return tok_ok
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock(return_value=stmt_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "R1"
+    assert out["access_token"] == "NEWJWT"
+    assert mock_client.post.await_count >= 1
+    args, kwargs = mock_client.get.await_args
+    assert kwargs["headers"]["Authorization"] == "Bearer NEWJWT"
+
+
+def test_enpara_probe_unexpired_jwt_access_denied_skips_refresh():
+    token = _jwt(7200)
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": token,
+        "client_id": "cid", "client_secret": "sec", "api_key": "gk-9",
+    }
+    denied = MagicMock()
+    denied.status_code = 401
+    denied.text = '{"error":"access_denied"}'
+    denied.json = MagicMock(return_value={"error": "access_denied"})
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=denied)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    assert "access_denied" in out["message"]
+    assert "IP" in out["message"]
+    mock_client.post.assert_not_called()
+    args, kwargs = mock_client.get.await_args
+    assert kwargs["headers"]["Authorization"] == f"Bearer {token}"
+    assert kwargs["headers"]["X-Gravitee-Api-Key"] == "gk-9"
+
+
+def test_enpara_access_token_expired_without_secret_raises():
+    conn = {"provider": "enpara", "mode": "live", "access_token": _jwt(-90)}
+
+    async def _run():
+        return await bp._enpara_access_token(conn)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected expired token error"
+    except RuntimeError as e:
+        assert "süresi dolmuş" in str(e).lower() or "Access Token" in str(e)
 

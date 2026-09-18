@@ -32,8 +32,8 @@ PROVIDERS = {
         "live_url": "https://api.enpara.com",
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
-        "fields": ["client_id", "client_secret", "access_token", "refresh_token", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. Access Token yapıştırın (veya Client ID/Secret → /securedomain/oauth/token). IBAN 26 hane. Production IP portalda izinli olmalı.",
+        "fields": ["client_id", "client_secret", "access_token", "refresh_token", "api_key", "customer_number"],
+        "hint": "Enpara QNB'den ayrıdır. Portal Access Token yapıştırın (süre dolunca yenileyin). Client ID/Secret yalnızca token yenileme içindir. API Key varsa X-Gravitee-Api-Key olarak gider. IBAN 26 hane. Production IP uygulama IP listesinde olmalı (401 access_denied sıkça IP/abonelik).",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -335,11 +335,40 @@ def _enpara_dead_route(resp) -> bool:
     return "404-EPG96" in text or "404-QPG97" in text or code == 404
 
 
+def _jwt_expired(token: str, *, skew_sec: int = 30) -> Optional[bool]:
+    """True=süresi dolmuş, False=geçerli, None=JWT değil / exp yok."""
+    raw = (token or "").strip()
+    parts = raw.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        pad = "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
+        exp = payload.get("exp")
+        if exp is None:
+            return None
+        now = datetime.now(timezone.utc).timestamp()
+        return int(exp) <= now + skew_sec
+    except Exception:
+        return None
+
+
+def _enpara_auth_blob(resp) -> str:
+    return f"{getattr(resp, 'text', '') or ''} {_api_error_detail(resp)}".lower()
+
+
 def _enpara_ip_blocked(resp) -> bool:
     if getattr(resp, "status_code", 0) not in (401, 403):
         return False
-    blob = f"{getattr(resp, 'text', '') or ''} {_api_error_detail(resp)}".lower()
+    blob = _enpara_auth_blob(resp)
     return any(x in blob for x in ("ip", "not allowed", "whitelist", "not permitted", "proxy"))
+
+
+def _enpara_access_denied(resp) -> bool:
+    if getattr(resp, "status_code", 0) not in (401, 403):
+        return False
+    blob = _enpara_auth_blob(resp)
+    return "access_denied" in blob or "unauthorized" in blob
 
 
 def _enpara_token_urls(conn: dict) -> List[str]:
@@ -435,9 +464,37 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
     )
 
 
+def _enpara_can_refresh(conn: dict) -> bool:
+    return bool((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
+
+
+def _enpara_should_refresh_on_auth_error(resp, token: str) -> bool:
+    """401/403 sonrası client_credentials yenilemesi.
+
+    Hâlâ geçerli JWT veya Gravitee access_denied/IP = portal token'ı ezme.
+    """
+    if getattr(resp, "status_code", 0) not in (401, 403):
+        return False
+    if _enpara_ip_blocked(resp):
+        return False
+    expired = _jwt_expired(token)
+    if expired is False:
+        return False
+    if _enpara_access_denied(resp) and expired is not True:
+        return False
+    return True
+
+
 async def _enpara_access_token(conn: dict) -> str:
     stored = (conn.get("access_token") or "").strip()
     if stored:
+        expired = _jwt_expired(stored)
+        if expired is True:
+            if _enpara_can_refresh(conn):
+                return await _enpara_refresh_access_token(conn)
+            raise RuntimeError(
+                "Enpara Access Token süresi dolmuş. Developer portalından yeni Access Token yapıştırın."
+            )
         return stored
     return await _enpara_refresh_access_token(conn)
 
@@ -449,31 +506,16 @@ def _is_simulated(conn: dict) -> bool:
 async def _enpara_probe(conn: dict) -> Dict[str, Any]:
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = _enpara_headers(token, conn, for_get=True)
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.get(f"{base}/v1/account-statement/list", headers=headers)
-        # 200/204/404 (boş liste) = auth OK; 401/403 = token geçersiz
         if resp.status_code in (401, 403):
-            detail = (resp.text or "")[:160]
-            if _enpara_ip_blocked(resp):
-                raise RuntimeError(
-                    "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
-                    f"({detail})"
-                )
-            # Access token süresi dolmuş olabilir → refresh dene
-            if (conn.get("refresh_token") or conn.get("client_secret")) and conn.get("client_id"):
+            if _enpara_should_refresh_on_auth_error(resp, token) and _enpara_can_refresh(conn):
                 token = await _enpara_refresh_access_token(conn)
-                headers["Authorization"] = f"Bearer {token}"
+                headers = _enpara_headers(token, conn, for_get=True)
                 resp = await client.get(f"{base}/v1/account-statement/list", headers=headers)
-                if _enpara_ip_blocked(resp):
-                    raise RuntimeError(
-                        "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
-                        f"({(resp.text or '')[:160]})"
-                    )
-                if resp.status_code in (401, 403):
-                    raise RuntimeError(f"Enpara Access Token geçersiz (HTTP {resp.status_code}). Portalden yeni token alın. {detail}")
-            else:
-                raise RuntimeError(f"Enpara Access Token geçersiz (HTTP {resp.status_code}). Portalden Access Token yapıştırın. {detail}")
+            if resp.status_code in (401, 403):
+                _enpara_raise_auth(resp)
         if resp.status_code >= 500:
             raise RuntimeError(f"Enpara API sunucu hatası: HTTP {resp.status_code}")
     return {"ok": True, "simulated": False, "message": "Enpara api.enpara.com doğrulandı (account-statement).", "token_preview": token[:6] + "…"}
@@ -695,11 +737,14 @@ def _enpara_account_ref(conn: dict) -> str:
 
 
 def _enpara_headers(token: str, conn: dict, *, for_get: bool = False) -> Dict[str, str]:
-    # Bearer yeterli; GET'e Content-Type koymamak Gravitee JSON Validation'ı bozmaz
+    # Bearer = Gravitee OAuth2 plan. API Key planı varsa X-Gravitee-Api-Key.
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
     }
+    api_key = (conn.get("api_key") or "").strip()
+    if api_key:
+        headers["X-Gravitee-Api-Key"] = api_key
     if not for_get:
         headers["Content-Type"] = "application/json"
     return headers
@@ -834,7 +879,15 @@ def _api_error_detail(resp) -> str:
         parts.append(top_msg)
     if data.get("code"):
         parts.append(f"code={data['code']}")
-    errs = data.get("errors") or data.get("error") or data.get("violations") or []
+    oauth_err = data.get("error")
+    if isinstance(oauth_err, str):
+        desc = data.get("error_description") or ""
+        bit = f"{oauth_err}: {desc}".strip() if desc else oauth_err
+        if bit not in parts:
+            parts.append(bit)
+        errs = data.get("errors") or data.get("violations") or []
+    else:
+        errs = data.get("errors") or data.get("error") or data.get("violations") or []
     if isinstance(errs, dict):
         errs = [errs]
     if isinstance(errs, list):
@@ -852,6 +905,25 @@ def _api_error_detail(resp) -> str:
     return " | ".join(parts) if parts else text
 
 
+def _enpara_raise_auth(resp):
+    detail = _api_error_detail(resp)
+    blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
+    code = getattr(resp, "status_code", 401) or 401
+    if _enpara_ip_blocked(resp) or "access_denied" in blob:
+        raise RuntimeError(
+            "Enpara 401 access_denied: istek reddedildi. "
+            "Production sunucu IP’sini Enpara/QNB developer portalındaki uygulama IP listesine ekleyin "
+            "ve Account Statement aboneliğini kontrol edin. "
+            "Süresi dolmuşsa portalden yeni Access Token yapıştırın "
+            "(client_credentials token bu API için yeterli olmayabilir). "
+            f"({detail[:160]})"
+        )
+    raise RuntimeError(
+        f"Enpara yetkilendirme hatası (HTTP {code}). "
+        f"Portalden Access Token’ı yenileyin. {detail}"
+    )
+
+
 async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]:
     """QNB/Enpara Gravitee Account Statement şeması.
 
@@ -861,6 +933,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     """
     import asyncio
 
+    stored_token = (conn.get("access_token") or "").strip()
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
     get_headers = _enpara_headers(token, conn, for_get=True)
@@ -874,20 +947,16 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     last_detail = ""
     got_ok_empty = False
     balance: Optional[float] = None
-    refreshed_token: Optional[str] = None
+    refreshed_token: Optional[str] = token if token and token != stored_token else None
     best_400 = ""
 
     async with httpx.AsyncClient(timeout=45) as client:
         async def _maybe_refresh(resp):
             nonlocal token, get_headers, post_headers, refreshed_token
-            if _enpara_ip_blocked(resp):
+            if not _enpara_should_refresh_on_auth_error(resp, token):
                 return resp
-            if resp.status_code not in (401, 403):
-                return resp
-            if not ((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip()):
-                raise RuntimeError(
-                    f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin. {_api_error_detail(resp)}"
-                )
+            if not _enpara_can_refresh(conn):
+                _enpara_raise_auth(resp)
             token = await _enpara_refresh_access_token(conn)
             refreshed_token = token
             get_headers = _enpara_headers(token, conn, for_get=True)
@@ -895,13 +964,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             return None
 
         def _raise_auth(resp):
-            detail = _api_error_detail(resp)
-            if "IP" in detail or "not allowed" in detail.lower() or "proxy" in detail.lower():
-                raise RuntimeError(
-                    "Enpara API IP kısıtı: sunucu IP’niz portalda izinli değil. "
-                    f"Enpara developer portalına production sunucu IP’nizi ekleyin. ({detail[:160]})"
-                )
-            raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {detail}")
+            _enpara_raise_auth(resp)
 
         async def _send(method: str, path: str, *, params=None, json_body=None):
             url = f"{base}{path}"
