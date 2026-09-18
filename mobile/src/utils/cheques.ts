@@ -80,6 +80,83 @@ export function chequeAction(row: Cheque): { path: "collect" | "pay"; label: str
     : { path: "pay", label: "Öde" };
 }
 
+export const CHEQUE_DIRECTIONS = [
+  { key: "received", label: "Alınan (müşteriden)" },
+  { key: "issued", label: "Verilen (tedarikçiye)" },
+] as const;
+
+export const CHEQUE_INSTRUMENTS = [
+  { key: "cheque", label: "Çek" },
+  { key: "promissory", label: "Senet" },
+] as const;
+
+export type ChequeDraft = {
+  direction: "received" | "issued";
+  instrument: "cheque" | "promissory";
+  contact_id: string;
+  contact_name: string;
+  amount: string;
+  issue_date: string;
+  due_date: string;
+  serial_no: string;
+  bank_name: string;
+  bank_branch: string;
+  account_no: string;
+  drawer_name: string;
+  notes: string;
+};
+
+export function emptyChequeDraft(today: string): ChequeDraft {
+  return {
+    direction: "received",
+    instrument: "cheque",
+    contact_id: "",
+    contact_name: "",
+    amount: "",
+    issue_date: today,
+    due_date: today,
+    serial_no: "",
+    bank_name: "",
+    bank_branch: "",
+    account_no: "",
+    drawer_name: "",
+    notes: "",
+  };
+}
+
+function num(v: string): number {
+  const n = Number(String(v).replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function validateChequeDraft(d: ChequeDraft): string | null {
+  if (!d.contact_id) return "Cari seçin.";
+  if (!(num(d.amount) > 0)) return "Tutar sıfırdan büyük olmalı.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.due_date)) return "Vade YYYY-AA-GG olmalı.";
+  if (d.issue_date && !/^\d{4}-\d{2}-\d{2}$/.test(d.issue_date)) return "Keşide tarihi YYYY-AA-GG olmalı.";
+  if (d.due_date < d.issue_date) return "Vade, keşide tarihinden önce olamaz.";
+  return null;
+}
+
+export function chequePayload(d: ChequeDraft, companyId: string) {
+  return {
+    company_id: companyId,
+    direction: d.direction,
+    instrument: d.instrument,
+    contact_id: d.contact_id,
+    amount: num(d.amount),
+    issue_date: d.issue_date,
+    due_date: d.due_date,
+    serial_no: d.serial_no.trim(),
+    bank_name: d.bank_name.trim(),
+    bank_branch: d.bank_branch.trim(),
+    account_no: d.account_no.trim(),
+    // Boşsa sunucu cari adını keşideci kabul ediyor.
+    drawer_name: d.drawer_name.trim(),
+    notes: d.notes.trim(),
+  };
+}
+
 export function filterCheques(rows: Cheque[], filter: ChequeFilter, query: string): Cheque[] {
   const s = query.trim().toLowerCase();
   return (rows || []).filter((r) => {

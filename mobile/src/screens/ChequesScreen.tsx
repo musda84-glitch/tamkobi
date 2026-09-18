@@ -2,9 +2,11 @@ import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Chip, n } from "../components/chips";
+import { ActionTiles } from "../components/ActionTiles";
+import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
+import { go } from "../nav";
 import { colors } from "../theme";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import {
@@ -110,6 +112,16 @@ export function ChequesScreen() {
           ...(summary?.bounced ? [{ key: "bounced", label: "Karşılıksız", value: fmtMoney(summary.bounced), valueColor: colors.danger }] : []),
         ]}
       />
+      {canEdit ? (
+        <ActionTiles
+          columns={3}
+          items={[
+            { key: "new", label: "Yeni kayıt", icon: "add-circle", tone: "emerald", testID: "cheque-new", onPress: () => go("ChequeNew") },
+            { key: "installments", label: "Taksitler", icon: "calendar", tone: "violet", testID: "cheque-installments", onPress: () => go("Installments") },
+            { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "cheque-refresh", onPress: load },
+          ]}
+        />
+      ) : null}
       <Field label="Ara" testID="cheque-search" value={q} onChangeText={setQ} placeholder="No, seri, cari, banka" />
       <Row style={{ flexWrap: "wrap" }}>
         {CHEQUE_FILTERS.map((f) => (

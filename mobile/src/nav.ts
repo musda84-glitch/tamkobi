@@ -71,6 +71,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/installments");
     case "Cheques":
       return router.push("/cheques");
+    case "ChequeNew":
+      return router.push("/cheques/new");
     case "Expenses":
       return router.push("/expenses");
     case "ExpenseNew":

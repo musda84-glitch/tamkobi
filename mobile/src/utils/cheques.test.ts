@@ -1,4 +1,14 @@
-import { chequeAction, chequeStatusTr, chequeTitle, chequeTone, filterCheques, type Cheque } from "./cheques";
+import {
+  chequeAction,
+  chequePayload,
+  chequeStatusTr,
+  chequeTitle,
+  chequeTone,
+  emptyChequeDraft,
+  filterCheques,
+  validateChequeDraft,
+  type Cheque,
+} from "./cheques";
 
 const rows: Cheque[] = [
   { id: "1", number: "CEK-2026-0001", instrument: "cheque", direction: "received", status: "open", contact_name: "Acme", bank_name: "Vakıf", amount: 1000, overdue: true },
@@ -32,6 +42,35 @@ describe("cheques", () => {
     expect(chequeTone(rows[2])).toBe("green");
     expect(chequeTone(rows[3])).toBe("red");
     expect(chequeTone({ status: "open" })).toBe("slate");
+  });
+
+  it("validates a new cheque before posting", () => {
+    const d = emptyChequeDraft("2026-09-18");
+    expect(validateChequeDraft(d)).toBe("Cari seçin.");
+    d.contact_id = "c1";
+    expect(validateChequeDraft(d)).toBe("Tutar sıfırdan büyük olmalı.");
+    d.amount = "1500,50";
+    expect(validateChequeDraft(d)).toBeNull();
+    expect(validateChequeDraft({ ...d, due_date: "18.09.2026" })).toMatch(/Vade/);
+    expect(validateChequeDraft({ ...d, issue_date: "2026-09-20" })).toMatch(/keşide/);
+  });
+
+  it("builds the create payload the API expects", () => {
+    const d = emptyChequeDraft("2026-09-18");
+    const body = chequePayload(
+      { ...d, contact_id: "c1", contact_name: "Acme", amount: "1500,50", due_date: "2026-10-18", instrument: "promissory", direction: "issued", serial_no: " snt-9 " },
+      "comp1"
+    );
+    expect(body).toMatchObject({
+      company_id: "comp1",
+      direction: "issued",
+      instrument: "promissory",
+      contact_id: "c1",
+      amount: 1500.5,
+      due_date: "2026-10-18",
+      serial_no: "snt-9",
+    });
+    expect(body.drawer_name).toBe("");
   });
 
   it("filters by direction, open state, overdue and free text", () => {
