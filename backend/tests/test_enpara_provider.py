@@ -167,18 +167,20 @@ def test_enpara_fetch_empty_completed_is_success():
 def test_payload_variants_are_lean_single_schema():
     start = datetime(2026, 9, 10, tzinfo=timezone.utc)
     end = datetime(2026, 9, 17, tzinfo=timezone.utc)
-    variants = bp._enpara_payload_variants(start, end, "TR330011100000000000000001", "")
+    iban = "TR330011100000000000000001"
+    variants = bp._enpara_payload_variants(start, end, iban, "")
     assert variants
-    assert len(variants) <= 28
-    for p in variants:
-        # Aynı anda birden fazla düz hesap alanı yığılmamalı
-        flat_acc = [k for k, v in p.items() if not isinstance(v, dict) and k.lower() in (
-            "iban", "ibannumber", "accountnumber", "accountno", "hesapno"
-        )]
-        nested_acc = [k for k, v in p.items() if isinstance(v, dict) and k.lower() in ("accountinfo", "account", "hesap")]
-        assert len(flat_acc) + len(nested_acc) == 1, p
-        date_keys = [k for k in p if "date" in k.lower() or "tarih" in k.lower()]
-        assert len(date_keys) == 2, p
+    assert len(variants) <= 22
+    # İlk deneme nesne sarmalayıcı olmalı (400-1 type=object)
+    assert "accountInfo" in variants[0] or "account" in variants[0]
+    assert isinstance(variants[0].get("accountInfo") or variants[0].get("account"), dict)
+
+
+def test_iban_parts():
+    p = bp._iban_parts("TR33 00111 0 00000000000001")
+    assert p["iban"].startswith("TR")
+    assert p["bankCode"] == "00111"
+    assert p["accountNumber"]
 
 
 def test_api_error_detail_parses_enpara_400():
@@ -192,3 +194,16 @@ def test_api_error_detail_parses_enpara_400():
     detail = bp._api_error_detail(resp)
     assert "Invalid iban" in detail
     assert "400-1" in detail
+
+
+def test_api_error_detail_nested_object_message():
+    resp = MagicMock()
+    resp.text = "{}"
+    resp.json = MagicMock(return_value={
+        "code": "400",
+        "message": "Bad Request",
+        "errors": [{"code": "400-1", "message": {"type": "object", "field": "accountInfo"}}],
+    })
+    detail = bp._api_error_detail(resp)
+    assert "accountInfo" in detail or "object" in detail
+

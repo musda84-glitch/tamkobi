@@ -5928,7 +5928,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
     try:
         result = await bank_providers.fetch_transactions(doc, since)
     except Exception as e:
-        msg = f"Senkronizasyon hatası: {str(e)[:220]}"
+        msg = f"Senkronizasyon hatası: {str(e)[:420]}"
         await db.bank_connections.update_one({"_id": conn_id}, {"$set": {"status": "error", "last_error": msg}})
         raise HTTPException(status_code=502, detail=msg)
 
