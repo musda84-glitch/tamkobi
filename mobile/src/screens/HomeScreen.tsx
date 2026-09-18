@@ -3,56 +3,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, Kpi, Muted, Row, Screen } from "../components/kit";
+import { ActionTiles, type ActionTile } from "../components/ActionTiles";
+import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
 import { go, goHref } from "../nav";
 import { colors } from "../theme";
 import type { Notification, Overview } from "../types";
 import { fmtMoney } from "../utils/money";
-import { QUICK_TONE_COLORS, resolveMobilePath, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
-
-function QuickTileButton({ tile }: { tile: QuickTile }) {
-  const tone = QUICK_TONE_COLORS[tile.tone];
-  return (
-    <Pressable
-      onPress={() => goHref(tile.href)}
-      testID={`home-quick-${tile.id}`}
-      style={{
-        width: "25%",
-        padding: 6,
-      }}
-    >
-      <View
-        style={{
-          backgroundColor: colors.surface,
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: 16,
-          paddingVertical: 14,
-          paddingHorizontal: 6,
-          alignItems: "center",
-          gap: 8,
-          minHeight: 96,
-        }}
-      >
-        <View
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 16,
-            backgroundColor: tone.bg,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Ionicons name={tile.icon as keyof typeof Ionicons.glyphMap} size={24} color={tone.fg} />
-        </View>
-        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12, textAlign: "center" }} numberOfLines={2}>
-          {tile.label}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
+import { resolveMobilePath, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
   const { client, companyId, user, activeCompany, license } = useAuth();
@@ -64,6 +21,19 @@ export function HomeScreen() {
   const tiles = useMemo(
     () => visibleQuickTiles(user, license),
     [user, license]
+  );
+
+  const quickItems: ActionTile[] = useMemo(
+    () => tiles.map((tile) => ({
+      key: tile.id,
+      label: tile.label,
+      icon: tile.icon as ActionTile["icon"],
+      tone: tile.tone,
+      testID: `home-quick-${tile.id}`,
+      badge: tile.id === "notifications" && unread ? String(unread) : undefined,
+      onPress: () => goHref(tile.href),
+    })),
+    [tiles, unread]
   );
 
   const load = useCallback(async () => {
@@ -106,19 +76,20 @@ export function HomeScreen() {
       <View testID="home-quick-menu">
         <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16, marginBottom: 4 }}>Hızlı menü</Text>
         <Muted>Modüllere ve sık kullanılan işlemlere tek dokunuş.</Muted>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -6, marginTop: 8 }}>
-          {tiles.map((tile) => <QuickTileButton key={tile.id} tile={tile} />)}
+        <View style={{ marginTop: 8 }}>
+          <ActionTiles size="md" items={quickItems} />
         </View>
       </View>
 
-      <Row>
-        <Kpi label="Tahsilat" value={fmtMoney(overview?.collections.total)} sub={`Gecikmiş ${fmtMoney(overview?.collections.overdue)}`} />
-        <Kpi label="Ödeme" value={fmtMoney(overview?.payments.total)} sub={`Gecikmiş ${fmtMoney(overview?.payments.overdue)}`} />
-      </Row>
-      <Row>
-        <Kpi label="Bu ay satış" value={String(overview?.invoices.outgoing.month ?? "—")} sub="Fatura adedi" />
-        <Kpi label="KDV ödenecek" value={fmtMoney(overview?.vat.payable)} sub={`${overview?.vat.days_left ?? "—"} gün`} />
-      </Row>
+      <StatRows
+        testID="home-summary"
+        items={[
+          { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
+          { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
+          { key: "sales", label: "Bu ay satış", value: String(overview?.invoices.outgoing.month ?? "—"), hint: "Fatura adedi" },
+          { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
+        ]}
+      />
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
         {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {

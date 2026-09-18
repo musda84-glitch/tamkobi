@@ -155,6 +155,25 @@ export function ListRow({
   );
 }
 
+export type StatRow = { key: string; label: string; value: string; hint?: string; valueColor?: string };
+
+/** Kart yığını yerine ince satırlar: solda etiket, sağda tutar. */
+export function StatRows({ items, testID }: { items: StatRow[]; testID?: string }) {
+  return (
+    <View style={[styles.card, { gap: 0 }]} testID={testID}>
+      {items.map((item, i) => (
+        <View key={item.key} style={[styles.statRow, i > 0 ? styles.statDivider : null]}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.statLabel}>{item.label}</Text>
+            {item.hint ? <Text style={styles.statHint} numberOfLines={1}>{item.hint}</Text> : null}
+          </View>
+          <Text style={[styles.statValue, item.valueColor ? { color: item.valueColor } : null]}>{item.value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <View style={styles.kpi}>
@@ -165,51 +184,58 @@ export function Kpi({ label, value, sub }: { label: string; value: string; sub?:
   );
 }
 
+/** Minimal düzen: dar boşluklar, ince çerçeveler; dokunma hedefleri 44 px altına inmez. */
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { flexGrow: 1 },
-  padded: { padding: spacing.md, gap: spacing.md },
+  padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radius.lg,
-    padding: spacing.md,
-    gap: 8,
+    padding: spacing.sm + 2,
+    gap: 6,
   },
-  h1: { fontSize: 22, fontWeight: "800", color: colors.text },
-  muted: { color: colors.muted, fontSize: 13 },
+  h1: { fontSize: 19, fontWeight: "800", color: colors.text },
+  muted: { color: colors.muted, fontSize: 12 },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
-  badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  badgeText: { fontSize: 11, fontWeight: "700" },
-  btn: { borderRadius: radius.md, minHeight: 48, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  btnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
-  label: { fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 6 },
+  badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  badgeText: { fontSize: 10, fontWeight: "700" },
+  btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  btnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  label: { fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4, textTransform: "uppercase" },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
+    paddingVertical: 10,
+    minHeight: 44,
+    fontSize: 15,
     color: colors.text,
     backgroundColor: "#fff",
   },
-  empty: { alignItems: "center", paddingVertical: 28, gap: 8 },
+  empty: { alignItems: "center", paddingVertical: 24, gap: 6 },
   emptyTitle: { fontWeight: "700", color: colors.text },
-  error: { backgroundColor: colors.rose50, borderRadius: radius.md, padding: 12 },
-  errorText: { color: "#BE123C", fontWeight: "600" },
+  error: { backgroundColor: colors.rose50, borderRadius: radius.md, padding: 10 },
+  errorText: { color: "#BE123C", fontWeight: "600", fontSize: 13 },
   listRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  listTitle: { fontWeight: "700", color: colors.text, fontSize: 15 },
-  listRight: { fontWeight: "800", color: colors.text, marginLeft: 8 },
-  kpi: { flex: 1, minWidth: 148, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 12 },
-  kpiLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
-  kpiValue: { fontSize: 18, fontWeight: "800", color: colors.text, marginTop: 4 },
+  listTitle: { fontWeight: "700", color: colors.text, fontSize: 14 },
+  listRight: { fontWeight: "800", color: colors.text, marginLeft: 8, fontSize: 14 },
+  statRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7 },
+  statDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  statLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  statHint: { fontSize: 11, color: colors.muted, marginTop: 1 },
+  statValue: { fontSize: 15, fontWeight: "800", color: colors.text },
+  kpi: { flex: 1, minWidth: 140, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 10 },
+  kpiLabel: { fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  kpiValue: { fontSize: 16, fontWeight: "800", color: colors.text, marginTop: 2 },
 });

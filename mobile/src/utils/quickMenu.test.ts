@@ -1,4 +1,17 @@
-import { QUICK_TILES, resolveMobilePath, splitHref, visibleQuickTiles } from "./quickMenu";
+import { QUICK_TILES, QUICK_TONE_COLORS, resolveMobilePath, splitHref, visibleQuickTiles } from "./quickMenu";
+
+describe("QUICK_TONE_COLORS", () => {
+  it("gives every tile tone a full palette", () => {
+    const tones = new Set(QUICK_TILES.map((t) => t.tone));
+    for (const tone of tones) {
+      const c = QUICK_TONE_COLORS[tone];
+      expect(c).toBeDefined();
+      for (const key of ["bg", "border", "solid", "fg"] as const) {
+        expect(c[key]).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      }
+    }
+  });
+});
 
 describe("visibleQuickTiles", () => {
   it("shows licensed modules for admin", () => {

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Text, View } from "react-native";
-import { colors, radius } from "../theme";
+import { Platform, Pressable, Text, View } from "react-native";
+import { colors } from "../theme";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
 
 export type ActionTile = {
@@ -12,12 +12,29 @@ export type ActionTile = {
   onPress: () => void;
   busy?: boolean;
   disabled?: boolean;
+  badge?: string;
   testID?: string;
 };
 
-/** Ana ekrandaki hızlı menüyle aynı dil: tam genişlik buton yığını yerine kompakt kutucuklar. */
-export function ActionTiles({ items, columns = 4 }: { items: ActionTile[]; columns?: 3 | 4 }) {
+type TileSize = "sm" | "md";
+
+const SIZES = {
+  sm: { minHeight: 82, badge: 36, radius: 12, icon: 18, font: 11, padding: 10 },
+  md: { minHeight: 104, badge: 46, radius: 16, icon: 22, font: 12, padding: 14 },
+} as const;
+
+/** Renkli zemin + katı ikon rozeti; ana ekran hızlı menüsü ve kayıt işlemleri aynı dili kullanır. */
+export function ActionTiles({
+  items,
+  columns = 4,
+  size = "sm",
+}: {
+  items: ActionTile[];
+  columns?: 3 | 4;
+  size?: TileSize;
+}) {
   const width = `${100 / columns}%` as const;
+  const s = SIZES[size];
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 }}>
       {items.map((item) => {
@@ -28,27 +45,66 @@ export function ActionTiles({ items, columns = 4 }: { items: ActionTile[]; colum
             testID={item.testID}
             onPress={item.onPress}
             disabled={item.disabled || item.busy}
-            style={{ width, padding: 4, opacity: item.disabled ? 0.4 : 1 }}
+            style={({ pressed }) => ({
+              width,
+              padding: 4,
+              opacity: item.disabled ? 0.45 : pressed ? 0.85 : 1,
+              transform: [{ scale: pressed ? 0.97 : 1 }],
+            })}
           >
             <View
               style={{
-                backgroundColor: colors.surface,
+                backgroundColor: tone.bg,
                 borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: radius.md,
-                paddingVertical: 10,
-                paddingHorizontal: 4,
+                borderColor: tone.border,
+                borderRadius: s.radius + 4,
+                paddingVertical: s.padding,
+                paddingHorizontal: 6,
                 alignItems: "center",
-                gap: 6,
-                minHeight: 76,
+                gap: 8,
+                minHeight: s.minHeight,
+                ...Platform.select({
+                  web: { boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)" },
+                  default: {
+                    shadowColor: "#0F172A",
+                    shadowOpacity: 0.06,
+                    shadowRadius: 6,
+                    shadowOffset: { width: 0, height: 2 },
+                    elevation: 1,
+                  },
+                }),
               }}
             >
-              <View style={{ width: 34, height: 34, borderRadius: 12, backgroundColor: tone.bg, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name={item.busy ? "hourglass-outline" : item.icon} size={18} color={tone.fg} />
+              <View
+                style={{
+                  width: s.badge,
+                  height: s.badge,
+                  borderRadius: s.radius,
+                  backgroundColor: tone.solid,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  ...Platform.select({
+                    web: { boxShadow: `0 4px 10px ${tone.solid}33` },
+                    default: {
+                      shadowColor: tone.solid,
+                      shadowOpacity: 0.3,
+                      shadowRadius: 8,
+                      shadowOffset: { width: 0, height: 3 },
+                      elevation: 2,
+                    },
+                  }),
+                }}
+              >
+                <Ionicons name={item.busy ? "hourglass-outline" : item.icon} size={s.icon} color="#fff" />
               </View>
-              <Text style={{ fontWeight: "700", color: colors.text, fontSize: 11, textAlign: "center" }} numberOfLines={2}>
+              <Text style={{ fontWeight: "800", color: colors.text, fontSize: s.font, textAlign: "center" }} numberOfLines={2}>
                 {item.label}
               </Text>
+              {item.badge ? (
+                <View style={{ position: "absolute", top: 6, right: 6, minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.danger }}>
+                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800", textAlign: "center" }}>{item.badge}</Text>
+                </View>
+              ) : null}
             </View>
           </Pressable>
         );

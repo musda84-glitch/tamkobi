@@ -7,29 +7,15 @@ import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
+import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
-
-const TYPE_FILTERS = [
-  { key: "all", label: "Tümü" },
-  { key: "customer", label: "Müşteri" },
-  { key: "supplier", label: "Tedarikçi" },
-  { key: "both", label: "Her ikisi" },
-] as const;
-
-const FIN_FILTERS = [
-  { key: "all", label: "Hepsi" },
-  { key: "debtors", label: "Bize borçlu" },
-  { key: "creditors", label: "Bize alacaklı" },
-  { key: "clear", label: "Bakiyesi sıfır" },
-] as const;
 
 export function ContactsScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/contacts", "edit");
   const [rows, setRows] = useState<Contact[]>([]);
   const [q, setQ] = useState("");
-  const [typeF, setTypeF] = useState<(typeof TYPE_FILTERS)[number]["key"]>("all");
-  const [finF, setFinF] = useState<(typeof FIN_FILTERS)[number]["key"]>("all");
+  const [typeF, setTypeF] = useState<ContactTypeFilter>("all");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -48,18 +34,7 @@ export function ContactsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return rows.filter((c) => {
-      if (typeF !== "all" && c.type !== typeF) return false;
-      const bal = Number(c.balance) || 0;
-      if (finF === "debtors" && !(bal > 0)) return false;
-      if (finF === "creditors" && !(bal < 0)) return false;
-      if (finF === "clear" && !!bal) return false;
-      if (s.length < 1) return true;
-      return [c.name, c.phone, c.email, c.tax_number_or_id, c.city, c.company_title].some((v) => String(v || "").toLowerCase().includes(s));
-    }).slice(0, 80);
-  }, [q, rows, typeF, finF]);
+  const filtered = useMemo(() => filterContacts(rows, typeF, q), [q, rows, typeF]);
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -68,13 +43,8 @@ export function ContactsScreen() {
       ) : null}
       <Field label="Ara" testID="contacts-search" value={q} onChangeText={setQ} placeholder="Ad, telefon, VKN" />
       <Row style={{ flexWrap: "wrap" }}>
-        {TYPE_FILTERS.map((t) => (
+        {CONTACT_TYPE_FILTERS.map((t) => (
           <Chip key={t.key} label={t.label} active={typeF === t.key} testID={`contacts-type-${t.key}`} onPress={() => setTypeF(t.key)} />
-        ))}
-      </Row>
-      <Row style={{ flexWrap: "wrap" }}>
-        {FIN_FILTERS.map((t) => (
-          <Chip key={t.key} label={t.label} active={finF === t.key} testID={`contacts-fin-${t.key}`} onPress={() => setFinF(t.key)} />
         ))}
       </Row>
       <ErrorBanner message={error} />
