@@ -1,4 +1,5 @@
 import { useAuth } from "@/auth/AuthContext";
+import { AccountMenu } from "@/components/AccountMenu";
 import { colors } from "@/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
@@ -20,6 +21,7 @@ export default function TabsLayout() {
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
         tabBarLabelStyle: { fontWeight: "700", fontSize: 10 },
+        headerRight: () => <AccountMenu />,
       }}
     >
       <Tabs.Screen

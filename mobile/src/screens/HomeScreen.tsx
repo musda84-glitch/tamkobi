@@ -1,11 +1,10 @@
-import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
-import { go, goHref } from "../nav";
+import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { Notification, Overview } from "../types";
 import { fmtMoney } from "../utils/money";
@@ -58,19 +57,10 @@ export function HomeScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <Row style={{ justifyContent: "space-between" }}>
-        <View style={{ flex: 1 }}>
-          <H1>Merhaba{user?.name ? `, ${user.name.split(" ")[0]}` : ""}</H1>
-          <Muted>{activeCompany?.name || "TamKobi"}</Muted>
-        </View>
-        <Pressable onPress={() => go("Search")} style={{ padding: 8 }} testID="home-search">
-          <Ionicons name="search" size={22} color={colors.text} />
-        </Pressable>
-        <Pressable onPress={() => go("Notifications")} style={{ padding: 8 }} testID="home-bell">
-          <Ionicons name="notifications" size={22} color={colors.text} />
-          {unread ? <Badge label={String(unread)} tone="red" /> : null}
-        </Pressable>
-      </Row>
+      <View>
+        <H1>Merhaba{user?.name ? `, ${user.name.split(" ")[0]}` : ""}</H1>
+        <Muted>{activeCompany?.name || "TamKobi"}</Muted>
+      </View>
       <ErrorBanner message={error} />
 
       <View testID="home-quick-menu">
