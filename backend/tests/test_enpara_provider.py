@@ -1168,6 +1168,175 @@ def test_enpara_nested_data_ticket_no_polls():
     assert out["transactions"][0]["external_id"] == "N1"
 
 
+def test_enpara_unparsed_error_shows_raw_body():
+    """'Çözümlenemedi' hatası ne geldiğini söylemeli: gövde + /list yanıtı."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = '{"status":"SUCCESS","errorCode":"0"}'
+    stmt.headers = {"content-type": "application/json"}
+    stmt.json = MagicMock(return_value={"status": "SUCCESS", "errorCode": "0"})
+
+    listed = MagicMock()
+    listed.status_code = 200
+    listed.text = ""
+    listed.headers = {"content-type": "application/json"}
+    listed.json = MagicMock(side_effect=ValueError("no json"))
+
+    async def _post(url, **kwargs):
+        if str(url).endswith("/list"):
+            return listed
+        return stmt
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            with patch.object(asyncio, "sleep", new=AsyncMock()):
+                return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected unparsed error"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "SUCCESS" in msg
+        assert "gövde=" in msg
+        assert "/list" in msg
+
+
+def test_enpara_empty_body_200_has_subscription_hint():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    blank = MagicMock()
+    blank.status_code = 200
+    blank.text = ""
+    blank.headers = {"content-type": "application/json"}
+    blank.json = MagicMock(side_effect=ValueError("no json"))
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=blank)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected empty-body error"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "gövde boş" in msg
+        assert "abonelik" in msg.lower() or "Hesap Hareketleri" in msg
+
+
+def test_enpara_loose_ticket_id_is_tried_as_fallback():
+    """Kesin ticketNo yoksa SUCCESS gövdesindeki id ticket olarak denenir."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = '{"status":"SUCCESS","id":"REQ-7"}'
+    stmt.headers = {"content-type": "application/json"}
+    stmt.json = MagicMock(return_value={"status": "SUCCESS", "id": "REQ-7"})
+
+    ready = MagicMock()
+    ready.status_code = 200
+    ready.text = "{}"
+    ready.headers = {"content-type": "application/json"}
+    ready.json = MagicMock(return_value={
+        "status": "completed",
+        "transactions": [
+            {"transactionId": "L1", "amount": 31, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-12"},
+        ],
+    })
+
+    async def _post(url, **kwargs):
+        return stmt
+
+    async def _get(url, **kwargs):
+        if str(url).endswith("/account-statement/ticket") and (kwargs.get("params") or {}).get("ticketNo") == "REQ-7":
+            return ready
+        return _miss_resp()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            with patch.object(asyncio, "sleep", new=AsyncMock()):
+                return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "L1"
+
+
+def test_enpara_ticket_from_response_header():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = '{"status":"SUCCESS"}'
+    stmt.headers = {"content-type": "application/json", "ticketNo": "H7"}
+    stmt.json = MagicMock(return_value={"status": "SUCCESS"})
+
+    ready = MagicMock()
+    ready.status_code = 200
+    ready.text = "{}"
+    ready.headers = {"content-type": "application/json"}
+    ready.json = MagicMock(return_value={
+        "status": "completed",
+        "transactions": [
+            {"transactionId": "H1", "amount": 5, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-12"},
+        ],
+    })
+
+    async def _post(url, **kwargs):
+        return stmt
+
+    async def _get(url, **kwargs):
+        if (kwargs.get("params") or {}).get("ticketNo") == "H7":
+            return ready
+        return _miss_resp()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            with patch.object(asyncio, "sleep", new=AsyncMock()):
+                return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "H1"
+
+
 def test_enpara_list_account_usable_balance():
     conn = {
         "provider": "enpara", "mode": "live", "access_token": "tok",
