@@ -4,7 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
-import { Badge, Card, ErrorBanner, H1, Kpi, Muted, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
 import { go, goHref } from "../nav";
 import { colors } from "../theme";
 import type { Notification, Overview } from "../types";
@@ -81,14 +81,15 @@ export function HomeScreen() {
         </View>
       </View>
 
-      <Row>
-        <Kpi label="Tahsilat" value={fmtMoney(overview?.collections.total)} sub={`Gecikmiş ${fmtMoney(overview?.collections.overdue)}`} />
-        <Kpi label="Ödeme" value={fmtMoney(overview?.payments.total)} sub={`Gecikmiş ${fmtMoney(overview?.payments.overdue)}`} />
-      </Row>
-      <Row>
-        <Kpi label="Bu ay satış" value={String(overview?.invoices.outgoing.month ?? "—")} sub="Fatura adedi" />
-        <Kpi label="KDV ödenecek" value={fmtMoney(overview?.vat.payable)} sub={`${overview?.vat.days_left ?? "—"} gün`} />
-      </Row>
+      <StatRows
+        testID="home-summary"
+        items={[
+          { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
+          { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
+          { key: "sales", label: "Bu ay satış", value: String(overview?.invoices.outgoing.month ?? "—"), hint: "Fatura adedi" },
+          { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
+        ]}
+      />
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
         {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {

@@ -4,7 +4,7 @@ import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
 import { colors } from "../theme";
 import {
   partnerTxTr,
@@ -165,12 +165,15 @@ export function BankingPartnersPanel({
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       {summary ? (
-        <Row style={{ flexWrap: "wrap" }}>
-          <Kpi label="Ortak alacağı" value={fmtMoney(summary.total_balance)} />
-          <Kpi label="Sermaye girişi" value={fmtMoney(summary.total_capital_in)} />
-          <Kpi label="Çekilen" value={fmtMoney(summary.total_withdrawn)} />
-          <Kpi label="Dağıtılan kâr" value={fmtMoney(summary.total_profit_share)} />
-        </Row>
+        <StatRows
+          testID="partners-summary"
+          items={[
+            { key: "balance", label: "Ortak alacağı", value: fmtMoney(summary.total_balance) },
+            { key: "capital", label: "Sermaye girişi", value: fmtMoney(summary.total_capital_in) },
+            { key: "withdrawn", label: "Çekilen", value: fmtMoney(summary.total_withdrawn) },
+            { key: "profit", label: "Dağıtılan kâr", value: fmtMoney(summary.total_profit_share) },
+          ]}
+        />
       ) : null}
       {canEdit ? (
         <>

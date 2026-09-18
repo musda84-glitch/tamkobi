@@ -155,6 +155,25 @@ export function ListRow({
   );
 }
 
+export type StatRow = { key: string; label: string; value: string; hint?: string; valueColor?: string };
+
+/** Kart yığını yerine ince satırlar: solda etiket, sağda tutar. */
+export function StatRows({ items, testID }: { items: StatRow[]; testID?: string }) {
+  return (
+    <View style={[styles.card, { gap: 0 }]} testID={testID}>
+      {items.map((item, i) => (
+        <View key={item.key} style={[styles.statRow, i > 0 ? styles.statDivider : null]}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.statLabel}>{item.label}</Text>
+            {item.hint ? <Text style={styles.statHint} numberOfLines={1}>{item.hint}</Text> : null}
+          </View>
+          <Text style={[styles.statValue, item.valueColor ? { color: item.valueColor } : null]}>{item.value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <View style={styles.kpi}>
@@ -211,6 +230,11 @@ const styles = StyleSheet.create({
   },
   listTitle: { fontWeight: "700", color: colors.text, fontSize: 14 },
   listRight: { fontWeight: "800", color: colors.text, marginLeft: 8, fontSize: 14 },
+  statRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7 },
+  statDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  statLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  statHint: { fontSize: 11, color: colors.muted, marginTop: 1 },
+  statValue: { fontSize: 15, fontWeight: "800", color: colors.text },
   kpi: { flex: 1, minWidth: 140, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 10 },
   kpiLabel: { fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
   kpiValue: { fontSize: 16, fontWeight: "800", color: colors.text, marginTop: 2 },

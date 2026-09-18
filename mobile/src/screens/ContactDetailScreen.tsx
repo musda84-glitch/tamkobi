@@ -7,7 +7,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { Badge, Card, ErrorBanner, Field, H1, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, riskStatusTr, statusTr } from "../utils/labels";
@@ -590,13 +590,16 @@ export function ContactDetailScreen() {
         </Card>
       ) : null}
 
-      <Row style={{ flexWrap: "wrap" }}>
-        <Kpi label="Cari hesap" value={fmtMoney(bal)} sub={hint.label} />
-        <Kpi label="Satış faturaları" value={fmtMoney(invoiced)} />
-        <Kpi label="Tahsil edilen" value={fmtMoney(paid)} />
-        <Kpi label="Kalan alacak" value={fmtMoney(openAmt)} />
-        {chequeBal ? <Kpi label="Çek / senet" value={fmtMoney(chequeBal)} /> : null}
-      </Row>
+      <StatRows
+        testID="contact-summary-strip"
+        items={[
+          { key: "balance", label: "Cari hesap", value: fmtMoney(bal), hint: hint.label, valueColor: bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : undefined },
+          { key: "invoiced", label: "Satış faturaları", value: fmtMoney(invoiced) },
+          { key: "paid", label: "Tahsil edilen", value: fmtMoney(paid) },
+          { key: "open", label: "Kalan alacak", value: fmtMoney(openAmt), valueColor: openAmt > 0 ? colors.danger : undefined },
+          ...(chequeBal ? [{ key: "cheques", label: "Çek / senet", value: fmtMoney(chequeBal) }] : []),
+        ]}
+      />
 
       <Card testID="contact-card">
         <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>
