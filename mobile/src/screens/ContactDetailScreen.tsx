@@ -8,6 +8,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { TabStrip, type TabStripItem } from "../components/TabStrip";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -47,16 +48,16 @@ type MsgChannel = "sms" | "email" | "whatsapp";
 type TabKey = "invoices" | "payments" | "installments" | "orders" | "quotes" | "projects" | "surveys" | "comm" | "cheques";
 type Aging = { total_remaining?: number; total_overdue?: number; total_late_fee?: number; rows?: { invoice_id?: string; invoice_number?: string; due_date?: string; remaining?: number; overdue_days?: number; late_fee?: number }[] };
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "invoices", label: "Faturalar" },
-  { key: "payments", label: "Ödemeler" },
-  { key: "installments", label: "Taksitler" },
-  { key: "orders", label: "Siparişler" },
-  { key: "quotes", label: "Teklifler" },
-  { key: "projects", label: "Projeler" },
-  { key: "surveys", label: "Keşifler" },
-  { key: "comm", label: "İletişim" },
-  { key: "cheques", label: "Çek" },
+const TABS: TabStripItem<TabKey>[] = [
+  { key: "invoices", label: "Fatura", icon: "document-text" },
+  { key: "payments", label: "Ödeme", icon: "wallet" },
+  { key: "installments", label: "Taksit", icon: "calendar" },
+  { key: "orders", label: "Sipariş", icon: "cart" },
+  { key: "quotes", label: "Teklif", icon: "create" },
+  { key: "projects", label: "Proje", icon: "briefcase" },
+  { key: "surveys", label: "Keşif", icon: "construct" },
+  { key: "comm", label: "İletişim", icon: "chatbubbles" },
+  { key: "cheques", label: "Çek", icon: "card" },
 ];
 
 function InfoLine({ label, value }: { label: string; value: string }) {
@@ -603,55 +604,12 @@ export function ContactDetailScreen() {
         ]}
       />
 
-      <Card testID="contact-card">
-        <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(c.balance)}</Text>
-        <Row style={{ flexWrap: "wrap" }}>
-          <Badge label={contactTypeLabel(c.type)} tone="indigo" />
-          <Badge label={hint.label} tone={hint.tone} />
-          {c.is_e_invoice_user ? <Badge label="E-Fatura" tone="green" /> : null}
-          {c.b2b_enabled ? <Badge label="B2B" tone="indigo" /> : null}
-          {c.risk_status && c.risk_status !== "normal" ? <Badge label={riskStatusTr(c.risk_status)} tone="red" /> : null}
-        </Row>
-        <Pressable
-          testID="contact-card-toggle"
-          onPress={() => setInfoOpen((v) => !v)}
-          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}
-        >
-          <Ionicons name={infoOpen ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
-          <Text style={{ fontWeight: "700", color: colors.muted, fontSize: 12 }}>
-            {infoOpen ? "Bilgileri gizle" : `Cari bilgileri${infoRows.length ? ` (${infoRows.length})` : ""}`}
-          </Text>
-        </Pressable>
-        {infoOpen ? (
-          <>
-            {summaryRows.length ? (
-              <View>
-                {summaryRows.map((r) => (
-                  <Muted key={r.key}>{r.label}: {r.value}</Muted>
-                ))}
-              </View>
-            ) : (
-              <Muted>0 fatura · açık {fmtMoney(0)}</Muted>
-            )}
-            {infoRows.map((r) => (
-              <InfoLine key={r.key} label={r.label} value={r.value} />
-            ))}
-          </>
-        ) : null}
-      </Card>
-
-      <Row style={{ flexWrap: "wrap" }}>
-        {TABS.map((t) => (
-          <Chip
-            key={t.key}
-            label={`${t.label} (${counts[t.key]})`}
-            active={tab === t.key}
-            testID={`detail-tab-${t.key}`}
-            onPress={() => setTab(t.key)}
-          />
-        ))}
-      </Row>
+      <TabStrip
+        testID="detail-tab"
+        items={TABS.map((t) => ({ ...t, count: counts[t.key] }))}
+        value={tab}
+        onChange={setTab}
+      />
 
       {tab === "invoices" ? (
         !invoices.length ? <Muted>Fatura yok.</Muted> : invoices.map((inv: any, idx: number) => (
@@ -875,6 +833,44 @@ export function ContactDetailScreen() {
           />
         ))
       ) : null}
+
+      <Card testID="contact-card">
+        <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(c.balance)}</Text>
+        <Row style={{ flexWrap: "wrap" }}>
+          <Badge label={contactTypeLabel(c.type)} tone="indigo" />
+          <Badge label={hint.label} tone={hint.tone} />
+          {c.is_e_invoice_user ? <Badge label="E-Fatura" tone="green" /> : null}
+          {c.b2b_enabled ? <Badge label="B2B" tone="indigo" /> : null}
+          {c.risk_status && c.risk_status !== "normal" ? <Badge label={riskStatusTr(c.risk_status)} tone="red" /> : null}
+        </Row>
+        <Pressable
+          testID="contact-card-toggle"
+          onPress={() => setInfoOpen((v) => !v)}
+          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}
+        >
+          <Ionicons name={infoOpen ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
+          <Text style={{ fontWeight: "700", color: colors.muted, fontSize: 12 }}>
+            {infoOpen ? "Bilgileri gizle" : `Cari bilgileri${infoRows.length ? ` (${infoRows.length})` : ""}`}
+          </Text>
+        </Pressable>
+        {infoOpen ? (
+          <>
+            {summaryRows.length ? (
+              <View>
+                {summaryRows.map((r) => (
+                  <Muted key={r.key}>{r.label}: {r.value}</Muted>
+                ))}
+              </View>
+            ) : (
+              <Muted>0 fatura · açık {fmtMoney(0)}</Muted>
+            )}
+            {infoRows.map((r) => (
+              <InfoLine key={r.key} label={r.label} value={r.value} />
+            ))}
+          </>
+        ) : null}
+      </Card>
     </Screen>
   );
 }
