@@ -38,6 +38,8 @@ export const MOBILE_MODULES: MobileModule[] = [
   { key: "mesai", path: "/mesai", label: "Mesaim", tab: true },
   { key: "personelim", path: "/personelim", label: "Personelim", tab: true },
   { key: "sevk", path: "/sevk", label: "Depo Sevkiyat" },
+  { key: "installments", path: "/installments", label: "Taksitler" },
+  { key: "cheques", path: "/cheques", label: "Çek & Senet" },
   { key: "contacts", path: "/contacts", label: "Cariler" },
   { key: "invoices", path: "/invoices", label: "Faturalar" },
   { key: "orders", path: "/orders", label: "Siparişler" },
