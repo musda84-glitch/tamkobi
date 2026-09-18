@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import * as Linking from "expo-linking";
+import * as Location from "expo-location";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
@@ -193,7 +195,29 @@ export function ContactFormScreen({ contactId }: { contactId?: string }) {
           <Field label="Adres" testID="cf-address" value={draft.address} onChangeText={(v) => set("address", v)} multiline />
           <Field label="İl" testID="cf-city" value={draft.city} onChangeText={(v) => set("city", v)} />
           <Field label="İlçe" testID="cf-district" value={draft.district} onChangeText={(v) => set("district", v)} />
-          <Field label="Harita / konum linki" testID="cf-location_url" value={draft.location_url} onChangeText={(v) => set("location_url", v)} autoCapitalize="none" />
+          <Field label="Harita / konum linki" testID="cf-location_url" value={draft.location_url} onChangeText={(v) => set("location_url", v)} autoCapitalize="none" placeholder="https://maps.google.com/..." />
+          <PrimaryButton
+            title="Konum bul / işaretle"
+            color={colors.indigo}
+            testID="use-my-location-btn"
+            onPress={async () => {
+              try {
+                const perm = await Location.requestForegroundPermissionsAsync();
+                if (perm.status !== "granted") { setError("Konum izni verilmedi."); return; }
+                const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                const lat = pos.coords.latitude.toFixed(6);
+                const lng = pos.coords.longitude.toFixed(6);
+                set("location_url", `https://www.google.com/maps?q=${lat},${lng}`);
+                setError(null);
+                setMessage("Mevcut konum işaretlendi.");
+              } catch {
+                setError("Konum alınamadı.");
+              }
+            }}
+          />
+          {draft.location_url ? (
+            <PrimaryButton title="Haritada aç" color={colors.primary} testID="open-location-btn" onPress={() => Linking.openURL(draft.location_url)} />
+          ) : null}
         </Card>
       ) : null}
       {tab === "finance" ? (
