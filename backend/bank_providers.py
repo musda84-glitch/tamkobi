@@ -17,11 +17,14 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        "sandbox_url": "https://sandbox-api.kuveytturk.com.tr",
+        "sandbox_url": "https://apitest.kuveytturk.com.tr/prep",
         "live_url": "https://api.kuveytturk.com.tr",
-        "token_path": "/oauth/token",
+        "identity_sandbox_url": "https://idprep.kuveytturk.com.tr",
+        "identity_live_url": "https://id.kuveytturk.com.tr",
+        "token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
-        "fields": ["client_id", "client_secret"],
+        "fields": ["client_id", "client_secret", "private_key", "customer_number"],
+        "hint": "API Market: Identity Server client_credentials (sandbox idprep / canlı id.kuveytturk.com.tr → /api/connect/token). Her API isteği RSA-SHA256 Signature ister — PKCS8 PEM private key yapıştırın. Sandbox API: apitest.kuveytturk.com.tr/prep",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -87,6 +90,8 @@ def has_credentials(conn: dict) -> bool:
             or ((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
             or (conn.get("refresh_token") or "").strip()
         )
+    if conn.get("provider") == "kuveytturk":
+        return bool((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
     return bool(conn.get("client_id") and conn.get("client_secret"))
 
 
@@ -116,6 +121,212 @@ async def _oauth_token(conn: dict) -> str:
         if not token:
             raise RuntimeError("Token yanıtında access_token yok.")
         return token
+
+
+def _kuveyt_identity_host(conn: dict) -> str:
+    meta = PROVIDERS["kuveytturk"]
+    live = conn.get("mode") == "live"
+    return (meta["identity_live_url"] if live else meta["identity_sandbox_url"]).rstrip("/")
+
+
+def _kuveyt_token_urls(conn: dict) -> List[str]:
+    """Identity Server: POST {idhost}/api/connect/token — not api.kuveytturk.com.tr/oauth/token."""
+    urls: List[str] = []
+    custom = (conn.get("token_url") or "").strip().rstrip("/")
+    if custom:
+        urls.append(custom)
+        if not custom.endswith("/token"):
+            urls.append(custom + "/api/connect/token")
+    host = _kuveyt_identity_host(conn)
+    urls.append(host + "/api/connect/token")
+    seen = set()
+    out = []
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out
+
+
+def _kuveyt_normalize_pem(raw: str) -> str:
+    s = (raw or "").strip().replace("\r\n", "\n")
+    if "BEGIN" in s:
+        return s
+    body = "".join(s.split())
+    if not body:
+        return ""
+    wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+    return f"-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----"
+
+
+def _kuveyt_private_key_pem(conn: dict) -> str:
+    """PKCS8 (BEGIN PRIVATE KEY) or PKCS1 (BEGIN RSA PRIVATE KEY). api_key only if it looks like PEM."""
+    for key in ("private_key", "api_key"):
+        raw = (conn.get(key) or "").strip()
+        if not raw:
+            continue
+        if key == "api_key" and "BEGIN" not in raw and "MII" not in raw:
+            continue
+        pem = _kuveyt_normalize_pem(raw)
+        if pem:
+            return pem
+    return ""
+
+
+def _kuveyt_load_private_key(pem: str):
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    try:
+        return load_pem_private_key(pem.encode("utf-8"), password=None)
+    except Exception as e:
+        raise RuntimeError(
+            "Kuveyt Türk RSA özel anahtarı okunamadı. PKCS8 PEM "
+            "(-----BEGIN PRIVATE KEY-----) beklenir. "
+            f"{_err_text(e)}"
+        ) from e
+
+
+def _kuveyt_query_string(params: Optional[Dict[str, Any]]) -> str:
+    """Official SignatureGenerator: ?k=v&k2=v2 in given order, values as-is (not URL-encoded)."""
+    if not params:
+        return ""
+    parts = []
+    for k, v in params.items():
+        if v is None or v == "":
+            continue
+        parts.append(f"{k}={v}")
+    if not parts:
+        return ""
+    return "?" + "&".join(parts)
+
+
+def _kuveyt_sign(access_token: str, pem: str, *, query_string: str = "", json_body: str = "") -> str:
+    """SHA256withRSA over UTF-8 payload, Base64. GET: token.trim()+query; POST: token+jsonBody."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    if json_body:
+        payload = (access_token or "") + json_body
+    else:
+        payload = (access_token or "").strip() + (query_string or "")
+    key = _kuveyt_load_private_key(pem)
+    sig = key.sign(payload.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
+    return base64.b64encode(sig).decode("ascii")
+
+
+def _kuveyt_headers(
+    token: str,
+    conn: dict,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    json_body: Optional[str] = None,
+) -> Dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "LanguageId": "1",
+    }
+    pem = _kuveyt_private_key_pem(conn)
+    if pem:
+        if json_body is not None:
+            headers["Signature"] = _kuveyt_sign(token, pem, json_body=json_body)
+            headers["Content-Type"] = "application/json"
+        else:
+            headers["Signature"] = _kuveyt_sign(token, pem, query_string=_kuveyt_query_string(params))
+    elif json_body is not None:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+async def _kuveyt_access_token(conn: dict) -> str:
+    client_id = (conn.get("client_id") or "").strip()
+    client_secret = (conn.get("client_secret") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("Kuveyt Türk Client ID / Client Secret gerekli (client_credentials).")
+
+    scopes: List[str] = []
+    custom_scope = (conn.get("scope") or "").strip()
+    if custom_scope:
+        scopes.append(custom_scope)
+    for s in ("public", "public accounts", ""):
+        if s not in scopes:
+            scopes.append(s)
+
+    last_err = "Token uç noktası yanıt vermedi."
+    async with httpx.AsyncClient(timeout=20) as client:
+        for url in _kuveyt_token_urls(conn):
+            for scope in scopes:
+                form = {
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+                if scope:
+                    form["scope"] = scope
+                try:
+                    resp = await client.post(
+                        url,
+                        data=form,
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Accept": "application/json",
+                        },
+                    )
+                    if resp.status_code < 400:
+                        data = resp.json() if resp.content else {}
+                        token = (data or {}).get("access_token") or (data or {}).get("accessToken")
+                        if token:
+                            return token
+                        last_err = f"{url} → access_token yok"
+                        continue
+                    last_err = _oauth_error_text(resp, url)
+                    blob = (getattr(resp, "text", None) or "").lower()
+                    if resp.status_code in (400, 401) and "scope" in blob:
+                        continue
+                except Exception as e:
+                    last_err = f"{url} → {_err_text(e)}"
+    raise RuntimeError(
+        "Kuveyt Türk token alınamadı (Identity Server client_credentials). "
+        "Client ID/Secret ve ortamı kontrol edin "
+        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({last_err[:180]})"
+    )
+
+
+async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
+    token = await _kuveyt_access_token(conn)
+    pem = _kuveyt_private_key_pem(conn)
+    extra = " RSA-SHA256 imza anahtarı yok — hesap hareketi için PKCS8 PEM gerekli."
+    if pem:
+        base = _base_url(conn)
+        headers = _kuveyt_headers(token, conn)
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(f"{base}/v1/data/banks", headers=headers)
+            if resp.status_code in (401, 403):
+                detail = _api_error_detail(resp)
+                blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
+                if "sign" in blob or "imza" in blob or resp.status_code == 401:
+                    raise RuntimeError(
+                        f"Kuveyt Türk imza/yetki hatası (HTTP {resp.status_code}). "
+                        "PKCS8 PEM private key ve Signature başlığını kontrol edin. "
+                        f"{detail[:160]}"
+                    )
+            extra = " RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else ""
+    return {
+        "ok": True,
+        "simulated": False,
+        "message": f"Kuveyt Türk Identity Server client_credentials doğrulandı.{extra}",
+        "token_preview": token[:6] + "…",
+    }
+
+
+def _kuveyt_account_suffix(conn: dict) -> str:
+    raw = (conn.get("bank_account_number") or "").strip().replace(" ", "").upper()
+    if not raw or raw == "-":
+        return ""
+    if raw.startswith("TR") and len(raw) >= 16:
+        acct = raw[10:]
+        return acct.lstrip("0") or acct
+    return raw
 
 
 def _enpara_dead_route(resp) -> bool:
@@ -274,6 +485,8 @@ async def test_connection(conn: dict) -> Dict[str, Any]:
     try:
         if conn.get("provider") == "enpara":
             return await _enpara_probe(conn)
+        if conn.get("provider") == "kuveytturk":
+            return await _kuveyt_probe(conn)
         token = await _oauth_token(conn)
         return {"ok": True, "simulated": False, "message": "OAuth2 token alındı. Banka bağlantısı doğrulandı.", "token_preview": token[:6] + "…"}
     except httpx.HTTPStatusError as e:
@@ -882,9 +1095,129 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
 
 
+async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
+    """API Market: Bearer + RSA-SHA256 Signature. GET query string is part of the signed payload."""
+    pem = _kuveyt_private_key_pem(conn)
+    if not pem:
+        raise RuntimeError(
+            "Kuveyt Türk hesap hareketi için RSA private key (PKCS8 PEM) gerekli. "
+            "Developer portalındaki imza anahtarını Düzenle ekranına yapıştırın."
+        )
+    token = await _kuveyt_access_token(conn)
+    base = _base_url(conn)
+    account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
+    suffix = _kuveyt_account_suffix(conn)
+    customer = (conn.get("customer_number") or "").strip()
+    end = datetime.now(timezone.utc)
+    start_d, end_d = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    last_detail = ""
+    balance: Optional[float] = None
+
+    ranges = [
+        {"beginDate": start_d, "endDate": end_d},
+        {"startDate": start_d, "endDate": end_d},
+        {"startDateTime": f"{start_d}T00:00:00", "endDateTime": f"{end_d}T23:59:59"},
+    ]
+    ident: Dict[str, str] = {}
+    if suffix:
+        ident["accountNumber"] = suffix
+        ident["accountSuffix"] = suffix
+    if account:
+        ident["iban"] = account.replace(" ", "").upper()
+    if customer:
+        ident["customerNumber"] = customer
+        ident["customerId"] = customer
+
+    param_sets: List[Dict[str, str]] = []
+    for rng in ranges:
+        param_sets.append(dict(rng))
+        for extra in (
+            {k: ident[k] for k in ("accountNumber",) if k in ident},
+            {k: ident[k] for k in ("iban",) if k in ident},
+            {k: ident[k] for k in ("accountSuffix",) if k in ident},
+            {k: ident[k] for k in ident if k in ("accountNumber", "customerNumber")},
+        ):
+            if extra:
+                param_sets.append({**rng, **extra})
+    seen = set()
+    uniq: List[Dict[str, str]] = []
+    for p in param_sets:
+        key = json.dumps(p, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+
+    paths = ["/v1/accounts/transactions"]
+    if suffix:
+        paths.append(f"/v1/accounts/{suffix}/transactions")
+        paths.append(f"/v1/accounts/{suffix}/accounttransactions")
+
+    async with httpx.AsyncClient(timeout=45) as client:
+        async def _get(path: str, params: Optional[Dict[str, str]] = None):
+            qs_params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
+            headers = _kuveyt_headers(token, conn, params=qs_params or None)
+            url = f"{base}{path}" + _kuveyt_query_string(qs_params)
+            return await client.get(url, headers=headers)
+
+        resp = await _get("/v1/accounts")
+        last_detail = f"GET /v1/accounts HTTP {resp.status_code}: {_api_error_detail(resp)}"
+        if resp.status_code in (401, 403):
+            raise RuntimeError(
+                f"Kuveyt Türk yetkilendirme hatası (HTTP {resp.status_code}). "
+                "client_credentials token ve RSA-SHA256 Signature’ı kontrol edin. "
+                f"{_api_error_detail(resp)[:200]}"
+            )
+        if resp.status_code < 400:
+            try:
+                data = resp.json()
+            except Exception:
+                data = None
+            if data is not None:
+                bal = _extract_balance(data)
+                if bal is not None:
+                    balance = bal
+                rows = _normalize_tx_rows(data)
+                if rows:
+                    return {"transactions": rows, "balance": balance, "access_token": None}
+
+        for path in paths:
+            for params in uniq[:8]:
+                resp = await _get(path, params)
+                last_detail = f"GET {path} HTTP {resp.status_code} ({','.join(params)}): {_api_error_detail(resp)}"
+                if resp.status_code in (401, 403):
+                    raise RuntimeError(
+                        f"Kuveyt Türk yetkilendirme hatası (HTTP {resp.status_code}). "
+                        f"{_api_error_detail(resp)[:200]}"
+                    )
+                if resp.status_code >= 400:
+                    continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    continue
+                bal = _extract_balance(data)
+                if bal is not None:
+                    balance = bal
+                rows = _normalize_tx_rows(data)
+                if rows:
+                    return {"transactions": rows, "balance": balance, "access_token": None}
+                if _ticket_ready(data) is True:
+                    return {"transactions": [], "balance": balance, "access_token": None}
+
+    if balance is not None:
+        return {"transactions": [], "balance": balance, "access_token": None}
+    hint = " Client ID/Secret, PKCS8 PEM ve hesap no/IBAN’ı kontrol edin."
+    if not account and not suffix:
+        hint = " Düzenle → Hesap No/IBAN alanına Kuveyt hesap numaranızı girin."
+    raise RuntimeError(f"Kuveyt Türk hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
+
+
 async def _fetch_live_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
     if conn.get("provider") == "enpara":
         return await _fetch_enpara_statement(conn, since)
+    if conn.get("provider") == "kuveytturk":
+        return await _fetch_kuveyt_transactions(conn, since)
     token = await _oauth_token(conn)
     base = _base_url(conn)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}

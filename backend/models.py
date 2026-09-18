@@ -424,6 +424,7 @@ class BankConnection(BaseDocument):
     refresh_token: Optional[str] = ""
     token_url: Optional[str] = ""
     api_key: Optional[str] = ""
+    private_key: Optional[str] = ""
     customer_number: Optional[str] = ""
     bank_account_number: Optional[str] = ""
     base_url: Optional[str] = ""
