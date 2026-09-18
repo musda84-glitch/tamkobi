@@ -1,5 +1,6 @@
 import { useAuth } from "@/auth/AuthContext";
 import { AccountMenu } from "@/components/AccountMenu";
+import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
@@ -9,7 +10,7 @@ function tabIconColor(color: unknown): string {
 }
 
 export default function TabsLayout() {
-  const { can, moduleOn } = useAuth();
+  const { can, moduleOn, user, activeCompany } = useAuth();
   const show = (path: string) => can(path) && moduleOn(path);
   return (
     <Tabs
@@ -28,6 +29,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Özet",
+          headerTitle: () => <HomeHeaderTitle name={user?.name} company={activeCompany?.name} />,
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
       />
