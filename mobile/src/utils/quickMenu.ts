@@ -17,12 +17,15 @@ export type QuickTile = {
   needsEdit?: boolean;
 };
 
-/** Web hızlı menüdeki işlemler + mevcut mobil modüller. */
+/**
+ * Web hızlı menüdeki işlemler + mevcut mobil modüller.
+ * Sekme çubuğundaki (Saha, Mesaim, Personelim) ve hesap menüsündeki (Ayarlar) girişler burada tekrarlanmaz.
+ */
 export const QUICK_TILES: QuickTile[] = [
   { id: "invoices", label: "Faturalar", path: "/invoices", href: "/invoices", icon: "document-text", tone: "emerald" },
   { id: "contacts", label: "Cariler", path: "/contacts", href: "/contacts", icon: "people", tone: "sky" },
   { id: "orders", label: "Siparişler", path: "/orders", href: "/orders", icon: "cart", tone: "amber" },
-  { id: "banking", label: "Kasa", path: "/banking", href: "/banking", icon: "wallet", tone: "teal" },
+  { id: "banking", label: "Banka & Kasa", path: "/banking", href: "/banking", icon: "wallet", tone: "teal" },
   { id: "expenses", label: "Masraf", path: "/expenses", href: "/expenses", icon: "receipt", tone: "rose" },
   { id: "installments", label: "Taksitler", path: "/installments", href: "/installments", icon: "calendar", tone: "violet" },
   { id: "cheques", label: "Çek & Senet", path: "/cheques", href: "/cheques", icon: "card", tone: "teal" },
@@ -32,11 +35,7 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "stock", label: "Stok", path: "/stock", href: "/stok", icon: "cube", tone: "indigo" },
   { id: "barcode", label: "Barkod", path: "/stock", href: "/stok?scan=1", icon: "barcode", tone: "indigo" },
   { id: "sevk", label: "Depo Sevkiyat", path: "/sevk", href: "/sevk", icon: "cube", tone: "teal" },
-  { id: "saha", label: "Saha", path: "/saha", href: "/saha", icon: "phone-portrait", tone: "orange" },
-  { id: "mesai", label: "Mesaim", path: "/mesai", href: "/mesai", icon: "time", tone: "teal" },
-  { id: "personelim", label: "Personelim", path: "/personelim", href: "/personelim", icon: "person", tone: "violet" },
   { id: "notifications", label: "Bildirimler", path: "/", href: "/notifications", icon: "notifications", tone: "rose", always: true },
-  { id: "settings", label: "Ayarlar", path: "/settings", href: "/settings", icon: "settings", tone: "slate", always: true },
 ];
 
 /** bg: kart zemini, border: ince çerçeve, solid: ikon rozeti, fg: metin / açık zemin ikonu. */
