@@ -60,6 +60,15 @@ export const CONTACT_FIELD_DEFS: { key: string; label: string; kind?: "money" | 
   { key: "notes", label: "Notlar" },
 ];
 
+/** İçe aktarma / entegrasyon artıkları: import_batch_id, bizimhesap_id, opening_balance_source… */
+const TECHNICAL_KEY = /(^|_)(id|uuid|guid|token|hash|batch|checksum)$|^(import|sync|external|integration|migration|legacy)_|_(source|version|revision)$/i;
+const TECHNICAL_VALUE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$|^[0-9a-f]{24,}$/i;
+
+export function isTechnicalField(key: string, value: unknown): boolean {
+  if (TECHNICAL_KEY.test(key)) return true;
+  return typeof value === "string" && TECHNICAL_VALUE.test(value.trim());
+}
+
 function isEmpty(value: unknown): boolean {
   if (value == null) return true;
   if (typeof value === "string" && value.trim() === "") return true;
@@ -124,6 +133,7 @@ export function contactInfoRows(contact: Record<string, unknown> | null | undefi
     if (seen.has(key) || SECRET_OR_INTERNAL.has(key)) continue;
     if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) continue;
     if (isEmpty(raw)) continue;
+    if (isTechnicalField(key, raw)) continue;
     const value = formatContactField(undefined, raw);
     if (!value) continue;
     rows.push({ key, label: key, value });
