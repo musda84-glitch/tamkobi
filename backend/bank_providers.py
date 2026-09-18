@@ -33,7 +33,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime; iban/accountNo opsiyonel). Ticket GET ?ticketNo= (405 ise POST {ticketNo}). Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara istekleri tarayıcıdan gitmez. Client Secret opsiyonel (yenileme). IBAN 26 hane. Production IP 85.95.240.136 whitelist’te olmalı (401 access_denied sıkça IP; 405 METHOD NOT ALLOWED IP değildir).",
+        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime; iban/accountNo opsiyonel). /list POST JSON. Ticket GET /v1/account-statement/ticket?ticketNo= (405 ise POST {ticketNo}). Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara istekleri tarayıcıdan gitmez. Client Secret opsiyonel (yenileme). IBAN 26 hane. Production IP 85.95.240.136 whitelist’te olmalı (401 access_denied sıkça IP; 405 METHOD NOT ALLOWED IP değildir).",
     },
     "qnb": {
         "name": "QNB Open Banking",
