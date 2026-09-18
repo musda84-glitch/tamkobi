@@ -39,14 +39,6 @@ function accountOptionLabel(a) {
   return `${a.bank_name || "—"} — ${a.account_name || "—"} (${typeLabel})`;
 }
 
-function linkedAccountLooksMismatched(c) {
-  const hints = PROVIDER_BANK_HINTS[c?.provider] || [];
-  if (!hints.length) return false;
-  const hay = `${c.linked_account_bank || ""} ${c.linked_account_name || ""}`.toLowerCase();
-  if (!hay.trim()) return false;
-  return !hints.some((h) => hay.includes(h));
-}
-
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const FIELD_LABELS = {
@@ -232,7 +224,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrıdır — <code className="font-mono">api.enpara.com</code> Access Token ile bağlanır. Ekstre: <code className="font-mono">startDateTime</code> / <code className="font-mono">endDateTime</code> (26 haneli IBAN). QNB için ayrı <b>QNB Open Banking</b> sağlayıcısını seçin.
+        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrıdır — Access Token yapıştırın; yoksa Client ID/Secret ile <code className="font-mono">/securedomain/oauth/token</code> kullanılır (<code className="font-mono">/oauth2/accesstoken</code> 404). IBAN 26 hane. QNB için ayrı sağlayıcı.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -242,11 +234,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div>
                 <div className="font-bold text-slate-900 text-sm">{c.provider_name}</div>
                 <div className="text-[11px] text-slate-500">→ {c.linked_account_name}</div>
-                {linkedAccountLooksMismatched(c) && (
-                  <div className="mt-1 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1" data-testid={`conn-link-mismatch-${c.id}`}>
-                    Bağlı hesap bu sağlayıcıya ait gibi görünmüyor. <b>Düzenle</b> ile doğru banka hesabını seçin; Hesaplar sekmesinde <b>ENTEGRE</b> rozeti o hesapta (Kuveyt gibi) görünür.
-                  </div>
-                )}
               </div>
               <div className="flex flex-col items-end gap-1">
                 <StatusBadge status={c.status} />
@@ -408,7 +395,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Enpara QNB'den ayrıdır. API: <b>api.enpara.com</b>. Hareket çekimi <b>GET /v1/account-statement?startDateTime&amp;endDateTime</b> (IBAN tam 26 karakter). POST /ticket 400-1 üretir — kullanılmaz.
+                Enpara token: portal <b>Access Token</b> yapıştırın. OAuth yolu <code className="font-mono">/securedomain/oauth/token</code> (Eski <code className="font-mono">/oauth2/accesstoken</code> 404-EPG96). IBAN 26 karakter.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">

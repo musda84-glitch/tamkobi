@@ -276,3 +276,93 @@ def test_api_error_detail_nested_object_message():
     detail = bp._api_error_detail(resp)
     assert "accountInfo" in detail or "object" in detail
 
+
+def test_enpara_token_url_is_gravitee_am():
+    urls = bp._enpara_token_urls({"provider": "enpara", "mode": "live"})
+    assert urls[0] == "https://api.enpara.com/securedomain/oauth/token"
+    assert all("/oauth2/accesstoken" not in u for u in urls)
+
+
+def test_enpara_refresh_posts_securedomain_oauth():
+    conn = {"provider": "enpara", "mode": "live", "client_id": "cid", "client_secret": "sec"}
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.content = b'{"access_token":"NEWTOK"}'
+    ok.text = '{"access_token":"NEWTOK"}'
+    ok.json = MagicMock(return_value={"access_token": "NEWTOK"})
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=ok)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._enpara_refresh_access_token(conn)
+
+    token = asyncio.run(_run())
+    assert token == "NEWTOK"
+    args, kwargs = mock_client.post.await_args
+    assert args[0] == "https://api.enpara.com/securedomain/oauth/token"
+    assert kwargs["data"]["grant_type"] == "client_credentials"
+
+
+def test_enpara_refresh_skips_404_epg96_then_hits_am():
+    conn = {"provider": "enpara", "mode": "live", "client_id": "cid", "client_secret": "sec", "token_url": "https://api.enpara.com/oauth2/accesstoken"}
+    dead = MagicMock()
+    dead.status_code = 500
+    dead.content = b'"404-EPG96-STATUS"'
+    dead.text = '"404-EPG96-STATUS"'
+    dead.json = MagicMock(side_effect=ValueError("html"))
+
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.content = b'{"access_token":"OK"}'
+    ok.text = '{"access_token":"OK"}'
+    ok.json = MagicMock(return_value={"access_token": "OK"})
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=[dead, ok])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._enpara_refresh_access_token(conn)
+
+    token = asyncio.run(_run())
+    assert token == "OK"
+    posted = [c.args[0] for c in mock_client.post.await_args_list]
+    assert posted[0].endswith("/oauth2/accesstoken")
+    assert any(u.endswith("/securedomain/oauth/token") for u in posted)
+
+
+def test_enpara_ip_block_does_not_refresh():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "client_id": "cid", "client_secret": "sec",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    blocked = MagicMock()
+    blocked.status_code = 403
+    blocked.text = '{"message":"Your IP is not allowed"}'
+    blocked.json = MagicMock(return_value={"message": "Your IP is not allowed"})
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=blocked)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected IP error"
+    except RuntimeError as e:
+        assert "IP" in str(e)
+    mock_client.post.assert_not_called()
+
