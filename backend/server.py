@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from mysql_store import MySQLClient
+from mysql_store import MySQLClient, chunk_list
 from client_ip import request_ip
 import partner_pay
 
@@ -3507,14 +3507,18 @@ async def update_product(product_id: str, updated: Dict[str, Any]):
     return clean_doc(res)
 
 
+BULK_FLAGS_MAX_IDS = 20000
+BULK_FLAGS_CHUNK = 200
+
+
 @api_router.post("/products/bulk-flags")
 async def bulk_product_flags(req: Dict[str, Any]):
-    """Toplu B2B / stok takibi bayrağı güncellemesi."""
+    """Toplu B2B / stok takibi bayrağı güncellemesi (parça parça, büyük seçimler için)."""
     ids = [str(i) for i in (req.get("ids") or []) if i]
     if not ids:
         raise HTTPException(status_code=400, detail="Ürün seçilmedi.")
-    if len(ids) > 2000:
-        raise HTTPException(status_code=400, detail="En fazla 2000 ürün seçilebilir.")
+    if len(ids) > BULK_FLAGS_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"En fazla {BULK_FLAGS_MAX_IDS} ürün seçilebilir.")
     patch: Dict[str, Any] = {}
     if "show_in_b2b" in req:
         patch["show_in_b2b"] = bool(req.get("show_in_b2b"))
@@ -3523,12 +3527,24 @@ async def bulk_product_flags(req: Dict[str, Any]):
     if not patch:
         raise HTTPException(status_code=400, detail="Güncellenecek alan yok (show_in_b2b / track_stock).")
     company_id = req.get("company_id")
-    q: Dict[str, Any] = {"_id": {"$in": ids}}
-    if company_id:
-        q["company_id"] = company_id
-    patch = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
-    result = await db.products.update_many(q, {"$set": patch})
-    return {"status": "success", "matched": result.matched_count, "modified": result.modified_count, "ids": ids, **patch}
+    stamp = datetime.now(timezone.utc).isoformat()
+    patch = {**patch, "updated_at": stamp}
+    matched = 0
+    modified = 0
+    for part in chunk_list(ids, BULK_FLAGS_CHUNK):
+        q: Dict[str, Any] = {"_id": {"$in": part}}
+        if company_id:
+            q["company_id"] = company_id
+        result = await db.products.update_many(q, {"$set": patch})
+        matched += int(getattr(result, "matched_count", 0) or 0)
+        modified += int(getattr(result, "modified_count", 0) or 0)
+    return {
+        "status": "success",
+        "matched": matched,
+        "modified": modified,
+        "count": len(ids),
+        **patch,
+    }
 
 async def _product_usage_labels(product_id: str) -> List[str]:
     """Fatura / sipariş / teklifte geçen stok kartları cari bakiyesini etkilemeden silinemez."""

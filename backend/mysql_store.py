@@ -144,6 +144,21 @@ def loads(raw) -> dict:
     return json.loads(raw)
 
 
+REPLACE_BATCH = 200
+
+
+def chunk_list(items: Optional[Sequence[Any]], size: int = REPLACE_BATCH) -> List[list]:
+    """Split a sequence into slices of `size` (at least 1)."""
+    n = max(1, int(size or 1))
+    seq = list(items or [])
+    return [seq[i:i + n] for i in range(0, len(seq), n)]
+
+
+def has_unique_index(indexes) -> bool:
+    """True when any stored index spec is unique (sku/barcode on products are not)."""
+    return any(bool(unique) for _spec, unique in (indexes or []))
+
+
 _SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DATEISH = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?")
 _PREFIX_RE = re.compile(r"^\^[\w.\-/]+$")
@@ -793,20 +808,29 @@ class MySQLCollection:
             return docs
         return [d for d in docs if match_query(d, query)]
 
+    async def _replace_rows(self, rows: Sequence[Tuple[str, str, str]]):
+        """Batch REPLACE so bulk flag updates do not do one round-trip per product."""
+        packed = list(rows or [])
+        if not packed:
+            return
+        await self._db._ensure()
+        t0 = time.perf_counter()
+        async with self._db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                for part in chunk_list(packed, REPLACE_BATCH):
+                    await cur.executemany(
+                        "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
+                        part,
+                    )
+        _audit_sql("REPLACE", self.name, doc_id=f"{len(packed)}", duration_ms=(time.perf_counter() - t0) * 1000)
+
     async def _save(self, doc: dict):
         await self._db._ensure()
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
         await self._check_unique(doc, exclude_id=None)
-        t0 = time.perf_counter()
-        async with self._db._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
-                    (self.name, str(doc["_id"]), dumps(doc)),
-                )
-        _audit_sql("REPLACE", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
+        await self._replace_rows([(self.name, str(doc["_id"]), dumps(doc))])
 
     async def _delete_ids(self, ids: Sequence[str]) -> int:
         if not ids:
@@ -826,7 +850,7 @@ class MySQLCollection:
 
     async def _check_unique(self, doc: dict, exclude_id):
         indexes = self._db._indexes.get(self.name) or []
-        if not indexes:
+        if not has_unique_index(indexes):
             return
         others = [d for d in await self._load_all() if d.get("_id") != exclude_id and d.get("_id") != doc.get("_id")]
         for spec, unique in indexes:
@@ -901,14 +925,21 @@ class MySQLCollection:
             if upsert:
                 return await self.update_one(query, update, upsert=True)
             return UpdateResult(0, 0, None)
-        modified = 0
+        changed: List[dict] = []
         for old in docs:
             new_doc = apply_update(old, update, query, is_insert=False)
             if new_doc != old:
                 await self._check_unique(new_doc, exclude_id=old.get("_id"))
-                await self._save(new_doc)
-                modified += 1
-        return UpdateResult(len(docs), modified, None)
+                changed.append(new_doc)
+        if changed:
+            rows = []
+            for d in changed:
+                doc = copy.deepcopy(d)
+                if not doc.get("_id"):
+                    doc["_id"] = str(uuid.uuid4())
+                rows.append((self.name, str(doc["_id"]), dumps(doc)))
+            await self._replace_rows(rows)
+        return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
         replacement = copy.deepcopy(replacement)
@@ -1216,18 +1247,26 @@ class SyncMySQLCollection:
             return docs
         return [d for d in docs if match_query(d, query)]
 
+    def _replace_rows(self, rows: Sequence[Tuple[str, str, str]]):
+        packed = list(rows or [])
+        if not packed:
+            return
+        self._db._ensure()
+        t0 = time.perf_counter()
+        with self._db._conn.cursor() as cur:
+            for part in chunk_list(packed, REPLACE_BATCH):
+                cur.executemany(
+                    "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
+                    part,
+                )
+        _audit_sql("REPLACE", self.name, doc_id=f"{len(packed)}", duration_ms=(time.perf_counter() - t0) * 1000)
+
     def _save(self, doc: dict):
         self._db._ensure()
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
-        t0 = time.perf_counter()
-        with self._db._conn.cursor() as cur:
-            cur.execute(
-                "REPLACE INTO docs (collection, id, doc) VALUES (%s,%s,%s)",
-                (self.name, str(doc["_id"]), dumps(doc)),
-            )
-        _audit_sql("REPLACE", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
+        self._replace_rows([(self.name, str(doc["_id"]), dumps(doc))])
         return doc
 
     def find_one(self, query=None, projection=None, sort=None, skip=0):
@@ -1270,13 +1309,20 @@ class SyncMySQLCollection:
         docs = self._load_filtered(query)
         if not docs:
             return self.update_one(query, update, upsert=upsert) if upsert else UpdateResult(0, 0, None)
-        modified = 0
+        changed = []
         for old in docs:
             new_doc = apply_update(old, update, query, is_insert=False)
             if new_doc != old:
-                self._save(new_doc)
-                modified += 1
-        return UpdateResult(len(docs), modified, None)
+                changed.append(new_doc)
+        if changed:
+            rows = []
+            for d in changed:
+                doc = copy.deepcopy(d)
+                if not doc.get("_id"):
+                    doc["_id"] = str(uuid.uuid4())
+                rows.append((self.name, str(doc["_id"]), dumps(doc)))
+            self._replace_rows(rows)
+        return UpdateResult(len(docs), len(changed), None)
 
     def replace_one(self, query, replacement, upsert=False):
         replacement = copy.deepcopy(replacement)
