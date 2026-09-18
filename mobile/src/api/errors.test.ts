@@ -15,6 +15,11 @@ describe("apiErrorMessage", () => {
 
   it("falls back", () => {
     expect(apiErrorMessage(null, "Yok")).toBe("Yok");
-    expect(apiErrorMessage({ message: "Network request failed" }, "Bağlantı yok")).toBe("Bağlantı yok");
+  });
+
+  it("explains transport failures instead of leaking fetch wording", () => {
+    for (const message of ["Failed to fetch", "Network request failed", "Load failed"]) {
+      expect(apiErrorMessage({ message }, "Giriş yapılamadı.")).toMatch(/Sunucuya ulaşılamadı/);
+    }
   });
 });

@@ -34,6 +34,31 @@ export function apiRoot(base: string): string {
   return `${normalizeApiBase(base)}/api`;
 }
 
+export const API_BASE_HEADER = "x-tamkobi-api-base";
+
+declare const __DEV__: boolean | undefined;
+
+function devWebOrigin(): string | null {
+  if (typeof __DEV__ !== "undefined" && __DEV__ === false) return null;
+  if (typeof document === "undefined" || typeof window === "undefined") return null;
+  const origin = window.location?.origin;
+  return origin && /^https?:/i.test(origin) ? origin : null;
+}
+
+/**
+ * Tarayıcı önizlemesinde ERP farklı origin olduğu için CORS'a takılıyor.
+ * Dev sunucusu /api'yi aynı origin üzerinden geçiriyor (metro.config.js); cihaz ve
+ * üretim derlemesi doğrudan API'ye gider.
+ */
+export function requestTarget(base: string, path: string): { url: string; proxiedBase?: string } {
+  const direct = `${apiRoot(base)}${path}`;
+  const origin = devWebOrigin();
+  if (!origin) return { url: direct };
+  const normalized = normalizeApiBase(base);
+  if (normalized === origin) return { url: direct };
+  return { url: `${origin}/api${path}`, proxiedBase: normalized };
+}
+
 /**
  * Sunucu `/api/files/...` gibi göreli yol döner; mobilde <Image> mutlak URL ister.
  * Web resolveImageUrl karşılığı.

@@ -1,5 +1,5 @@
 import { ApiHttpError, apiErrorMessage } from "./errors";
-import { apiRoot, fileUrl, normalizeApiBase } from "./url";
+import { API_BASE_HEADER, apiRoot, fileUrl, normalizeApiBase, requestTarget } from "./url";
 
 export type Query = Record<string, string | number | boolean | null | undefined>;
 
@@ -25,10 +25,11 @@ export async function request<T>(
   path: string,
   opts?: { body?: unknown; query?: Query }
 ): Promise<T> {
-  const url = `${apiRoot(client.baseUrl)}${withQuery(path, opts?.query)}`;
+  const { url, proxiedBase } = requestTarget(client.baseUrl, withQuery(path, opts?.query));
   const headers: Record<string, string> = { Accept: "application/json" };
   if (opts?.body !== undefined) headers["Content-Type"] = "application/json";
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
+  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -57,9 +58,10 @@ export async function request<T>(
 
 /** Multipart yükleme: Content-Type'ı fetch kendisi (boundary ile) koyar. */
 export async function upload<T>(client: ApiClient, path: string, form: FormData, query?: Query): Promise<T> {
-  const url = `${apiRoot(client.baseUrl)}${withQuery(path, query)}`;
+  const { url, proxiedBase } = requestTarget(client.baseUrl, withQuery(path, query));
   const headers: Record<string, string> = { Accept: "application/json" };
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
+  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
   let res: Response;
   try {
     res = await fetch(url, { method: "POST", headers, body: form });
