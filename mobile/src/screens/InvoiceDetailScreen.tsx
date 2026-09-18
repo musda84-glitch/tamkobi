@@ -4,10 +4,13 @@ import React, { useCallback, useState } from "react";
 import { Alert, Platform, Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
+import { splitPaymentTarget } from "../utils/contactDraft";
+import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
 import {
   canDeleteInvoice,
   E_TYPES,
@@ -17,8 +20,6 @@ import {
 } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
-
-type BankAccount = { id?: string; _id?: string; account_name?: string; bank_name?: string; type?: string; currency?: string };
 
 function confirmAction(title: string, msg: string, onYes: () => void) {
   if (Platform.OS === "web") {
@@ -37,6 +38,7 @@ export function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [accountId, setAccountId] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -62,11 +64,16 @@ export function InvoiceDetailScreen() {
 
   const loadAccounts = useCallback(async () => {
     try {
-      const rows = await get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId });
+      const [rows, pars] = await Promise.all([
+        get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
+      ]);
       setAccounts(rows || []);
+      setPartners(pars || []);
       setAccountId((prev) => prev || (rows?.length ? idOf(rows[0]) : ""));
     } catch {
       setAccounts([]);
+      setPartners([]);
     }
   }, [client, companyId]);
 
@@ -205,19 +212,15 @@ export function InvoiceDetailScreen() {
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Tahsilat / ödeme</Text>
           <Field label="Tutar" testID="inv-pay-amount" value={payAmount} onChangeText={setPayAmount} keyboardType="decimal-pad" />
-          {accounts.length ? (
-            <>
-              <Muted>Kasa / banka</Muted>
-              {accounts.slice(0, 12).map((a) => (
-                <ListRow
-                  key={idOf(a)}
-                  title={a.account_name || a.bank_name || "Hesap"}
-                  subtitle={[a.type, a.currency].filter(Boolean).join(" · ")}
-                  onPress={() => setAccountId(idOf(a))}
-                />
-              ))}
-              {accountId ? <Muted>Seçili hesap: {accounts.find((a) => idOf(a) === accountId)?.account_name || accountId}</Muted> : null}
-            </>
+          {accounts.length || partners.length ? (
+            <GroupedSelect
+              label={inv.invoice_type === "sales" ? "Kasa / banka / POS / ortak (tahsilat)" : "Kasa / banka / kart / ortak"}
+              testID="inv-pay-account-select"
+              value={accountId}
+              onChange={setAccountId}
+              emptyLabel="Hesapsız — cariye işle"
+              groups={paymentTargetGroups(accounts, partners, { collectableOnly: inv.invoice_type === "sales" })}
+            />
           ) : <Muted>Hesap yok — tutar cariye işlenir.</Muted>}
           <PrimaryButton
             title={busy ? "Kaydediliyor…" : "Tahsilatı kaydet"}
@@ -227,8 +230,13 @@ export function InvoiceDetailScreen() {
             onPress={() => {
               const amount = Number(String(payAmount).replace(",", "."));
               if (!(amount > 0)) { setError("Lütfen geçerli bir tutar girin."); return; }
+              const target = splitPaymentTarget(accountId);
               run(async () => {
-                await post(client, `/invoices/${id}/record-payment`, { amount, account_id: accountId || undefined });
+                await post(client, `/invoices/${id}/record-payment`, {
+                  amount,
+                  account_id: target.account_id || undefined,
+                  partner_id: target.partner_id || undefined,
+                });
                 setMessage("Tahsilat/ödeme kaydı işlendi.");
               }, "Ödeme kaydedilemedi.");
             }}
