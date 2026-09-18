@@ -79,7 +79,11 @@ function n(v: string): number {
 }
 
 export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
-  const { type: filterType } = useLocalSearchParams<{ type?: string }>();
+  const { type: filterType, contact_id: preContactId, contact_name: preContactName } = useLocalSearchParams<{
+    type?: string;
+    contact_id?: string;
+    contact_name?: string;
+  }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can("/invoices", "edit");
   const isNew = !invoiceId;
@@ -145,6 +149,33 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   useEffect(() => { loadLookups(); }, [loadLookups]);
   useEffect(() => { loadInvoice(); }, [loadInvoice]);
+
+  useEffect(() => {
+    if (!isNew || !preContactId) return;
+    const found = contacts.find((c) => idOf(c) === String(preContactId));
+    setDraft((d) => {
+      if (d.contact_id) return d;
+      if (found) {
+        const due = found.payment_term_days ? plusDaysIso(d.issue_date, Number(found.payment_term_days)) : d.due_date;
+        return {
+          ...d,
+          contact_id: idOf(found),
+          contact_name: found.name,
+          e_type: eTypeForContact(d, found.is_e_invoice_user),
+          due_date: due,
+        };
+      }
+      if (preContactName) {
+        return {
+          ...d,
+          contact_id: String(preContactId),
+          contact_name: String(preContactName),
+          e_type: eTypeForContact(d, false),
+        };
+      }
+      return d;
+    });
+  }, [contacts, isNew, preContactId, preContactName]);
 
   const custHits = useMemo(() => {
     const q = custQ.trim().toLowerCase();

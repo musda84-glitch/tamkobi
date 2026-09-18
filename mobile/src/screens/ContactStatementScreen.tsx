@@ -1,0 +1,123 @@
+import { useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Platform, Share, Text, View } from "react-native";
+import { get, post } from "../api/client";
+import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { colors } from "../theme";
+import { buildStatementRows, smsBalanceText, statementText, waDigits } from "../utils/contactStatement";
+import { fmtMoney } from "../utils/money";
+
+export function ContactStatementScreen() {
+  const { client, companyId, activeCompany } = useAuth();
+  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const st = await get<any>(client, `/contacts/${id}/statement`);
+      setData(st);
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Ekstre yüklenemedi."));
+    }
+  }, [client, id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const contact = data?.contact || {};
+  const rows = useMemo(() => buildStatementRows(data || {}), [data]);
+  const text = useMemo(
+    () => statementText({ name: contact.name || name, balance: contact.balance }, rows, activeCompany?.name),
+    [activeCompany?.name, contact.balance, contact.name, name, rows]
+  );
+  const last = rows.length ? rows[rows.length - 1].balance : Number(contact.balance) || 0;
+
+  const share = async () => {
+    try {
+      await Share.share({ message: text });
+    } catch {
+      setError("Paylaşılamadı.");
+    }
+  };
+
+  const copy = async () => {
+    try {
+      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        setMessage("Ekstre metni kopyalandı.");
+        return;
+      }
+      await Share.share({ message: text });
+    } catch {
+      setError("Kopyalanamadı.");
+    }
+  };
+
+  const sendWhatsApp = async () => {
+    const phone = waDigits(contact.phone);
+    if (!phone) { setError("Carinin telefon numarası yok."); return; }
+    Linking.openURL(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`);
+    try {
+      await post(client, "/comm/whatsapp/logs", {
+        company_id: companyId,
+        contact_id: id,
+        contact_name: contact.name,
+        phone: contact.phone,
+        message: text,
+        direction: "outbound",
+      });
+    } catch { /* log optional */ }
+  };
+
+  return (
+    <Screen onRefresh={load}>
+      <H1>{contact.name || name || "Cari"} — ekstre</H1>
+      <Muted>VKN: {contact.tax_number_or_id || "—"} · Bakiye {fmtMoney(contact.balance)}</Muted>
+      <ErrorBanner message={error} />
+      {message ? <Muted>{message}</Muted> : null}
+      <PrimaryButton title="Ekstre gönder (paylaş)" onPress={share} color={colors.primary} testID="statement-share" />
+      <PrimaryButton title="WhatsApp ile gönder" onPress={sendWhatsApp} color="#128C7E" testID="statement-whatsapp" />
+      <PrimaryButton
+        title="E-posta ile gönder"
+        color={colors.primary}
+        testID="statement-email"
+        onPress={() => {
+          if (!contact.email) { setError("Carinin e-postası yok."); return; }
+          Linking.openURL(`mailto:${contact.email}?subject=${encodeURIComponent(`Cari Hesap Ekstresi - ${contact.name}`)}&body=${encodeURIComponent(text)}`);
+        }}
+      />
+      <PrimaryButton
+        title="SMS ile gönder"
+        color={colors.indigo}
+        testID="statement-sms"
+        onPress={() => {
+          const phone = contact.phone;
+          if (!phone) { setError("Carinin telefon numarası yok."); return; }
+          Linking.openURL(`sms:${phone}?body=${encodeURIComponent(smsBalanceText(contact))}`);
+        }}
+      />
+      <PrimaryButton title="Metni kopyala" onPress={copy} testID="statement-copy" />
+      <Card testID="statement-table">
+        <Muted>Hesap hareketleri</Muted>
+        {!rows.length ? <Muted>Hareket yok.</Muted> : rows.map((r, idx) => (
+          <ListRow
+            key={`${r.kind}-${idx}`}
+            testID={`statement-row-${r.kind}-${idx}`}
+            title={r.doc}
+            subtitle={r.date}
+            right={`${r.debit ? `B ${fmtMoney(r.debit)}` : `A ${fmtMoney(r.credit)}`}`}
+          />
+        ))}
+        <View style={{ paddingTop: 8 }}>
+          <Text style={{ fontWeight: "800", color: last > 0 ? "#BE123C" : colors.primary }}>
+            Güncel bakiye {fmtMoney(Math.abs(last))} {last > 0 ? "Borçlu" : last < 0 ? "Alacaklı" : ""}
+          </Text>
+        </View>
+      </Card>
+    </Screen>
+  );
+}
