@@ -161,6 +161,19 @@ export type Order = {
   notes?: string;
   shipping_address?: string;
   city?: string;
+  cancel_request?: { status?: string; reason?: string; at?: string } | null;
+  tracking?: {
+    carrier?: string;
+    tracking_number?: string;
+    tracking_url?: string;
+    status?: string;
+    step?: number;
+    steps?: string[];
+    estimated_delivery?: string;
+    delivered_at?: string;
+    shipped_at?: string;
+    is_late?: boolean;
+  } | null;
 };
 
 export type Product = {
@@ -301,6 +314,8 @@ export type B2BInstallment = {
   days_left?: number | null;
 };
 
+export type B2BLegalLink = { slug: string; title: string; path?: string };
+
 export type B2BPortal = {
   contact: B2BContact;
   company: B2BCompany;
@@ -309,4 +324,5 @@ export type B2BPortal = {
   invoices: B2BInvoice[];
   installments: B2BInstallment[];
   settings: B2BSettings;
+  legal?: B2BLegalLink[];
 };
