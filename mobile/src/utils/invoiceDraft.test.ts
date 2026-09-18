@@ -13,6 +13,8 @@ import {
   plusDaysIso,
   remainingAmount,
   validateInvoiceDraft,
+  WITHHOLDING,
+  withholdingSelectGroups,
 } from "./invoiceDraft";
 import { computeLine, emptyLine } from "./documentLines";
 
@@ -128,6 +130,23 @@ describe("invoiceDraft", () => {
     expect(remainingAmount({ grand_total: 120, paid_amount: 20 })).toBe(100);
     expect(parseWithholding("0.5|602")).toEqual({ withholding_rate: 0.5, withholding_code: "602" });
     expect(plusDaysIso("2026-01-01", 15)).toBe("2026-01-16");
+  });
+
+  it("groups withholding options by rate for the dropdown", () => {
+    const groups = withholdingSelectGroups();
+    expect(groups[0]).toEqual({ label: "Tevkifat", options: [{ value: "", label: "Tevkifat yok" }] });
+    expect(groups.slice(1).map((g) => g.label)).toEqual([
+      "2/10 tevkifat",
+      "3/10 tevkifat",
+      "5/10 tevkifat",
+      "7/10 tevkifat",
+      "9/10 tevkifat",
+      "10/10 tevkifat",
+    ]);
+    const five = groups.find((g) => g.label === "5/10 tevkifat");
+    expect(five?.options).toContainEqual({ value: "0.5|602", label: "Etüt, plan-proje (602)" });
+    const all = groups.flatMap((g) => g.options);
+    expect(all).toHaveLength(WITHHOLDING.length);
   });
 
   it("invoiceTotals apply general discount and withholding", () => {

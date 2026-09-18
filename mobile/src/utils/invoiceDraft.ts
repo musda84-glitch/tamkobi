@@ -85,6 +85,24 @@ export const WITHHOLDING: { value: string; rate: number; code: string; label: st
   { value: "0.5|615", rate: 0.5, code: "615", label: "5/10 – Reklam hizmetleri (615)" },
 ];
 
+/** Uzun tevkifat listesini orana göre grupla; "2/10 – " öneki grup başlığına taşınır. */
+export function withholdingSelectGroups(): { label: string; options: { value: string; label: string }[] }[] {
+  const groups: { label: string; options: { value: string; label: string }[] }[] = [];
+  const none = WITHHOLDING.find((w) => !w.value);
+  if (none) groups.push({ label: "Tevkifat", options: [{ value: "", label: none.label }] });
+  const byRate = new Map<number, { value: string; label: string }[]>();
+  for (const w of WITHHOLDING) {
+    if (!w.value) continue;
+    const options = byRate.get(w.rate) || [];
+    options.push({ value: w.value, label: w.label.replace(/^\s*\d+\/10\s*[–-]\s*/, "") });
+    byRate.set(w.rate, options);
+  }
+  for (const rate of [...byRate.keys()].sort((a, b) => a - b)) {
+    groups.push({ label: `${Math.round(rate * 10)}/10 tevkifat`, options: byRate.get(rate) || [] });
+  }
+  return groups;
+}
+
 export const INVOICE_FILTERS = [
   { key: "all", label: "Tümü" },
   { key: "sales", label: "Satış" },
