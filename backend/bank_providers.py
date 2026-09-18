@@ -8,9 +8,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import random
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 
@@ -33,7 +36,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime; iban/accountNo opsiyonel). /list POST JSON. Ticket GET /v1/account-statement/ticket?ticketNo= (405 ise POST {ticketNo}). Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara istekleri tarayıcıdan gitmez. Client Secret opsiyonel (yenileme). IBAN 26 hane. Production IP 85.95.240.136 whitelist’te olmalı (401 access_denied sıkça IP; 405 METHOD NOT ALLOWED IP değildir).",
+        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime; iban/accountNo opsiyonel). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. IBAN 26 hane. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -674,25 +677,25 @@ def _simulate_transactions(conn: dict, since: datetime) -> List[Dict[str, Any]]:
     return txs
 
 
-def _dig_list(raw: Any, keys: tuple) -> Optional[list]:
-    if isinstance(raw, list):
-        return raw
+def _ci_get(raw: Any, *names: str) -> Any:
+    """Case-insensitive dict get; skips empty values."""
     if not isinstance(raw, dict):
         return None
-    for k in keys:
-        v = raw.get(k)
-        if isinstance(v, list):
+    wanted = [n.lower().replace("_", "") for n in names]
+    by_norm = {str(k).lower().replace("_", ""): v for k, v in raw.items()}
+    for n in wanted:
+        v = by_norm.get(n)
+        if v is not None and v != "":
             return v
-        if isinstance(v, dict):
-            nested = _dig_list(v, keys)
-            if nested is not None:
-                return nested
     return None
 
 
 def _parse_amount(val: Any) -> float:
     if val is None or val == "":
         return 0.0
+    if isinstance(val, dict):
+        inner = _ci_get(val, "amount", "value", "tutar")
+        return _parse_amount(inner) if inner is not None else 0.0
     if isinstance(val, (int, float)):
         return float(val)
     s = str(val).strip().replace(" ", "").replace("₺", "").replace("TL", "")
@@ -720,12 +723,96 @@ def _normalize_date(val: Any) -> str:
     return s[:10]
 
 
+_TX_HINT_KEYS = {
+    "amount", "tutar", "transactionamount", "creditamount", "debitamount",
+    "alacak", "borc", "borç", "islemtutari", "islemtutar",
+    "transactiondate", "islemtarihi", "bookingdate", "valuedate", "tarih",
+    "accountingdate", "dekonttarihi",
+    "aciklama", "description", "explanation", "accounttransactionexplanation",
+    "fisno", "referansno", "referencenumber",
+}
+
+_TX_LIST_KEYS = (
+    "transactions", "items", "accountTransactions", "statementLines", "lines",
+    "hareketler", "accountStatement", "statement", "results", "content",
+    "transactionList", "transactionTable", "accountStatementList",
+    "hesapHareketleri", "ekstre", "ekstreHareketleri", "value", "data", "list",
+)
+
+
+def _row_tx_score(row: dict) -> int:
+    keys = {str(k).lower().replace("_", "") for k in row}
+    return sum(1 for h in _TX_HINT_KEYS if h in keys)
+
+
+def _dig_list(raw: Any, keys: tuple = _TX_LIST_KEYS) -> Optional[list]:
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    for k in keys:
+        v = _ci_get(raw, k)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            nested = _dig_list(v, keys)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _find_tx_rows(raw: Any, depth: int = 0) -> Optional[list]:
+    """Find the list that looks like bank movements, including PascalCase QNB wrappers."""
+    named = _dig_list(raw)
+    if isinstance(named, list) and named and all(isinstance(x, dict) for x in named[:3]):
+        if sum(_row_tx_score(x) for x in named[:8] if isinstance(x, dict)) >= max(1, min(3, len(named[:8]))):
+            return named
+        if named and _row_tx_score(named[0]) >= 1:
+            return named
+    best: Optional[list] = None
+    best_score = 0
+
+    def walk(node: Any, d: int) -> None:
+        nonlocal best, best_score
+        if d > 8:
+            return
+        if isinstance(node, list):
+            dicts = [x for x in node if isinstance(x, dict)]
+            if dicts:
+                score = sum(_row_tx_score(x) for x in dicts[:8])
+                if score >= len(dicts[:8]) and score > best_score:
+                    best, best_score = dicts, score
+            for x in node[:40]:
+                walk(x, d + 1)
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v, d + 1)
+
+    walk(raw, depth)
+    return named if best is None else best
+
+
+def _has_explicit_empty_tx_list(raw: Any, depth: int = 0) -> bool:
+    if depth > 6:
+        return False
+    if isinstance(raw, list):
+        return len(raw) == 0
+    if not isinstance(raw, dict):
+        return False
+    for k in _TX_LIST_KEYS:
+        v = _ci_get(raw, k)
+        if isinstance(v, list) and len(v) == 0:
+            return True
+    for nest_name in ("data", "value", "result", "body", "return", "content"):
+        nest = _ci_get(raw, nest_name)
+        if nest is not None and _has_explicit_empty_tx_list(nest, depth + 1):
+            return True
+    return False
+
+
 def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
-    rows = _dig_list(raw, (
-        "value", "data", "transactions", "items", "accountTransactions",
-        "statementLines", "lines", "hareketler", "Hareketler", "accountStatement",
-        "statement", "results", "content", "transactionList",
-    ))
+    rows = _find_tx_rows(raw)
     if rows is None:
         return []
     txs = []
@@ -733,30 +820,33 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
         if not isinstance(r, dict):
             continue
         # Ticket / durum satırlarını hareket sanma
-        status = str(r.get("status") or r.get("ticketStatus") or r.get("state") or "").lower()
+        status = str(_ci_get(r, "status", "ticketStatus", "state") or "").lower()
         if status in ("pending", "processing", "queued", "waiting", "inprogress", "in_progress") and not (
-            r.get("amount") or r.get("tutar") or r.get("Amount") or r.get("transactionAmount")
+            _ci_get(r, "amount", "tutar", "Amount", "transactionAmount")
         ):
             continue
         amount = _parse_amount(
-            r.get("amount") or r.get("Amount") or r.get("transactionAmount")
-            or r.get("tutar") or r.get("Tutar") or r.get("islemtutari") or r.get("islemTutari")
-            or r.get("creditAmount") or r.get("debitAmount")
+            _ci_get(
+                r, "amount", "Amount", "transactionAmount", "tutar", "Tutar",
+                "islemtutari", "islemTutari", "creditAmount", "debitAmount",
+            )
         )
-        credit = _parse_amount(r.get("creditAmount") or r.get("alacak") or r.get("Alacak") or r.get("credit"))
-        debit = _parse_amount(r.get("debitAmount") or r.get("borc") or r.get("Borc") or r.get("borç") or r.get("debit"))
+        credit = _parse_amount(_ci_get(r, "creditAmount", "alacak", "Alacak", "credit", "alacakTutar"))
+        debit = _parse_amount(_ci_get(r, "debitAmount", "borc", "Borc", "borç", "debit", "borcTutar"))
         if credit and not debit:
             amount, direction = credit, "credit"
         elif debit and not credit:
             amount, direction = debit, "debit"
         else:
             direction_hint = str(
-                r.get("direction") or r.get("creditDebitIndicator") or r.get("type")
-                or r.get("islemYonu") or r.get("hareketTipi") or r.get("borcAlacak") or ""
+                _ci_get(
+                    r, "direction", "creditDebitIndicator", "type", "transactionType",
+                    "islemYonu", "hareketTipi", "borcAlacak",
+                ) or ""
             ).lower()
-            if direction_hint in ("credit", "alacak", "a", "in", "inflow", "cr", "c", "+"):
+            if direction_hint in ("credit", "alacak", "a", "in", "inflow", "cr", "c", "+", "1"):
                 direction = "credit"
-            elif direction_hint in ("debit", "borc", "borç", "b", "out", "outflow", "dr", "d", "-"):
+            elif direction_hint in ("debit", "borc", "borç", "b", "out", "outflow", "dr", "d", "-", "2"):
                 direction = "debit"
             else:
                 direction = "credit" if amount >= 0 else "debit"
@@ -764,82 +854,151 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
         if amount == 0:
             continue
         date = _normalize_date(
-            r.get("transactionDate") or r.get("bookingDate") or r.get("date") or r.get("valueDate")
-            or r.get("islemTarihi") or r.get("IslemTarihi") or r.get("valorTarihi") or r.get("tarih")
+            _ci_get(
+                r, "transactionDate", "bookingDate", "date", "valueDate",
+                "islemTarihi", "IslemTarihi", "valorTarihi", "tarih",
+                "accountingDate", "dekontTarihi",
+            )
         )
         txs.append({
             "external_id": str(
-                r.get("transactionId") or r.get("id") or r.get("referenceNo") or r.get("bookingId")
-                or r.get("fisNo") or r.get("dekontNo") or r.get("referansNo") or r.get("refNo")
+                _ci_get(
+                    r, "transactionId", "id", "referenceNo", "bookingId",
+                    "fisNo", "dekontNo", "referansNo", "refNo", "referenceNumber",
+                )
                 or hashlib.sha256(str(r).encode()).hexdigest()[:16]
             ),
             "date": date,
             "amount": amount,
             "direction": direction,
             "description": (
-                r.get("description") or r.get("explanation") or r.get("narrative")
-                or r.get("aciklama") or r.get("Aciklama") or r.get("islemAciklama") or "Banka Hareketi"
+                _ci_get(
+                    r, "description", "explanation", "narrative", "aciklama",
+                    "Aciklama", "islemAciklama", "accountTransactionExplanation",
+                ) or "Banka Hareketi"
             ),
             "counterparty": (
-                r.get("counterpartyName") or r.get("senderName") or r.get("counterparty")
-                or r.get("karsiHesapAdi") or r.get("gonderenAdi") or r.get("aliciAdi") or ""
+                _ci_get(
+                    r, "counterpartyName", "senderName", "counterparty",
+                    "karsiHesapAdi", "gonderenAdi", "aliciAdi",
+                ) or ""
             ),
-            "currency": r.get("currency") or r.get("currencyCode") or r.get("paraBirimi") or "TRY",
+            "currency": _ci_get(r, "currency", "currencyCode", "paraBirimi") or "TRY",
             "is_simulated": False,
         })
     return txs
 
 
-def _extract_balance(raw: Any) -> Optional[float]:
-    if not isinstance(raw, dict):
-        return None
-    candidates = (
-        raw.get("balance"), raw.get("currentBalance"), raw.get("availableBalance"),
-        raw.get("bakiye"), raw.get("Bakiye"), raw.get("guncelBakiye"), raw.get("hesapBakiyesi"),
-        raw.get("ledgerBalance"), raw.get("accountBalance"),
-    )
-    for c in candidates:
-        if isinstance(c, dict):
-            c = c.get("amount") or c.get("value") or c.get("tutar")
-        if c is not None and c != "":
-            return _parse_amount(c)
-    data = raw.get("data") if isinstance(raw.get("data"), dict) else None
-    if data:
-        return _extract_balance(data)
+def _extract_balance(raw: Any, prefer_iban: str = "") -> Optional[float]:
+    prefer = (prefer_iban or "").replace(" ", "").upper()
+    found_pref: Optional[float] = None
+    found_hi: Optional[float] = None
+    found_lo: Optional[float] = None
+    hi = {"usablebalance", "availablebalance", "guncelbakiye", "hesapbakiyesi"}
+    lo = {"currentbalance", "ledgerbalance", "accountbalance", "endbalance", "bakiye", "balance"}
+
+    def _as_amount(v: Any) -> Optional[float]:
+        if v is None or v == "":
+            return None
+        return _parse_amount(v)
+
+    def consider(d: dict) -> None:
+        nonlocal found_pref, found_hi, found_lo
+        iban = str(_ci_get(d, "iban") or "").replace(" ", "").upper()
+        for k, v in d.items():
+            lk = str(k).lower().replace("_", "")
+            if lk not in hi and lk not in lo:
+                continue
+            parsed = _as_amount(v)
+            if parsed is None:
+                continue
+            matched = bool(prefer and iban and (iban == prefer or iban.endswith(prefer[-10:] if len(prefer) >= 10 else prefer)))
+            if matched and found_pref is None:
+                found_pref = parsed
+            elif lk in hi and found_hi is None:
+                found_hi = parsed
+            elif lk in lo and found_lo is None:
+                found_lo = parsed
+
+    def walk(node: Any, depth: int) -> None:
+        if depth > 10:
+            return
+        if isinstance(node, dict):
+            consider(node)
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for it in node[:80]:
+                walk(it, depth + 1)
+
+    walk(raw, 0)
+    for x in (found_pref, found_hi, found_lo):
+        if x is not None:
+            return x
     return None
 
 
-def _ticket_id_from(data: Any) -> Optional[str]:
+def _ticket_id_from(data: Any, depth: int = 0) -> Optional[str]:
+    """Ticket no only — generic `id` is NOT a ticket (correlation / statement id)."""
+    if depth > 8:
+        return None
+    if isinstance(data, list):
+        for item in data[:30]:
+            tid = _ticket_id_from(item, depth + 1)
+            if tid:
+                return tid
+        return None
     if not isinstance(data, dict):
         return None
-    for k in ("ticketNo", "ticketId", "ticket", "id", "requestId", "jobId"):
-        v = data.get(k)
-        if v and not isinstance(v, (dict, list)):
-            return str(v)
-    for nest in (data.get("data"), data.get("value"), data.get("result")):
-        tid = _ticket_id_from(nest) if isinstance(nest, dict) else None
-        if tid:
-            return tid
+    for k, v in data.items():
+        lk = str(k).lower().replace("_", "")
+        if lk in ("ticketno", "ticketid", "ticket", "ticketnumber", "requestticket"):
+            if v and not isinstance(v, (dict, list)):
+                s = str(v).strip()
+                if s and s.lower() not in ("null", "none", "0"):
+                    return s
+    for v in data.values():
+        if isinstance(v, (dict, list)):
+            tid = _ticket_id_from(v, depth + 1)
+            if tid:
+                return tid
     return None
 
 
 def _ticket_ready(data: Any) -> Optional[bool]:
-    """True=hazır, False=bekliyor, None=bilinmiyor."""
+    """True=ekstre hazır, False=bekliyor, None=bilinmiyor.
+
+    Enpara/QNB `status: SUCCESS` istek kabulüdür, boş ekstre değildir — ticket poll gerekir.
+    """
     if not isinstance(data, dict):
         return None
-    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    nested = _ci_get(data, "data", "result", "value")
+    nested = nested if isinstance(nested, dict) else {}
     status = str(
-        data.get("status")
-        or data.get("ticketStatus")
-        or data.get("state")
-        or nested.get("status")
+        _ci_get(data, "status", "ticketStatus", "state")
+        or _ci_get(nested, "status", "ticketStatus", "state")
         or ""
     ).lower()
-    if status in ("completed", "complete", "ready", "done", "success", "succeeded", "finished", "ok", "hazir", "tamamlandi", "tamamlandı"):
+    if status in (
+        "completed", "complete", "ready", "done", "finished",
+        "hazir", "tamamlandi", "tamamlandı", "processed",
+    ):
         return True
-    if status in ("pending", "processing", "queued", "waiting", "inprogress", "in_progress", "running", "created", "new"):
+    if status in (
+        "pending", "processing", "queued", "waiting", "inprogress", "in_progress",
+        "running", "created", "new", "accepted", "received",
+    ):
         return False
     return None
+
+
+def _enpara_body_hint(data: Any) -> str:
+    if isinstance(data, dict):
+        keys = ",".join(str(k) for k in list(data.keys())[:14])
+        return f"anahtarlar={keys or '—'}"
+    if isinstance(data, list):
+        return f"liste({len(data)})"
+    return type(data).__name__
 
 
 def _enpara_account_ref(conn: dict) -> str:
@@ -946,6 +1105,18 @@ def _enpara_payload_variants(start: datetime, end: datetime, account: str, custo
     del customer  # şemada yok; imza uyumu
     iban = _enpara_iban_26(account)
     acct_no = _enpara_account_no(account)
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Istanbul")
+    except Exception:
+        tz = timezone(timedelta(hours=3))
+
+    def _tr(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz)
+
+    start, end = _tr(start), _tr(end)
     start_d, end_d = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
     ranges = [
         (f"{start_d}T00:00:00", f"{end_d}T23:59:59"),
@@ -1061,12 +1232,18 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     payloads = _enpara_payload_variants(since, end, account, customer)
     last_detail = ""
     got_ok_empty = False
+    ticket_timeout = False
+    unparsed_hint = ""
+    notice = ""
     balance: Optional[float] = None
     refreshed_token: Optional[str] = token if token and token != stored_token else None
     best_400 = ""
 
     def _pack(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"transactions": rows, "balance": balance, "access_token": refreshed_token}
+        out: Dict[str, Any] = {
+            "transactions": rows, "balance": balance, "access_token": refreshed_token,
+            "notice": notice,
+        }
         if refreshed_token and conn.get("refresh_token"):
             out["refresh_token"] = conn.get("refresh_token")
         return out
@@ -1101,9 +1278,9 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 resp = await client.post(url, headers=post_headers, json=body)
             return resp
 
-        def _consume(data: Any, *, as_statement: bool = True) -> Optional[Dict[str, Any]]:
+        def _consume(data: Any, *, as_statement: bool = True, from_ticket: bool = False) -> Optional[Dict[str, Any]]:
             nonlocal balance, got_ok_empty
-            bal = _extract_balance(data)
+            bal = _extract_balance(data, prefer_iban=account)
             if bal is not None:
                 balance = bal
             rows = _normalize_tx_rows(data)
@@ -1112,7 +1289,10 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             ready = _ticket_ready(data)
             if ready is False:
                 return None
-            if as_statement and ready is True:
+            if as_statement and _has_explicit_empty_tx_list(data):
+                got_ok_empty = True
+                return _pack([])
+            if as_statement and from_ticket and ready is True:
                 got_ok_empty = True
                 return _pack([])
             return None
@@ -1126,7 +1306,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     best_400 = last_detail
 
         async def _handle_statement(resp, payload: dict, label: str) -> Optional[Dict[str, Any]]:
-            nonlocal got_ok_empty, last_detail
+            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout
             if resp.status_code in (401, 403):
                 _enpara_raise_auth(resp)
             keys = ",".join((payload or {}).keys())
@@ -1138,25 +1318,31 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 data = resp.json()
             except Exception:
                 data = {}
+            logger.info("enpara %s → %s", label, _enpara_body_hint(data))
             out = _consume(data, as_statement=True)
             if out and out.get("transactions"):
-                return out
-            if out is not None and _ticket_ready(data) is True:
                 return out
             tid = _ticket_id_from(data)
             if tid:
                 polled = await _poll_ticket(tid)
                 if polled:
                     return polled
-            got_ok_empty = True
+                ticket_timeout = True
+                last_detail = f"{label} ticket={tid} henüz hareket döndürmedi: {_enpara_body_hint(data)}"
+                return None
+            if out is not None:
+                return out
+            unparsed_hint = f"{label} HTTP {resp.status_code} {_enpara_body_hint(data)}"
+            last_detail = unparsed_hint
             return None
 
         async def _poll_ticket(ticket_id: str) -> Optional[Dict[str, Any]]:
             nonlocal last_detail
             use_post = False
-            for attempt in range(10):
+            ticket_body = {"ticketNo": ticket_id, "pageNo": "1", "pageSize": "100"}
+            for attempt in range(16):
                 if attempt:
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(2.0)
                 if not use_post:
                     resp = await _get(
                         "/v1/account-statement/ticket",
@@ -1169,7 +1355,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 if use_post:
                     resp = await _post(
                         "/v1/account-statement/ticket",
-                        json_body={"ticketNo": ticket_id},
+                        json_body=ticket_body,
                     )
                     last_detail = f"POST /v1/account-statement/ticket HTTP {resp.status_code}: {_api_error_detail(resp)}"
                 if resp.status_code in (401, 403):
@@ -1182,7 +1368,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     continue
                 if _ticket_ready(data) is False:
                     continue
-                out = _consume(data, as_statement=True)
+                out = _consume(data, as_statement=True, from_ticket=True)
                 if out is not None:
                     return out
             return None
@@ -1198,6 +1384,8 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             out = await _handle_statement(resp, payload, "POST /v1/account-statement")
             if out is not None:
                 return out
+            if ticket_timeout:
+                break
 
         # Katalog GET iddiası: yalnızca POST 405 olursa query-string yedek
         if statement_post_405:
@@ -1207,6 +1395,8 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 out = await _handle_statement(resp, payload, "GET /v1/account-statement")
                 if out is not None:
                     return out
+                if ticket_timeout:
+                    break
 
         # 2) POST /v1/account-statement/list — kayıtlı hesaplar / bakiye (GET production’da 405)
         list_body: Dict[str, Any] = {}
@@ -1234,12 +1424,31 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     out = _consume(data, as_statement=False)
                     if out and out.get("transactions"):
                         return out
-                    bal = _extract_balance(data)
+                    bal = _extract_balance(data, prefer_iban=account)
                     if bal is not None:
                         balance = bal
 
-    if got_ok_empty or balance is not None:
+    if got_ok_empty:
+        notice = notice or " Enpara bu tarih aralığında hareket satırı döndürmedi."
         return _pack([])
+    if balance is not None and not ticket_timeout:
+        if unparsed_hint:
+            notice = " Enpara hareket satırı çözümlenemedi; bakiye kayıtlı hesaptan alındı."
+        return _pack([])
+    if ticket_timeout:
+        if balance is not None:
+            notice = " Ekstre ticket'ı henüz hareket satırı vermedi; bakiye kayıtlı hesaptan alındı. Biraz sonra tekrar senkron deneyin."
+            return _pack([])
+        raise RuntimeError(
+            "Enpara ekstre ticket'ı henüz hareket döndürmedi. Birkaç saniye sonra Senkron'u tekrar deneyin. "
+            f"Son yanıt: {last_detail[:360]}"
+        )
+    if unparsed_hint:
+        hint = (
+            " Enpara 200 döndü ama hareket satırı çözümlenemedi. "
+            "status=SUCCESS boş ekstre değildir; ticket veya transactionTable beklenir."
+        )
+        raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
 
     if best_400:
         last_detail = best_400
@@ -1409,4 +1618,5 @@ async def fetch_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
         "balance": live.get("balance"),
         "access_token": live.get("access_token"),
         "refresh_token": live.get("refresh_token"),
+        "notice": live.get("notice") or "",
     }
