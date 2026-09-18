@@ -232,7 +232,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrıdır — <code className="font-mono">api.enpara.com</code> Access Token ile bağlanır. Ekstre: <code className="font-mono">startDateTime</code> / <code className="font-mono">endDateTime</code> (26 haneli IBAN). QNB için ayrı <b>QNB Open Banking</b> sağlayıcısını seçin.
+        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrıdır — Access Token yapıştırın; yoksa Client ID/Secret ile <code className="font-mono">/securedomain/oauth/token</code> kullanılır (<code className="font-mono">/oauth2/accesstoken</code> 404). IBAN 26 hane. QNB için ayrı sağlayıcı.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -408,7 +408,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Enpara QNB'den ayrıdır. API: <b>api.enpara.com</b>. Hareket çekimi <b>GET /v1/account-statement?startDateTime&amp;endDateTime</b> (IBAN tam 26 karakter). POST /ticket 400-1 üretir — kullanılmaz.
+                Enpara token: portal <b>Access Token</b> yapıştırın. OAuth yolu <code className="font-mono">/securedomain/oauth/token</code> (Eski <code className="font-mono">/oauth2/accesstoken</code> 404-EPG96). IBAN 26 karakter.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">

@@ -27,10 +27,10 @@ PROVIDERS = {
         "name": "Enpara Şirketim API",
         "sandbox_url": "https://api.enpara.com",
         "live_url": "https://api.enpara.com",
-        "token_path": "/oauth2/token",
+        "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["client_id", "client_secret", "access_token", "refresh_token", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. Access/Refresh Token + Client ID + 26 haneli IBAN (boşluksuz). Hareket: GET /v1/account-statement?startDateTime&endDateTime (POST /ticket şema dışı, 400-1). Production IP portalda izinli olmalı.",
+        "hint": "Enpara QNB'den ayrıdır. Access Token yapıştırın (veya Client ID/Secret → /securedomain/oauth/token). IBAN 26 hane. Production IP portalda izinli olmalı.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -118,29 +118,71 @@ async def _oauth_token(conn: dict) -> str:
         return token
 
 
+def _enpara_dead_route(resp) -> bool:
+    text = getattr(resp, "text", None) or ""
+    code = getattr(resp, "status_code", 0) or 0
+    return "404-EPG96" in text or "404-QPG97" in text or code == 404
+
+
+def _enpara_ip_blocked(resp) -> bool:
+    if getattr(resp, "status_code", 0) not in (401, 403):
+        return False
+    blob = f"{getattr(resp, 'text', '') or ''} {_api_error_detail(resp)}".lower()
+    return any(x in blob for x in ("ip", "not allowed", "whitelist", "not permitted", "proxy"))
+
+
+def _enpara_token_urls(conn: dict) -> List[str]:
+    """Gravitee AM: POST /securedomain/oauth/token (api.enpara.com kök oauth2/* 404-EPG96)."""
+    urls: List[str] = []
+    custom = (conn.get("token_url") or "").strip().rstrip("/")
+    if custom:
+        urls.append(custom)
+    base = _base_url(conn) or "https://api.enpara.com"
+    for path in (
+        "/securedomain/oauth/token",
+        "/securedomain/oidc/token",
+        "/oauth2/token",
+        "/oauth/token",
+    ):
+        urls.append(base + path)
+    seen = set()
+    out = []
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out
+
+
+def _oauth_error_text(resp, url: str) -> str:
+    try:
+        data = resp.json()
+    except Exception:
+        data = None
+    if isinstance(data, dict) and (data.get("error") or data.get("error_description")):
+        err = data.get("error") or ""
+        desc = data.get("error_description") or data.get("message") or ""
+        return f"{url} → {err}: {desc}".strip()
+    return f"{url} → HTTP {resp.status_code}: {(getattr(resp, 'text', None) or '')[:120]}"
+
+
 async def _enpara_refresh_access_token(conn: dict) -> str:
-    """Refresh / client_credentials ile Enpara access token al. Token URL portalda değişebilir."""
+    """Refresh / client_credentials: Gravitee AM /securedomain/oauth/token."""
     client_id = (conn.get("client_id") or "").strip()
     client_secret = (conn.get("client_secret") or "").strip()
     refresh = (conn.get("refresh_token") or "").strip()
     if not client_id or not client_secret:
-        raise RuntimeError("Enpara Client ID / Client Secret gerekli (token yenileme için).")
-
-    base = _base_url(conn) or "https://api.enpara.com"
-    candidates = []
-    if conn.get("token_url"):
-        candidates.append(conn["token_url"].rstrip("/"))
-    # Bilinen / denenecek yollar (Apigee / portal varyasyonları)
-    for path in ("/oauth2/token", "/oauth/token", "/v1/oauth2/token", "/oauth2/accesstoken"):
-        candidates.append(base + path)
+        raise RuntimeError("Enpara Client ID / Client Secret gerekli (token yenileme için). Portalden Access Token yapıştırın.")
 
     last_err = "Token uç noktası yanıt vermedi."
     async with httpx.AsyncClient(timeout=20) as client:
-        for url in candidates:
+        for url in _enpara_token_urls(conn):
             forms = []
             if refresh:
                 forms.append({"grant_type": "refresh_token", "refresh_token": refresh})
             forms.append({"grant_type": "client_credentials"})
+            hit_real_am = False
             for form in forms:
                 try:
                     headers = {
@@ -148,24 +190,37 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
                         "Content-Type": "application/x-www-form-urlencoded",
                         "Accept": "application/json",
                     }
-                    resp = await client.post(url, data={**form, "client_id": client_id, "client_secret": client_secret}, headers=headers)
+                    body = {**form, "client_id": client_id, "client_secret": client_secret}
+                    resp = await client.post(url, data=body, headers=headers)
+                    if _enpara_dead_route(resp):
+                        last_err = f"{url} → yok (404-EPG96)"
+                        break
                     if resp.status_code >= 400:
-                        # body ile tekrar dene (Basic olmadan)
-                        resp = await client.post(url, data={**form, "client_id": client_id, "client_secret": client_secret}, headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
-                    if resp.status_code >= 400:
-                        last_err = f"{url} → HTTP {resp.status_code}: {(resp.text or '')[:120]}"
+                        resp = await client.post(
+                            url,
+                            data=body,
+                            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                        )
+                        if _enpara_dead_route(resp):
+                            last_err = f"{url} → yok (404-EPG96)"
+                            break
+                    hit_real_am = True
+                    if resp.status_code < 400:
+                        data = resp.json() if resp.content else {}
+                        token = (data or {}).get("access_token") or (data or {}).get("accessToken")
+                        if token:
+                            return token
+                        last_err = f"{url} → access_token yok"
                         continue
-                    data = resp.json() if resp.content else {}
-                    token = data.get("access_token") or data.get("accessToken")
-                    if token:
-                        return token
-                    last_err = f"{url} → access_token yok"
+                    last_err = _oauth_error_text(resp, url)
                 except Exception as e:
                     last_err = f"{url} → {_err_text(e)}"
                     continue
+            if hit_real_am:
+                break
     raise RuntimeError(
         "Enpara token alınamadı. Developer portalından Access Token yapıştırın "
-        f"veya token URL'sini base_url ile belirtin. ({last_err[:160]})"
+        f"(token URL: /securedomain/oauth/token). ({last_err[:180]})"
     )
 
 
@@ -189,11 +244,21 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
         # 200/204/404 (boş liste) = auth OK; 401/403 = token geçersiz
         if resp.status_code in (401, 403):
             detail = (resp.text or "")[:160]
+            if _enpara_ip_blocked(resp):
+                raise RuntimeError(
+                    "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
+                    f"({detail})"
+                )
             # Access token süresi dolmuş olabilir → refresh dene
-            if (conn.get("refresh_token") or conn.get("client_secret")) and conn.get("access_token"):
+            if (conn.get("refresh_token") or conn.get("client_secret")) and conn.get("client_id"):
                 token = await _enpara_refresh_access_token(conn)
                 headers["Authorization"] = f"Bearer {token}"
                 resp = await client.get(f"{base}/v1/account-statement/list", headers=headers)
+                if _enpara_ip_blocked(resp):
+                    raise RuntimeError(
+                        "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
+                        f"({(resp.text or '')[:160]})"
+                    )
                 if resp.status_code in (401, 403):
                     raise RuntimeError(f"Enpara Access Token geçersiz (HTTP {resp.status_code}). Portalden yeni token alın. {detail}")
             else:
@@ -602,9 +667,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     async with httpx.AsyncClient(timeout=45) as client:
         async def _maybe_refresh(resp):
             nonlocal token, get_headers, post_headers, refreshed_token
+            if _enpara_ip_blocked(resp):
+                return resp
             if resp.status_code not in (401, 403):
                 return resp
-            if not ((conn.get("refresh_token") or conn.get("client_secret")) and (conn.get("client_id") or conn.get("access_token"))):
+            if not ((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip()):
                 raise RuntimeError(
                     f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin. {_api_error_detail(resp)}"
                 )
