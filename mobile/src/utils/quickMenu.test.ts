@@ -19,15 +19,23 @@ describe("visibleQuickTiles", () => {
     expect(tiles.map((t) => t.id)).toEqual(QUICK_TILES.map((t) => t.id));
   });
 
-  it("hides stock and saha when license or role blocks them", () => {
-    const user = { role: "sales", permissions: { "/saha": "none", "/stock": "view", "/invoices": "view" } };
-    const tiles = visibleQuickTiles(user, { modules: { "/saha": false, "/stock": true } });
+  it("hides modules the role or license blocks", () => {
+    const user = { role: "sales", permissions: { "/banking": "none", "/stock": "view", "/invoices": "view" } };
+    const tiles = visibleQuickTiles(user, { modules: { "/cheques": false, "/stock": true } });
     const ids = tiles.map((t) => t.id);
-    expect(ids).not.toContain("saha");
+    expect(ids).not.toContain("banking");
+    expect(ids).not.toContain("cheques");
     expect(ids).toContain("stock");
     expect(ids).toContain("barcode");
     expect(ids).toContain("notifications");
-    expect(ids).toContain("settings");
+  });
+
+  it("keeps tab bar and account menu entries out of the quick menu", () => {
+    const ids = QUICK_TILES.map((t) => t.id);
+    for (const id of ["saha", "mesai", "personelim", "settings", "search"]) {
+      expect(ids).not.toContain(id);
+    }
+    expect(ids).toContain("banking");
   });
 
   it("routes dashboard task paths that now have mobile screens", () => {
@@ -43,11 +51,6 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/sevk": false } }).map((t) => t.id)).not.toContain("sevk");
   });
 
-  it("aliases personelim to mesai license", () => {
-    const tiles = visibleQuickTiles({ role: "admin" }, { modules: { "/mesai": false } });
-    expect(tiles.map((t) => t.id)).not.toContain("personelim");
-    expect(tiles.map((t) => t.id)).not.toContain("mesai");
-  });
 });
 
 describe("resolveMobilePath", () => {
