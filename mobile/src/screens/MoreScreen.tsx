@@ -11,6 +11,7 @@ const LINKS = [
   { title: "Cariler", path: "/contacts", screen: "Contacts", icon: "people" as const },
   { title: "Faturalar", path: "/invoices", screen: "Invoices", icon: "document-text" as const },
   { title: "Siparişler", path: "/orders", screen: "Orders", icon: "cart" as const },
+  { title: "Depo Sevkiyat", path: "/sevk", screen: "Sevk", icon: "cube" as const },
   { title: "Kasa & Banka", path: "/banking", screen: "Banking", icon: "wallet" as const },
   { title: "Masraflar", path: "/expenses", screen: "Expenses", icon: "receipt" as const },
   { title: "Teklifler", path: "/quotes", screen: "Quotes", icon: "create" as const },

@@ -26,8 +26,16 @@ describe("visibleQuickTiles", () => {
     expect(ids).not.toContain("saha");
     expect(ids).toContain("stock");
     expect(ids).toContain("barcode");
-    expect(ids).toContain("search");
+    expect(ids).toContain("notifications");
     expect(ids).toContain("settings");
+  });
+
+  it("gates the warehouse shipping tile on the /sevk module", () => {
+    const warehouse = { role: "warehouse", permissions: { "/sevk": "edit" } };
+    expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).toContain("sevk");
+    const accountant = { role: "accountant", permissions: { "/sevk": "none" } };
+    expect(visibleQuickTiles(accountant, null).map((t) => t.id)).not.toContain("sevk");
+    expect(visibleQuickTiles({ role: "admin" }, { modules: { "/sevk": false } }).map((t) => t.id)).not.toContain("sevk");
   });
 
   it("aliases personelim to mesai license", () => {
@@ -42,7 +50,8 @@ describe("resolveMobilePath", () => {
     expect(resolveMobilePath("/invoices")).toBe("/invoices");
     expect(resolveMobilePath("/stock")).toBe("/stok");
     expect(resolveMobilePath("/personnel")).toBe("/personelim");
-    expect(resolveMobilePath("/sevk")).toBeNull();
+    expect(resolveMobilePath("/sevk")).toBe("/sevk");
+    expect(resolveMobilePath("/bilinmeyen")).toBeNull();
     expect(resolveMobilePath("")).toBeNull();
   });
 });
