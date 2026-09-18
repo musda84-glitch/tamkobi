@@ -2,11 +2,11 @@ import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { GroupedSelect } from "../components/GroupedSelect";
+import { ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { accountTypeTr, validateVirman, virmanAccounts, type BankAccount } from "../utils/finance";
+import { paymentTargetGroups, validateVirman, virmanAccounts, type BankAccount } from "../utils/finance";
 import { n } from "../components/chips";
-import { fmtMoney, idOf } from "../utils/money";
 
 export function BankingVirmanScreen() {
   const { client, companyId, can } = useAuth();
@@ -31,6 +31,8 @@ export function BankingVirmanScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const pool = paymentTargetGroups(accounts, [], { includePartners: false });
 
   const save = async () => {
     const invalid = validateVirman(source, target, amount);
@@ -58,28 +60,22 @@ export function BankingVirmanScreen() {
       <H1>Virman</H1>
       <Muted>Entegre (canlı banka) hesaplar virmana kapalı.</Muted>
       <ErrorBanner message={error} />
-      <Muted>Kaynak hesap</Muted>
-      {accounts.map((a) => (
-        <ListRow
-          key={`s-${idOf(a)}`}
-          title={a.account_name || "Hesap"}
-          subtitle={`${accountTypeTr(a.type)} · ${fmtMoney(a.current_balance, a.currency)}`}
-          onPress={() => setSource(idOf(a))}
-          right={source === idOf(a) ? "Kaynak" : undefined}
-        />
-      ))}
-      {source ? <Muted>Kaynak: {accounts.find((a) => idOf(a) === source)?.account_name}</Muted> : null}
-      <Muted>Hedef hesap</Muted>
-      {accounts.map((a) => (
-        <ListRow
-          key={`t-${idOf(a)}`}
-          title={a.account_name || "Hesap"}
-          subtitle={`${accountTypeTr(a.type)} · ${fmtMoney(a.current_balance, a.currency)}`}
-          onPress={() => setTarget(idOf(a))}
-          right={target === idOf(a) ? "Hedef" : undefined}
-        />
-      ))}
-      {target ? <Muted>Hedef: {accounts.find((a) => idOf(a) === target)?.account_name}</Muted> : null}
+      <GroupedSelect
+        label="Kaynak hesap"
+        testID="virman-source-select"
+        value={source}
+        onChange={setSource}
+        emptyLabel="Hesap seçin"
+        groups={pool}
+      />
+      <GroupedSelect
+        label="Hedef hesap"
+        testID="virman-target-select"
+        value={target}
+        onChange={setTarget}
+        emptyLabel="Hesap seçin"
+        groups={pool}
+      />
       <Field label="Tutar" testID="virman-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
       <Field label="Açıklama" testID="virman-desc" value={desc} onChangeText={setDesc} />
       <PrimaryButton title={busy ? "Aktarılıyor…" : "Virmanı kaydet"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID="submit-virman-btn" />

@@ -10,9 +10,12 @@ export function apiErrorMessage(err: unknown, fallback = "İşlem başarısız."
       .join(" ");
     if (joined) return joined;
   }
-  if (typeof anyErr.message === "string" && anyErr.message && anyErr.message !== "Network request failed") {
-    return anyErr.message;
+  const message = typeof anyErr.message === "string" ? anyErr.message : "";
+  // fetch ağ/CORS hatasını ayırt edemez; "Failed to fetch" kullanıcıya şifre hatası gibi görünüyordu.
+  if (message === "Failed to fetch" || message === "Network request failed" || message === "Load failed") {
+    return "Sunucuya ulaşılamadı. İnternet bağlantınızı ve giriş ekranındaki sunucu adresini kontrol edin.";
   }
+  if (message) return message;
   return fallback;
 }
 

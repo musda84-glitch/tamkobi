@@ -1,3 +1,6 @@
+import { collectableAccounts } from "./contactDraft";
+import { fmtMoney, idOf } from "./money";
+
 export const ACCOUNT_TYPES = [
   { key: "bank", label: "Banka" },
   { key: "cash_box", label: "Kasa" },
@@ -203,6 +206,35 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
   return (accounts || []).filter((a) => !a.is_integrated);
 }
 
+export type PaymentTargetGroup = { label: string; options: { value: string; label: string }[] };
+
+/** Web PaymentTargetSelect karşılığı: tür bazlı gruplar + opsiyonel ortaklar. */
+export function paymentTargetGroups(
+  accounts: BankAccount[],
+  partners: Partner[] = [],
+  opts: { collectableOnly?: boolean; includePartners?: boolean } = {}
+): PaymentTargetGroup[] {
+  const pool = opts.collectableOnly ? collectableAccounts(accounts || []) : accounts || [];
+  const groups: PaymentTargetGroup[] = groupedAccounts(pool).map((g) => ({
+    label: g.label,
+    options: g.items.map((a) => ({
+      value: idOf(a),
+      label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`,
+    })),
+  }));
+  const active = (partners || []).filter((p) => p.is_active !== false);
+  if (opts.includePartners !== false && active.length) {
+    groups.push({
+      label: "Ortaklar",
+      options: active.map((p) => ({
+        value: `partner:${idOf(p)}`,
+        label: `${p.name || "Ortak"} · ${fmtMoney(p.balance)}`,
+      })),
+    });
+  }
+  return groups;
+}
+
 export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null } {
   const v = String(value || "");
   if (v.startsWith("partner:")) return { partner_id: v.slice(8), account_id: null };
@@ -270,6 +302,24 @@ export const EXPENSE_DEFAULT_CATEGORIES = [
   "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK", "Bakım / Onarım", "Pazarlama / Reklam",
   "Yazılım / Abonelik", "Kargo / Nakliye", "Muhasebe / Danışmanlık", "Diğer",
 ];
+
+export type ExpenseCategory = { name?: string; is_default?: boolean };
+
+/** /expenses/categories varsayılan ve şirkete özel kategorileri birlikte döner. */
+export function expenseCategoryGroups(rows: ExpenseCategory[], extra: string[] = []): PaymentTargetGroup[] {
+  const named = (rows || []).map((c) => ({ name: String(c.name || "").trim(), is_default: c.is_default !== false })).filter((c) => c.name);
+  const base = named.length ? named : EXPENSE_DEFAULT_CATEGORIES.map((name) => ({ name, is_default: true }));
+  const known = new Set(base.map((c) => c.name));
+  const custom = [
+    ...base.filter((c) => !c.is_default).map((c) => c.name),
+    ...extra.map((n) => n.trim()).filter((n) => n && !known.has(n)),
+  ];
+  const groups: PaymentTargetGroup[] = [];
+  const defaults = base.filter((c) => c.is_default).map((c) => c.name);
+  if (defaults.length) groups.push({ label: "Varsayılan", options: defaults.map((name) => ({ value: name, label: name })) });
+  if (custom.length) groups.push({ label: "Şirkete özel", options: custom.map((name) => ({ value: name, label: name })) });
+  return groups;
+}
 
 export type Expense = {
   id?: string;

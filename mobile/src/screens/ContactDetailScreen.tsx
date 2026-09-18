@@ -5,11 +5,13 @@ import { Platform, Share, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, riskStatusTr, statusTr } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
+import { paymentTargetGroups } from "../utils/finance";
 import { balanceHint, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
 import { mapsLink } from "../utils/geo";
@@ -105,17 +107,10 @@ export function ContactDetailScreen() {
     cheques: cheques.length,
   };
 
-  const payPool = useMemo(() => {
-    const accs = payForm?.type === "inflow" ? collectableAccounts(accounts) : accounts;
-    const accTargets = accs.map((a) => ({
-      id: idOf(a),
-      label: `${a.account_name || "Hesap"} · ${fmtMoney(a.current_balance, a.currency)}`,
-    }));
-    const partnerTargets = (partners || [])
-      .filter((p) => p.is_active !== false)
-      .map((p) => ({ id: `partner:${idOf(p)}`, label: `Ortak · ${p.name || "—"} · ${fmtMoney(p.balance)}` }));
-    return [...accTargets, ...partnerTargets];
-  }, [accounts, partners, payForm?.type]);
+  const payPool = useMemo(
+    () => paymentTargetGroups(accounts, partners, { collectableOnly: payForm?.type === "inflow" }),
+    [accounts, partners, payForm?.type]
+  );
 
   const openPay = async () => {
     if (!canBank) { setError("Tahsilat yetkiniz yok."); return; }
@@ -304,12 +299,14 @@ export function ContactDetailScreen() {
             <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow" })} />
             <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow" })} />
           </Row>
-          <Muted>{payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {payPool.map((t) => (
-              <Chip key={t.id} label={t.label} active={payForm.account_id === t.id} testID={`collect-account-${t.id}`} onPress={() => setPayForm({ ...payForm, account_id: t.id })} />
-            ))}
-          </Row>
+          <GroupedSelect
+            label={payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
+            testID="collect-account-select"
+            value={payForm.account_id}
+            onChange={(id) => setPayForm({ ...payForm, account_id: id })}
+            emptyLabel="Hesap seçin"
+            groups={payPool}
+          />
           <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="collect-desc" value={payForm.description} onChangeText={(v) => setPayForm({ ...payForm, description: v })} />
           <PrimaryButton title="Kaydet" onPress={savePay} loading={payBusy} color={colors.primary} testID="collect-save" />

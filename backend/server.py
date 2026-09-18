@@ -133,11 +133,24 @@ def _cors_origins():
             listed.append(extra)
     return listed
 
+_LOCAL_ORIGIN_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+
+def _cors_origin_regex():
+    """CORS_ORIGIN_REGEX: mobil önizleme tüneli gibi sabit olmayan origin'ler için opt-in.
+
+    Çerezli isteklere izin verdiğimiz için varsayılan yalnızca localhost'tur; kalıcı
+    adresleri CORS_ORIGINS ile, değişken adresleri bu değişkenle açın.
+    """
+    extra = os.environ.get("CORS_ORIGIN_REGEX", "").strip()
+    if not extra:
+        return rf"^{_LOCAL_ORIGIN_REGEX}$"
+    return rf"^(?:{_LOCAL_ORIGIN_REGEX}|{extra})$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=_cors_origins(),
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=_cors_origin_regex(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

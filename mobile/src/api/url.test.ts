@@ -1,4 +1,4 @@
-import { apiRoot, extraApiUrl, normalizeApiBase } from "./url";
+import { apiRoot, extraApiUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
 
 describe("normalizeApiBase", () => {
   it("defaults empty to production", () => {
@@ -26,5 +26,17 @@ describe("normalizeApiBase", () => {
   it("keeps localhost http", () => {
     expect(normalizeApiBase("http://127.0.0.1:8000")).toBe("http://127.0.0.1:8000");
     expect(apiRoot("http://localhost:8000/api")).toBe("http://localhost:8000/api");
+  });
+
+  it("calls the API directly when there is no browser origin", () => {
+    expect(requestTarget("https://tamkobi.com", "/auth/login")).toEqual({ url: "https://tamkobi.com/api/auth/login" });
+  });
+
+  it("makes uploaded file paths absolute for native <Image>", () => {
+    expect(fileUrl("https://tamkobi.com", "/api/files/tamkobi/survey/x.jpg")).toBe("https://tamkobi.com/api/files/tamkobi/survey/x.jpg");
+    expect(fileUrl("https://tamkobi.com/api", "api/files/x.jpg")).toBe("https://tamkobi.com/api/files/x.jpg");
+    expect(fileUrl("https://tamkobi.com", "tamkobi/survey/x.jpg")).toBe("https://tamkobi.com/api/files/tamkobi/survey/x.jpg");
+    expect(fileUrl("https://tamkobi.com", "https://cdn.test/x.jpg")).toBe("https://cdn.test/x.jpg");
+    expect(fileUrl("https://tamkobi.com", "")).toBe("");
   });
 });
