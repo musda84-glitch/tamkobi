@@ -203,6 +203,9 @@ export type Notification = {
   is_read?: boolean;
   created_at?: string;
   type?: string;
+  link?: string | null;
+  ref_type?: string | null;
+  ref_id?: string | null;
 };
 
 export type SessionKind = "erp" | "b2b";

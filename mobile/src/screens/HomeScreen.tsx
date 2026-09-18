@@ -1,26 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
+import { NotificationsPanel } from "../components/NotificationsPanel";
 import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
-import { fmtMoney } from "../utils/money";
-import { resolveMobilePath, visibleQuickTiles } from "../utils/quickMenu";
+import { fmtMoney, idOf } from "../utils/money";
+import { latestNotifications, notificationRoute, unreadCount } from "../utils/notifications";
+import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
   const { client, companyId, user, activeCompany, license } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [unread, setUnread] = useState(0);
+  const [notes, setNotes] = useState<Notification[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const tiles = useMemo(
-    () => visibleQuickTiles(user, license),
+  const { tiles, notifications } = useMemo(
+    () => splitNotificationsTile(visibleQuickTiles(user, license)),
     [user, license]
   );
 
@@ -31,23 +33,22 @@ export function HomeScreen() {
       icon: tile.icon as ActionTile["icon"],
       tone: tile.tone,
       testID: `home-quick-${tile.id}`,
-      badge: tile.id === "notifications" && unread ? String(unread) : undefined,
       onPress: () => goHref(tile.href),
     })),
-    [tiles, unread]
+    [tiles]
   );
 
   const load = useCallback(async () => {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, notes, st] = await Promise.all([
+      const [ov, list, st] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
-        get<Notification[]>(client, "/notifications", { company_id: companyId, unread_only: true }),
+        get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
       ]);
       setOverview(ov);
-      setUnread((notes || []).length);
+      setNotes(list || []);
       setStats(st);
       setError(null);
     } catch (err) {
@@ -58,6 +59,15 @@ export function HomeScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const openNotification = useCallback((n: Notification) => {
+    const id = idOf(n);
+    if (id && !n.is_read) {
+      setNotes((prev) => prev.map((x) => (idOf(x) === id ? { ...x, is_read: true } : x)));
+      post(client, `/notifications/${id}/read`, {}).catch(() => { /* okundu işareti kritik değil */ });
+    }
+    goHref(notificationRoute(n) || "/notifications");
+  }, [client]);
 
   const profitRow = netProfitRow(stats);
 
@@ -75,6 +85,16 @@ export function HomeScreen() {
         <View style={{ marginTop: 8 }}>
           <ActionTiles size="md" items={quickItems} />
         </View>
+        {notifications ? (
+          <View style={{ marginTop: 4 }}>
+            <NotificationsPanel
+              items={latestNotifications(notes)}
+              unread={unreadCount(notes)}
+              onOpenAll={() => goHref(notifications.href)}
+              onOpenItem={openNotification}
+            />
+          </View>
+        ) : null}
       </View>
 
       <StatRows

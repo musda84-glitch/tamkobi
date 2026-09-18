@@ -1,4 +1,4 @@
-import { QUICK_TILES, QUICK_TONE_COLORS, resolveMobilePath, splitHref, visibleQuickTiles } from "./quickMenu";
+import { QUICK_TILES, QUICK_TONE_COLORS, resolveMobilePath, splitHref, splitNotificationsTile, visibleQuickTiles } from "./quickMenu";
 
 describe("QUICK_TONE_COLORS", () => {
   it("gives every tile tone a full palette", () => {
@@ -51,6 +51,20 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/sevk": false } }).map((t) => t.id)).not.toContain("sevk");
   });
 
+});
+
+describe("splitNotificationsTile", () => {
+  it("pulls the notifications tile out of the grid for the wide panel", () => {
+    const all = visibleQuickTiles({ role: "admin" }, null);
+    const { tiles, notifications } = splitNotificationsTile(all);
+    expect(notifications?.href).toBe("/notifications");
+    expect(tiles.map((t) => t.id)).not.toContain("notifications");
+    expect(tiles).toHaveLength(all.length - 1);
+  });
+
+  it("returns no panel when the tile is filtered out", () => {
+    expect(splitNotificationsTile([]).notifications).toBeNull();
+  });
 });
 
 describe("resolveMobilePath", () => {

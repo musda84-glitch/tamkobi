@@ -73,6 +73,14 @@ const TASK_PATH_MAP: Record<string, string> = {
   "/search": "/search",
 };
 
+/** Bildirim kutucuğu ana ekranda son bildirimleri gösteren geniş panele dönüşür. */
+export function splitNotificationsTile(tiles: QuickTile[]): { tiles: QuickTile[]; notifications: QuickTile | null } {
+  return {
+    tiles: tiles.filter((t) => t.id !== "notifications"),
+    notifications: tiles.find((t) => t.id === "notifications") || null,
+  };
+}
+
 export function visibleQuickTiles(user: SessionUser, license: License): QuickTile[] {
   const seen = new Set<string>();
   return QUICK_TILES.filter((tile) => {
