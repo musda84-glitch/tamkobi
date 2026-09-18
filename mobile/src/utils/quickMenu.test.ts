@@ -38,6 +38,11 @@ describe("visibleQuickTiles", () => {
     expect(ids).toContain("banking");
   });
 
+  it("leaves installments to the cheques screen and the more menu", () => {
+    expect(QUICK_TILES.map((t) => t.id)).not.toContain("installments");
+    expect(resolveMobilePath("/installments")).toBe("/installments");
+  });
+
   it("routes dashboard task paths that now have mobile screens", () => {
     expect(resolveMobilePath("/installments")).toBe("/installments");
     expect(resolveMobilePath("/cheques")).toBe("/cheques");
