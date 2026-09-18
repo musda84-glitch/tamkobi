@@ -28,7 +28,13 @@ def test_providers_split_enpara_and_qnb():
     assert "Enpara" in bp.PROVIDERS["enpara"]["name"]
     assert "QNB" in bp.PROVIDERS["qnb"]["name"]
     assert "access_token" in bp.PROVIDERS["enpara"]["fields"]
-    assert "api_key" in bp.PROVIDERS["enpara"]["fields"]
+    assert "refresh_token" in bp.PROVIDERS["enpara"]["fields"]
+    assert "client_id" in bp.PROVIDERS["enpara"]["fields"]
+    assert bp.PROVIDERS["enpara"]["fields"][0] == "access_token"
+    hint = bp.PROVIDERS["enpara"]["hint"]
+    assert "/v1/account-statement" in hint
+    assert "/ticket" in hint
+    assert "/list" in hint
 
 
 def test_has_credentials_enpara_access_token_only():
@@ -173,19 +179,15 @@ def test_enpara_fetch_empty_completed_is_success():
     assert out["balance"] == 10.0
 
 
-def test_enpara_async_ticket_polls_ticket_no():
+def test_enpara_ticket_polls_statement_ticket():
+    """Portal: GET /account-statement → ticketNo, GET /account-statement/ticket?ticketNo=."""
     conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR330011100000000000000001"}
     since = datetime.now(timezone.utc) - timedelta(days=3)
 
-    miss = MagicMock()
-    miss.status_code = 404
-    miss.text = "not found"
-    miss.json = MagicMock(side_effect=ValueError("no json"))
-
-    ticket_resp = MagicMock()
-    ticket_resp.status_code = 200
-    ticket_resp.text = "{}"
-    ticket_resp.json = MagicMock(return_value={"ticketNo": "T9"})
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = "{}"
+    stmt.json = MagicMock(return_value={"ticketNo": "T9"})
 
     ready = MagicMock()
     ready.status_code = 200
@@ -199,23 +201,20 @@ def test_enpara_async_ticket_polls_ticket_no():
     })
 
     async def _get(url, **kwargs):
-        if "/async-ticket/T9" in url or (kwargs.get("params") or {}).get("ticketNo") == "T9":
+        path = str(url)
+        if path.endswith("/account-statement/ticket") and (kwargs.get("params") or {}).get("ticketNo") == "T9":
             return ready
+        if path.endswith("/account-statement"):
+            return stmt
+        miss = MagicMock()
+        miss.status_code = 404
+        miss.text = "not found"
+        miss.json = MagicMock(side_effect=ValueError("no json"))
         return miss
-
-    bad = MagicMock()
-    bad.status_code = 400
-    bad.text = '{"code":"400"}'
-    bad.json = MagicMock(return_value={"code": "400", "message": "Bad Request", "errors": [{"code": "400-1", "message": "skip"}]})
-
-    async def _post(url, **kwargs):
-        if str(url).endswith("/async-ticket"):
-            return ticket_resp
-        return bad
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(side_effect=_get)
-    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.post = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -226,11 +225,10 @@ def test_enpara_async_ticket_polls_ticket_no():
     out = asyncio.run(_run())
     assert out["transactions"][0]["external_id"] == "A1"
     assert out["balance"] == 80.0
-    posted = mock_client.post.await_args
-    assert posted.args[0].endswith("/v1/account-transactions/async-ticket")
-    body = posted.kwargs.get("json") or {}
-    assert "startDateTime" in body and "endDateTime" in body
-    assert "accountInfo" not in body
+    mock_client.post.assert_not_called()
+    ticket_calls = [c for c in mock_client.get.await_args_list if str(c.args[0]).endswith("/account-statement/ticket")]
+    assert ticket_calls
+    assert ticket_calls[0].kwargs["params"]["ticketNo"] == "T9"
 
 
 def test_payload_variants_match_gravitee_schema():
@@ -526,4 +524,79 @@ def test_enpara_access_token_expired_without_secret_raises():
         assert False, "expected expired token error"
     except RuntimeError as e:
         assert "süresi dolmuş" in str(e).lower() or "Access Token" in str(e)
+
+
+def test_enpara_can_refresh_with_refresh_token_no_secret():
+    assert bp._enpara_can_refresh({"client_id": "cid", "refresh_token": "rt"}) is True
+    assert bp._enpara_can_refresh({"client_id": "cid", "client_secret": "sec"}) is True
+    assert bp._enpara_can_refresh({"client_id": "cid"}) is False
+    assert bp._enpara_can_refresh({"refresh_token": "rt"}) is False
+
+
+def test_enpara_refresh_posts_refresh_token_grant():
+    conn = {"provider": "enpara", "mode": "live", "client_id": "cid", "refresh_token": "rt-old"}
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.content = b'{"access_token":"NEWTOK","refresh_token":"rt-new"}'
+    ok.text = '{"access_token":"NEWTOK","refresh_token":"rt-new"}'
+    ok.json = MagicMock(return_value={"access_token": "NEWTOK", "refresh_token": "rt-new"})
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=ok)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._enpara_refresh_access_token(conn)
+
+    token = asyncio.run(_run())
+    assert token == "NEWTOK"
+    assert conn["refresh_token"] == "rt-new"
+    args, kwargs = mock_client.post.await_args
+    assert args[0] == "https://api.enpara.com/securedomain/oauth/token"
+    assert kwargs["data"]["grant_type"] == "refresh_token"
+    assert kwargs["data"]["refresh_token"] == "rt-old"
+    assert "client_secret" not in kwargs["data"]
+    assert "Authorization" not in kwargs["headers"]
+
+
+def test_enpara_fetch_never_posts_unsubscribed_paths():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    bad = MagicMock()
+    bad.status_code = 400
+    bad.text = '{"code":"400"}'
+    bad.json = MagicMock(return_value={"code": "400", "message": "Bad Request"})
+
+    listed = MagicMock()
+    listed.status_code = 200
+    listed.text = "{}"
+    listed.json = MagicMock(return_value={"bakiye": 42})
+
+    async def _get(url, **kwargs):
+        if str(url).endswith("/account-statement/list"):
+            return listed
+        return bad
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["balance"] == 42.0
+    mock_client.post.assert_not_called()
+    for call in mock_client.get.await_args_list:
+        assert "account-transactions" not in str(call.args[0])
+        assert "/v1/accounts" not in str(call.args[0])
+        assert "/v1/balance" not in str(call.args[0])
 
