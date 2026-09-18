@@ -6003,6 +6003,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         "balance": bank_balance,
         "message": (
             f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı).{bal_note}"
+            + (result.get("notice") or "")
             + (f" {auto_matched} hareket öğrenilen kurallarla otomatik işlendi." if auto_matched else "")
             + (" [SİMÜLE VERİ]" if result["simulated"] else "")
         ),
