@@ -12,6 +12,7 @@ import { invoiceTypeTr, riskStatusTr, statusTr } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { balanceHint, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
+import { mapsLink } from "../utils/geo";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import type { BankAccount } from "../utils/finance";
 
@@ -374,11 +375,12 @@ export function ContactDetailScreen() {
       {c.phone ? <PrimaryButton title={`Ara ${c.phone}`} onPress={() => Linking.openURL(`tel:${c.phone}`)} /> : null}
       {c.email ? <PrimaryButton title={`E-posta ${c.email}`} color={colors.primary} onPress={() => Linking.openURL(`mailto:${c.email}`)} /> : null}
       {c.phone ? <PrimaryButton title="WhatsApp" color="#128C7E" onPress={() => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`)} /> : null}
-      {(c.location_url || (c.latitude && c.longitude)) ? (
+      {mapsLink(c) ? (
         <PrimaryButton
           title="Konuma git"
           color={colors.primary}
-          onPress={() => Linking.openURL(c.location_url || `https://maps.google.com/?q=${c.latitude},${c.longitude}`)}
+          testID="detail-location-btn"
+          onPress={() => Linking.openURL(String(mapsLink(c)))}
         />
       ) : null}
 

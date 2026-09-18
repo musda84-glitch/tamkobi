@@ -8,10 +8,37 @@ export const ACCOUNT_TYPES = [
 
 export const ACCOUNT_TYPE_TR: Record<string, string> = Object.fromEntries(ACCOUNT_TYPES.map((t) => [t.key, t.label]));
 
+const TYPE_ALIAS: Record<string, string> = {
+  cash: "cash_box",
+  kasa: "cash_box",
+  cashbox: "cash_box",
+  nakit: "cash_box",
+  cash_box: "cash_box",
+  bank: "bank",
+  banka: "bank",
+  pos: "pos",
+  okc: "okc_pos",
+  okc_pos: "okc_pos",
+  credit_card: "credit_card",
+  kart: "credit_card",
+  card: "credit_card",
+};
+
+export function normalizeAccountType(t?: string | null): string {
+  const raw = String(t || "").toLowerCase();
+  return TYPE_ALIAS[raw] || raw || "bank";
+}
+
 export const TX_TYPE_TR: Record<string, string> = {
   inflow: "Tahsilat",
   outflow: "Tediye",
   transfer: "Virman",
+};
+
+export const PARTNER_TX_TR: Record<string, string> = {
+  capital_in: "Sermaye Girişi",
+  withdrawal: "Para Çekişi",
+  profit_share: "Kâr Payı",
 };
 
 export type BankAccount = {
@@ -24,11 +51,18 @@ export type BankAccount = {
   iban?: string;
   currency?: string;
   current_balance?: number;
+  balance?: number;
   pos_commission_rate?: number;
   card_holder?: string;
   card_last4?: string;
   card_expiry?: string;
   card_limit?: number | null;
+  okc_brand?: string;
+  okc_serial?: string;
+  okc_terminal_id?: string;
+  is_integrated?: boolean;
+  integration_provider?: string;
+  integration_status?: string;
 };
 
 export type BankTx = {
@@ -43,6 +77,45 @@ export type BankTx = {
   description?: string;
   date?: string;
   contact_name?: string;
+  source?: string;
+  is_simulated?: boolean;
+};
+
+export type Partner = {
+  id?: string;
+  _id?: string;
+  name?: string;
+  share_percent?: number;
+  phone?: string;
+  email?: string;
+  balance?: number;
+  total_capital_in?: number;
+  total_withdrawn?: number;
+  total_profit_share?: number;
+  is_active?: boolean;
+};
+
+export type PartnerSummary = {
+  partner_count?: number;
+  total_share_percent?: number;
+  total_balance?: number;
+  total_capital_in?: number;
+  total_withdrawn?: number;
+  total_profit_share?: number;
+};
+
+export type PartnerTx = {
+  id?: string;
+  _id?: string;
+  partner_id?: string;
+  partner_name?: string;
+  type?: string;
+  amount?: number;
+  account_id?: string;
+  account_name?: string;
+  description?: string;
+  date?: string;
+  is_paid?: boolean;
 };
 
 export type AccountDraft = {
@@ -58,6 +131,9 @@ export type AccountDraft = {
   card_last4: string;
   card_expiry: string;
   card_limit: string;
+  okc_brand: string;
+  okc_serial: string;
+  okc_terminal_id: string;
 };
 
 export function emptyAccountDraft(): AccountDraft {
@@ -74,24 +150,30 @@ export function emptyAccountDraft(): AccountDraft {
     card_last4: "",
     card_expiry: "",
     card_limit: "",
+    okc_brand: "",
+    okc_serial: "",
+    okc_terminal_id: "",
   };
 }
 
 export function draftFromAccount(acc: BankAccount): AccountDraft {
   return {
     ...emptyAccountDraft(),
-    type: acc.type || "bank",
+    type: normalizeAccountType(acc.type) || "bank",
     bank_name: acc.bank_name || "",
     account_name: acc.account_name || "",
     account_number: acc.account_number || "",
     iban: acc.iban || "",
     currency: acc.currency || "TRY",
-    current_balance: String(acc.current_balance ?? 0),
+    current_balance: String(acc.current_balance ?? acc.balance ?? 0),
     pos_commission_rate: String(acc.pos_commission_rate ?? 1.5),
     card_holder: acc.card_holder || "",
     card_last4: acc.card_last4 || "",
     card_expiry: acc.card_expiry || "",
     card_limit: acc.card_limit == null ? "" : String(acc.card_limit),
+    okc_brand: acc.okc_brand || "",
+    okc_serial: acc.okc_serial || "",
+    okc_terminal_id: acc.okc_terminal_id || "",
   };
 }
 
@@ -100,9 +182,50 @@ function num(v: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+export function accountBalance(a?: { current_balance?: number; balance?: number } | null): number {
+  return Number(a?.current_balance ?? a?.balance ?? 0) || 0;
+}
+
+export function groupedAccounts<T extends { type?: string }>(accounts: T[]): { key: string; label: string; items: T[] }[] {
+  const list = accounts || [];
+  const groups: { key: string; label: string; items: T[] }[] = ACCOUNT_TYPES.map((g) => ({
+    key: g.key,
+    label: g.label,
+    items: list.filter((a) => normalizeAccountType(a.type) === g.key),
+  })).filter((g) => g.items.length);
+  const known = new Set<string>(ACCOUNT_TYPES.map((t) => t.key));
+  const other = list.filter((a) => !known.has(normalizeAccountType(a.type)));
+  if (other.length) groups.push({ key: "other", label: "Diğer", items: other });
+  return groups;
+}
+
+export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: T[]): T[] {
+  return (accounts || []).filter((a) => !a.is_integrated);
+}
+
+export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null } {
+  const v = String(value || "");
+  if (v.startsWith("partner:")) return { partner_id: v.slice(8), account_id: null };
+  return { account_id: v || null, partner_id: null };
+}
+
+export function totalLiquidity(accounts: BankAccount[]): number {
+  return (accounts || [])
+    .filter((a) => normalizeAccountType(a.type) !== "credit_card")
+    .reduce((s, a) => s + accountBalance(a), 0);
+}
+
 export function validateAccountDraft(d: AccountDraft): string | null {
   if (!d.account_name.trim()) return "Hesap adı gerekli.";
   if (d.type === "bank" && !d.bank_name.trim()) return "Banka adı gerekli.";
+  return null;
+}
+
+export function validatePartner(name: string, share: string, currentTotal = 0): string | null {
+  if (!name.trim()) return "Ortak adı gerekli.";
+  const s = num(share);
+  if (!(s > 0)) return "Ortaklık payı girin.";
+  if (currentTotal + s > 100.01) return "Toplam ortaklık payı %100'ü aşamaz.";
   return null;
 }
 
@@ -126,6 +249,11 @@ export function accountPayload(d: AccountDraft, companyId?: string) {
     body.iban = d.iban.trim();
     body.account_number = d.account_number.trim();
     if (d.type === "pos" || d.type === "okc_pos") body.pos_commission_rate = num(d.pos_commission_rate);
+    if (d.type === "okc_pos") {
+      body.okc_brand = d.okc_brand.trim() || null;
+      body.okc_serial = d.okc_serial.trim() || null;
+      body.okc_terminal_id = d.okc_terminal_id.trim() || null;
+    }
   }
   return body;
 }
@@ -233,6 +361,7 @@ export function validateExpenseDraft(d: ExpenseDraft): string | null {
 }
 
 export function expensePayload(d: ExpenseDraft, companyId: string) {
+  const target = splitPaymentTarget(d.account_id);
   return {
     company_id: companyId,
     date: d.date,
@@ -241,7 +370,8 @@ export function expensePayload(d: ExpenseDraft, companyId: string) {
     amount: num(d.amount),
     vat_rate: num(d.vat_rate),
     vat_included: d.vat_included,
-    account_id: d.account_id || null,
+    account_id: target.account_id,
+    partner_id: target.partner_id,
     contact_id: d.contact_id || null,
     document_no: d.document_no,
     notes: d.notes,
@@ -259,10 +389,16 @@ export function validateVirman(sourceId: string, targetId: string, amount: strin
 
 export function accountTypeTr(v?: string | null): string {
   if (!v) return "—";
-  return ACCOUNT_TYPE_TR[v] || v;
+  const key = normalizeAccountType(v);
+  return ACCOUNT_TYPE_TR[key] || v;
 }
 
 export function txTypeTr(v?: string | null): string {
   if (!v) return "—";
   return TX_TYPE_TR[v] || v;
+}
+
+export function partnerTxTr(v?: string | null): string {
+  if (!v) return "—";
+  return PARTNER_TX_TR[v] || v;
 }

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { get, post, type ApiClient } from "../api/client";
-import { apiErrorMessage } from "../api/errors";
+import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
 import { can as canPerm, moduleOn as moduleOnPerm } from "../utils/permissions";
 import {
@@ -9,11 +9,13 @@ import {
   loadApiBase,
   loadB2bName,
   loadB2bToken,
+  loadSessionCache,
   loadSessionKind,
   loadToken,
   saveApiBase,
   saveB2bName,
   saveB2bToken,
+  saveSessionCache,
   saveSessionKind,
   saveToken,
 } from "./storage";
@@ -54,6 +56,11 @@ function pickCompany(companies: Company[], activeId?: string | null): Company | 
   return companies.find((c) => (c.id || c._id) === activeId) || companies[0];
 }
 
+/** Sunucu oturumu reddetmediyse (ağ/timeout) kaydedilmiş token korunur. */
+function isAuthRejection(err: unknown): boolean {
+  return err instanceof ApiHttpError && (err.status === 401 || err.status === 403);
+}
+
 const loggedOut = {
   token: null as string | null,
   user: null as User | null,
@@ -73,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ...loggedOut,
   });
 
-  const applySession = useCallback((baseUrl: string, token: string | null, payload: SessionPayload | null) => {
+  const applySession = useCallback((baseUrl: string, token: string | null, payload: SessionPayload | null, error: string | null = null) => {
     const user = payload?.user || null;
     const companies = payload?.companies || [];
     setState({
@@ -84,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       companies,
       activeCompany: pickCompany(companies, user?.active_company_id),
       license: payload?.license || null,
-      error: null,
+      error,
       sessionKind: token && user ? "erp" : null,
       b2bToken: null,
       b2bName: null,
@@ -126,7 +133,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const portal = await get<B2BPortal>({ baseUrl, token: null }, `/public/b2b/${b2bToken}`);
         applyB2b(baseUrl, b2bToken, portal?.contact?.name || b2bStoredName);
-      } catch {
+      } catch (err) {
+        if (!isAuthRejection(err) && !(err instanceof ApiHttpError && err.status === 404)) {
+          applyB2b(baseUrl, b2bToken, b2bStoredName);
+          return;
+        }
         await clearB2bSession();
         await saveSessionKind(null);
         setState((s) => ({ ...s, ready: true, baseUrl, ...loggedOut }));
@@ -141,12 +152,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const me = await get<SessionPayload>({ baseUrl, token }, "/auth/me");
       if (!me?.authenticated || !me.user) {
         await clearToken();
+        await saveSessionCache(null);
         applySession(baseUrl, null, null);
         return;
       }
+      await saveSessionCache(me);
       applySession(baseUrl, token, me);
-    } catch {
+    } catch (err) {
+      const cached = isAuthRejection(err) ? null : await loadSessionCache();
+      if (cached) {
+        applySession(baseUrl, token, cached, apiErrorMessage(err, "Sunucuya ulaşılamadı; son bilinen oturum kullanılıyor."));
+        return;
+      }
       await clearToken();
+      await saveSessionCache(null);
       setState((s) => ({ ...s, ready: true, baseUrl, ...loggedOut }));
     }
   }, [applyB2b, applySession]);
@@ -163,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearB2bSession();
     await saveToken(res.token);
     await saveSessionKind("erp");
+    await saveSessionCache(res);
     applySession(baseUrl, res.token, res);
   }, [applySession, state.baseUrl]);
 
@@ -201,6 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearToken();
     await clearB2bSession();
     await saveSessionKind(null);
+    await saveSessionCache(null);
     setState((s) => ({ ...s, ...loggedOut }));
   }, [state.baseUrl, state.token]);
 
@@ -209,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!state.token) return;
       await post({ baseUrl: state.baseUrl, token: state.token }, "/auth/switch-company", { company_id: companyId });
       const me = await get<SessionPayload>({ baseUrl: state.baseUrl, token: state.token }, "/auth/me");
+      await saveSessionCache(me);
       applySession(state.baseUrl, state.token, me);
     },
     [applySession, state.baseUrl, state.token]
@@ -219,6 +241,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearToken();
     await clearB2bSession();
     await saveSessionKind(null);
+    await saveSessionCache(null);
     setState((s) => ({
       ...s,
       baseUrl: next,

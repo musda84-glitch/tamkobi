@@ -8,7 +8,7 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import { accountTypeTr, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
+import { accountBalance, accountTypeTr, normalizeAccountType, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function BankingAccountScreen() {
@@ -83,19 +83,20 @@ export function BankingAccountScreen() {
 
   if (!acc) return <Screen><ErrorBanner message={error || "Hesap bulunamadı."} /></Screen>;
 
-  const isCard = acc.type === "credit_card";
+  const isCard = normalizeAccountType(acc.type) === "credit_card";
 
   return (
     <Screen onRefresh={load}>
       <H1>{acc.account_name || "Hesap"}</H1>
       <Muted>{[accountTypeTr(acc.type), acc.bank_name, acc.iban].filter(Boolean).join(" · ")}</Muted>
-      <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(acc.current_balance, acc.currency)}</Text>
+      <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(accountBalance(acc), acc.currency)}</Text>
+      {acc.is_integrated ? <Muted>Entegre hesap ({acc.integration_provider || "canlı veri"}) — manuel tahsilat kapalı.</Muted> : null}
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
       {canEdit ? (
         <PrimaryButton title="Hesabı düzenle" onPress={() => go("BankingEdit", { id })} color={colors.secondary} testID="bank-edit" />
       ) : null}
-      {canEdit && !isCard ? (
+      {canEdit && !isCard && !acc.is_integrated ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Tahsilat / tediye</Text>
           <Row>

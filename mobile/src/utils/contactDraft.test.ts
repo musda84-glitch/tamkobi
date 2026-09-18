@@ -32,6 +32,15 @@ describe("contactDraft", () => {
     expect(body.b2b_password).toBeUndefined();
   });
 
+  it("carries map coordinates into the contact payload", () => {
+    const d = draftFromContact({ name: "Acme", tax_number_or_id: "1", latitude: 41.0151, longitude: 28.9795 });
+    expect(d.latitude).toBe("41.0151");
+    const body = contactPayload(d);
+    expect(body.latitude).toBe(41.0151);
+    expect(body.longitude).toBe(28.9795);
+    expect(contactPayload(emptyContactDraft()).latitude).toBeNull();
+  });
+
   it("omits credit cards from tahsilat accounts", () => {
     const pool = collectableAccounts([
       { type: "bank" },

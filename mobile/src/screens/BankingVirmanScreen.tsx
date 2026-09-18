@@ -4,7 +4,7 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { accountTypeTr, validateVirman, type BankAccount } from "../utils/finance";
+import { accountTypeTr, validateVirman, virmanAccounts, type BankAccount } from "../utils/finance";
 import { n } from "../components/chips";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -22,7 +22,8 @@ export function BankingVirmanScreen() {
   const load = useCallback(async () => {
     try {
       const rows = await get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId });
-      setAccounts(rows || []);
+      const manual = virmanAccounts(rows || []);
+      setAccounts(manual);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Hesaplar yüklenemedi."));
@@ -55,7 +56,7 @@ export function BankingVirmanScreen() {
   return (
     <Screen>
       <H1>Virman</H1>
-      <Muted>Kasalar ve bankalar arasında aktarım.</Muted>
+      <Muted>Entegre (canlı banka) hesaplar virmana kapalı.</Muted>
       <ErrorBanner message={error} />
       <Muted>Kaynak hesap</Muted>
       {accounts.map((a) => (
@@ -64,6 +65,7 @@ export function BankingVirmanScreen() {
           title={a.account_name || "Hesap"}
           subtitle={`${accountTypeTr(a.type)} · ${fmtMoney(a.current_balance, a.currency)}`}
           onPress={() => setSource(idOf(a))}
+          right={source === idOf(a) ? "Kaynak" : undefined}
         />
       ))}
       {source ? <Muted>Kaynak: {accounts.find((a) => idOf(a) === source)?.account_name}</Muted> : null}
@@ -74,6 +76,7 @@ export function BankingVirmanScreen() {
           title={a.account_name || "Hesap"}
           subtitle={`${accountTypeTr(a.type)} · ${fmtMoney(a.current_balance, a.currency)}`}
           onPress={() => setTarget(idOf(a))}
+          right={target === idOf(a) ? "Hedef" : undefined}
         />
       ))}
       {target ? <Muted>Hedef: {accounts.find((a) => idOf(a) === target)?.account_name}</Muted> : null}

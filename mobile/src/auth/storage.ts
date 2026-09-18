@@ -7,11 +7,12 @@ import {
   extraApiUrl,
   REMEMBER_B2B_EMAIL_KEY,
   REMEMBER_EMAIL_KEY,
+  SESSION_CACHE_KEY,
   SESSION_KIND_KEY,
   TOKEN_KEY,
   normalizeApiBase,
 } from "../api/url";
-import type { SessionKind } from "../types";
+import type { SessionKind, SessionPayload } from "../types";
 
 function readExpoExtra(): { apiUrl?: unknown } | undefined {
   try {
@@ -89,6 +90,30 @@ export async function loadRememberedEmail(): Promise<string> {
 export async function saveRememberedEmail(email: string | null): Promise<void> {
   if (email) await AsyncStorage.setItem(REMEMBER_EMAIL_KEY, email);
   else await AsyncStorage.removeItem(REMEMBER_EMAIL_KEY);
+}
+
+/** Son başarılı /auth/me yanıtı: sunucuya ulaşılamadığında oturum açık kalsın diye saklanır. */
+export async function saveSessionCache(payload: SessionPayload | null): Promise<void> {
+  if (!payload?.user) {
+    await AsyncStorage.removeItem(SESSION_CACHE_KEY);
+    return;
+  }
+  try {
+    await AsyncStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    /* kota dolu olabilir; önbellek zorunlu değil */
+  }
+}
+
+export async function loadSessionCache(): Promise<SessionPayload | null> {
+  const raw = await AsyncStorage.getItem(SESSION_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as SessionPayload;
+    return parsed?.user ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function loadSessionKind(): Promise<SessionKind | null> {

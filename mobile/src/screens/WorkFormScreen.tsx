@@ -1,13 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
+import * as Location from "expo-location";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
+import { coordText } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import {
@@ -54,7 +58,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
-  const [locationUrl, setLocationUrl] = useState("");
+  const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -106,7 +110,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setEndDate(String(p.end_date || "").slice(0, 10));
         setNotes(p.description || "");
         setAddress(p.address || "");
-        setLocationUrl(p.location_url || "");
+        setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
         setStatus(p.status || "planning");
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
@@ -118,7 +122,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setAddress(s.address || "");
         setSurveyDate(String(s.survey_date || todayIso()).slice(0, 10));
         setNotes(s.notes || "");
-        setLocationUrl(s.location_url || "");
+        setLocation({ url: s.location_url || "", lat: coordText(s.latitude), lng: coordText(s.longitude) });
         setStatus(s.status || "planned");
         const ms = s.measurements || [];
         setItems(ms.length ? ms.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0 })) : [emptyItem()]);
@@ -132,7 +136,22 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   useFocusEffect(useCallback(() => { loadDoc(); }, [loadDoc]));
 
-  const form = { contact_id: contactId, contact_name: contactName, title, valid_until: validUntil, notes, name, budget, start_date: startDate, end_date: endDate, address, survey_date: surveyDate, location_url: locationUrl };
+  const form = {
+    contact_id: contactId,
+    contact_name: contactName,
+    title,
+    valid_until: validUntil,
+    notes,
+    name,
+    budget,
+    start_date: startDate,
+    end_date: endDate,
+    address,
+    survey_date: surveyDate,
+    location_url: location.url,
+    latitude: location.lat,
+    longitude: location.lng,
+  };
   const totals = workItemTotals(items);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
   const prodHits = prodQ.trim().length < 2 ? [] : products.filter((p) => [p.name, p.sku].some((v) => String(v || "").toLowerCase().includes(prodQ.trim().toLowerCase()))).slice(0, 8);
@@ -279,7 +298,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       ) : null}
       {kind === "survey" ? <Field label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} placeholder="YYYY-MM-DD" editable={canEdit} /> : null}
       {kind !== "quote" ? <Field label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
-      {kind !== "quote" ? <Field label="Konum linki" value={locationUrl} onChangeText={setLocationUrl} autoCapitalize="none" editable={canEdit} /> : null}
+      {kind !== "quote" ? (
+        <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
+      ) : null}
 
       {!isNew ? (
         <>

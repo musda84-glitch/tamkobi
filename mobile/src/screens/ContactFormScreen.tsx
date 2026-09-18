@@ -6,6 +6,7 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { LocationPicker } from "../components/LocationPicker";
 import { colors } from "../theme";
 import {
   CONTACT_CURRENCIES,
@@ -193,7 +194,13 @@ export function ContactFormScreen({ contactId }: { contactId?: string }) {
           <Field label="Adres" testID="cf-address" value={draft.address} onChangeText={(v) => set("address", v)} multiline />
           <Field label="İl" testID="cf-city" value={draft.city} onChangeText={(v) => set("city", v)} />
           <Field label="İlçe" testID="cf-district" value={draft.district} onChangeText={(v) => set("district", v)} />
-          <Field label="Harita / konum linki" testID="cf-location_url" value={draft.location_url} onChangeText={(v) => set("location_url", v)} autoCapitalize="none" />
+          <LocationPicker
+            label="Müşteri konumu"
+            testID="cf-location"
+            value={{ url: draft.location_url, lat: draft.latitude, lng: draft.longitude }}
+            onChange={(next) => setDraft((d) => ({ ...d, location_url: next.url, latitude: next.lat, longitude: next.lng }))}
+            editable={canEdit}
+          />
         </Card>
       ) : null}
       {tab === "finance" ? (

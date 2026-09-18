@@ -1,3 +1,5 @@
+import { coordValue } from "./geo";
+
 export type WorkKind = "quote" | "project" | "survey";
 
 export type WorkItem = {
@@ -45,6 +47,8 @@ export type ProjectDoc = {
   can_invoice?: boolean;
   invoice_id?: string;
   location_url?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export type SurveyDoc = {
@@ -61,6 +65,8 @@ export type SurveyDoc = {
   measurements?: WorkItem[];
   quote_id?: string;
   location_url?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export const QUOTE_STATUSES = [
@@ -131,7 +137,7 @@ export function quoteUpdateBody(form: { contact_id: string; contact_name: string
   return rest;
 }
 
-export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string }) {
+export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string }) {
   return {
     company_id: companyId,
     name: form.name.trim(),
@@ -143,10 +149,12 @@ export function projectPayload(companyId: string, form: { name: string; contact_
     description: form.notes,
     address: form.address,
     location_url: form.location_url || null,
+    latitude: coordValue(form.latitude || ""),
+    longitude: coordValue(form.longitude || ""),
   };
 }
 
-export function surveyPayload(companyId: string, form: { contact_id: string; contact_name: string; address: string; survey_date: string; notes: string; location_url: string }, items: WorkItem[]) {
+export function surveyPayload(companyId: string, form: { contact_id: string; contact_name: string; address: string; survey_date: string; notes: string; location_url: string; latitude?: string; longitude?: string }, items: WorkItem[]) {
   return {
     company_id: companyId,
     contact_id: form.contact_id || null,
@@ -155,6 +163,8 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
     survey_date: form.survey_date,
     notes: form.notes,
     location_url: form.location_url || null,
+    latitude: coordValue(form.latitude || ""),
+    longitude: coordValue(form.longitude || ""),
     measurements: namedItems(items).map((i) => ({
       name: i.name,
       quantity: Number(i.quantity) || 1,
