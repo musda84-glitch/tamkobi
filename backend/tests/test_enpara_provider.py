@@ -709,3 +709,114 @@ def test_server_mask_connection_hides_enpara_secrets():
     assert "rt-super-secret-99" not in blob
     assert "shh-secret-val" not in blob
 
+
+def test_enpara_ip_blocked_ignores_method_not_allowed():
+    resp = MagicMock()
+    resp.status_code = 405
+    resp.text = '{ "status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED" }'
+    resp.json = MagicMock(return_value={"status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+    assert bp._enpara_method_not_allowed(resp) is True
+    assert bp._enpara_ip_blocked(resp) is False
+
+    ip = MagicMock()
+    ip.status_code = 403
+    ip.text = '{"message":"Your IP is not allowed"}'
+    ip.json = MagicMock(return_value={"message": "Your IP is not allowed"})
+    assert bp._enpara_ip_blocked(ip) is True
+
+
+def test_enpara_list_405_does_not_mask_as_ip_error():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 400
+    stmt.text = '{"code":"400","message":"Bad Request"}'
+    stmt.json = MagicMock(return_value={"code": "400", "message": "Bad Request"})
+    listed = MagicMock()
+    listed.status_code = 405
+    listed.text = '{ "status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED" }'
+    listed.json = MagicMock(return_value={"status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+
+    async def _get(url, **kwargs):
+        if str(url).endswith("/account-statement/list"):
+            return listed
+        return stmt
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected 400"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "400" in msg
+        assert "izinli değil" not in msg
+    mock_client.post.assert_not_called()
+
+
+def test_enpara_statement_200_empty_ok_when_list_405():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = "{}"
+    stmt.json = MagicMock(return_value={})
+    listed = MagicMock()
+    listed.status_code = 405
+    listed.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
+    listed.json = MagicMock(return_value={"status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+
+    async def _get(url, **kwargs):
+        if str(url).endswith("/list"):
+            return listed
+        return stmt
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"] == []
+    mock_client.post.assert_not_called()
+
+
+def test_enpara_probe_list_405_still_ok():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 405
+    mock_resp.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
+    mock_resp.json = MagicMock(return_value={"errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is True
+    assert "405" in out["message"]
+
