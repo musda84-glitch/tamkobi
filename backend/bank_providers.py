@@ -1223,10 +1223,10 @@ def _enpara_payload_variants(start: datetime, end: datetime, account: str, custo
     start, end = _tr(start), _tr(end)
     start_d, end_d = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
     start_off, end_off = _tr_offset(start), _tr_offset(end)
+    # Servis yalnızca yyyy-MM-ddTHH:mm:ss+HH:mm kabul ediyor; milisaniye ve
+    # offsetsiz biçimler "could not be parsed at index 19" ile reddediliyor.
     ranges = [
         (f"{start_d}T00:00:00{start_off}", f"{end_d}T23:59:59{end_off}"),
-        (f"{start_d}T00:00:00.000{start_off}", f"{end_d}T23:59:59.999{end_off}"),
-        (f"{start_d}T00:00:00", f"{end_d}T23:59:59"),
     ]
     variants: List[Dict[str, Any]] = []
 
@@ -1340,7 +1340,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     unparsed_hint = ""
     list_hint = ""
     empty_body_200 = False
-    best_result_error = ""
+    result_errors: List[str] = []
     notice = ""
     balance: Optional[float] = None
     refreshed_token: Optional[str] = token if token and token != stored_token else None
@@ -1413,7 +1413,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     best_400 = last_detail
 
         async def _handle_statement(resp, payload: dict, label: str) -> Optional[Dict[str, Any]]:
-            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout, empty_body_200, best_result_error
+            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout, empty_body_200
             if resp.status_code in (401, 403):
                 _enpara_raise_auth(resp)
             keys = ",".join((payload or {}).keys())
@@ -1433,8 +1433,8 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             if res_err and not (out and out.get("transactions")):
                 result_error = f"{label} ({keys}): {res_err}"
                 last_detail = result_error
-                if not best_result_error or len(result_error) > len(best_result_error):
-                    best_result_error = result_error
+                if result_error not in result_errors:
+                    result_errors.append(result_error)
                 return None
             strict_tid = _ticket_id_from(data) or _ticket_from_headers(resp)
             candidates = _ticket_candidates(data)
@@ -1554,7 +1554,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     if got_ok_empty:
         notice = notice or " Enpara bu tarih aralığında hareket satırı döndürmedi."
         return _pack([])
-    if balance is not None and not ticket_timeout and not best_result_error:
+    if balance is not None and not ticket_timeout and not result_errors:
         if unparsed_hint:
             notice = " Enpara hareket satırı çözümlenemedi; bakiye kayıtlı hesaptan alındı."
         return _pack([])
@@ -1566,10 +1566,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             "Enpara ekstre ticket'ı henüz hareket döndürmedi. Birkaç saniye sonra Senkron'u tekrar deneyin. "
             f"Son yanıt: {last_detail[:360]}"
         )
-    if best_result_error:
+    if result_errors:
+        detail = " || ".join(result_errors[:3])
         raise RuntimeError(
             "Enpara hesap hareketi alınamadı. Servis isteği reddetti: "
-            f"{best_result_error[:420]}"
+            f"{detail[:600]}"
         )
     if unparsed_hint:
         if empty_body_200:
