@@ -454,16 +454,16 @@ export function ContactDetailScreen() {
   const docParams = { contact_id: String(id), contact_name: String(c.name || name || "") };
 
   const actionTiles: ActionTile[] = [
-    canEditContact && { key: "edit", label: "Düzenle", icon: "create-outline" as const, tone: "slate" as const, testID: "detail-edit-contact-btn", onPress: () => go("ContactEdit", { id }) },
-    { key: "statement", label: "Ekstre", icon: "document-text-outline" as const, tone: "indigo" as const, testID: "detail-statement-btn", onPress: () => go("ContactStatement", { id, name: c.name || name }) },
-    canInvoice && { key: "sell", label: "Satış yap", icon: "arrow-up-circle-outline" as const, tone: "emerald" as const, testID: "detail-sell-btn", onPress: () => go("InvoiceNew", { type: "sales", ...docParams }) },
-    canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle-outline" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
-    canBank && { key: "collect", label: "Tahsilat", icon: "wallet-outline" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
-    { key: "message", label: "Mesaj", icon: "chatbubble-ellipses-outline" as const, tone: "violet" as const, testID: "detail-message-btn", onPress: openMessage },
+    canEditContact && { key: "edit", label: "Düzenle", icon: "create" as const, tone: "slate" as const, testID: "detail-edit-contact-btn", onPress: () => go("ContactEdit", { id }) },
+    { key: "statement", label: "Ekstre", icon: "document-text" as const, tone: "indigo" as const, testID: "detail-statement-btn", onPress: () => go("ContactStatement", { id, name: c.name || name }) },
+    canInvoice && { key: "sell", label: "Satış yap", icon: "arrow-up-circle" as const, tone: "emerald" as const, testID: "detail-sell-btn", onPress: () => go("InvoiceNew", { type: "sales", ...docParams }) },
+    canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
+    canBank && { key: "collect", label: "Tahsilat", icon: "wallet" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
+    { key: "message", label: "Mesaj", icon: "chatbubble-ellipses" as const, tone: "violet" as const, testID: "detail-message-btn", onPress: openMessage },
     canEditContact && {
       key: "terms",
       label: c.payment_term_days ? `Vade ${c.payment_term_days}g` : "Vade uygula",
-      icon: "calendar-outline" as const,
+      icon: "calendar" as const,
       tone: "amber" as const,
       testID: "detail-terms-btn",
       onPress: openTerms,
@@ -471,7 +471,7 @@ export function ContactDetailScreen() {
     canBank && {
       key: "plan",
       label: "Taksitlendir",
-      icon: "layers-outline" as const,
+      icon: "layers" as const,
       tone: "violet" as const,
       testID: "detail-balance-installments-btn",
       disabled: bal === 0,
@@ -480,16 +480,16 @@ export function ContactDetailScreen() {
     {
       key: "b2b",
       label: c.b2b_enabled ? "B2B linki" : "B2B erişimi",
-      icon: "cart-outline" as const,
+      icon: "cart" as const,
       tone: "indigo" as const,
       testID: "detail-b2b-access-btn",
       busy: b2bBusy,
       onPress: grantB2b,
     },
-    c.phone && { key: "call", label: "Ara", icon: "call-outline" as const, tone: "teal" as const, testID: "detail-call-btn", onPress: () => Linking.openURL(`tel:${c.phone}`) },
+    c.phone && { key: "call", label: "Ara", icon: "call" as const, tone: "teal" as const, testID: "detail-call-btn", onPress: () => Linking.openURL(`tel:${c.phone}`) },
     c.phone && { key: "wa", label: "WhatsApp", icon: "logo-whatsapp" as const, tone: "emerald" as const, testID: "detail-wa-btn", onPress: () => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`) },
-    c.email && { key: "mail", label: "E-posta", icon: "mail-outline" as const, tone: "sky" as const, testID: "detail-mail-btn", onPress: () => Linking.openURL(`mailto:${c.email}`) },
-    mapsLink(c) && { key: "map", label: "Konum", icon: "navigate-outline" as const, tone: "rose" as const, testID: "detail-location-btn", onPress: () => Linking.openURL(String(mapsLink(c))) },
+    c.email && { key: "mail", label: "E-posta", icon: "mail" as const, tone: "sky" as const, testID: "detail-mail-btn", onPress: () => Linking.openURL(`mailto:${c.email}`) },
+    mapsLink(c) && { key: "map", label: "Konum", icon: "navigate" as const, tone: "rose" as const, testID: "detail-location-btn", onPress: () => Linking.openURL(String(mapsLink(c))) },
   ].filter(Boolean) as ActionTile[];
 
   return (

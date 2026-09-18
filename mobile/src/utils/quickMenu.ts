@@ -37,16 +37,17 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "settings", label: "Ayarlar", path: "/settings", href: "/settings", icon: "settings", tone: "slate", always: true },
 ];
 
-export const QUICK_TONE_COLORS: Record<QuickTone, { bg: string; fg: string }> = {
-  emerald: { bg: "#ECFDF5", fg: "#047857" },
-  sky: { bg: "#E0F2FE", fg: "#0369A1" },
-  amber: { bg: "#FFFBEB", fg: "#B45309" },
-  indigo: { bg: "#EEF2FF", fg: "#4338CA" },
-  teal: { bg: "#CCFBF1", fg: "#0F766E" },
-  orange: { bg: "#FFEDD5", fg: "#C2410C" },
-  violet: { bg: "#EDE9FE", fg: "#6D28D9" },
-  rose: { bg: "#FFF1F2", fg: "#BE123C" },
-  slate: { bg: "#F1F5F9", fg: "#334155" },
+/** bg: kart zemini, border: ince çerçeve, solid: ikon rozeti, fg: metin / açık zemin ikonu. */
+export const QUICK_TONE_COLORS: Record<QuickTone, { bg: string; border: string; solid: string; fg: string }> = {
+  emerald: { bg: "#ECFDF5", border: "#A7F3D0", solid: "#059669", fg: "#047857" },
+  sky: { bg: "#E0F2FE", border: "#BAE6FD", solid: "#0284C7", fg: "#0369A1" },
+  amber: { bg: "#FFFBEB", border: "#FDE68A", solid: "#D97706", fg: "#B45309" },
+  indigo: { bg: "#EEF2FF", border: "#C7D2FE", solid: "#4F46E5", fg: "#4338CA" },
+  teal: { bg: "#CCFBF1", border: "#99F6E4", solid: "#0D9488", fg: "#0F766E" },
+  orange: { bg: "#FFEDD5", border: "#FED7AA", solid: "#EA580C", fg: "#C2410C" },
+  violet: { bg: "#EDE9FE", border: "#DDD6FE", solid: "#7C3AED", fg: "#6D28D9" },
+  rose: { bg: "#FFF1F2", border: "#FECDD3", solid: "#E11D48", fg: "#BE123C" },
+  slate: { bg: "#F8FAFC", border: "#E2E8F0", solid: "#475569", fg: "#334155" },
 };
 
 const TASK_PATH_MAP: Record<string, string> = {
