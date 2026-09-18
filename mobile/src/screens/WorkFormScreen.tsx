@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
+import * as Location from "expo-location";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
@@ -279,7 +281,35 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       ) : null}
       {kind === "survey" ? <Field label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} placeholder="YYYY-MM-DD" editable={canEdit} /> : null}
       {kind !== "quote" ? <Field label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
-      {kind !== "quote" ? <Field label="Konum linki" value={locationUrl} onChangeText={setLocationUrl} autoCapitalize="none" editable={canEdit} /> : null}
+      {kind !== "quote" ? (
+        <>
+          <Field label="Konum linki" testID="work-location-url" value={locationUrl} onChangeText={setLocationUrl} autoCapitalize="none" editable={canEdit} placeholder="https://maps.google.com/..." />
+          {canEdit ? (
+            <PrimaryButton
+              title="Konum bul / işaretle"
+              color={colors.indigo}
+              testID="use-my-location-btn"
+              onPress={async () => {
+                try {
+                  const perm = await Location.requestForegroundPermissionsAsync();
+                  if (perm.status !== "granted") { setError("Konum izni verilmedi."); return; }
+                  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                  const lat = pos.coords.latitude.toFixed(6);
+                  const lng = pos.coords.longitude.toFixed(6);
+                  setLocationUrl(`https://www.google.com/maps?q=${lat},${lng}`);
+                  setError(null);
+                  setMessage("Mevcut konum işaretlendi.");
+                } catch {
+                  setError("Konum alınamadı.");
+                }
+              }}
+            />
+          ) : null}
+          {locationUrl ? (
+            <PrimaryButton title="Haritada aç" color={colors.primary} testID="open-location-btn" onPress={() => Linking.openURL(locationUrl)} />
+          ) : null}
+        </>
+      ) : null}
 
       {!isNew ? (
         <>
