@@ -96,18 +96,13 @@ def test_enpara_probe_invalid_token():
 
 
 def test_enpara_fetch_normalizes_rows():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR00"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR330011100000000000000001"}
     since = datetime.now(timezone.utc) - timedelta(days=3)
 
-    ticket_resp = MagicMock()
-    ticket_resp.status_code = 200
-    ticket_resp.json = MagicMock(return_value={"ticketId": "T1"})
-    ticket_resp.text = '{"ticketId":"T1"}'
-
-    list_resp = MagicMock()
-    list_resp.status_code = 200
-    list_resp.text = "{}"
-    list_resp.json = MagicMock(return_value={
+    stmt_resp = MagicMock()
+    stmt_resp.status_code = 200
+    stmt_resp.text = "{}"
+    stmt_resp.json = MagicMock(return_value={
         "status": "completed",
         "bakiye": 1500.25,
         "transactions": [
@@ -117,8 +112,8 @@ def test_enpara_fetch_normalizes_rows():
     })
 
     mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=ticket_resp)
-    mock_client.get = AsyncMock(return_value=list_resp)
+    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock(return_value=stmt_resp)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -133,25 +128,26 @@ def test_enpara_fetch_normalizes_rows():
     assert out["transactions"][0]["direction"] == "credit"
     assert out["transactions"][1]["direction"] == "debit"
     assert out["balance"] == 1500.25
+    args, kwargs = mock_client.get.await_args
+    assert args[0] == "https://api.enpara.com/v1/account-statement"
+    assert "startDateTime" in (kwargs.get("params") or {})
+    assert "endDateTime" in (kwargs.get("params") or {})
+    assert kwargs["params"]["iban"] == "TR330011100000000000000001"
+    mock_client.post.assert_not_called()
 
 
 def test_enpara_fetch_empty_completed_is_success():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR00"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR330011100000000000000001"}
     since = datetime.now(timezone.utc) - timedelta(days=3)
 
-    ticket_resp = MagicMock()
-    ticket_resp.status_code = 200
-    ticket_resp.json = MagicMock(return_value={"ticketId": "T2"})
-    ticket_resp.text = "{}"
-
-    list_resp = MagicMock()
-    list_resp.status_code = 200
-    list_resp.text = "{}"
-    list_resp.json = MagicMock(return_value={"status": "completed", "transactions": [], "bakiye": 10})
+    stmt_resp = MagicMock()
+    stmt_resp.status_code = 200
+    stmt_resp.text = "{}"
+    stmt_resp.json = MagicMock(return_value={"status": "completed", "transactions": [], "bakiye": 10})
 
     mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=ticket_resp)
-    mock_client.get = AsyncMock(return_value=list_resp)
+    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock(return_value=stmt_resp)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -164,16 +160,82 @@ def test_enpara_fetch_empty_completed_is_success():
     assert out["balance"] == 10.0
 
 
-def test_payload_variants_are_lean_single_schema():
+def test_enpara_async_ticket_polls_ticket_no():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR330011100000000000000001"}
+    since = datetime.now(timezone.utc) - timedelta(days=3)
+
+    miss = MagicMock()
+    miss.status_code = 404
+    miss.text = "not found"
+    miss.json = MagicMock(side_effect=ValueError("no json"))
+
+    ticket_resp = MagicMock()
+    ticket_resp.status_code = 200
+    ticket_resp.text = "{}"
+    ticket_resp.json = MagicMock(return_value={"ticketNo": "T9"})
+
+    ready = MagicMock()
+    ready.status_code = 200
+    ready.text = "{}"
+    ready.json = MagicMock(return_value={
+        "status": "completed",
+        "bakiye": 80,
+        "transactions": [
+            {"transactionId": "A1", "amount": 20, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-12"},
+        ],
+    })
+
+    async def _get(url, **kwargs):
+        if "/async-ticket/T9" in url or (kwargs.get("params") or {}).get("ticketNo") == "T9":
+            return ready
+        return miss
+
+    bad = MagicMock()
+    bad.status_code = 400
+    bad.text = '{"code":"400"}'
+    bad.json = MagicMock(return_value={"code": "400", "message": "Bad Request", "errors": [{"code": "400-1", "message": "skip"}]})
+
+    async def _post(url, **kwargs):
+        if str(url).endswith("/async-ticket"):
+            return ticket_resp
+        return bad
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "A1"
+    assert out["balance"] == 80.0
+    posted = mock_client.post.await_args
+    assert posted.args[0].endswith("/v1/account-transactions/async-ticket")
+    body = posted.kwargs.get("json") or {}
+    assert "startDateTime" in body and "endDateTime" in body
+    assert "accountInfo" not in body
+
+
+def test_payload_variants_match_gravitee_schema():
     start = datetime(2026, 9, 10, tzinfo=timezone.utc)
     end = datetime(2026, 9, 17, tzinfo=timezone.utc)
     iban = "TR330011100000000000000001"
+    assert len(iban) == 26
     variants = bp._enpara_payload_variants(start, end, iban, "")
     assert variants
-    assert len(variants) <= 22
-    # İlk deneme nesne sarmalayıcı olmalı (400-1 type=object)
-    assert "accountInfo" in variants[0] or "account" in variants[0]
-    assert isinstance(variants[0].get("accountInfo") or variants[0].get("account"), dict)
+    assert len(variants) <= 12
+    first = variants[0]
+    # QNB Gravitee: startDateTime/endDateTime string, iban 26-char string — nested object yok
+    assert first["startDateTime"].startswith("2026-09-10")
+    assert first["endDateTime"].startswith("2026-09-17")
+    assert first.get("iban") == iban
+    assert "accountInfo" not in first
+    assert not any(isinstance(v, dict) for v in first.values())
+    assert all("startDateTime" in p and "endDateTime" in p for p in variants)
 
 
 def test_iban_parts():
@@ -181,6 +243,13 @@ def test_iban_parts():
     assert p["iban"].startswith("TR")
     assert p["bankCode"] == "00111"
     assert p["accountNumber"]
+
+
+def test_enpara_iban_must_be_26_alnum():
+    assert bp._enpara_iban_26("TR33 0011 1000 0000 0000 0000 01") == "TR330011100000000000000001"
+    assert len(bp._enpara_iban_26("TR330011100000000000000001")) == 26
+    assert bp._enpara_iban_26("TR00") == ""
+    assert bp._ticket_id_from({"ticketNo": "T9"}) == "T9"
 
 
 def test_api_error_detail_parses_enpara_400():

@@ -232,7 +232,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrı bir bankadır — <code className="font-mono">api.enpara.com</code> Access Token / Refresh Token ile bağlanır (developer portal). QNB için ayrı <b>QNB Open Banking</b> sağlayıcısını seçin. Kuveyt Türk: developer.kuveytturk.com.tr.
+        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Enpara</b> QNB'den ayrıdır — <code className="font-mono">api.enpara.com</code> Access Token ile bağlanır. Ekstre: <code className="font-mono">startDateTime</code> / <code className="font-mono">endDateTime</code> (26 haneli IBAN). QNB için ayrı <b>QNB Open Banking</b> sağlayıcısını seçin.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -408,7 +408,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Enpara QNB'den ayrıdır. API: <b>api.enpara.com</b>. Developer portalındaki <b>Access Token</b> / <b>Refresh Token</b> değerlerini yapıştırın.
+                Enpara QNB'den ayrıdır. API: <b>api.enpara.com</b>. Hareket çekimi <b>GET /v1/account-statement?startDateTime&amp;endDateTime</b> (IBAN tam 26 karakter). POST /ticket 400-1 üretir — kullanılmaz.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
@@ -434,7 +434,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
               <div><label className="block font-semibold mb-1">Hesap No / IBAN <span className="text-rose-600">(Enpara hareket için gerekli)</span></label>
                 <input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} data-testid="edit-conn-iban" placeholder="TR… veya hesap no" autoComplete="off" />
-                <p className="text-[10px] text-slate-500 mt-1">Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır. Güncel bakiye ve hareket çekimi için IBAN şart.</p>
+                <p className="text-[10px] text-slate-500 mt-1">Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır. Enpara şeması IBAN’ı tam 26 karakter (boşluksuz) ister.</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="edit-conn-mode-sandbox">Sandbox</button>
