@@ -11,12 +11,11 @@ import { colors } from "../theme";
 import type { Contact } from "../types";
 import {
   EXPENSE_DEFAULT_CATEGORIES,
-  accountBalance,
   draftFromExpense,
   emptyExpenseDraft,
   expenseCalc,
   expensePayload,
-  groupedAccounts,
+  paymentTargetGroups,
   splitPaymentTarget,
   validateExpenseDraft,
   type BankAccount,
@@ -27,26 +26,6 @@ import {
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 type Cat = { name?: string };
-
-function paymentGroups(accounts: BankAccount[], partners: Partner[]) {
-  const groups = groupedAccounts(accounts).map((g) => ({
-    label: g.label,
-    options: g.items.map((a) => ({
-      value: idOf(a),
-      label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`,
-    })),
-  }));
-  if (partners.length) {
-    groups.push({
-      label: "Ortaklar",
-      options: partners.map((p) => ({
-        value: `partner:${idOf(p)}`,
-        label: `${p.name || "Ortak"} · ${fmtMoney(p.balance)}`,
-      })),
-    });
-  }
-  return groups;
-}
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
@@ -229,7 +208,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
             value={draft.account_id}
             onChange={(id) => set("account_id", id)}
             emptyLabel="Ödenmedi — borç olarak kaydet"
-            groups={paymentGroups(accounts, partners)}
+            groups={paymentTargetGroups(accounts, partners)}
           />
           {draft.account_id ? <Muted>Seçili hesapla kaydedince masraf ödenmiş olur.</Muted> : <Muted>Boş bırakırsanız borç olarak kaydedilir.</Muted>}
         </>
@@ -259,7 +238,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
             value={payAcc}
             onChange={setPayAcc}
             emptyLabel="Hesap seçin"
-            groups={paymentGroups(accounts, partners)}
+            groups={paymentTargetGroups(accounts, partners)}
           />
           <PrimaryButton title="Masrafı öde" onPress={payTarget} loading={busy} color={colors.primary} testID="exp-pay" />
         </Card>

@@ -6,6 +6,7 @@ import {
   expenseCalc,
   expensePayload,
   groupedAccounts,
+  paymentTargetGroups,
   splitPaymentTarget,
   totalLiquidity,
   validateAccountDraft,
@@ -77,6 +78,25 @@ describe("finance drafts", () => {
     const partnerBody = expensePayload(d, "comp");
     expect(partnerBody.account_id).toBeNull();
     expect(partnerBody.partner_id).toBe("p9");
+  });
+
+  it("groups payment targets like web PaymentTargetSelect", () => {
+    const accounts = [
+      { id: "b1", type: "bank", account_name: "Vakıf", current_balance: 100 },
+      { id: "k1", type: "kasa", account_name: "Merkez kasa", current_balance: 50 },
+      { id: "c1", type: "credit_card", account_name: "Kart", current_balance: -20 },
+    ];
+    const partners = [{ id: "p1", name: "Ali", balance: 3000 }, { id: "p2", name: "Pasif", is_active: false }];
+
+    const collect = paymentTargetGroups(accounts, partners, { collectableOnly: true });
+    expect(collect.map((g) => g.label)).toEqual(["Banka", "Kasa", "Ortaklar"]);
+    expect(collect.at(-1)?.options).toEqual([{ value: "partner:p1", label: expect.stringContaining("Ali") }]);
+
+    const spend = paymentTargetGroups(accounts, partners);
+    expect(spend.map((g) => g.label)).toContain("Kredi Kartı");
+
+    const noPartners = paymentTargetGroups(accounts, partners, { includePartners: false });
+    expect(noPartners.map((g) => g.label)).not.toContain("Ortaklar");
   });
 
   it("rejects virman onto the same account", () => {

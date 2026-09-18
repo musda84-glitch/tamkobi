@@ -3,11 +3,12 @@ import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row } from "../components/kit";
 import { colors } from "../theme";
 import {
-  accountBalance,
   partnerTxTr,
+  paymentTargetGroups,
   validatePartner,
   type BankAccount,
   type Partner,
@@ -155,7 +156,8 @@ export function BankingPartnersPanel({
     });
   };
 
-  const txPool = txType === "capital_in" ? cashAccounts : accounts;
+  const txPool = paymentTargetGroups(accounts, [], { collectableOnly: txType === "capital_in" });
+  const profitPool = paymentTargetGroups(accounts, [], { collectableOnly: true });
 
   return (
     <View testID="partners-panel" style={{ gap: 16 }}>
@@ -198,21 +200,25 @@ export function BankingPartnersPanel({
       {mode === "tx" ? (
         <Card testID="partner-tx-modal">
           <Muted>Ortak para koy / çek</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {partners.map((p) => (
-              <Chip key={idOf(p)} label={p.name || "Ortak"} active={txPartner === idOf(p)} testID={`partner-tx-partner-${idOf(p)}`} onPress={() => setTxPartner(idOf(p))} />
-            ))}
-          </Row>
+          <GroupedSelect
+            label="Ortak"
+            testID="partner-tx-partner-select"
+            value={txPartner}
+            onChange={setTxPartner}
+            groups={[{ label: "Ortaklar", options: partners.map((p) => ({ value: idOf(p), label: `${p.name || "Ortak"} · %${p.share_percent || 0}` })) }]}
+          />
           <Row style={{ flexWrap: "wrap" }}>
             <Chip label="Para koy" active={txType === "capital_in"} testID="partner-tx-type-in" onPress={() => setTxType("capital_in")} />
             <Chip label="Para çek" active={txType === "withdrawal"} testID="partner-tx-type-out" color={colors.danger} onPress={() => setTxType("withdrawal")} />
           </Row>
-          <Muted>{txType === "capital_in" ? "Kasa / banka" : "Kasa / banka / kart"}</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {txPool.map((a) => (
-              <Chip key={idOf(a)} label={`${a.account_name || "Hesap"} · ${fmtMoney(accountBalance(a))}`} active={txAccount === idOf(a)} testID={`partner-tx-account-${idOf(a)}`} onPress={() => setTxAccount(idOf(a))} />
-            ))}
-          </Row>
+          <GroupedSelect
+            label={txType === "capital_in" ? "Kasa / banka" : "Kasa / banka / kart"}
+            testID="partner-tx-account-select"
+            value={txAccount}
+            onChange={setTxAccount}
+            emptyLabel="Hesap seçin"
+            groups={txPool}
+          />
           <Field label="Tutar" testID="partner-tx-amount-input" value={txAmount} onChangeText={setTxAmount} keyboardType="decimal-pad" />
           <Field label="Açıklama" value={txDesc} onChangeText={setTxDesc} />
           <PrimaryButton title="İşlemi kaydet" onPress={saveTx} loading={busy} color={colors.primary} testID="save-partner-tx-btn" />
@@ -230,14 +236,14 @@ export function BankingPartnersPanel({
             <Chip label="Sonra öde" active={!payNow} testID="profit-pay-later" onPress={() => setPayNow(false)} />
           </Row>
           {payNow ? (
-            <>
-              <Muted>Ödenecek kasa / banka</Muted>
-              <Row style={{ flexWrap: "wrap" }}>
-                {cashAccounts.map((a) => (
-                  <Chip key={idOf(a)} label={a.account_name || "Hesap"} active={profitAccount === idOf(a)} onPress={() => setProfitAccount(idOf(a))} />
-                ))}
-              </Row>
-            </>
+            <GroupedSelect
+              label="Ödenecek kasa / banka"
+              testID="profit-account-select"
+              value={profitAccount}
+              onChange={setProfitAccount}
+              emptyLabel="Hesap seçin"
+              groups={profitPool}
+            />
           ) : null}
           <PrimaryButton title="Dağıt" onPress={distribute} loading={busy} color="#B45309" testID="save-profit-btn" />
           <PrimaryButton title="Vazgeç" onPress={() => setMode("none")} />

@@ -1,3 +1,6 @@
+import { collectableAccounts } from "./contactDraft";
+import { fmtMoney, idOf } from "./money";
+
 export const ACCOUNT_TYPES = [
   { key: "bank", label: "Banka" },
   { key: "cash_box", label: "Kasa" },
@@ -201,6 +204,35 @@ export function groupedAccounts<T extends { type?: string }>(accounts: T[]): { k
 
 export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: T[]): T[] {
   return (accounts || []).filter((a) => !a.is_integrated);
+}
+
+export type PaymentTargetGroup = { label: string; options: { value: string; label: string }[] };
+
+/** Web PaymentTargetSelect karşılığı: tür bazlı gruplar + opsiyonel ortaklar. */
+export function paymentTargetGroups(
+  accounts: BankAccount[],
+  partners: Partner[] = [],
+  opts: { collectableOnly?: boolean; includePartners?: boolean } = {}
+): PaymentTargetGroup[] {
+  const pool = opts.collectableOnly ? collectableAccounts(accounts || []) : accounts || [];
+  const groups: PaymentTargetGroup[] = groupedAccounts(pool).map((g) => ({
+    label: g.label,
+    options: g.items.map((a) => ({
+      value: idOf(a),
+      label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`,
+    })),
+  }));
+  const active = (partners || []).filter((p) => p.is_active !== false);
+  if (opts.includePartners !== false && active.length) {
+    groups.push({
+      label: "Ortaklar",
+      options: active.map((p) => ({
+        value: `partner:${idOf(p)}`,
+        label: `${p.name || "Ortak"} · ${fmtMoney(p.balance)}`,
+      })),
+    });
+  }
+  return groups;
 }
 
 export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null } {
