@@ -6,6 +6,7 @@ import {
   expenseCalc,
   expensePayload,
   groupedAccounts,
+  splitPaymentTarget,
   totalLiquidity,
   validateAccountDraft,
   validateExpenseDraft,
@@ -71,6 +72,11 @@ describe("finance drafts", () => {
     expect(body.company_id).toBe("comp");
     expect(body.amount).toBe(100);
     expect(body.account_id).toBe("acc1");
+    expect(body.partner_id).toBeNull();
+    d.account_id = "partner:p9";
+    const partnerBody = expensePayload(d, "comp");
+    expect(partnerBody.account_id).toBeNull();
+    expect(partnerBody.partner_id).toBe("p9");
   });
 
   it("rejects virman onto the same account", () => {
@@ -95,6 +101,7 @@ describe("finance drafts", () => {
       { type: "credit_card", current_balance: -20 },
     ])).toBe(15);
     expect(virmanAccounts([{ is_integrated: true }, { is_integrated: false }])).toHaveLength(1);
+    expect(splitPaymentTarget("partner:p1")).toEqual({ partner_id: "p1", account_id: null });
     expect(validatePartner("", "10")).toBe("Ortak adı gerekli.");
     expect(validatePartner("Ali", "60", 50)).toBe("Toplam ortaklık payı %100'ü aşamaz.");
     expect(validatePartner("Ali", "40", 50)).toBeNull();

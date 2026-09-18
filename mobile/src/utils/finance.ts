@@ -203,6 +203,12 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
   return (accounts || []).filter((a) => !a.is_integrated);
 }
 
+export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null } {
+  const v = String(value || "");
+  if (v.startsWith("partner:")) return { partner_id: v.slice(8), account_id: null };
+  return { account_id: v || null, partner_id: null };
+}
+
 export function totalLiquidity(accounts: BankAccount[]): number {
   return (accounts || [])
     .filter((a) => normalizeAccountType(a.type) !== "credit_card")
@@ -355,6 +361,7 @@ export function validateExpenseDraft(d: ExpenseDraft): string | null {
 }
 
 export function expensePayload(d: ExpenseDraft, companyId: string) {
+  const target = splitPaymentTarget(d.account_id);
   return {
     company_id: companyId,
     date: d.date,
@@ -363,7 +370,8 @@ export function expensePayload(d: ExpenseDraft, companyId: string) {
     amount: num(d.amount),
     vat_rate: num(d.vat_rate),
     vat_included: d.vat_included,
-    account_id: d.account_id || null,
+    account_id: target.account_id,
+    partner_id: target.partner_id,
     contact_id: d.contact_id || null,
     document_no: d.document_no,
     notes: d.notes,

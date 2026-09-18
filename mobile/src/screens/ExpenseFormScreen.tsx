@@ -10,18 +10,87 @@ import { colors } from "../theme";
 import type { Contact } from "../types";
 import {
   EXPENSE_DEFAULT_CATEGORIES,
+  accountBalance,
   draftFromExpense,
   emptyExpenseDraft,
   expenseCalc,
   expensePayload,
+  groupedAccounts,
+  splitPaymentTarget,
   validateExpenseDraft,
   type BankAccount,
   type Expense,
   type ExpenseDraft,
+  type Partner,
 } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 type Cat = { name?: string };
+
+function PaymentSelect({
+  accounts,
+  partners,
+  value,
+  onChange,
+  allowEmpty,
+  testID,
+}: {
+  accounts: BankAccount[];
+  partners: Partner[];
+  value: string;
+  onChange: (id: string) => void;
+  allowEmpty?: boolean;
+  testID?: string;
+}) {
+  const groups = groupedAccounts(accounts);
+  return (
+    <Card testID={testID}>
+      {allowEmpty ? (
+        <Chip label="Ödenmedi — borç olarak kaydet" active={!value} testID="exp-pay-none" onPress={() => onChange("")} />
+      ) : null}
+      {!groups.length && !partners.length ? <Muted>Kasa / banka / ortak bulunamadı. Kasa & Banka ekranından hesap ekleyin.</Muted> : null}
+      {groups.map((g) => (
+        <React.Fragment key={g.key}>
+          <Muted>{g.label}</Muted>
+          <Row style={{ flexWrap: "wrap" }}>
+            {g.items.map((a) => {
+              const id = idOf(a);
+              return (
+                <Chip
+                  key={id}
+                  label={`${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`}
+                  active={value === id}
+                  testID={`exp-pay-acc-${id}`}
+                  onPress={() => onChange(value === id && allowEmpty ? "" : id)}
+                />
+              );
+            })}
+          </Row>
+        </React.Fragment>
+      ))}
+      {partners.length ? (
+        <>
+          <Muted>Ortaklar</Muted>
+          <Row style={{ flexWrap: "wrap" }}>
+            {partners.map((p) => {
+              const id = `partner:${idOf(p)}`;
+              return (
+                <Chip
+                  key={id}
+                  label={`${p.name || "Ortak"} · ${fmtMoney(p.balance)}`}
+                  active={value === id}
+                  testID={`exp-pay-partner-${idOf(p)}`}
+                  color="#B45309"
+                  onPress={() => onChange(value === id && allowEmpty ? "" : id)}
+                />
+              );
+            })}
+          </Row>
+        </>
+      ) : null}
+    </Card>
+  );
+}
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
@@ -29,9 +98,11 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const isNew = !expenseId;
   const [draft, setDraft] = useState<ExpenseDraft>(emptyExpenseDraft(todayIso()));
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [categories, setCategories] = useState<string[]>(EXPENSE_DEFAULT_CATEGORIES);
   const [custQ, setCustQ] = useState("");
+  const [catQ, setCatQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,12 +113,14 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [acc, cats, cnt] = await Promise.all([
+      const [acc, cats, cnt, pars] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<Cat[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setAccounts(acc || []);
+      setPartners((pars || []).filter((p) => p.is_active !== false));
       const names = (cats || []).map((c) => c.name || "").filter(Boolean);
       setCategories(names.length ? names : EXPENSE_DEFAULT_CATEGORIES);
       setContacts((cnt || []).filter((c) => c.type !== "customer"));
@@ -101,11 +174,13 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
     }
   };
 
-  const pay = async () => {
-    if (!expenseId || !payAcc) { setError("Ödeme için kasa/banka seçin."); return; }
+  const payTarget = async () => {
+    if (!expenseId) return;
+    const target = splitPaymentTarget(payAcc);
+    if (!target.account_id && !target.partner_id) { setError("Ödeme için kasa/banka/ortak seçin."); return; }
     setBusy(true);
     try {
-      await post(client, `/expenses/${expenseId}/pay`, { account_id: payAcc });
+      await post(client, `/expenses/${expenseId}/pay`, { account_id: target.account_id, partner_id: target.partner_id });
       setMessage("Masraf ödendi.");
       await load();
       setError(null);
@@ -143,10 +218,38 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       <Field label="Tarih" testID="exp-date" value={draft.date} onChangeText={(v) => set("date", v)} placeholder="YYYY-MM-DD" editable={canEdit} />
       <Muted>Kategori</Muted>
       <Row style={{ flexWrap: "wrap" }}>
-        {categories.slice(0, 16).map((c) => (
-          <Chip key={c} label={c} active={draft.category === c} onPress={() => canEdit && set("category", c)} />
+        {categories.map((c) => (
+          <Chip key={c} label={c} active={draft.category === c} testID={`exp-cat-${c}`} onPress={() => canEdit && set("category", c)} />
         ))}
       </Row>
+      <Field
+        label="Yeni kategori"
+        testID="exp-category-custom"
+        value={catQ}
+        onChangeText={setCatQ}
+        placeholder="Listede yoksa yazın"
+        onSubmitEditing={() => {
+          const name = catQ.trim();
+          if (!name) return;
+          if (!categories.includes(name)) setCategories((prev) => [...prev, name]);
+          set("category", name);
+          setCatQ("");
+        }}
+        editable={canEdit}
+      />
+      {catQ.trim() ? (
+        <PrimaryButton
+          title={`Kategori: ${catQ.trim()}`}
+          onPress={() => {
+            const name = catQ.trim();
+            if (!categories.includes(name)) setCategories((prev) => [...prev, name]);
+            set("category", name);
+            setCatQ("");
+          }}
+          color={colors.primary}
+          testID="exp-cat-add"
+        />
+      ) : null}
       <Field label="Açıklama" testID="exp-description" value={draft.description} onChangeText={(v) => set("description", v)} editable={canEdit} />
       <Field label="Tutar" testID="exp-amount" value={draft.amount} onChangeText={(v) => set("amount", v)} keyboardType="decimal-pad" editable={canEdit} />
       <Muted>KDV %</Muted>
@@ -163,11 +266,16 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       </Card>
       {isNew ? (
         <>
-          <Muted>Ödeme (opsiyonel)</Muted>
-          {accounts.slice(0, 12).map((a) => (
-            <ListRow key={idOf(a)} title={a.account_name || "Hesap"} subtitle={fmtMoney(a.current_balance, a.currency)} onPress={() => set("account_id", idOf(a) === draft.account_id ? "" : idOf(a))} />
-          ))}
-          {draft.account_id ? <Muted>Seçili: {accounts.find((a) => idOf(a) === draft.account_id)?.account_name}</Muted> : <Muted>Boş bırakırsanız borç olarak kaydedilir.</Muted>}
+          <Muted>Ödeme (opsiyonel) — kasa, banka, kart veya ortak</Muted>
+          <PaymentSelect
+            testID="exp-pay-select"
+            accounts={accounts}
+            partners={partners}
+            value={draft.account_id}
+            onChange={(id) => set("account_id", id)}
+            allowEmpty
+          />
+          {draft.account_id ? <Muted>Seçili hesapla kaydedince masraf ödenmiş olur.</Muted> : <Muted>Boş bırakırsanız borç olarak kaydedilir.</Muted>}
         </>
       ) : null}
       <Field label="Tedarikçi ara" value={custQ} onChangeText={setCustQ} placeholder="Cari" />
@@ -189,10 +297,15 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       {!isNew && loaded?.payment_status !== "paid" && canEdit ? (
         <Card>
           <Text style={{ fontWeight: "800" }}>Öde</Text>
-          {accounts.slice(0, 12).map((a) => (
-            <ListRow key={idOf(a)} title={a.account_name || "Hesap"} onPress={() => setPayAcc(idOf(a))} />
-          ))}
-          <PrimaryButton title="Masrafı öde" onPress={pay} loading={busy} color={colors.primary} testID="exp-pay" />
+          <Muted>Kasa / banka / kart / ortak</Muted>
+          <PaymentSelect
+            testID="exp-pay-select-edit"
+            accounts={accounts}
+            partners={partners}
+            value={payAcc}
+            onChange={setPayAcc}
+          />
+          <PrimaryButton title="Masrafı öde" onPress={payTarget} loading={busy} color={colors.primary} testID="exp-pay" />
         </Card>
       ) : null}
       {!isNew && loaded?.payment_status === "paid" && canEdit ? (
