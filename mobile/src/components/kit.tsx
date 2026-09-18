@@ -40,8 +40,8 @@ export function H1({ children }: { children: React.ReactNode }) {
   return <Text style={styles.h1}>{children}</Text>;
 }
 
-export function Muted({ children }: { children: React.ReactNode }) {
-  return <Text style={styles.muted}>{children}</Text>;
+export function Muted({ children, testID }: { children: React.ReactNode; testID?: string }) {
+  return <Text testID={testID} style={styles.muted}>{children}</Text>;
 }
 
 export function Row({ children, style }: ViewProps) {
@@ -122,22 +122,34 @@ export function ListRow({
   title,
   subtitle,
   right,
+  rightSub,
+  rightSubColor,
+  leading,
   onPress,
   testID,
 }: {
   title: string;
   subtitle?: string;
   right?: string;
+  rightSub?: string;
+  rightSubColor?: string;
+  leading?: React.ReactNode;
   onPress?: () => void;
   testID?: string;
 }) {
   return (
     <Pressable testID={testID} onPress={onPress} style={styles.listRow} disabled={!onPress}>
+      {leading}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.listTitle} numberOfLines={1}>{title}</Text>
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
-      {right ? <Text style={styles.listRight}>{right}</Text> : null}
+      {right || rightSub ? (
+        <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
+          {right ? <Text style={styles.listRight}>{right}</Text> : null}
+          {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]}>{rightSub}</Text> : null}
+        </View>
+      ) : null}
       {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
     </Pressable>
   );

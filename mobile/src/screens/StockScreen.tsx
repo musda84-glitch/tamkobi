@@ -1,14 +1,45 @@
+import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { get } from "../api/client";
+import { View } from "react-native";
+import { fileUrl, get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
-import { colors } from "../theme";
+import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
+import { productImage, stockBadge } from "../utils/productDisplay";
+
+function ProductThumb({ uri }: { uri: string }) {
+  const { client } = useAuth();
+  const box = {
+    width: 46,
+    height: 46,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.slate100,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    overflow: "hidden" as const,
+  };
+  if (!uri) {
+    return (
+      <View style={box}>
+        <Ionicons name="cube-outline" size={20} color={colors.muted} />
+      </View>
+    );
+  }
+  return (
+    <View style={box}>
+      <Image source={{ uri: fileUrl(client.baseUrl, uri) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
+    </View>
+  );
+}
 
 export function StockScreen() {
   const { client, companyId, can } = useAuth();
@@ -73,16 +104,27 @@ export function StockScreen() {
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Yeni stok kartı ekleyin veya aramayı değiştirin." : "Aramayı değiştirin veya barkod okutun."} />
-      ) : filtered.map((p) => (
-        <ListRow
-          key={idOf(p)}
-          testID={`stock-row-${idOf(p)}`}
-          title={p.name}
-          subtitle={[p.sku || "SKU yok", `stok ${p.stock_quantity ?? "—"} ${p.unit || ""}`, productTypeTr(p.type), p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ")}
-          right={fmtMoney(p.sale_price)}
-          onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
-        />
-      ))}
+      ) : filtered.map((p) => {
+        const badge = stockBadge(p);
+        return (
+          <ListRow
+            key={idOf(p)}
+            testID={`stock-row-${idOf(p)}`}
+            leading={<ProductThumb uri={productImage(p)} />}
+            title={p.name}
+            subtitle={[
+              p.sku || "SKU yok",
+              p.barcode ? `barkod ${p.barcode}` : "barkodsuz",
+              productTypeTr(p.type),
+              p.is_active === false ? "Pasif" : "",
+            ].filter(Boolean).join(" · ")}
+            right={fmtMoney(p.sale_price)}
+            rightSub={badge ? `stok ${badge.label}` : undefined}
+            rightSubColor={badge?.tone === "danger" ? colors.danger : badge?.tone === "warning" ? colors.warning : undefined}
+            onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
+          />
+        );
+      })}
       <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookup} />
     </Screen>
   );
