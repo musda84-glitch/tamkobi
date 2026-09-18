@@ -30,7 +30,7 @@ PROVIDERS = {
         "token_path": "/oauth2/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["client_id", "client_secret", "access_token", "refresh_token", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. Access/Refresh Token + Client ID/Secret (JWT aud ile aynı Client ID) + IBAN. Production sunucu IP’si portalda izinli olmalı. Hareket: ticket → list.",
+        "hint": "Enpara QNB'den ayrıdır. Access/Refresh Token + Client ID + 26 haneli IBAN (boşluksuz). Hareket: GET /v1/account-statement?startDateTime&endDateTime (POST /ticket şema dışı, 400-1). Production IP portalda izinli olmalı.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -378,7 +378,7 @@ def _extract_balance(raw: Any) -> Optional[float]:
 def _ticket_id_from(data: Any) -> Optional[str]:
     if not isinstance(data, dict):
         return None
-    for k in ("ticketId", "ticket", "id", "requestId", "jobId"):
+    for k in ("ticketNo", "ticketId", "ticket", "id", "requestId", "jobId"):
         v = data.get(k)
         if v and not isinstance(v, (dict, list)):
             return str(v)
@@ -416,13 +416,15 @@ def _enpara_account_ref(conn: dict) -> str:
     return ""
 
 
-def _enpara_headers(token: str, conn: dict) -> Dict[str, str]:
-    # Bearer yeterli; ekstra client_id header'ları bazı Apigee kurallarında 400 üretebiliyor
-    return {
+def _enpara_headers(token: str, conn: dict, *, for_get: bool = False) -> Dict[str, str]:
+    # Bearer yeterli; GET'e Content-Type koymamak Gravitee JSON Validation'ı bozmaz
+    headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
-        "Content-Type": "application/json",
     }
+    if not for_get:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 def _is_iban(ref: str) -> bool:
@@ -466,74 +468,78 @@ def _stringify_err_msg(val: Any) -> str:
     return str(val)
 
 
+def _enpara_iban_26(account: str) -> str:
+    """Gravitee şeması: iban string, minLength=26, maxLength=26, [a-zA-Z0-9]."""
+    raw = (account or "").strip().upper().replace(" ", "")
+    if len(raw) == 26 and raw.isalnum():
+        return raw
+    if _is_iban(raw) and len(raw) >= 26:
+        return raw[:26]
+    return ""
+
+
+def _enpara_account_no(account: str) -> str:
+    raw = (account or "").strip().upper().replace(" ", "")
+    if not raw or raw == "-":
+        return ""
+    iban = _enpara_iban_26(raw)
+    if iban:
+        parts = _iban_parts(iban)
+        return parts.get("accountNumber") or ""
+    return raw
+
+
+def _string_params(payload: Dict[str, Any]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for k, v in payload.items():
+        if v is None or isinstance(v, (dict, list)):
+            continue
+        s = str(v).strip()
+        if s:
+            out[k] = s
+    return out
+
+
 def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
-    """400-1 'object' = kökte accountInfo/account nesnesi bekleniyor. Düz iban sona bırakılır."""
-    start_iso, end_iso = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
-    start_tr, end_tr = start.strftime("%d.%m.%Y"), end.strftime("%d.%m.%Y")
-    start_compact, end_compact = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
-    start_dmy, end_dmy = start.strftime("%d%m%Y"), end.strftime("%d%m%Y")
-    start_dt = f"{start_iso}T00:00:00"
-    end_dt = f"{end_iso}T23:59:59"
-    parts = _iban_parts(account) if account else {}
-    acc = parts.get("iban") or (account or "").strip().upper().replace(" ", "")
-    acct_no = parts.get("accountNumber") or (acc if acc and not _is_iban(acc) else "")
-    bank_code = parts.get("bankCode") or ""
+    """QNB/Enpara Gravitee Account Statement + Account Transactions şeması.
+
+    Zorunlu: startDateTime, endDateTime (string). Opsiyonel: iban (tam 26), accountNo (string).
+    Nested object (accountInfo) JSON Schema'da yok — 400-1 'object' üretir.
+    """
+    del customer  # şemada yok; imza uyumu
+    iban = _enpara_iban_26(account)
+    acct_no = _enpara_account_no(account)
+    start_d, end_d = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    ranges = [
+        (f"{start_d}T00:00:00", f"{end_d}T23:59:59"),
+        (f"{start_d}T00:00:00.000", f"{end_d}T23:59:59.999"),
+        (f"{start_d} 00:00:00", f"{end_d} 23:59:59"),
+        (start_d, end_d),
+    ]
     variants: List[Dict[str, Any]] = []
 
     def add(p: Dict[str, Any]):
         variants.append(p)
 
-    if acc:
-        info_iban = {"iban": acc, "currencyCode": "TRY"}
-        info_full = {**info_iban}
+    for sd, ed in ranges:
+        base = {"startDateTime": sd, "endDateTime": ed}
+        if iban and acct_no:
+            add({**base, "iban": iban, "accountNo": acct_no})
+        if iban:
+            add({**base, "iban": iban})
         if acct_no:
-            info_full["accountNumber"] = acct_no
-        if bank_code:
-            info_full["branchCode"] = bank_code
-            info_full["bankCode"] = bank_code
-
-        # 1) Nesne sarmalayıcılar (şema 'type: object')
-        add({"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso})
-        add({"accountInfo": info_full, "startDate": start_iso, "endDate": end_iso})
-        add({"accountInfo": info_iban, "startDate": start_dt, "endDate": end_dt})
-        add({"accountInfo": info_iban, "queryStartDate": start_iso, "queryEndDate": end_iso})
-        add({"accountInfo": info_iban, "startDate": start_compact, "endDate": end_compact})
-        add({"accountInfo": info_iban, "startDate": start_dmy, "endDate": end_dmy})
-        add({"accountInfo": info_iban, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
-        add({"account": {"iban": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
-        add({
-            "account": {"iban": acc, "currencyCode": "TRY"},
-            "period": {"startDate": start_iso, "endDate": end_iso},
-        })
-        add({
-            "accountInfo": info_iban,
-            "dateRange": {"startDate": start_iso, "endDate": end_iso},
-        })
-        add({"data": {"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso}})
-        add({"request": {"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso}})
-        add({"hesap": {"iban": acc, "paraBirimi": "TRY"}, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
-        if acct_no:
-            add({"accountInfo": {"accountNumber": acct_no, "currencyCode": "TRY", "iban": acc}, "startDate": start_iso, "endDate": end_iso})
-        if customer:
-            add({"accountInfo": {**info_iban, "customerNumber": customer}, "startDate": start_iso, "endDate": end_iso})
-
-        # 2) Düz alanlar (eski denemeler, nesne şeması tutmazsa)
-        add({"iban": acc, "startDate": start_iso, "endDate": end_iso})
-        add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
-        if acct_no:
-            add({"accountNumber": acct_no, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
-    else:
-        add({"startDate": start_iso, "endDate": end_iso})
+            add({**base, "accountNo": acct_no})
+        add(dict(base))
 
     seen = set()
     uniq = []
     for p in variants:
-        key = json.dumps(p, sort_keys=True, ensure_ascii=False, default=str)
+        key = json.dumps(p, sort_keys=True, ensure_ascii=False)
         if key in seen:
             continue
         seen.add(key)
         uniq.append(p)
-    return uniq[:22]
+    return uniq[:12]
 
 
 def _api_error_detail(resp) -> str:
@@ -569,16 +575,21 @@ def _api_error_detail(resp) -> str:
 
 
 async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]:
-    """Hareket + opsiyonel bakiye. Boş hareket listesi başarıdır (dönemde işlem yok)."""
+    """QNB/Enpara Gravitee Account Statement şeması.
+
+    GET /v1/account-statement?startDateTime&endDateTime  (POST kök/ticket 405)
+    POST /v1/account-transactions/realtime | /async-ticket  (aynı JSON: startDateTime, endDateTime, iban)
+    GET  /v1/account-statement/ticket?ticketNo=...
+    """
     import asyncio
 
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
-    headers = _enpara_headers(token, conn)
+    get_headers = _enpara_headers(token, conn, for_get=True)
+    post_headers = _enpara_headers(token, conn, for_get=False)
     account = _enpara_account_ref(conn)
     customer = (conn.get("customer_number") or "").strip()
     end = datetime.now(timezone.utc)
-    # Enpara genelde kısa aralık ister; aşırı uzun aralık 400 verebilir
     if (end - since).days > 30:
         since = end - timedelta(days=30)
     payloads = _enpara_payload_variants(since, end, account, customer)
@@ -586,35 +597,47 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     got_ok_empty = False
     balance: Optional[float] = None
     refreshed_token: Optional[str] = None
-    start_iso, end_iso = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    best_400 = ""
 
     async with httpx.AsyncClient(timeout=45) as client:
         async def _maybe_refresh(resp):
-            nonlocal token, headers, refreshed_token
+            nonlocal token, get_headers, post_headers, refreshed_token
             if resp.status_code not in (401, 403):
                 return resp
             if not ((conn.get("refresh_token") or conn.get("client_secret")) and (conn.get("client_id") or conn.get("access_token"))):
-                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin. {_api_error_detail(resp)}")
+                raise RuntimeError(
+                    f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). Access Token'ı yenileyin. {_api_error_detail(resp)}"
+                )
             token = await _enpara_refresh_access_token(conn)
             refreshed_token = token
-            headers = _enpara_headers(token, conn)
+            get_headers = _enpara_headers(token, conn, for_get=True)
+            post_headers = _enpara_headers(token, conn, for_get=False)
             return None
+
+        def _raise_auth(resp):
+            detail = _api_error_detail(resp)
+            if "IP" in detail or "not allowed" in detail.lower() or "proxy" in detail.lower():
+                raise RuntimeError(
+                    "Enpara API IP kısıtı: sunucu IP’niz portalda izinli değil. "
+                    f"Enpara developer portalına production sunucu IP’nizi ekleyin. ({detail[:160]})"
+                )
+            raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {detail}")
 
         async def _send(method: str, path: str, *, params=None, json_body=None):
             url = f"{base}{path}"
             if method == "GET":
-                resp = await client.get(url, headers=headers, params=params or {})
+                resp = await client.get(url, headers=get_headers, params=params or {})
             else:
-                resp = await client.post(url, headers=headers, json=json_body or {})
+                resp = await client.post(url, headers=post_headers, json=json_body or {})
             retried = await _maybe_refresh(resp)
             if retried is None:
                 if method == "GET":
-                    resp = await client.get(url, headers=headers, params=params or {})
+                    resp = await client.get(url, headers=get_headers, params=params or {})
                 else:
-                    resp = await client.post(url, headers=headers, json=json_body or {})
+                    resp = await client.post(url, headers=post_headers, json=json_body or {})
             return resp
 
-        def _consume(data: Any) -> Optional[Dict[str, Any]]:
+        def _consume(data: Any, *, as_statement: bool = True) -> Optional[Dict[str, Any]]:
             nonlocal balance, got_ok_empty
             bal = _extract_balance(data)
             if bal is not None:
@@ -625,83 +648,34 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             ready = _ticket_ready(data)
             if ready is False:
                 return None
-            if isinstance(data, (dict, list)):
+            if as_statement and ready is True:
                 got_ok_empty = True
-            if ready is True:
                 return {"transactions": [], "balance": balance, "access_token": refreshed_token}
             return None
 
-        # 1) Ticket — önce accountInfo nesnesi (400-1 type=object)
-        ticket_id = None
-        best_400 = ""
-        for payload in payloads:
-            tr = await _send("POST", "/v1/account-statement/ticket", json_body=payload)
-            if tr.status_code in (401, 403):
-                detail = _api_error_detail(tr)
-                if "IP" in detail or "not allowed" in detail.lower() or "proxy" in detail.lower():
-                    raise RuntimeError(
-                        "Enpara API IP kısıtı: sunucu IP’niz portalda izinli değil. "
-                        f"Enpara developer portalına production sunucu IP’nizi ekleyin. ({detail[:160]})"
-                    )
-                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {tr.status_code}). {_api_error_detail(tr)}")
-            keys = ",".join(payload.keys())
-            last_detail = f"ticket HTTP {tr.status_code} ({keys}): {_api_error_detail(tr)}"
-            if tr.status_code >= 400:
-                if tr.status_code == 400:
-                    # Daha uzun / alan adı içeren yanıtı tut (ilk 'object' mesajını ez)
-                    if (not best_400) or ("object" in best_400 and "object" not in last_detail) or len(last_detail) > len(best_400):
-                        best_400 = last_detail
-                continue
-            try:
-                td = tr.json()
-            except Exception:
-                td = {}
-            ticket_id = _ticket_id_from(td)
-            out = _consume(td)
-            if out and out.get("transactions"):
-                return out
-            if ticket_id:
-                break
+        def _note_400(label: str, resp, payload: Optional[dict] = None):
+            nonlocal last_detail, best_400
+            keys = ",".join((payload or {}).keys())
+            last_detail = f"{label} HTTP {resp.status_code} ({keys}): {_api_error_detail(resp)}"
+            if resp.status_code == 400:
+                if (not best_400) or ("object" in best_400 and "object" not in last_detail) or len(last_detail) > len(best_400):
+                    best_400 = last_detail
 
-        # Ticket hiç oluşmadıysa önce GET list (açık ticket’lar) dene
-        if not ticket_id:
-            resp = await _send("GET", "/v1/account-statement/list", params={})
-            last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
-            if resp.status_code < 400:
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = None
-                if data is not None:
-                    out = _consume(data)
-                    if out and out.get("transactions"):
-                        return out
-                    # listedeki ilk ticketId
-                    rows = data if isinstance(data, list) else _dig_list(data, ("value", "data", "items", "tickets", "list")) or []
-                    if isinstance(rows, list):
-                        for row in rows:
-                            if isinstance(row, dict):
-                                tid = _ticket_id_from(row)
-                                if tid:
-                                    ticket_id = tid
-                                    break
-
-
-        # 2) Ticket ile liste / ekstre (GET öncelikli; POST yalnız ticketId)
-        if ticket_id:
+        async def _poll_ticket(ticket_id: str) -> Optional[Dict[str, Any]]:
+            nonlocal last_detail
             for attempt in range(10):
                 if attempt:
                     await asyncio.sleep(1.5)
                 pending = False
                 for method, path, params in (
-                    ("GET", "/v1/account-statement/list", {"ticketId": ticket_id}),
-                    ("GET", "/v1/account-statement", {"ticketId": ticket_id}),
-                    ("GET", "/v1/account-statement/list", {"ticketId": ticket_id, "startDate": start_iso, "endDate": end_iso}),
+                    ("GET", f"/v1/account-transactions/async-ticket/{ticket_id}", {}),
+                    ("GET", "/v1/account-statement/ticket", {"ticketNo": ticket_id}),
+                    ("GET", "/v1/account-statement", {"ticketNo": ticket_id}),
                 ):
                     resp = await _send(method, path, params=params)
                     last_detail = f"{method} {path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
                     if resp.status_code in (401, 403):
-                        raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {_api_error_detail(resp)}")
+                        _raise_auth(resp)
                     if resp.status_code >= 400:
                         continue
                     try:
@@ -711,74 +685,103 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     if _ticket_ready(data) is False:
                         pending = True
                         break
-                    out = _consume(data)
+                    out = _consume(data, as_statement=True)
                     if out is not None:
                         return out
                 if pending:
                     continue
-                resp = await _send("POST", "/v1/account-statement", json_body={"ticketId": ticket_id})
-                last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
-                if resp.status_code < 400:
-                    try:
-                        data = resp.json()
-                    except Exception:
-                        data = None
-                    if data is not None:
-                        if _ticket_ready(data) is False:
-                            continue
-                        out = _consume(data)
-                        if out is not None:
-                            return out
+            return None
 
-        # 3) Ticket olmadan doğrudan ekstre — az sayıda sade gövde (POST tarih ile sık 400)
-        for payload in payloads[:6]:
-            resp = await _send("GET", "/v1/account-statement", params={
-                k: v for k, v in payload.items() if not isinstance(v, dict)
-            })
-            last_detail = f"GET /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
-            if resp.status_code < 400:
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = None
-                if data is not None:
-                    out = _consume(data)
-                    if out and out.get("transactions"):
-                        return out
-                    if out is not None and _ticket_ready(data) is True:
-                        return out
-
-            resp = await _send("POST", "/v1/account-statement", json_body=payload)
-            last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
+        # 1) Resmi Account Statement: GET + startDateTime/endDateTime (POST kök/ticket 405)
+        for payload in payloads:
+            qs = _string_params(payload)
+            resp = await _send("GET", "/v1/account-statement", params=qs)
             if resp.status_code in (401, 403):
-                detail = _api_error_detail(resp)
-                if "IP" in detail or "not allowed" in detail.lower():
-                    raise RuntimeError(
-                        "Enpara API IP kısıtı: production sunucu IP’nizi developer portalına ekleyin. "
-                        f"({detail[:160]})"
-                    )
-                raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {resp.status_code}). {detail}")
+                _raise_auth(resp)
+            last_detail = f"GET /v1/account-statement HTTP {resp.status_code} ({','.join(qs)}): {_api_error_detail(resp)}"
             if resp.status_code >= 400:
-                if resp.status_code == 400 and not best_400:
-                    best_400 = last_detail
+                _note_400("GET /v1/account-statement", resp, payload)
                 continue
             try:
                 data = resp.json()
             except Exception:
                 continue
-            out = _consume(data)
+            out = _consume(data, as_statement=True)
             if out and out.get("transactions"):
                 return out
             if out is not None and _ticket_ready(data) is True:
                 return out
+            tid = _ticket_id_from(data)
+            if tid:
+                polled = await _poll_ticket(tid)
+                if polled:
+                    return polled
 
-        # 4) Bakiye
+        # 2) Account Transactions realtime (aynı JSON şema)
+        for payload in payloads[:4]:
+            resp = await _send("POST", "/v1/account-transactions/realtime", json_body=payload)
+            if resp.status_code in (401, 403):
+                _raise_auth(resp)
+            last_detail = f"POST /v1/account-transactions/realtime HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code >= 400:
+                _note_400("POST realtime", resp, payload)
+                continue
+            try:
+                data = resp.json()
+            except Exception:
+                continue
+            out = _consume(data, as_statement=True)
+            if out and (out.get("transactions") or _ticket_ready(data) is True):
+                return out
+
+        # 3) Async ticket: POST /async-ticket → GET .../{ticketNo}
+        for payload in payloads[:4]:
+            resp = await _send("POST", "/v1/account-transactions/async-ticket", json_body=payload)
+            if resp.status_code in (401, 403):
+                _raise_auth(resp)
+            last_detail = f"POST /v1/account-transactions/async-ticket HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code >= 400:
+                _note_400("POST async-ticket", resp, payload)
+                continue
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            out = _consume(data, as_statement=True)
+            if out and out.get("transactions"):
+                return out
+            tid = _ticket_id_from(data)
+            if tid:
+                polled = await _poll_ticket(tid)
+                if polled:
+                    return polled
+
+        # 4) Kayıtlı hesaplar (getRegisteredAccounts) — IBAN/bakiye; hareket değil
+        resp = await _send("GET", "/v1/account-statement/list", params={})
+        last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
+        if resp.status_code in (401, 403):
+            _raise_auth(resp)
+        if resp.status_code < 400:
+            try:
+                data = resp.json()
+            except Exception:
+                data = None
+            if data is not None:
+                out = _consume(data, as_statement=False)
+                if out and out.get("transactions"):
+                    return out
+                bal = _extract_balance(data)
+                if bal is not None:
+                    balance = bal
+
         if balance is None and account:
-            bal_params_list = [
-                {"iban": account} if _is_iban(account) else {"accountNumber": account},
-                {"accountNumber": account},
-                {"iban": account},
-            ]
+            iban26 = _enpara_iban_26(account)
+            bal_params_list = []
+            if iban26:
+                bal_params_list.append({"iban": iban26})
+            acct_no = _enpara_account_no(account)
+            if acct_no:
+                bal_params_list.append({"accountNo": acct_no})
             for path in ("/v1/accounts/balance", "/v1/account/balance", "/v1/accounts", "/v1/balance"):
                 for bal_params in bal_params_list:
                     resp = await _send("GET", path, params=bal_params)
@@ -799,11 +802,14 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 
     if best_400:
         last_detail = best_400
-    hint = " Access Token, IBAN/hesap no ve account-statement yetkisini kontrol edin."
+    hint = " Access Token, 26 haneli IBAN ve account-statement yetkisini kontrol edin."
     if not account:
-        hint = " Düzenle → Hesap No/IBAN alanına Enpara IBAN’ınızı girin (bağlı hesapta da IBAN olmalı)."
+        hint = " Düzenle → Hesap No/IBAN alanına Enpara IBAN’ınızı girin (tam 26 karakter, boşluksuz)."
     elif "400" in last_detail:
-        hint = " İstek reddedildi (400). IBAN’ın Enpara’ya ait olduğundan emin olun; portal API dokümanındaki alan adlarını doğrulayın."
+        hint = (
+            " İstek reddedildi (400). Gravitee şeması startDateTime/endDateTime string ister; "
+            "IBAN tam 26 karakter olmalı. POST /ticket kullanılmaz."
+        )
     elif "IP" in last_detail or "not allowed" in last_detail.lower():
         hint = " Sunucu IP’si Enpara portalında izinli değil."
     raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
