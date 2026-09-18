@@ -67,6 +67,10 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push({ pathname: "/banking/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
     case "BankingEdit":
       return router.push({ pathname: "/banking/edit/[id]", params: { id: String(params?.id || "") } });
+    case "Installments":
+      return router.push("/installments");
+    case "Cheques":
+      return router.push("/cheques");
     case "Expenses":
       return router.push("/expenses");
     case "ExpenseNew":

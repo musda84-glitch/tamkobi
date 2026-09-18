@@ -14,6 +14,8 @@ const LINKS = [
   { title: "Depo Sevkiyat", path: "/sevk", screen: "Sevk", icon: "cube" as const },
   { title: "Kasa & Banka", path: "/banking", screen: "Banking", icon: "wallet" as const },
   { title: "Masraflar", path: "/expenses", screen: "Expenses", icon: "receipt" as const },
+  { title: "Taksitler", path: "/installments", screen: "Installments", icon: "calendar" as const },
+  { title: "Çek & Senet", path: "/cheques", screen: "Cheques", icon: "card" as const },
   { title: "Teklifler", path: "/quotes", screen: "Quotes", icon: "create" as const },
   { title: "Keşifler", path: "/surveys", screen: "Surveys", icon: "construct" as const },
   { title: "Projeler", path: "/projects", screen: "Projects", icon: "briefcase" as const },

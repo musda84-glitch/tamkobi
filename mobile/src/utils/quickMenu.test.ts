@@ -30,6 +30,11 @@ describe("visibleQuickTiles", () => {
     expect(ids).toContain("settings");
   });
 
+  it("routes dashboard task paths that now have mobile screens", () => {
+    expect(resolveMobilePath("/installments")).toBe("/installments");
+    expect(resolveMobilePath("/cheques")).toBe("/cheques");
+  });
+
   it("gates the warehouse shipping tile on the /sevk module", () => {
     const warehouse = { role: "warehouse", permissions: { "/sevk": "edit" } };
     expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).toContain("sevk");
