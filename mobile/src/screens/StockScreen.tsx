@@ -5,8 +5,9 @@ import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
 import { fileUrl, get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors, radius } from "../theme";
 import type { Product } from "../types";
@@ -96,10 +97,14 @@ export function StockScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      {canEdit ? (
-        <PrimaryButton title="Yeni stok kartı" onPress={() => go("StockNew")} color={colors.primary} testID="stock-new" />
-      ) : null}
-      <PrimaryButton title="Barkod okut" onPress={() => setScan(true)} testID="stock-scan" />
+      <ActionTiles
+        items={[
+          ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
+          { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
+          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: load },
+        ]}
+        columns={3}
+      />
       <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
       <ErrorBanner message={error} />
       {!filtered.length ? (

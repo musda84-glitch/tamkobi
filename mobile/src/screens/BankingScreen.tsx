@@ -3,8 +3,9 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction } from "../components/chips";
-import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import {
@@ -105,6 +106,13 @@ export function BankingScreen() {
   const liquidity = totalLiquidity(rows);
   const virmanOk = virmanAccounts(rows).length > 1;
 
+  const actions: ActionTile[] = [
+    canEdit && { key: "new", label: "Yeni hesap", icon: "add-circle" as const, tone: "emerald" as const, testID: "bank-new", onPress: () => go("BankingNew") },
+    canEdit && virmanOk && { key: "virman", label: "Virman", icon: "swap-horizontal" as const, tone: "indigo" as const, testID: "bank-virman", onPress: () => go("BankingVirman") },
+    { key: "partners", label: "Ortaklar", icon: "people" as const, tone: "amber" as const, testID: "bank-partners-tile", onPress: () => setTab("partners") },
+    { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "bank-refresh", onPress: load },
+  ].filter(Boolean) as ActionTile[];
+
   const actApproval = (id: string, action: "approve" | "reject") => {
     confirmAction(action === "approve" ? "Onayla" : "Reddet", "Bu nakit talebi işlensin mi?", async () => {
       try {
@@ -127,35 +135,46 @@ export function BankingScreen() {
         <BankingPartnersPanel accounts={rows} onChanged={load} />
       ) : (
         <>
-          {canEdit ? (
-            <PrimaryButton title="Yeni hesap" onPress={() => go("BankingNew")} color={colors.primary} testID="bank-new" />
-          ) : null}
-          {canEdit && virmanOk ? (
-            <PrimaryButton title="Virman" onPress={() => go("BankingVirman")} color={colors.indigo} testID="bank-virman" />
-          ) : null}
-          <Kpi label="Toplam likidite" value={fmtMoney(liquidity)} sub="Kredi kartı hariç kasa + banka + POS" />
+          {actions.length ? <ActionTiles items={actions} /> : null}
+          <Card>
+            <Row style={{ justifyContent: "space-between" }}>
+              <Muted>Toplam likidite</Muted>
+              <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }} testID="bank-liquidity">{fmtMoney(liquidity)}</Text>
+            </Row>
+            <Muted>Kredi kartı hariç kasa + banka + POS</Muted>
+            {partnerSummary && (partnerSummary.partner_count || 0) > 0 ? (
+              <Pressable onPress={() => setTab("partners")} testID="partners-account-card" style={{ paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <Row style={{ justifyContent: "space-between" }}>
+                  <Muted>Ortaklar · {partnerSummary.partner_count} ortak</Muted>
+                  <Text style={{ fontWeight: "700", color: colors.text }}>{fmtMoney(partnerSummary.total_balance)}</Text>
+                </Row>
+              </Pressable>
+            ) : null}
+          </Card>
           <Approvals items={approvals} onAct={actApproval} />
-          {partnerSummary && (partnerSummary.partner_count || 0) > 0 ? (
-            <Pressable onPress={() => setTab("partners")} testID="partners-account-card">
-              <Card>
-                <Muted>Ortaklar hesabı</Muted>
-                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>{partnerSummary.partner_count} ortak</Text>
-                <Text style={{ fontSize: 20, fontWeight: "800", color: colors.text }}>{fmtMoney(partnerSummary.total_balance)}</Text>
-                <Muted>Sermaye {fmtMoney(partnerSummary.total_capital_in)} · çekilen {fmtMoney(partnerSummary.total_withdrawn)}</Muted>
-              </Card>
-            </Pressable>
-          ) : null}
           <Row style={{ flexWrap: "wrap" }}>
             {groups.map((g) => {
               const total = g.items.reduce((s, a) => s + accountBalance(a), 0);
+              const active = groupF === g.key;
               return (
-                <Pressable key={g.key} onPress={() => setGroupF(groupF === g.key ? "all" : g.key)} testID={`account-group-${g.key}`} style={{ minWidth: "45%", flex: 1 }}>
-                  <Card style={groupF === g.key ? { borderColor: colors.primary, borderWidth: 2 } : undefined}>
-                    <Muted>{g.label}</Muted>
-                    <Text style={{ fontWeight: "800", color: colors.text }}>{g.items.length} hesap</Text>
-                    <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(total)}</Text>
-                    {g.key === "credit_card" ? <Muted>Tahsilat kapalı</Muted> : null}
-                  </Card>
+                <Pressable
+                  key={g.key}
+                  onPress={() => setGroupF(active ? "all" : g.key)}
+                  testID={`account-group-${g.key}`}
+                  style={{
+                    flexGrow: 1,
+                    flexBasis: "30%",
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.emerald50 : colors.surface,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" }}>{g.label}</Text>
+                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{fmtMoney(total)}</Text>
+                  <Text style={{ fontSize: 11, color: colors.muted }}>{g.items.length} hesap{g.key === "credit_card" ? " · tahsilat kapalı" : ""}</Text>
                 </Pressable>
               );
             })}

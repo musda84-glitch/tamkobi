@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Share, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { ActionTiles } from "../components/ActionTiles";
+import { Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { buildStatementRows, smsBalanceText, statementText, waDigits } from "../utils/contactStatement";
 import { fmtMoney } from "../utils/money";
@@ -79,28 +80,36 @@ export function ContactStatementScreen() {
       <Muted>VKN: {contact.tax_number_or_id || "—"} · Bakiye {fmtMoney(contact.balance)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      <PrimaryButton title="Ekstre gönder (paylaş)" onPress={share} color={colors.primary} testID="statement-share" />
-      <PrimaryButton title="WhatsApp ile gönder" onPress={sendWhatsApp} color="#128C7E" testID="statement-whatsapp" />
-      <PrimaryButton
-        title="E-posta ile gönder"
-        color={colors.primary}
-        testID="statement-email"
-        onPress={() => {
-          if (!contact.email) { setError("Carinin e-postası yok."); return; }
-          Linking.openURL(`mailto:${contact.email}?subject=${encodeURIComponent(`Cari Hesap Ekstresi - ${contact.name}`)}&body=${encodeURIComponent(text)}`);
-        }}
+      <ActionTiles
+        items={[
+          { key: "share", label: "Paylaş", icon: "share-social", tone: "emerald", testID: "statement-share", onPress: share },
+          { key: "whatsapp", label: "WhatsApp", icon: "logo-whatsapp", tone: "emerald", testID: "statement-whatsapp", onPress: sendWhatsApp },
+          {
+            key: "email",
+            label: "E-posta",
+            icon: "mail",
+            tone: "sky",
+            testID: "statement-email",
+            onPress: () => {
+              if (!contact.email) { setError("Carinin e-postası yok."); return; }
+              Linking.openURL(`mailto:${contact.email}?subject=${encodeURIComponent(`Cari Hesap Ekstresi - ${contact.name}`)}&body=${encodeURIComponent(text)}`);
+            },
+          },
+          {
+            key: "sms",
+            label: "SMS",
+            icon: "chatbox",
+            tone: "violet",
+            testID: "statement-sms",
+            onPress: () => {
+              const phone = contact.phone;
+              if (!phone) { setError("Carinin telefon numarası yok."); return; }
+              Linking.openURL(`sms:${phone}?body=${encodeURIComponent(smsBalanceText(contact))}`);
+            },
+          },
+          { key: "copy", label: "Kopyala", icon: "copy", tone: "slate", testID: "statement-copy", onPress: copy },
+        ]}
       />
-      <PrimaryButton
-        title="SMS ile gönder"
-        color={colors.indigo}
-        testID="statement-sms"
-        onPress={() => {
-          const phone = contact.phone;
-          if (!phone) { setError("Carinin telefon numarası yok."); return; }
-          Linking.openURL(`sms:${phone}?body=${encodeURIComponent(smsBalanceText(contact))}`);
-        }}
-      />
-      <PrimaryButton title="Metni kopyala" onPress={copy} testID="statement-copy" />
       <Card testID="statement-table">
         <Muted>Hesap hareketleri</Muted>
         {!rows.length ? <Muted>Hareket yok.</Muted> : rows.map((r, idx) => (
