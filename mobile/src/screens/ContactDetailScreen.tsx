@@ -102,6 +102,7 @@ export function ContactDetailScreen() {
   const [aging, setAging] = useState<Aging | null>(null);
   const [termsBusy, setTermsBusy] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const loadCash = useCallback(async () => {
     const [accs, pars] = await Promise.all([
@@ -463,6 +464,8 @@ export function ContactDetailScreen() {
     canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
     canBank && { key: "collect", label: "Tahsilat", icon: "wallet" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
     { key: "message", label: "Mesaj", icon: "chatbubble-ellipses" as const, tone: "violet" as const, testID: "detail-message-btn", onPress: openMessage },
+    c.phone && { key: "call", label: "Ara", icon: "call" as const, tone: "teal" as const, testID: "detail-call-btn", onPress: () => Linking.openURL(`tel:${c.phone}`) },
+    c.phone && { key: "wa", label: "WhatsApp", icon: "logo-whatsapp" as const, tone: "emerald" as const, testID: "detail-wa-btn", onPress: () => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`) },
     canEditContact && {
       key: "terms",
       label: c.payment_term_days ? `Vade ${c.payment_term_days}g` : "Vade uygula",
@@ -489,11 +492,26 @@ export function ContactDetailScreen() {
       busy: b2bBusy,
       onPress: grantB2b,
     },
-    c.phone && { key: "call", label: "Ara", icon: "call" as const, tone: "teal" as const, testID: "detail-call-btn", onPress: () => Linking.openURL(`tel:${c.phone}`) },
-    c.phone && { key: "wa", label: "WhatsApp", icon: "logo-whatsapp" as const, tone: "emerald" as const, testID: "detail-wa-btn", onPress: () => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`) },
     c.email && { key: "mail", label: "E-posta", icon: "mail" as const, tone: "sky" as const, testID: "detail-mail-btn", onPress: () => Linking.openURL(`mailto:${c.email}`) },
     mapsLink(c) && { key: "map", label: "Konum", icon: "navigate" as const, tone: "rose" as const, testID: "detail-location-btn", onPress: () => Linking.openURL(String(mapsLink(c))) },
   ].filter(Boolean) as ActionTile[];
+
+  /** Sekmeler ekranın üstünde kalsın diye ilk satırlar görünür, kalanı "Diğer" ile açılır. */
+  const PRIMARY_ACTIONS = 7;
+  const collapsible = actionTiles.length > PRIMARY_ACTIONS + 1;
+  const visibleActions: ActionTile[] = [
+    ...(collapsible && !actionsOpen ? actionTiles.slice(0, PRIMARY_ACTIONS) : actionTiles),
+    ...(collapsible
+      ? [{
+          key: "more",
+          label: actionsOpen ? "Gizle" : `Diğer (${actionTiles.length - PRIMARY_ACTIONS})`,
+          icon: (actionsOpen ? "chevron-up" : "ellipsis-horizontal") as ActionTile["icon"],
+          tone: "slate" as const,
+          testID: "detail-actions-toggle",
+          onPress: () => setActionsOpen((v) => !v),
+        }]
+      : []),
+  ];
 
   return (
     <Screen onRefresh={load}>
@@ -502,7 +520,7 @@ export function ContactDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
-      <ActionTiles items={actionTiles} />
+      <ActionTiles items={visibleActions} />
 
       {termsOpen ? (
         <Card testID="contact-terms-form">
@@ -592,17 +610,6 @@ export function ContactDetailScreen() {
           <PrimaryButton title="Vazgeç" onPress={() => setMsgOpen(false)} testID="qm-cancel" />
         </Card>
       ) : null}
-
-      <StatRows
-        testID="contact-summary-strip"
-        items={[
-          { key: "balance", label: "Cari hesap", value: fmtMoney(bal), hint: hint.label, valueColor: bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : undefined },
-          { key: "invoiced", label: "Satış faturaları", value: fmtMoney(invoiced) },
-          { key: "paid", label: "Tahsil edilen", value: fmtMoney(paid) },
-          { key: "open", label: "Kalan alacak", value: fmtMoney(openAmt), valueColor: openAmt > 0 ? colors.danger : undefined },
-          ...(chequeBal ? [{ key: "cheques", label: "Çek / senet", value: fmtMoney(chequeBal) }] : []),
-        ]}
-      />
 
       <TabStrip
         testID="detail-tab"
@@ -833,6 +840,17 @@ export function ContactDetailScreen() {
           />
         ))
       ) : null}
+
+      <StatRows
+        testID="contact-summary-strip"
+        items={[
+          { key: "balance", label: "Cari hesap", value: fmtMoney(bal), hint: hint.label, valueColor: bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : undefined },
+          { key: "invoiced", label: "Satış faturaları", value: fmtMoney(invoiced) },
+          { key: "paid", label: "Tahsil edilen", value: fmtMoney(paid) },
+          { key: "open", label: "Kalan alacak", value: fmtMoney(openAmt), valueColor: openAmt > 0 ? colors.danger : undefined },
+          ...(chequeBal ? [{ key: "cheques", label: "Çek / senet", value: fmtMoney(chequeBal) }] : []),
+        ]}
+      />
 
       <Card testID="contact-card">
         <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>

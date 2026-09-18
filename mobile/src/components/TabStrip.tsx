@@ -27,7 +27,10 @@ export function TabStrip<K extends string>({
       horizontal
       showsHorizontalScrollIndicator={false}
       testID={testID}
-      contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+      // Dikey ScrollView içinde yatay şerit; sınırlanmazsa kalan yüksekliği kaplayıp
+      // sekmeleri dikeyde uzatıyor.
+      style={{ flexGrow: 0, flexShrink: 0, alignSelf: "stretch" }}
+      contentContainerStyle={{ gap: 6, alignItems: "center", paddingVertical: 2 }}
     >
       {items.map((item) => {
         const active = item.key === value;
