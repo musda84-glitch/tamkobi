@@ -39,14 +39,6 @@ function accountOptionLabel(a) {
   return `${a.bank_name || "—"} — ${a.account_name || "—"} (${typeLabel})`;
 }
 
-function linkedAccountLooksMismatched(c) {
-  const hints = PROVIDER_BANK_HINTS[c?.provider] || [];
-  if (!hints.length) return false;
-  const hay = `${c.linked_account_bank || ""} ${c.linked_account_name || ""}`.toLowerCase();
-  if (!hay.trim()) return false;
-  return !hints.some((h) => hay.includes(h));
-}
-
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const FIELD_LABELS = {
@@ -242,11 +234,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div>
                 <div className="font-bold text-slate-900 text-sm">{c.provider_name}</div>
                 <div className="text-[11px] text-slate-500">→ {c.linked_account_name}</div>
-                {linkedAccountLooksMismatched(c) && (
-                  <div className="mt-1 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1" data-testid={`conn-link-mismatch-${c.id}`}>
-                    Bağlı hesap bu sağlayıcıya ait gibi görünmüyor. <b>Düzenle</b> ile doğru banka hesabını seçin; Hesaplar sekmesinde <b>ENTEGRE</b> rozeti o hesapta (Kuveyt gibi) görünür.
-                  </div>
-                )}
               </div>
               <div className="flex flex-col items-end gap-1">
                 <StatusBadge status={c.status} />
