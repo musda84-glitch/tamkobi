@@ -33,7 +33,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: GET /v1/account-statement, /ticket, /list. Portal Access Token + Refresh Token + Client ID yapıştırın (Client Secret opsiyonel, yenileme için). IBAN 26 hane. Production IP listede olmalı (401 access_denied sıkça IP).",
+        "hint": "Hesap Hareketleri: GET /v1/account-statement, /ticket, /list. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara istekleri tarayıcıdan gitmez. Client Secret opsiyonel (yenileme). IBAN 26 hane. Production IP listede olmalı (401 access_denied sıkça IP).",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -62,6 +62,68 @@ PROVIDERS = {
     },
 }
 
+CONNECTION_SECRET_KEYS = (
+    "client_id",
+    "client_secret",
+    "api_key",
+    "access_token",
+    "refresh_token",
+    "private_key",
+)
+
+
+def is_masked_secret(value: Any) -> bool:
+    return str(value or "").startswith("••••")
+
+
+def _plain_secret(conn: dict, key: str) -> str:
+    val = str(conn.get(key) or "").strip()
+    if not val or is_masked_secret(val):
+        return ""
+    return val
+
+
+def mask_secret_value(val: str) -> str:
+    val = str(val or "")
+    if not val:
+        return val
+    if "BEGIN" in val:
+        body = "".join(
+            val.replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replace("-----BEGIN RSA PRIVATE KEY-----", "")
+            .replace("-----END RSA PRIVATE KEY-----", "")
+            .split()
+        )
+        return "••••" + (body[-4:] if body else "")
+    return "••••" + val[-4:]
+
+
+def mask_connection_secrets(doc: dict) -> dict:
+    """API yanıtı için sırları maskele; Client ID Enpara'da da sırdır."""
+    out = dict(doc or {})
+    for key in CONNECTION_SECRET_KEYS:
+        raw = out.get(key)
+        if raw:
+            out[key] = mask_secret_value(str(raw))
+    return out
+
+
+def drop_masked_secrets(payload: dict) -> dict:
+    """PUT gövdesinde maskeli yer tutucuyu gerçek sırın üzerine yazma."""
+    out = dict(payload or {})
+    for key in CONNECTION_SECRET_KEYS:
+        if key in out and is_masked_secret(out.get(key)):
+            out.pop(key)
+    return out
+
+
+def public_test_result(test: dict) -> dict:
+    """Test/probe yanıtından token önizlemesi ve sır alanlarını çıkar."""
+    allowed = ("ok", "simulated", "message")
+    return {k: test[k] for k in allowed if k in (test or {})}
+
+
 SIM_COUNTERPARTIES = [
     ("Trendyol Pazaryeri Ödemesi", "credit", "Trendyol"),
     ("Hepsiburada Hakediş", "credit", "Hepsiburada"),
@@ -86,13 +148,13 @@ def _base_url(conn: dict) -> str:
 def has_credentials(conn: dict) -> bool:
     if conn.get("provider") == "enpara":
         return bool(
-            (conn.get("access_token") or "").strip()
-            or ((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
-            or (conn.get("refresh_token") or "").strip()
+            _plain_secret(conn, "access_token")
+            or (_plain_secret(conn, "client_id") and _plain_secret(conn, "client_secret"))
+            or _plain_secret(conn, "refresh_token")
         )
     if conn.get("provider") == "kuveytturk":
-        return bool((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
-    return bool(conn.get("client_id") and conn.get("client_secret"))
+        return bool(_plain_secret(conn, "client_id") and _plain_secret(conn, "client_secret"))
+    return bool(_plain_secret(conn, "client_id") and _plain_secret(conn, "client_secret"))
 
 
 def _err_text(exc: BaseException) -> str:
@@ -111,8 +173,8 @@ async def _oauth_token(conn: dict) -> str:
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(url, data={
             "grant_type": "client_credentials",
-            "client_id": conn.get("client_id"),
-            "client_secret": conn.get("client_secret"),
+            "client_id": _plain_secret(conn, "client_id"),
+            "client_secret": _plain_secret(conn, "client_secret"),
             "scope": conn.get("scope") or "accounts transactions",
         })
         resp.raise_for_status()
@@ -163,7 +225,7 @@ def _kuveyt_normalize_pem(raw: str) -> str:
 def _kuveyt_private_key_pem(conn: dict) -> str:
     """PKCS8 (BEGIN PRIVATE KEY) or PKCS1 (BEGIN RSA PRIVATE KEY). api_key only if it looks like PEM."""
     for key in ("private_key", "api_key"):
-        raw = (conn.get(key) or "").strip()
+        raw = _plain_secret(conn, key)
         if not raw:
             continue
         if key == "api_key" and "BEGIN" not in raw and "MII" not in raw:
@@ -239,8 +301,8 @@ def _kuveyt_headers(
 
 
 async def _kuveyt_access_token(conn: dict) -> str:
-    client_id = (conn.get("client_id") or "").strip()
-    client_secret = (conn.get("client_secret") or "").strip()
+    client_id = _plain_secret(conn, "client_id")
+    client_secret = _plain_secret(conn, "client_secret")
     if not client_id or not client_secret:
         raise RuntimeError("Kuveyt Türk Client ID / Client Secret gerekli (client_credentials).")
 
@@ -315,7 +377,6 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
         "ok": True,
         "simulated": False,
         "message": f"Kuveyt Türk Identity Server client_credentials doğrulandı.{extra}",
-        "token_preview": token[:6] + "…",
     }
 
 
@@ -409,9 +470,9 @@ def _oauth_error_text(resp, url: str) -> str:
 
 async def _enpara_refresh_access_token(conn: dict) -> str:
     """Refresh Token (portal) veya client_credentials → Gravitee AM /securedomain/oauth/token."""
-    client_id = (conn.get("client_id") or "").strip()
-    client_secret = (conn.get("client_secret") or "").strip()
-    refresh = (conn.get("refresh_token") or "").strip()
+    client_id = _plain_secret(conn, "client_id")
+    client_secret = _plain_secret(conn, "client_secret")
+    refresh = _plain_secret(conn, "refresh_token")
     if not client_id:
         raise RuntimeError("Enpara Client ID gerekli (token yenileme). Portalden Access Token yapıştırın.")
     if not refresh and not client_secret:
@@ -457,10 +518,11 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
                         data = resp.json() if resp.content else {}
                         token = (data or {}).get("access_token") or (data or {}).get("accessToken")
                         if token:
+                            conn["access_token"] = str(token)
                             new_rt = (data or {}).get("refresh_token") or (data or {}).get("refreshToken")
                             if new_rt:
                                 conn["refresh_token"] = str(new_rt)
-                            return token
+                            return str(token)
                         last_err = f"{url} → access_token yok"
                         continue
                     last_err = _oauth_error_text(resp, url)
@@ -476,12 +538,11 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
 
 
 def _enpara_can_refresh(conn: dict) -> bool:
-    cid = (conn.get("client_id") or "").strip()
-    if not cid:
+    if not _plain_secret(conn, "client_id"):
         return False
-    if (conn.get("refresh_token") or "").strip():
+    if _plain_secret(conn, "refresh_token"):
         return True
-    return bool((conn.get("client_secret") or "").strip())
+    return bool(_plain_secret(conn, "client_secret"))
 
 
 def _enpara_should_refresh_on_auth_error(resp, token: str) -> bool:
@@ -502,7 +563,7 @@ def _enpara_should_refresh_on_auth_error(resp, token: str) -> bool:
 
 
 async def _enpara_access_token(conn: dict) -> str:
-    stored = (conn.get("access_token") or "").strip()
+    stored = _plain_secret(conn, "access_token")
     if stored:
         expired = _jwt_expired(stored)
         if expired is True:
@@ -534,7 +595,9 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
                 _enpara_raise_auth(resp)
         if resp.status_code >= 500:
             raise RuntimeError(f"Enpara API sunucu hatası: HTTP {resp.status_code}")
-    return {"ok": True, "simulated": False, "message": "Enpara api.enpara.com doğrulandı (account-statement).", "token_preview": token[:6] + "…"}
+    if token:
+        conn["access_token"] = token
+    return {"ok": True, "simulated": False, "message": "Enpara api.enpara.com doğrulandı (account-statement)."}
 
 
 async def test_connection(conn: dict) -> Dict[str, Any]:
@@ -546,7 +609,9 @@ async def test_connection(conn: dict) -> Dict[str, Any]:
         if conn.get("provider") == "kuveytturk":
             return await _kuveyt_probe(conn)
         token = await _oauth_token(conn)
-        return {"ok": True, "simulated": False, "message": "OAuth2 token alındı. Banka bağlantısı doğrulandı.", "token_preview": token[:6] + "…"}
+        if token:
+            conn["access_token"] = token
+        return {"ok": True, "simulated": False, "message": "OAuth2 token alındı. Banka bağlantısı doğrulandı."}
     except httpx.HTTPStatusError as e:
         body = (e.response.text or "")[:120]
         return {"ok": False, "simulated": False, "message": f"Banka API hatası: HTTP {e.response.status_code} {body}".strip()}
@@ -758,7 +823,7 @@ def _enpara_headers(token: str, conn: dict, *, for_get: bool = False) -> Dict[st
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
     }
-    api_key = (conn.get("api_key") or "").strip()
+    api_key = _plain_secret(conn, "api_key")
     if api_key:
         headers["X-Gravitee-Api-Key"] = api_key
     if not for_get:
@@ -949,7 +1014,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     """
     import asyncio
 
-    stored_token = (conn.get("access_token") or "").strip()
+    stored_token = _plain_secret(conn, "access_token")
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
     get_headers = _enpara_headers(token, conn, for_get=True)

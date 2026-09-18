@@ -52,6 +52,9 @@ const FIELD_LABELS = {
   base_url: "API Base URL",
   token_url: "Token URL",
 };
+const SECRET_FIELDS = ["client_id", "client_secret", "access_token", "refresh_token", "api_key", "private_key"];
+const emptySecrets = () => Object.fromEntries(SECRET_FIELDS.map((k) => [k, ""]));
+const credentialsOnFile = (c) => SECRET_FIELDS.some((k) => !!c?.[k]);
 
 const StatusBadge = ({ status }) => {
   const map = {
@@ -110,6 +113,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     try {
       const res = await axios.post(`${API_URL}/banking/connections`, { company_id: companyId, provider_name: "", ...form, linked_account_id: linked });
       toast[res.data.test_result?.ok ? "success" : "error"](res.data.test_result?.message);
+      setForm((f) => ({ ...f, ...emptySecrets() }));
       setShowAdd(false); load(); onSynced?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı eklenemedi."); }
   };
@@ -137,12 +141,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     setEditForm({
       provider: c.provider || "enpara",
       linked_account_id: c.linked_account_id || "",
-      client_id: c.client_id || "",
-      client_secret: "",
-      access_token: "",
-      refresh_token: "",
-      api_key: "",
-      private_key: "",
+      ...emptySecrets(),
       customer_number: c.customer_number || "",
       bank_account_number: c.bank_account_number || "",
       mode: c.mode || "live",
@@ -155,8 +154,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     try {
       const payload = { ...editForm };
       Object.keys(payload).forEach((k) => { if (payload[k] === "" || payload[k] == null) delete payload[k]; });
+      SECRET_FIELDS.forEach((k) => {
+        if (payload[k] && String(payload[k]).startsWith("••••")) delete payload[k];
+      });
       await axios.put(`${API_URL}/banking/connections/${editConn.id}`, payload);
       toast.success("Bağlantı güncellendi.");
+      setEditForm((f) => ({ ...f, ...emptySecrets() }));
       setEditConn(null);
       const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
       toast[r.data.ok ? "success" : "error"](r.data.message);
@@ -227,7 +230,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Kuveyt Türk</b> Identity Server <code className="font-mono">client_credentials</code> + her istekte <b>RSA-SHA256 Signature</b> (PKCS8 PEM) kullanır. <b>Enpara</b> QNB'den ayrıdır — Access Token yapıştırın; yoksa Client ID/Secret ile <code className="font-mono">/securedomain/oauth/token</code> kullanılır. IBAN 26 hane.
+        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Kuveyt Türk</b> Identity Server <code className="font-mono">client_credentials</code> + her istekte <b>RSA-SHA256 Signature</b> (PKCS8 PEM) kullanır. <b>Enpara</b> Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara API çağrıları tarayıcıdan yapılmaz. IBAN 26 hane.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -246,7 +249,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-4">
               <span>Son senk: <b className="text-slate-700">{c.last_synced_at ? new Date(c.last_synced_at).toLocaleString("tr-TR") : "—"}</b></span>
               <span>Çekilen: <b className="text-slate-700">{c.synced_count}</b></span>
-              {c.client_id ? <span>Client: <b className="font-mono">{c.client_id}</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
+              {credentialsOnFile(c) ? <span>Kimlik bilgisi <b>sunucuda kayıtlı</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
             {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
             <button type="button" onClick={() => toggleAutoMatch(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_match ? "bg-violet-50 border-violet-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-match-toggle-${c.id}`} aria-pressed={!!c.auto_match}>
@@ -386,7 +389,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                   {f === "private_key" ? (
                     <textarea className={`${inputCls} font-mono min-h-[88px]`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" placeholder="-----BEGIN PRIVATE KEY-----" spellCheck={false} />
                   ) : (
-                    <input type={["client_secret", "api_key", "access_token", "refresh_token"].includes(f) ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" />
+                    <input type={SECRET_FIELDS.includes(f) ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="new-password" />
                   )}
                 </div>
               ))}
@@ -409,7 +412,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
                 Portal uçları: <code className="font-mono">GET /v1/account-statement</code>, <code className="font-mono">/ticket</code>, <code className="font-mono">/list</code>.
-                Yapıştırın: <b>Access Token</b>, <b>Refresh Token</b>, <b>Client ID</b>. Client Secret opsiyonel.
+                Yapıştırın: <b>Access Token</b>, <b>Refresh Token</b>, <b>Client ID</b> (sunucuda saklanır, listede görünmez). Client Secret opsiyonel.
                 401 access_denied genelde IP listesi — production sunucu IP’sini portala ekleyin. IBAN 26 karakter.
               </p>
             )}
@@ -434,22 +437,28 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 </select>
                 <p className="text-[10px] text-slate-500 mt-1">Hesaplar sekmesinde bu hesapta <b>ENTEGRE</b> rozeti görünür (Kuveyt örneği gibi). Enpara bağlantısını Enpara banka hesabına bağlayın.</p>
               </div>
-              <div><label className="block font-semibold mb-1">Client ID</label><input className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="off" /></div>
-              <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="off" /></div>
-              {editForm.provider === "kuveytturk" ? (
-                <div>
-                  <label className="block font-semibold mb-1">RSA Private Key (PKCS8 PEM) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
-                  <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder="-----BEGIN PRIVATE KEY-----" spellCheck={false} />
-                </div>
+              {editForm.provider === "enpara" ? (
+                <>
+                  <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Yeni token yapıştırın — mevcut değer sunucuda kalır" /></div>
+                  <div><label className="block font-semibold mb-1">Refresh Token <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" placeholder="Yeni refresh token — boşsa değişmez" /></div>
+                  <div><label className="block font-semibold mb-1">Client ID <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="new-password" placeholder="Kayıtlıysa boş bırakın" /></div>
+                  <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(opsiyonel — boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="new-password" /></div>
+                  <div><label className="block font-semibold mb-1">API Key <span className="text-slate-400 font-normal">(opsiyonel — X-Gravitee-Api-Key, boşsa değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.api_key} onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })} data-testid="edit-conn-api-key" autoComplete="new-password" /></div>
+                </>
               ) : (
                 <>
-                  <div><label className="block font-semibold mb-1">Access Token</label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Portalden Access Token yapıştırın" /></div>
-                  <div><label className="block font-semibold mb-1">Refresh Token</label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" /></div>
-                  {editForm.provider === "enpara" && (
+                  <div><label className="block font-semibold mb-1">Client ID <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_id} onChange={(e) => setEditForm({ ...editForm, client_id: e.target.value })} data-testid="edit-conn-client-id" autoComplete="new-password" placeholder="Kayıtlıysa boş bırakın" /></div>
+                  <div><label className="block font-semibold mb-1">Client Secret <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.client_secret} onChange={(e) => setEditForm({ ...editForm, client_secret: e.target.value })} data-testid="edit-conn-client-secret" autoComplete="new-password" /></div>
+                  {editForm.provider === "kuveytturk" ? (
                     <div>
-                      <label className="block font-semibold mb-1">API Key <span className="text-slate-400 font-normal">(opsiyonel — X-Gravitee-Api-Key, boşsa değişmez)</span></label>
-                      <input type="password" className={`${inputCls} font-mono`} value={editForm.api_key} onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })} data-testid="edit-conn-api-key" autoComplete="off" />
+                      <label className="block font-semibold mb-1">RSA Private Key (PKCS8 PEM) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
+                      <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder="-----BEGIN PRIVATE KEY-----" spellCheck={false} />
                     </div>
+                  ) : (
+                    <>
+                      <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Yeni token — boşsa değişmez" /></div>
+                      <div><label className="block font-semibold mb-1">Refresh Token <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" /></div>
+                    </>
                   )}
                 </>
               )}

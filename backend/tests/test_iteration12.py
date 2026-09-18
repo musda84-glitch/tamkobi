@@ -45,7 +45,8 @@ class TestBankingConnections:
 
     def test_cleanup_stale_test_connections(self, s):
         for c in s.get(f"{BASE}/banking/connections", params={"company_id": CO}).json():
-            if c.get("client_id") == "TEST_cid" or c.get("last_error"):
+            cid = str(c.get("client_id") or "")
+            if cid in ("TEST_cid", "••••_cid") or c.get("last_error"):
                 s.delete(f"{BASE}/banking/connections/{c['id']}")
 
     def test_list_connections(self, s):

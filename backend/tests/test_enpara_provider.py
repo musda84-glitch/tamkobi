@@ -553,6 +553,7 @@ def test_enpara_refresh_posts_refresh_token_grant():
     token = asyncio.run(_run())
     assert token == "NEWTOK"
     assert conn["refresh_token"] == "rt-new"
+    assert conn["access_token"] == "NEWTOK"
     args, kwargs = mock_client.post.await_args
     assert args[0] == "https://api.enpara.com/securedomain/oauth/token"
     assert kwargs["data"]["grant_type"] == "refresh_token"
@@ -599,4 +600,112 @@ def test_enpara_fetch_never_posts_unsubscribed_paths():
         assert "account-transactions" not in str(call.args[0])
         assert "/v1/accounts" not in str(call.args[0])
         assert "/v1/balance" not in str(call.args[0])
+
+
+def test_mask_connection_secrets_hides_enpara_client_id_and_tokens():
+    masked = bp.mask_connection_secrets({
+        "provider": "enpara",
+        "client_id": "real-client-id-xyz",
+        "access_token": "eyJhbGciOi.real.tokenVALUE",
+        "refresh_token": "rt-super-secret-99",
+        "client_secret": "shh-secret-val",
+        "bank_account_number": "TR330011100000000000000001",
+    })
+    blob = json.dumps(masked)
+    assert masked["client_id"].startswith("••••")
+    assert "real-client-id-xyz" not in blob
+    assert "eyJhbGciOi.real.tokenVALUE" not in blob
+    assert "rt-super-secret-99" not in blob
+    assert "shh-secret-val" not in blob
+    assert masked["bank_account_number"] == "TR330011100000000000000001"
+    assert "token_preview" not in masked
+
+
+def test_drop_masked_secrets_skips_client_id_placeholder():
+    out = bp.drop_masked_secrets({
+        "client_id": "••••-xyz",
+        "access_token": "••••ALUE",
+        "refresh_token": "fresh-rt",
+        "mode": "live",
+    })
+    assert "client_id" not in out
+    assert "access_token" not in out
+    assert out["refresh_token"] == "fresh-rt"
+    assert out["mode"] == "live"
+
+
+def test_public_test_result_strips_token_preview():
+    pub = bp.public_test_result({
+        "ok": True,
+        "simulated": False,
+        "message": "doğrulandı",
+        "token_preview": "eyJhbG…",
+        "access_token": "NEWJWT",
+        "refresh_token": "rt",
+        "client_id": "cid",
+    })
+    assert pub == {"ok": True, "simulated": False, "message": "doğrulandı"}
+    assert "token_preview" not in pub
+    assert "access_token" not in pub
+    assert "client_id" not in pub
+
+
+def test_has_credentials_ignores_masked_placeholders():
+    assert not bp.has_credentials({"provider": "enpara", "access_token": "••••tok1"})
+    assert not bp.has_credentials({"provider": "enpara", "client_id": "••••cid1", "client_secret": "••••sec1"})
+    assert not bp._enpara_can_refresh({"client_id": "••••cid1", "refresh_token": "rt"})
+    assert bp.has_credentials({"provider": "enpara", "access_token": "eyJabc"})
+
+
+def test_enpara_probe_response_has_no_token_preview():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "[]"
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is True
+    assert "token_preview" not in out
+    assert "access_token" not in out
+    assert "refresh_token" not in out
+    assert "client_id" not in out
+
+
+def test_frontend_bank_panel_does_not_call_enpara():
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[2] / "frontend/src/components/BankConnectionsPanel.jsx"
+    text = src.read_text(encoding="utf-8")
+    assert "api.enpara.com" not in text
+    assert "securedomain/oauth" not in text
+    assert "{c.client_id}" not in text
+    assert "Kimlik bilgisi" in text
+    assert "sunucuda" in text
+    assert "emptySecrets" in text
+
+
+def test_server_mask_connection_hides_enpara_secrets():
+    from server import _mask_connection
+    out = _mask_connection({
+        "_id": "c1",
+        "provider": "enpara",
+        "client_id": "real-client-id-xyz",
+        "access_token": "eyJhbGciOi.real.tokenVALUE",
+        "refresh_token": "rt-super-secret-99",
+        "client_secret": "shh-secret-val",
+    })
+    blob = json.dumps(out)
+    assert out["id"] == "c1"
+    assert out["client_id"].startswith("••••")
+    assert "real-client-id-xyz" not in blob
+    assert "eyJhbGciOi.real.tokenVALUE" not in blob
+    assert "rt-super-secret-99" not in blob
+    assert "shh-secret-val" not in blob
 

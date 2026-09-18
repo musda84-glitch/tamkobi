@@ -5783,22 +5783,8 @@ async def reject_cash_request(req_id: str, request: Request):
 
 # ----------------- BANKA CANLI VERİ BAĞLANTILARI -----------------
 def _mask_connection(doc: dict) -> dict:
-    doc = clean_doc(doc)
-    for key in ("client_secret", "api_key", "access_token", "refresh_token", "private_key"):
-        if doc.get(key):
-            val = str(doc[key])
-            if "BEGIN" in val:
-                body = "".join(
-                    val.replace("-----BEGIN PRIVATE KEY-----", "")
-                    .replace("-----END PRIVATE KEY-----", "")
-                    .replace("-----BEGIN RSA PRIVATE KEY-----", "")
-                    .replace("-----END RSA PRIVATE KEY-----", "")
-                    .split()
-                )
-                doc[key] = "••••" + (body[-4:] if body else "")
-            else:
-                doc[key] = "••••" + val[-4:]
-    return doc
+    # Kopyala: clean_doc _id'yi yerinde pop eder; Mongo belgesini bozma.
+    return bank_providers.mask_connection_secrets(clean_doc(dict(doc or {})))
 
 @api_router.get("/banking/providers")
 async def list_bank_providers():
@@ -5849,7 +5835,7 @@ async def create_bank_connection(conn: BankConnection):
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]
     await db.bank_connections.insert_one(doc)
-    return {**_enrich_connection(doc, acc), "test_result": test}
+    return {**_enrich_connection(doc, acc), "test_result": bank_providers.public_test_result(test)}
 
 @api_router.put("/banking/connections/{conn_id}")
 async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
@@ -5858,9 +5844,7 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
         "api_key", "private_key", "customer_number", "bank_account_number", "base_url", "mode",
         "auto_sync", "auto_match", "linked_account_id", "provider",
     }}
-    for secret_key in ("client_secret", "api_key", "access_token", "refresh_token", "private_key"):
-        if allowed.get(secret_key) and str(allowed[secret_key]).startswith("••••"):
-            allowed.pop(secret_key)
+    allowed = bank_providers.drop_masked_secrets(allowed)
     if "provider" in allowed and allowed["provider"] not in bank_providers.PROVIDERS:
         raise HTTPException(status_code=400, detail="Desteklenmeyen banka sağlayıcısı.")
     if "provider" in allowed:
@@ -5899,9 +5883,13 @@ async def test_bank_connection(conn_id: str):
     test = await bank_providers.test_connection(doc)
     status_val = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     patch.update({"status": status_val, "last_error": None if test["ok"] else test["message"]})
-    # Probe sırasında yenilenen access token'ı sakla (yalnızca dönen token_preview değil; refresh helper yazmaz — UI'dan gelir)
+    # Yenilenen token'ı yalnızca sunucuda sakla; istemciye gönderme.
+    for secret_key in ("access_token", "refresh_token"):
+        val = doc.get(secret_key)
+        if val and not bank_providers.is_masked_secret(val):
+            patch[secret_key] = val
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": patch})
-    return {**test, "status": status_val}
+    return {**bank_providers.public_test_result(test), "status": status_val}
 
 async def _suggest_contact(company_id: str, counterparty: str, description: str):
     rule = await _find_rule(company_id, f"{counterparty} {description}")
