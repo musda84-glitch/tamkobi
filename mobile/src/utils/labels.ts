@@ -4,6 +4,7 @@ export const STATUS_TR: Record<string, string> = {
   accepted: "Kabul Edildi",
   rejected: "Reddedildi",
   pending: "Beklemede",
+  new: "Yeni",
   approved: "Onaylandı",
   cancelled: "İptal",
   paid: "Ödendi",

@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { get, post, type ApiClient } from "../api/client";
 import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
+import { parseB2bToken } from "../utils/b2bToken";
 import { can as canPerm, moduleOn as moduleOnPerm } from "../utils/permissions";
 import {
   clearB2bSession,
@@ -39,6 +40,7 @@ type AuthContextValue = AuthState & {
   companyId: string;
   login: (email: string, password: string, serverUrl?: string) => Promise<void>;
   loginB2b: (email: string, password: string, serverUrl?: string) => Promise<void>;
+  enterB2bToken: (tokenOrLink: string, serverUrl?: string) => Promise<void>;
   forgotB2b: (email: string) => Promise<B2BForgotResult>;
   resetB2b: (resetToken: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -194,6 +196,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await persistB2b(baseUrl, res.token, res.name);
   }, [persistB2b, state.baseUrl]);
 
+  const enterB2bToken = useCallback(async (tokenOrLink: string, serverUrl?: string) => {
+    const token = parseB2bToken(tokenOrLink);
+    if (!token) throw new Error("Geçerli bir B2B portal linki veya token girin.");
+    const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
+    if (serverUrl) setState((s) => ({ ...s, baseUrl }));
+    const portal = await get<B2BPortal>({ baseUrl, token: null }, `/public/b2b/${token}`);
+    await persistB2b(baseUrl, token, portal?.contact?.name);
+  }, [persistB2b, state.baseUrl]);
+
   const forgotB2b = useCallback(async (email: string) => {
     return post<B2BForgotResult>(
       { baseUrl: state.baseUrl, token: null },
@@ -259,6 +270,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       companyId,
       login,
       loginB2b,
+      enterB2bToken,
       forgotB2b,
       resetB2b,
       logout,
@@ -268,7 +280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       can: (path, level = "view") => (state.sessionKind === "b2b" ? false : canPerm(state.user, path, level)),
       moduleOn: (path) => (state.sessionKind === "b2b" ? false : moduleOnPerm(state.license, path)),
     }),
-    [bootstrap, client, companyId, forgotB2b, login, loginB2b, logout, resetB2b, setServer, state, switchCompany]
+    [bootstrap, client, companyId, enterB2bToken, forgotB2b, login, loginB2b, logout, resetB2b, setServer, state, switchCompany]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

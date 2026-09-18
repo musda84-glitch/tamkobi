@@ -9,7 +9,7 @@ import type { B2BForgotResult } from "../types";
 type Mode = "erp" | "b2b" | "b2b-forgot" | "b2b-reset";
 
 export function LoginScreen() {
-  const { login, loginB2b, forgotB2b, resetB2b, baseUrl } = useAuth();
+  const { login, loginB2b, enterB2bToken, forgotB2b, resetB2b, baseUrl } = useAuth();
   const [mode, setMode] = useState<Mode>("erp");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,6 +20,7 @@ export function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [resetInfo, setResetInfo] = useState<B2BForgotResult | null>(null);
   const [resetToken, setResetToken] = useState("");
+  const [portalLink, setPortalLink] = useState("");
 
   useEffect(() => {
     loadRememberedEmail().then((v) => {
@@ -51,6 +52,18 @@ export function LoginScreen() {
       await saveRememberedEmail(email.trim().toLowerCase());
     } catch (err) {
       setError(apiErrorMessage(err, "Giriş yapılamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitB2bLink = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await enterB2bToken(portalLink, server.trim() || undefined);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Portal linki geçersiz."));
     } finally {
       setBusy(false);
     }
@@ -177,6 +190,8 @@ export function LoginScreen() {
                 <Field label="API adresi" testID="login-api" autoCapitalize="none" value={server} onChangeText={setServerField} placeholder="https://tamkobi.com" />
               ) : null}
               <PrimaryButton testID="b2b-login-submit" title={busy ? "Giriş yapılıyor…" : "Portala Giriş"} onPress={submitB2b} loading={busy} disabled={!email || !password} color={colors.primary} />
+              <Field label="veya portal linki / token" testID="b2b-login-link" autoCapitalize="none" value={portalLink} onChangeText={setPortalLink} placeholder="https://…/portal/…" />
+              <PrimaryButton testID="b2b-login-link-submit" title="Link ile gir" onPress={submitB2bLink} loading={busy} disabled={!portalLink.trim()} color={colors.indigo} />
               <Pressable onPress={() => switchMode("b2b-forgot")} testID="b2b-forgot-open" style={{ paddingTop: 12 }}>
                 <Text style={styles.forgot}>Şifremi unuttum</Text>
               </Pressable>
