@@ -1,3 +1,5 @@
+import { coordText, coordValue } from "./geo";
+
 export type ContactDraft = {
   type: string;
   name: string;
@@ -14,6 +16,8 @@ export type ContactDraft = {
   city: string;
   district: string;
   location_url: string;
+  latitude: string;
+  longitude: string;
   credit_limit: string;
   payment_term_days: string;
   late_fee_rate: string;
@@ -85,6 +89,8 @@ export function emptyContactDraft(): ContactDraft {
     city: "İstanbul",
     district: "",
     location_url: "",
+    latitude: "",
+    longitude: "",
     credit_limit: "0",
     payment_term_days: "0",
     late_fee_rate: "0",
@@ -135,6 +141,8 @@ export function draftFromContact(c: Record<string, unknown>): ContactDraft {
     city: str(c.city, "İstanbul") || "İstanbul",
     district: str(c.district),
     location_url: str(c.location_url),
+    latitude: coordText(c.latitude),
+    longitude: coordText(c.longitude),
     credit_limit: numStr(c.credit_limit),
     payment_term_days: numStr(c.payment_term_days),
     late_fee_rate: numStr(c.late_fee_rate),
@@ -186,6 +194,8 @@ export function contactPayload(d: ContactDraft, companyId?: string): Record<stri
     city: d.city.trim(),
     district: d.district.trim(),
     location_url: d.location_url.trim(),
+    latitude: coordValue(d.latitude),
+    longitude: coordValue(d.longitude),
     credit_limit: n(d.credit_limit),
     payment_term_days: n(d.payment_term_days),
     late_fee_rate: n(d.late_fee_rate),
