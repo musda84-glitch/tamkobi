@@ -47,6 +47,24 @@ describe("contactDisplay", () => {
     expect(contactInfoRows({ credit_limit: 0, payment_term_days: 0, b2b_enabled: false }).map((r) => r.key)).toEqual([]);
   });
 
+  it("hides import and integration leftovers from the card", () => {
+    const rows = contactInfoRows({
+      sales_rep: "Ayşe",
+      import_batch_id: "02d56a9e-a6ec-4d42-a5ac-728b7fe092d0",
+      bizimhesap_id: "C6D0054D176A4AC499791F1771D9FCE9",
+      opening_balance_source: "bizimhesap",
+      external_ref: "9f2c",
+      erp_code: "MTK-1",
+    });
+    const keys = rows.map((r) => r.key);
+    expect(keys).toContain("sales_rep");
+    expect(keys).toContain("erp_code");
+    expect(keys).not.toContain("import_batch_id");
+    expect(keys).not.toContain("bizimhesap_id");
+    expect(keys).not.toContain("opening_balance_source");
+    expect(keys).not.toContain("external_ref");
+  });
+
   it("labels type and balance", () => {
     expect(contactTypeLabel("both")).toBe("Müşteri & Tedarikçi");
     expect(balanceHint(4460).label).toMatch(/Alacak/);
