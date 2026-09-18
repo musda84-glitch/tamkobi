@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Platform, Share, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -452,6 +453,45 @@ export function ContactDetailScreen() {
 
   const docParams = { contact_id: String(id), contact_name: String(c.name || name || "") };
 
+  const actionTiles: ActionTile[] = [
+    canEditContact && { key: "edit", label: "Düzenle", icon: "create-outline" as const, tone: "slate" as const, testID: "detail-edit-contact-btn", onPress: () => go("ContactEdit", { id }) },
+    { key: "statement", label: "Ekstre", icon: "document-text-outline" as const, tone: "indigo" as const, testID: "detail-statement-btn", onPress: () => go("ContactStatement", { id, name: c.name || name }) },
+    canInvoice && { key: "sell", label: "Satış yap", icon: "arrow-up-circle-outline" as const, tone: "emerald" as const, testID: "detail-sell-btn", onPress: () => go("InvoiceNew", { type: "sales", ...docParams }) },
+    canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle-outline" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
+    canBank && { key: "collect", label: "Tahsilat", icon: "wallet-outline" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
+    { key: "message", label: "Mesaj", icon: "chatbubble-ellipses-outline" as const, tone: "violet" as const, testID: "detail-message-btn", onPress: openMessage },
+    canEditContact && {
+      key: "terms",
+      label: c.payment_term_days ? `Vade ${c.payment_term_days}g` : "Vade uygula",
+      icon: "calendar-outline" as const,
+      tone: "amber" as const,
+      testID: "detail-terms-btn",
+      onPress: openTerms,
+    },
+    canBank && {
+      key: "plan",
+      label: "Taksitlendir",
+      icon: "layers-outline" as const,
+      tone: "violet" as const,
+      testID: "detail-balance-installments-btn",
+      disabled: bal === 0,
+      onPress: openPlan,
+    },
+    {
+      key: "b2b",
+      label: c.b2b_enabled ? "B2B linki" : "B2B erişimi",
+      icon: "cart-outline" as const,
+      tone: "indigo" as const,
+      testID: "detail-b2b-access-btn",
+      busy: b2bBusy,
+      onPress: grantB2b,
+    },
+    c.phone && { key: "call", label: "Ara", icon: "call-outline" as const, tone: "teal" as const, testID: "detail-call-btn", onPress: () => Linking.openURL(`tel:${c.phone}`) },
+    c.phone && { key: "wa", label: "WhatsApp", icon: "logo-whatsapp" as const, tone: "emerald" as const, testID: "detail-wa-btn", onPress: () => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`) },
+    c.email && { key: "mail", label: "E-posta", icon: "mail-outline" as const, tone: "sky" as const, testID: "detail-mail-btn", onPress: () => Linking.openURL(`mailto:${c.email}`) },
+    mapsLink(c) && { key: "map", label: "Konum", icon: "navigate-outline" as const, tone: "rose" as const, testID: "detail-location-btn", onPress: () => Linking.openURL(String(mapsLink(c))) },
+  ].filter(Boolean) as ActionTile[];
+
   return (
     <Screen onRefresh={load}>
       <H1>{c.name || name || "Cari"}</H1>
@@ -459,38 +499,7 @@ export function ContactDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
-      {canEditContact ? (
-        <PrimaryButton title="Cariyi düzenle" onPress={() => go("ContactEdit", { id })} color={colors.secondary} testID="detail-edit-contact-btn" />
-      ) : null}
-      <PrimaryButton title="Ekstre gönder" onPress={() => go("ContactStatement", { id, name: c.name || name })} color={colors.indigo} testID="detail-statement-btn" />
-      {canInvoice ? (
-        <PrimaryButton title="Satış yap" onPress={() => go("InvoiceNew", { type: "sales", ...docParams })} color={colors.secondary} testID="detail-sell-btn" />
-      ) : null}
-      {canInvoice ? (
-        <PrimaryButton title="Alış yap" onPress={() => go("InvoiceNew", { type: "purchase", ...docParams })} testID="detail-buy-btn" />
-      ) : null}
-      {canBank ? (
-        <PrimaryButton title="Tahsilat" onPress={openPay} color={colors.primary} testID="detail-collect-btn" />
-      ) : null}
-      <PrimaryButton title="Mesaj" onPress={openMessage} color={colors.indigo} testID="detail-message-btn" />
-      {canEditContact ? (
-        <PrimaryButton
-          title={`Vade uygula${c.payment_term_days ? ` (${c.payment_term_days} gün)` : ""}`}
-          onPress={openTerms}
-          color={colors.secondary}
-          testID="detail-terms-btn"
-        />
-      ) : null}
-      {canBank && bal !== 0 ? (
-        <PrimaryButton title="Bakiyeyi taksitlendir" onPress={openPlan} color="#7C3AED" testID="detail-balance-installments-btn" />
-      ) : null}
-      <PrimaryButton
-        title={c.b2b_enabled ? "B2B portal linki" : "B2B erişimi ver"}
-        onPress={grantB2b}
-        loading={b2bBusy}
-        color={colors.indigo}
-        testID="detail-b2b-access-btn"
-      />
+      <ActionTiles items={actionTiles} />
 
       {termsOpen ? (
         <Card testID="contact-terms-form">
@@ -612,18 +621,6 @@ export function ContactDetailScreen() {
           <InfoLine key={r.key} label={r.label} value={r.value} />
         ))}
       </Card>
-
-      {c.phone ? <PrimaryButton title={`Ara ${c.phone}`} onPress={() => Linking.openURL(`tel:${c.phone}`)} /> : null}
-      {c.email ? <PrimaryButton title={`E-posta ${c.email}`} color={colors.primary} onPress={() => Linking.openURL(`mailto:${c.email}`)} /> : null}
-      {c.phone ? <PrimaryButton title="WhatsApp" color="#128C7E" onPress={() => Linking.openURL(`https://wa.me/${waDigits(c.phone)}`)} /> : null}
-      {mapsLink(c) ? (
-        <PrimaryButton
-          title="Konuma git"
-          color={colors.primary}
-          testID="detail-location-btn"
-          onPress={() => Linking.openURL(String(mapsLink(c)))}
-        />
-      ) : null}
 
       <Row style={{ flexWrap: "wrap" }}>
         {TABS.map((t) => (

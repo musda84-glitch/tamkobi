@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   },
   listTitle: { fontWeight: "700", color: colors.text, fontSize: 15 },
   listRight: { fontWeight: "800", color: colors.text, marginLeft: 8 },
-  kpi: { flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 12 },
+  kpi: { flex: 1, minWidth: 148, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 12 },
   kpiLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
   kpiValue: { fontSize: 18, fontWeight: "800", color: colors.text, marginTop: 4 },
 });
