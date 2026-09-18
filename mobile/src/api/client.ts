@@ -1,5 +1,5 @@
 import { ApiHttpError, apiErrorMessage } from "./errors";
-import { apiRoot, normalizeApiBase } from "./url";
+import { apiRoot, fileUrl, normalizeApiBase } from "./url";
 
 export type Query = Record<string, string | number | boolean | null | undefined>;
 
@@ -55,6 +55,32 @@ export async function request<T>(
   return data as T;
 }
 
+/** Multipart yükleme: Content-Type'ı fetch kendisi (boundary ile) koyar. */
+export async function upload<T>(client: ApiClient, path: string, form: FormData, query?: Query): Promise<T> {
+  const url = `${apiRoot(client.baseUrl)}${withQuery(path, query)}`;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (client.token) headers.Authorization = `Bearer ${client.token}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers, body: form });
+  } catch (err) {
+    throw new ApiHttpError(0, null, apiErrorMessage(err, "Dosya yüklenemedi. Bağlantıyı kontrol edin."));
+  }
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { detail: text };
+    }
+  }
+  if (!res.ok) {
+    throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, apiErrorMessage({ response: { data } }, `HTTP ${res.status}`));
+  }
+  return data as T;
+}
+
 export const get = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "GET", path, { query });
 export const post = <T,>(c: ApiClient, path: string, body?: unknown, query?: Query) =>
   request<T>(c, "POST", path, { body: body ?? {}, query });
@@ -62,4 +88,4 @@ export const put = <T,>(c: ApiClient, path: string, body?: unknown, query?: Quer
   request<T>(c, "PUT", path, { body: body ?? {}, query });
 export const del = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "DELETE", path, { query });
 
-export { normalizeApiBase, apiRoot };
+export { normalizeApiBase, apiRoot, fileUrl };

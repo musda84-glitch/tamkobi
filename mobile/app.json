@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.tamkobi.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "Barkod okutmak ve stok/saha siparişinde ürün bulmak için kamera gerekir.",
+        "NSCameraUsageDescription": "Barkod okutmak, keşif fotoğrafı çekmek ve stok/saha siparişinde ürün bulmak için kamera gerekir.",
+        "NSPhotoLibraryUsageDescription": "Keşif ve proje fotoğraflarını yüklemek için galeri erişimi gerekir.",
         "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir."
       }
     },
@@ -52,6 +53,13 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Keşif ve proje fotoğraflarını yüklemek için galeriye izin verin.",
+          "cameraPermission": "Keşif ve proje fotoğrafı çekmek için kameraya izin verin."
         }
       ],
       "expo-secure-store",

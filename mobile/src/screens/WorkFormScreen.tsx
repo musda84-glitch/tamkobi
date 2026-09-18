@@ -8,6 +8,7 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
@@ -59,6 +60,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
   const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
+  const [photos, setPhotos] = useState<string[]>([]);
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -111,6 +113,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setNotes(p.description || "");
         setAddress(p.address || "");
         setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
+        setPhotos(p.images || []);
         setStatus(p.status || "planning");
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
@@ -123,6 +126,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setSurveyDate(String(s.survey_date || todayIso()).slice(0, 10));
         setNotes(s.notes || "");
         setLocation({ url: s.location_url || "", lat: coordText(s.latitude), lng: coordText(s.longitude) });
+        setPhotos(s.images || []);
         setStatus(s.status || "planned");
         const ms = s.measurements || [];
         setItems(ms.length ? ms.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0 })) : [emptyItem()]);
@@ -300,6 +304,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "quote" ? <Field label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
       {kind !== "quote" ? (
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
+      ) : null}
+
+      {kind !== "quote" ? (
+        <ImageUploader
+          entity={kind}
+          entityId={docId}
+          images={photos}
+          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          editable={canEdit}
+          label={kind === "survey" ? "Keşif fotoğrafları" : "Proje fotoğrafları"}
+          hint="Yüklenen fotoğraflar web’deki keşif / proje kartında da görünür."
+          testID="work-photos"
+        />
       ) : null}
 
       {!isNew ? (

@@ -33,3 +33,17 @@ export function normalizeApiBase(input: string | null | undefined, fallback = DE
 export function apiRoot(base: string): string {
   return `${normalizeApiBase(base)}/api`;
 }
+
+/**
+ * Sunucu `/api/files/...` gibi göreli yol döner; mobilde <Image> mutlak URL ister.
+ * Web resolveImageUrl karşılığı.
+ */
+export function fileUrl(base: string, url?: string | null): string {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  if (/^(https?:|data:|blob:|file:)/i.test(raw)) return raw;
+  const origin = normalizeApiBase(base);
+  if (raw.startsWith("/")) return `${origin}${raw}`;
+  if (raw.startsWith("api/")) return `${origin}/${raw}`;
+  return `${apiRoot(base)}/files/${raw.replace(/^\/+/, "")}`;
+}

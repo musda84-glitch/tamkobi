@@ -49,6 +49,7 @@ export type ProjectDoc = {
   location_url?: string;
   latitude?: number | null;
   longitude?: number | null;
+  images?: string[];
 };
 
 export type SurveyDoc = {
@@ -67,6 +68,7 @@ export type SurveyDoc = {
   location_url?: string;
   latitude?: number | null;
   longitude?: number | null;
+  images?: string[];
 };
 
 export const QUOTE_STATUSES = [
