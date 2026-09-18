@@ -213,7 +213,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       {draft.contact_id ? <Muted>Tedarikçi seçildi</Muted> : null}
       <Field label="Belge / fiş no" value={draft.document_no} onChangeText={(v) => set("document_no", v)} editable={canEdit} />
       <Field label="Not" value={draft.notes} onChangeText={(v) => set("notes", v)} editable={canEdit} />
-      <Chip label="Her ay tekrarlansın" active={draft.is_recurring} onPress={() => canEdit && set("is_recurring", !draft.is_recurring)} testID="exp-recurring" />
+      {draft.is_recurring ? <Muted testID="exp-recurring-note">Bu masraf aylık tekrarlı; tekrar ayarı web panelinden yönetilir.</Muted> : null}
       <PrimaryButton
         title={busy ? "Kaydediliyor…" : isNew ? (draft.account_id ? "Kaydet & öde" : "Kaydet") : "Güncelle"}
         onPress={save}
