@@ -32,8 +32,8 @@ PROVIDERS = {
         "live_url": "https://api.enpara.com",
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
-        "fields": ["client_id", "client_secret", "access_token", "refresh_token", "api_key", "customer_number"],
-        "hint": "Enpara QNB'den ayrıdır. Portal Access Token yapıştırın (süre dolunca yenileyin). Client ID/Secret yalnızca token yenileme içindir. API Key varsa X-Gravitee-Api-Key olarak gider. IBAN 26 hane. Production IP uygulama IP listesinde olmalı (401 access_denied sıkça IP/abonelik).",
+        "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
+        "hint": "Hesap Hareketleri: GET /v1/account-statement, /ticket, /list. Portal Access Token + Refresh Token + Client ID yapıştırın (Client Secret opsiyonel, yenileme için). IBAN 26 hane. Production IP listede olmalı (401 access_denied sıkça IP).",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -408,12 +408,17 @@ def _oauth_error_text(resp, url: str) -> str:
 
 
 async def _enpara_refresh_access_token(conn: dict) -> str:
-    """Refresh / client_credentials: Gravitee AM /securedomain/oauth/token."""
+    """Refresh Token (portal) veya client_credentials → Gravitee AM /securedomain/oauth/token."""
     client_id = (conn.get("client_id") or "").strip()
     client_secret = (conn.get("client_secret") or "").strip()
     refresh = (conn.get("refresh_token") or "").strip()
-    if not client_id or not client_secret:
-        raise RuntimeError("Enpara Client ID / Client Secret gerekli (token yenileme için). Portalden Access Token yapıştırın.")
+    if not client_id:
+        raise RuntimeError("Enpara Client ID gerekli (token yenileme). Portalden Access Token yapıştırın.")
+    if not refresh and not client_secret:
+        raise RuntimeError(
+            "Enpara token yenilemek için Refresh Token veya Client Secret gerekli. "
+            "Portalden Access Token + Refresh Token yapıştırın."
+        )
 
     last_err = "Token uç noktası yanıt vermedi."
     async with httpx.AsyncClient(timeout=20) as client:
@@ -421,21 +426,24 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
             forms = []
             if refresh:
                 forms.append({"grant_type": "refresh_token", "refresh_token": refresh})
-            forms.append({"grant_type": "client_credentials"})
+            if client_secret:
+                forms.append({"grant_type": "client_credentials"})
             hit_real_am = False
             for form in forms:
                 try:
                     headers = {
-                        "Authorization": _basic_auth_header(client_id, client_secret),
                         "Content-Type": "application/x-www-form-urlencoded",
                         "Accept": "application/json",
                     }
-                    body = {**form, "client_id": client_id, "client_secret": client_secret}
+                    body = {**form, "client_id": client_id}
+                    if client_secret:
+                        headers["Authorization"] = _basic_auth_header(client_id, client_secret)
+                        body["client_secret"] = client_secret
                     resp = await client.post(url, data=body, headers=headers)
                     if _enpara_dead_route(resp):
                         last_err = f"{url} → yok (404-EPG96)"
                         break
-                    if resp.status_code >= 400:
+                    if resp.status_code >= 400 and client_secret:
                         resp = await client.post(
                             url,
                             data=body,
@@ -449,6 +457,9 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
                         data = resp.json() if resp.content else {}
                         token = (data or {}).get("access_token") or (data or {}).get("accessToken")
                         if token:
+                            new_rt = (data or {}).get("refresh_token") or (data or {}).get("refreshToken")
+                            if new_rt:
+                                conn["refresh_token"] = str(new_rt)
                             return token
                         last_err = f"{url} → access_token yok"
                         continue
@@ -459,13 +470,18 @@ async def _enpara_refresh_access_token(conn: dict) -> str:
             if hit_real_am:
                 break
     raise RuntimeError(
-        "Enpara token alınamadı. Developer portalından Access Token yapıştırın "
+        "Enpara token alınamadı. Developer portalından Access Token + Refresh Token yapıştırın "
         f"(token URL: /securedomain/oauth/token). ({last_err[:180]})"
     )
 
 
 def _enpara_can_refresh(conn: dict) -> bool:
-    return bool((conn.get("client_id") or "").strip() and (conn.get("client_secret") or "").strip())
+    cid = (conn.get("client_id") or "").strip()
+    if not cid:
+        return False
+    if (conn.get("refresh_token") or "").strip():
+        return True
+    return bool((conn.get("client_secret") or "").strip())
 
 
 def _enpara_should_refresh_on_auth_error(resp, token: str) -> bool:
@@ -925,11 +941,11 @@ def _enpara_raise_auth(resp):
 
 
 async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]:
-    """QNB/Enpara Gravitee Account Statement şeması.
+    """Enpara Hesap Hareketleri — portal aboneliği yalnızca bu üç GET:
 
-    GET /v1/account-statement?startDateTime&endDateTime  (POST kök/ticket 405)
-    POST /v1/account-transactions/realtime | /async-ticket  (aynı JSON: startDateTime, endDateTime, iban)
-    GET  /v1/account-statement/ticket?ticketNo=...
+    GET https://api.enpara.com/v1/account-statement?startDateTime&endDateTime
+    GET https://api.enpara.com/v1/account-statement/ticket?ticketNo=
+    GET https://api.enpara.com/v1/account-statement/list
     """
     import asyncio
 
@@ -937,7 +953,6 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
     get_headers = _enpara_headers(token, conn, for_get=True)
-    post_headers = _enpara_headers(token, conn, for_get=False)
     account = _enpara_account_ref(conn)
     customer = (conn.get("customer_number") or "").strip()
     end = datetime.now(timezone.utc)
@@ -950,9 +965,15 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     refreshed_token: Optional[str] = token if token and token != stored_token else None
     best_400 = ""
 
+    def _pack(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"transactions": rows, "balance": balance, "access_token": refreshed_token}
+        if refreshed_token and conn.get("refresh_token"):
+            out["refresh_token"] = conn.get("refresh_token")
+        return out
+
     async with httpx.AsyncClient(timeout=45) as client:
         async def _maybe_refresh(resp):
-            nonlocal token, get_headers, post_headers, refreshed_token
+            nonlocal token, get_headers, refreshed_token
             if not _enpara_should_refresh_on_auth_error(resp, token):
                 return resp
             if not _enpara_can_refresh(conn):
@@ -960,24 +981,14 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             token = await _enpara_refresh_access_token(conn)
             refreshed_token = token
             get_headers = _enpara_headers(token, conn, for_get=True)
-            post_headers = _enpara_headers(token, conn, for_get=False)
             return None
 
-        def _raise_auth(resp):
-            _enpara_raise_auth(resp)
-
-        async def _send(method: str, path: str, *, params=None, json_body=None):
+        async def _send(path: str, *, params=None):
             url = f"{base}{path}"
-            if method == "GET":
-                resp = await client.get(url, headers=get_headers, params=params or {})
-            else:
-                resp = await client.post(url, headers=post_headers, json=json_body or {})
+            resp = await client.get(url, headers=get_headers, params=params or {})
             retried = await _maybe_refresh(resp)
             if retried is None:
-                if method == "GET":
-                    resp = await client.get(url, headers=get_headers, params=params or {})
-                else:
-                    resp = await client.post(url, headers=post_headers, json=json_body or {})
+                resp = await client.get(url, headers=get_headers, params=params or {})
             return resp
 
         def _consume(data: Any, *, as_statement: bool = True) -> Optional[Dict[str, Any]]:
@@ -987,13 +998,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 balance = bal
             rows = _normalize_tx_rows(data)
             if rows:
-                return {"transactions": rows, "balance": balance, "access_token": refreshed_token}
+                return _pack(rows)
             ready = _ticket_ready(data)
             if ready is False:
                 return None
             if as_statement and ready is True:
                 got_ok_empty = True
-                return {"transactions": [], "balance": balance, "access_token": refreshed_token}
+                return _pack([])
             return None
 
         def _note_400(label: str, resp, payload: Optional[dict] = None):
@@ -1009,38 +1020,32 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             for attempt in range(10):
                 if attempt:
                     await asyncio.sleep(1.5)
-                pending = False
-                for method, path, params in (
-                    ("GET", f"/v1/account-transactions/async-ticket/{ticket_id}", {}),
-                    ("GET", "/v1/account-statement/ticket", {"ticketNo": ticket_id}),
-                    ("GET", "/v1/account-statement", {"ticketNo": ticket_id}),
-                ):
-                    resp = await _send(method, path, params=params)
-                    last_detail = f"{method} {path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
-                    if resp.status_code in (401, 403):
-                        _raise_auth(resp)
-                    if resp.status_code >= 400:
-                        continue
-                    try:
-                        data = resp.json()
-                    except Exception:
-                        continue
-                    if _ticket_ready(data) is False:
-                        pending = True
-                        break
-                    out = _consume(data, as_statement=True)
-                    if out is not None:
-                        return out
-                if pending:
+                resp = await _send(
+                    "/v1/account-statement/ticket",
+                    params={"ticketNo": ticket_id, "pageNo": "1", "pageSize": "100"},
+                )
+                last_detail = f"GET /v1/account-statement/ticket HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                if resp.status_code in (401, 403):
+                    _enpara_raise_auth(resp)
+                if resp.status_code >= 400:
                     continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    continue
+                if _ticket_ready(data) is False:
+                    continue
+                out = _consume(data, as_statement=True)
+                if out is not None:
+                    return out
             return None
 
-        # 1) Resmi Account Statement: GET + startDateTime/endDateTime (POST kök/ticket 405)
+        # 1) GET /v1/account-statement?startDateTime&endDateTime
         for payload in payloads:
             qs = _string_params(payload)
-            resp = await _send("GET", "/v1/account-statement", params=qs)
+            resp = await _send("/v1/account-statement", params=qs)
             if resp.status_code in (401, 403):
-                _raise_auth(resp)
+                _enpara_raise_auth(resp)
             last_detail = f"GET /v1/account-statement HTTP {resp.status_code} ({','.join(qs)}): {_api_error_detail(resp)}"
             if resp.status_code >= 400:
                 _note_400("GET /v1/account-statement", resp, payload)
@@ -1060,50 +1065,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 if polled:
                     return polled
 
-        # 2) Account Transactions realtime (aynı JSON şema)
-        for payload in payloads[:4]:
-            resp = await _send("POST", "/v1/account-transactions/realtime", json_body=payload)
-            if resp.status_code in (401, 403):
-                _raise_auth(resp)
-            last_detail = f"POST /v1/account-transactions/realtime HTTP {resp.status_code}: {_api_error_detail(resp)}"
-            if resp.status_code >= 400:
-                _note_400("POST realtime", resp, payload)
-                continue
-            try:
-                data = resp.json()
-            except Exception:
-                continue
-            out = _consume(data, as_statement=True)
-            if out and (out.get("transactions") or _ticket_ready(data) is True):
-                return out
-
-        # 3) Async ticket: POST /async-ticket → GET .../{ticketNo}
-        for payload in payloads[:4]:
-            resp = await _send("POST", "/v1/account-transactions/async-ticket", json_body=payload)
-            if resp.status_code in (401, 403):
-                _raise_auth(resp)
-            last_detail = f"POST /v1/account-transactions/async-ticket HTTP {resp.status_code}: {_api_error_detail(resp)}"
-            if resp.status_code >= 400:
-                _note_400("POST async-ticket", resp, payload)
-                continue
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            out = _consume(data, as_statement=True)
-            if out and out.get("transactions"):
-                return out
-            tid = _ticket_id_from(data)
-            if tid:
-                polled = await _poll_ticket(tid)
-                if polled:
-                    return polled
-
-        # 4) Kayıtlı hesaplar (getRegisteredAccounts) — IBAN/bakiye; hareket değil
-        resp = await _send("GET", "/v1/account-statement/list", params={})
+        # 2) GET /v1/account-statement/list — kayıtlı hesaplar / bakiye
+        resp = await _send("/v1/account-statement/list", params={})
         last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
         if resp.status_code in (401, 403):
-            _raise_auth(resp)
+            _enpara_raise_auth(resp)
         if resp.status_code < 400:
             try:
                 data = resp.json()
@@ -1117,41 +1083,18 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 if bal is not None:
                     balance = bal
 
-        if balance is None and account:
-            iban26 = _enpara_iban_26(account)
-            bal_params_list = []
-            if iban26:
-                bal_params_list.append({"iban": iban26})
-            acct_no = _enpara_account_no(account)
-            if acct_no:
-                bal_params_list.append({"accountNo": acct_no})
-            for path in ("/v1/accounts/balance", "/v1/account/balance", "/v1/accounts", "/v1/balance"):
-                for bal_params in bal_params_list:
-                    resp = await _send("GET", path, params=bal_params)
-                    if resp.status_code >= 400:
-                        continue
-                    try:
-                        bal = _extract_balance(resp.json())
-                    except Exception:
-                        bal = None
-                    if bal is not None:
-                        balance = bal
-                        break
-                if balance is not None:
-                    break
-
     if got_ok_empty or balance is not None:
-        return {"transactions": [], "balance": balance, "access_token": refreshed_token}
+        return _pack([])
 
     if best_400:
         last_detail = best_400
-    hint = " Access Token, 26 haneli IBAN ve account-statement yetkisini kontrol edin."
+    hint = " Access Token, Refresh Token, Client ID ve 26 haneli IBAN’ı kontrol edin."
     if not account:
         hint = " Düzenle → Hesap No/IBAN alanına Enpara IBAN’ınızı girin (tam 26 karakter, boşluksuz)."
     elif "400" in last_detail:
         hint = (
-            " İstek reddedildi (400). Gravitee şeması startDateTime/endDateTime string ister; "
-            "IBAN tam 26 karakter olmalı. POST /ticket kullanılmaz."
+            " İstek reddedildi (400). GET /v1/account-statement startDateTime/endDateTime ister; "
+            "IBAN tam 26 karakter olmalı. Ticket: GET /v1/account-statement/ticket?ticketNo=."
         )
     elif "IP" in last_detail or "not allowed" in last_detail.lower():
         hint = " Sunucu IP’si Enpara portalında izinli değil."
@@ -1303,4 +1246,5 @@ async def fetch_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
         "transactions": live.get("transactions") or [],
         "balance": live.get("balance"),
         "access_token": live.get("access_token"),
+        "refresh_token": live.get("refresh_token"),
     }

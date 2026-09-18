@@ -408,9 +408,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                <b>401 access_denied</b> genelde IP listesi veya Account Statement aboneliğidir — production sunucu IP’sini portala ekleyin.
-                Token süresi dolduysa yeni <b>Access Token</b> yapıştırın (client_credentials yetmeyebilir).
-                API Key varsa <code className="font-mono">X-Gravitee-Api-Key</code> olarak gider. IBAN 26 karakter. OAuth: <code className="font-mono">/securedomain/oauth/token</code>.
+                Portal uçları: <code className="font-mono">GET /v1/account-statement</code>, <code className="font-mono">/ticket</code>, <code className="font-mono">/list</code>.
+                Yapıştırın: <b>Access Token</b>, <b>Refresh Token</b>, <b>Client ID</b>. Client Secret opsiyonel.
+                401 access_denied genelde IP listesi — production sunucu IP’sini portala ekleyin. IBAN 26 karakter.
               </p>
             )}
             {editForm.provider === "kuveytturk" && (

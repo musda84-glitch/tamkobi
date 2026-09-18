@@ -5992,6 +5992,8 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
     }
     if result.get("access_token"):
         conn_set["access_token"] = result["access_token"]
+    if result.get("refresh_token"):
+        conn_set["refresh_token"] = result["refresh_token"]
     if filled_iban:
         conn_set["bank_account_number"] = filled_iban
     await db.bank_connections.update_one({"_id": conn_id}, {
