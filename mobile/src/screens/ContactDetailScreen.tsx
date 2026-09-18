@@ -1,7 +1,8 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import React, { useCallback, useMemo, useState } from "react";
-import { Platform, Share, Text, View } from "react-native";
+import { Platform, Pressable, Share, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
@@ -99,6 +100,7 @@ export function ContactDetailScreen() {
   const [terms, setTerms] = useState<TermsDraft>({ days: "0", late_fee_rate: "0", apply_to_open_invoices: true });
   const [aging, setAging] = useState<Aging | null>(null);
   const [termsBusy, setTermsBusy] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const loadCash = useCallback(async () => {
     const [accs, pars] = await Promise.all([
@@ -603,7 +605,7 @@ export function ContactDetailScreen() {
 
       <Card testID="contact-card">
         <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>
-        <Text style={{ fontSize: 24, fontWeight: "800", color: colors.text }}>{fmtMoney(c.balance)}</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(c.balance)}</Text>
         <Row style={{ flexWrap: "wrap" }}>
           <Badge label={contactTypeLabel(c.type)} tone="indigo" />
           <Badge label={hint.label} tone={hint.tone} />
@@ -611,18 +613,32 @@ export function ContactDetailScreen() {
           {c.b2b_enabled ? <Badge label="B2B" tone="indigo" /> : null}
           {c.risk_status && c.risk_status !== "normal" ? <Badge label={riskStatusTr(c.risk_status)} tone="red" /> : null}
         </Row>
-        {summaryRows.length ? (
-          <View>
-            {summaryRows.map((r) => (
-              <Muted key={r.key}>{r.label}: {r.value}</Muted>
+        <Pressable
+          testID="contact-card-toggle"
+          onPress={() => setInfoOpen((v) => !v)}
+          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}
+        >
+          <Ionicons name={infoOpen ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
+          <Text style={{ fontWeight: "700", color: colors.muted, fontSize: 12 }}>
+            {infoOpen ? "Bilgileri gizle" : `Cari bilgileri${infoRows.length ? ` (${infoRows.length})` : ""}`}
+          </Text>
+        </Pressable>
+        {infoOpen ? (
+          <>
+            {summaryRows.length ? (
+              <View>
+                {summaryRows.map((r) => (
+                  <Muted key={r.key}>{r.label}: {r.value}</Muted>
+                ))}
+              </View>
+            ) : (
+              <Muted>0 fatura · açık {fmtMoney(0)}</Muted>
+            )}
+            {infoRows.map((r) => (
+              <InfoLine key={r.key} label={r.label} value={r.value} />
             ))}
-          </View>
-        ) : (
-          <Muted>0 fatura · açık {fmtMoney(0)}</Muted>
-        )}
-        {infoRows.map((r) => (
-          <InfoLine key={r.key} label={r.label} value={r.value} />
-        ))}
+          </>
+        ) : null}
       </Card>
 
       <Row style={{ flexWrap: "wrap" }}>
