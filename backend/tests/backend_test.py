@@ -296,11 +296,18 @@ class TestBankConnections:
 
     def test_secrets_masked(self, s):
         s.put(f"{BASE}/banking/connections/{TestBankConnections.conn_id}",
-              json={"client_id": "abc", "client_secret": "supersecret1234"}, timeout=30)
+              json={"client_id": "enparaClientId99", "client_secret": "supersecret1234",
+                    "access_token": "liveAccessTok", "refresh_token": "liveRefreshTok"}, timeout=30)
         conns = s.get(f"{BASE}/banking/connections", timeout=30).json()
         c = next(x for x in conns if x["id"] == TestBankConnections.conn_id)
         assert c["client_secret"].startswith("••••"), c["client_secret"]
         assert "supersecret" not in c["client_secret"]
+        assert c["client_id"].startswith("••••"), c["client_id"]
+        assert "enparaClientId99" not in c["client_id"]
+        assert c["access_token"].startswith("••••"), c["access_token"]
+        assert "liveAccessTok" not in c["access_token"]
+        assert c["refresh_token"].startswith("••••"), c["refresh_token"]
+        assert "liveRefreshTok" not in c["refresh_token"]
 
     def test_match_transaction_and_learn_rule(self, s):
         tx = s.get(f"{BASE}/banking/transactions/unmatched", timeout=30).json()[0]
