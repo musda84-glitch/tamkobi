@@ -90,6 +90,16 @@ export function BankingAccountFormScreen({ accountId }: { accountId?: string }) 
           <Field label="Hesap no" testID="bank-account-no" value={draft.account_number} onChangeText={(v) => set("account_number", v)} editable={canEdit} />
         </>
       )}
+      {draft.type === "pos" || draft.type === "okc_pos" ? (
+        <Field label="POS komisyon (%)" testID="bank-pos-rate" value={draft.pos_commission_rate} onChangeText={(v) => set("pos_commission_rate", v)} keyboardType="decimal-pad" editable={canEdit} />
+      ) : null}
+      {draft.type === "okc_pos" ? (
+        <>
+          <Field label="ÖKC marka" testID="bank-okc-brand" value={draft.okc_brand} onChangeText={(v) => set("okc_brand", v)} editable={canEdit} />
+          <Field label="ÖKC seri no" testID="bank-okc-serial" value={draft.okc_serial} onChangeText={(v) => set("okc_serial", v)} editable={canEdit} />
+          <Field label="ÖKC terminal id" testID="bank-okc-terminal" value={draft.okc_terminal_id} onChangeText={(v) => set("okc_terminal_id", v)} editable={canEdit} />
+        </>
+      ) : null}
       {isNew ? (
         <Field label={draft.type === "credit_card" ? "Borç bakiyesi" : "Açılış bakiyesi"} testID="bank-balance" value={draft.current_balance} onChangeText={(v) => set("current_balance", v)} keyboardType="decimal-pad" editable={canEdit} />
       ) : (
