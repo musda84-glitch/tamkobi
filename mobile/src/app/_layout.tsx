@@ -29,6 +29,9 @@ function RootStack() {
         <Stack.Screen name="search" options={{ title: "Ara" }} />
         <Stack.Screen name="notifications" options={{ title: "Bildirimler" }} />
         <Stack.Screen name="contacts/index" options={{ title: "Cariler" }} />
+        <Stack.Screen name="contacts/new" options={{ title: "Yeni cari" }} />
+        <Stack.Screen name="contacts/edit/[id]" options={{ title: "Cariyi düzenle" }} />
+        <Stack.Screen name="contacts/statement/[id]" options={{ title: "Cari ekstre" }} />
         <Stack.Screen name="contacts/[id]" options={{ title: "Cari" }} />
         <Stack.Screen name="invoices/index" options={{ title: "Faturalar" }} />
         <Stack.Screen name="invoices/new" options={{ title: "Yeni fatura" }} />

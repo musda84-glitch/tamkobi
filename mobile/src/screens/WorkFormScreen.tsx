@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
@@ -34,13 +34,17 @@ import {
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
 
 export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string }) {
+  const { contact_id: preContactId, contact_name: preContactName } = useLocalSearchParams<{
+    contact_id?: string;
+    contact_name?: string;
+  }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
   const isNew = !docId;
   const [title, setTitle] = useState("");
   const [name, setName] = useState("");
-  const [contactId, setContactId] = useState("");
-  const [contactName, setContactName] = useState("");
+  const [contactId, setContactId] = useState(isNew ? String(preContactId || "") : "");
+  const [contactName, setContactName] = useState(isNew ? String(preContactName || "") : "");
   const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
   const [validUntil, setValidUntil] = useState("");

@@ -14,6 +14,12 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/contacts");
     case "ContactDetail":
       return router.push({ pathname: "/contacts/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
+    case "ContactNew":
+      return router.push("/contacts/new");
+    case "ContactEdit":
+      return router.push({ pathname: "/contacts/edit/[id]", params: { id: String(params?.id || "") } });
+    case "ContactStatement":
+      return router.push({ pathname: "/contacts/statement/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
     case "Invoices":
       return router.push("/invoices");
     case "InvoiceDetail":
@@ -21,7 +27,11 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "InvoiceNew":
       return router.push({
         pathname: "/invoices/new",
-        params: { type: String(params?.type || "all") },
+        params: {
+          type: String(params?.type || "all"),
+          contact_id: String(params?.contact_id || ""),
+          contact_name: String(params?.contact_name || ""),
+        },
       });
     case "InvoiceEdit":
       return router.push({ pathname: "/invoices/edit/[id]", params: { id: String(params?.id || "") } });
@@ -62,19 +72,28 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "Quotes":
       return router.push("/quotes");
     case "QuoteNew":
-      return router.push("/quotes/new");
+      return router.push({
+        pathname: "/quotes/new",
+        params: { contact_id: String(params?.contact_id || ""), contact_name: String(params?.contact_name || "") },
+      });
     case "QuoteDetail":
       return router.push({ pathname: "/quotes/[id]", params: { id: String(params?.id || "") } });
     case "Projects":
       return router.push("/projects");
     case "ProjectNew":
-      return router.push("/projects/new");
+      return router.push({
+        pathname: "/projects/new",
+        params: { contact_id: String(params?.contact_id || ""), contact_name: String(params?.contact_name || "") },
+      });
     case "ProjectDetail":
       return router.push({ pathname: "/projects/[id]", params: { id: String(params?.id || "") } });
     case "Surveys":
       return router.push("/surveys");
     case "SurveyNew":
-      return router.push("/surveys/new");
+      return router.push({
+        pathname: "/surveys/new",
+        params: { contact_id: String(params?.contact_id || ""), contact_name: String(params?.contact_name || "") },
+      });
     case "SurveyDetail":
       return router.push({ pathname: "/surveys/[id]", params: { id: String(params?.id || "") } });
     default:
