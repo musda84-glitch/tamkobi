@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
@@ -32,7 +33,7 @@ import {
   plusDaysIso,
   TRADE_KINDS,
   validateInvoiceDraft,
-  WITHHOLDING,
+  withholdingSelectGroups,
   withholdingValue,
   type InvoiceDraft,
 } from "../utils/invoiceDraft";
@@ -203,6 +204,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   const totals = invoiceTotals(draft);
   const defaultVat = draft.trade_kind === "export" || draft.e_type === "e_export" ? 0 : 20;
+  const withholdingGroups = useMemo(() => withholdingSelectGroups(), []);
 
   const pickContact = (c: Contact) => {
     const due = c.payment_term_days ? plusDaysIso(draft.issue_date, Number(c.payment_term_days)) : draft.due_date;
@@ -346,28 +348,32 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           />
         ))}
       </Row>
-      <Muted>E-belge türü</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {E_TYPES.map((t) => (
-          <Chip key={t.key} label={t.label} active={draft.e_type === t.key} testID={`inv-etype-${t.key}`} onPress={() => set("e_type", t.key)} />
-        ))}
-      </Row>
-      <Muted>Dış ticaret</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {TRADE_KINDS.map((t) => (
-          <Chip key={t.key || "domestic"} label={t.label} active={draft.trade_kind === t.key} testID={`inv-trade-${t.key || "none"}`} onPress={() => setDraft((d) => applyTradeKind(d, t.key))} />
-        ))}
-      </Row>
+      <GroupedSelect
+        label="E-belge türü"
+        testID="inv-etype-select"
+        value={draft.e_type}
+        onChange={(v) => set("e_type", v)}
+        groups={[{ label: "E-belge", options: E_TYPES.map((t) => ({ value: t.key, label: t.label })) }]}
+      />
+      <GroupedSelect
+        label="Dış ticaret"
+        testID="inv-trade-select"
+        value={draft.trade_kind}
+        onChange={(v) => setDraft((d) => applyTradeKind(d, v))}
+        groups={[{ label: "İşlem türü", options: TRADE_KINDS.map((t) => ({ value: t.key, label: t.label })) }]}
+      />
 
       {(draft.trade_kind === "export" || draft.trade_kind === "import") ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Dış ticaret bilgileri</Text>
-          <Muted>Teslim şekli</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {INCOTERMS.filter(Boolean).map((x) => (
-              <Chip key={x} label={x} active={draft.incoterm === x} onPress={() => set("incoterm", x)} />
-            ))}
-          </Row>
+          <GroupedSelect
+            label="Teslim şekli"
+            testID="inv-incoterm-select"
+            value={draft.incoterm}
+            onChange={(v) => set("incoterm", v)}
+            emptyLabel="Seçilmedi"
+            groups={[{ label: "Incoterms", options: INCOTERMS.filter(Boolean).map((x) => ({ value: x, label: x })) }]}
+          />
           <Field label="Ülke" testID="inv-country" value={draft.country} onChangeText={(v) => set("country", v)} />
           <Field label="Gümrük idaresi" testID="inv-customs" value={draft.customs_office} onChangeText={(v) => set("customs_office", v)} />
           <Field label="Rejim" testID="inv-regime" value={draft.regime_code} onChangeText={(v) => set("regime_code", v)} placeholder="4000 / 1000" />
@@ -379,17 +385,13 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         </Card>
       ) : null}
 
-      <Muted>Tevkifat (hizmet faturası)</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {WITHHOLDING.map((w) => (
-          <Chip
-            key={w.value || "none"}
-            label={w.label}
-            active={withholdingValue(draft) === w.value}
-            onPress={() => setDraft((d) => ({ ...d, ...parseWithholding(w.value) }))}
-          />
-        ))}
-      </Row>
+      <GroupedSelect
+        label="Tevkifat (hizmet faturası)"
+        testID="inv-withholding-select"
+        value={withholdingValue(draft)}
+        onChange={(v) => setDraft((d) => ({ ...d, ...parseWithholding(v) }))}
+        groups={withholdingGroups}
+      />
 
       <Muted>Kayıt durumu</Muted>
       <Row>
