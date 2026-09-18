@@ -166,6 +166,8 @@ export type Product = {
   is_active?: boolean;
   price_includes_vat?: boolean;
   image_url?: string;
+  thumbnail_url?: string;
+  images?: string[];
   category?: string;
   purchase_price?: number;
   purchase_vat_rate?: number;

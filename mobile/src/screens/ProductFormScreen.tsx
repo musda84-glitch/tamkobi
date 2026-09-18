@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { del, fileUrl, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Product } from "../types";
+import { productImage } from "../utils/productDisplay";
 import {
   PRODUCT_TYPES,
   VAT_RATES,
@@ -98,6 +100,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const canEdit = can("/stock", "edit");
   const isNew = !productId;
   const [draft, setDraft] = useState<ProductDraft>(emptyProductDraft());
+  const [photo, setPhoto] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,6 +116,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
     try {
       const p = await get<Product>(client, `/products/${productId}`);
       setDraft(draftFromProduct(p));
+      setPhoto(productImage(p));
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Stok kartı yüklenemedi."));
@@ -166,6 +170,15 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
       <Muted>{isNew ? "Ad ve SKU zorunlu. Barkod boşsa sunucu üretir." : [draft.sku, draft.barcode].filter(Boolean).join(" · ")}</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
+      {photo ? (
+        <Image
+          testID="stock-photo"
+          source={{ uri: fileUrl(client.baseUrl, photo) }}
+          style={{ width: "100%", height: 180, borderRadius: 12, borderWidth: 1, borderColor: colors.border }}
+          contentFit="cover"
+          transition={120}
+        />
+      ) : null}
 
       <Field label="Ürün adı" testID="stock-name" value={draft.name} onChangeText={(v) => set("name", v)} editable={canEdit} />
       <Field label="SKU" testID="stock-sku" value={draft.sku} onChangeText={(v) => set("sku", v)} autoCapitalize="none" editable={canEdit} />
