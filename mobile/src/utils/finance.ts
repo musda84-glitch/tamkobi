@@ -303,6 +303,24 @@ export const EXPENSE_DEFAULT_CATEGORIES = [
   "Yazılım / Abonelik", "Kargo / Nakliye", "Muhasebe / Danışmanlık", "Diğer",
 ];
 
+export type ExpenseCategory = { name?: string; is_default?: boolean };
+
+/** /expenses/categories varsayılan ve şirkete özel kategorileri birlikte döner. */
+export function expenseCategoryGroups(rows: ExpenseCategory[], extra: string[] = []): PaymentTargetGroup[] {
+  const named = (rows || []).map((c) => ({ name: String(c.name || "").trim(), is_default: c.is_default !== false })).filter((c) => c.name);
+  const base = named.length ? named : EXPENSE_DEFAULT_CATEGORIES.map((name) => ({ name, is_default: true }));
+  const known = new Set(base.map((c) => c.name));
+  const custom = [
+    ...base.filter((c) => !c.is_default).map((c) => c.name),
+    ...extra.map((n) => n.trim()).filter((n) => n && !known.has(n)),
+  ];
+  const groups: PaymentTargetGroup[] = [];
+  const defaults = base.filter((c) => c.is_default).map((c) => c.name);
+  if (defaults.length) groups.push({ label: "Varsayılan", options: defaults.map((name) => ({ value: name, label: name })) });
+  if (custom.length) groups.push({ label: "Şirkete özel", options: custom.map((name) => ({ value: name, label: name })) });
+  return groups;
+}
+
 export type Expense = {
   id?: string;
   _id?: string;

@@ -10,22 +10,21 @@ import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Scree
 import { colors } from "../theme";
 import type { Contact } from "../types";
 import {
-  EXPENSE_DEFAULT_CATEGORIES,
   draftFromExpense,
   emptyExpenseDraft,
   expenseCalc,
+  expenseCategoryGroups,
   expensePayload,
   paymentTargetGroups,
   splitPaymentTarget,
   validateExpenseDraft,
   type BankAccount,
   type Expense,
+  type ExpenseCategory,
   type ExpenseDraft,
   type Partner,
 } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
-
-type Cat = { name?: string };
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
@@ -35,7 +34,8 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [categories, setCategories] = useState<string[]>(EXPENSE_DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [addedCats, setAddedCats] = useState<string[]>([]);
   const [custQ, setCustQ] = useState("");
   const [catQ, setCatQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,14 +50,13 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
     try {
       const [acc, cats, cnt, pars] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
-        get<Cat[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
+        get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setAccounts(acc || []);
       setPartners((pars || []).filter((p) => p.is_active !== false));
-      const names = (cats || []).map((c) => c.name || "").filter(Boolean);
-      setCategories(names.length ? names : EXPENSE_DEFAULT_CATEGORIES);
+      setCategories(cats || []);
       setContacts((cnt || []).filter((c) => c.type !== "customer"));
       if (expenseId) {
         const list = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, q: expenseId });
@@ -81,6 +80,16 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   }, [client, companyId, expenseId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const categoryGroups = expenseCategoryGroups(categories, [...addedCats, draft.category]);
+
+  const addCategory = () => {
+    const name = catQ.trim();
+    if (!name) return;
+    setAddedCats((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    set("category", name);
+    setCatQ("");
+  };
 
   const totals = expenseCalc(draft);
   const hits = custQ.trim().length < 2
@@ -156,7 +165,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         testID="exp-category-select"
         value={draft.category}
         onChange={(v) => canEdit && set("category", v)}
-        groups={[{ label: "Kategoriler", options: categories.map((c) => ({ value: c, label: c })) }]}
+        groups={categoryGroups}
       />
       <Field
         label="Yeni kategori"
@@ -164,27 +173,11 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         value={catQ}
         onChangeText={setCatQ}
         placeholder="Listede yoksa yazın"
-        onSubmitEditing={() => {
-          const name = catQ.trim();
-          if (!name) return;
-          if (!categories.includes(name)) setCategories((prev) => [...prev, name]);
-          set("category", name);
-          setCatQ("");
-        }}
+        onSubmitEditing={addCategory}
         editable={canEdit}
       />
       {catQ.trim() ? (
-        <PrimaryButton
-          title={`Kategori: ${catQ.trim()}`}
-          onPress={() => {
-            const name = catQ.trim();
-            if (!categories.includes(name)) setCategories((prev) => [...prev, name]);
-            set("category", name);
-            setCatQ("");
-          }}
-          color={colors.primary}
-          testID="exp-cat-add"
-        />
+        <PrimaryButton title={`Kategori: ${catQ.trim()}`} onPress={addCategory} color={colors.primary} testID="exp-cat-add" />
       ) : null}
       <Field label="Açıklama" testID="exp-description" value={draft.description} onChangeText={(v) => set("description", v)} editable={canEdit} />
       <Field label="Tutar" testID="exp-amount" value={draft.amount} onChangeText={(v) => set("amount", v)} keyboardType="decimal-pad" editable={canEdit} />

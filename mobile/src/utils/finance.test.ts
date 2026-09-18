@@ -4,6 +4,7 @@ import {
   draftFromAccount,
   emptyAccountDraft,
   expenseCalc,
+  expenseCategoryGroups,
   expensePayload,
   groupedAccounts,
   paymentTargetGroups,
@@ -97,6 +98,16 @@ describe("finance drafts", () => {
 
     const noPartners = paymentTargetGroups(accounts, partners, { includePartners: false });
     expect(noPartners.map((g) => g.label)).not.toContain("Ortaklar");
+  });
+
+  it("splits expense categories into default and company groups", () => {
+    const groups = expenseCategoryGroups(
+      [{ name: "Kira", is_default: true }, { name: "Şantiye", is_default: false }],
+      ["Depo kirası", "Kira"]
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Varsayılan", "Şirkete özel"]);
+    expect(groups[1].options.map((o) => o.value)).toEqual(["Şantiye", "Depo kirası"]);
+    expect(expenseCategoryGroups([])[0].options.length).toBeGreaterThan(5);
   });
 
   it("rejects virman onto the same account", () => {
