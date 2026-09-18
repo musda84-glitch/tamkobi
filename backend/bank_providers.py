@@ -1001,6 +1001,78 @@ def _enpara_body_hint(data: Any) -> str:
     return type(data).__name__
 
 
+def _enpara_response_hint(resp, data: Any = None) -> str:
+    """Ham gövdeyi görünür kıl — 'çözümlenemedi' hatası ne geldiğini söylemeli."""
+    text = (getattr(resp, "text", None) or "")
+    ctype = ""
+    try:
+        ctype = (resp.headers or {}).get("content-type", "") or ""
+    except Exception:
+        ctype = ""
+    body = " ".join(text.split())[:240]
+    parts = [f"HTTP {getattr(resp, 'status_code', '?')}"]
+    if ctype:
+        parts.append(f"ct={ctype.split(';')[0]}")
+    parts.append(f"len={len(text)}")
+    if data is not None:
+        parts.append(_enpara_body_hint(data))
+    parts.append(f"gövde={body or '(boş)'}")
+    return " ".join(parts)
+
+
+_LOOSE_TICKET_KEYS = ("requestid", "jobid", "correlationid", "batchid", "id", "referenceno")
+
+
+def _ticket_candidates(data: Any) -> List[str]:
+    """Kesin ticket alanları önce; SUCCESS gövdesindeki diğer kimlikler yedek."""
+    out: List[str] = []
+    strict = _ticket_id_from(data)
+    if strict:
+        out.append(strict)
+
+    def walk(node: Any, depth: int) -> None:
+        if depth > 6 or len(out) >= 4:
+            return
+        if isinstance(node, list):
+            for item in node[:20]:
+                walk(item, depth + 1)
+            return
+        if not isinstance(node, dict):
+            return
+        for k, v in node.items():
+            if isinstance(v, (dict, list)):
+                continue
+            lk = str(k).lower().replace("_", "")
+            if lk in _LOOSE_TICKET_KEYS and v not in (None, "", 0, "0"):
+                s = str(v).strip()
+                if s and s not in out:
+                    out.append(s)
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                walk(v, depth + 1)
+
+    walk(data, 0)
+    return out[:4]
+
+
+def _ticket_from_headers(resp) -> Optional[str]:
+    try:
+        headers = resp.headers or {}
+    except Exception:
+        return None
+    for k in getattr(headers, "keys", lambda: [])():
+        lk = str(k).lower().replace("-", "").replace("_", "")
+        if lk in ("ticketno", "ticketid", "xticketno", "xticketid"):
+            v = str(headers.get(k) or "").strip()
+            if v:
+                return v
+    return None
+
+
+def _is_empty_body(resp) -> bool:
+    return not (getattr(resp, "text", None) or "").strip()
+
+
 def _enpara_account_ref(conn: dict) -> str:
     for key in ("bank_account_number", "iban", "account_number"):
         v = (conn.get(key) or "").strip().replace(" ", "").upper()
@@ -1234,6 +1306,8 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     got_ok_empty = False
     ticket_timeout = False
     unparsed_hint = ""
+    list_hint = ""
+    empty_body_200 = False
     notice = ""
     balance: Optional[float] = None
     refreshed_token: Optional[str] = token if token and token != stored_token else None
@@ -1306,7 +1380,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     best_400 = last_detail
 
         async def _handle_statement(resp, payload: dict, label: str) -> Optional[Dict[str, Any]]:
-            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout
+            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout, empty_body_200
             if resp.status_code in (401, 403):
                 _enpara_raise_auth(resp)
             keys = ",".join((payload or {}).keys())
@@ -1318,29 +1392,37 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 data = resp.json()
             except Exception:
                 data = {}
-            logger.info("enpara %s → %s", label, _enpara_body_hint(data))
+            logger.info("enpara %s → %s", label, _enpara_response_hint(resp, data))
             out = _consume(data, as_statement=True)
             if out and out.get("transactions"):
                 return out
-            tid = _ticket_id_from(data)
-            if tid:
-                polled = await _poll_ticket(tid)
+            strict_tid = _ticket_id_from(data) or _ticket_from_headers(resp)
+            candidates = _ticket_candidates(data)
+            if strict_tid and strict_tid not in candidates:
+                candidates.insert(0, strict_tid)
+            for idx, tid in enumerate(candidates):
+                strict = bool(strict_tid) and tid == strict_tid
+                polled = await _poll_ticket(tid, attempts=16 if strict else 2)
                 if polled:
                     return polled
-                ticket_timeout = True
-                last_detail = f"{label} ticket={tid} henüz hareket döndürmedi: {_enpara_body_hint(data)}"
-                return None
+                if strict:
+                    ticket_timeout = True
+                    last_detail = f"{label} ticket={tid} henüz hareket döndürmedi: {_enpara_response_hint(resp, data)}"
+                    return None
+                del idx
             if out is not None:
                 return out
-            unparsed_hint = f"{label} HTTP {resp.status_code} {_enpara_body_hint(data)}"
+            unparsed_hint = f"{label} {_enpara_response_hint(resp, data)}"
+            if _is_empty_body(resp):
+                empty_body_200 = True
             last_detail = unparsed_hint
             return None
 
-        async def _poll_ticket(ticket_id: str) -> Optional[Dict[str, Any]]:
+        async def _poll_ticket(ticket_id: str, *, attempts: int = 16) -> Optional[Dict[str, Any]]:
             nonlocal last_detail
             use_post = False
             ticket_body = {"ticketNo": ticket_id, "pageNo": "1", "pageSize": "100"}
-            for attempt in range(16):
+            for attempt in range(attempts):
                 if attempt:
                     await asyncio.sleep(2.0)
                 if not use_post:
@@ -1414,7 +1496,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
         elif resp.status_code in (401, 403):
             _enpara_raise_auth(resp)
         else:
-            last_detail = f"POST /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            last_detail = f"POST /v1/account-statement/list {_enpara_response_hint(resp)}"
             if resp.status_code < 400:
                 try:
                     data = resp.json()
@@ -1427,6 +1509,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     bal = _extract_balance(data, prefer_iban=account)
                     if bal is not None:
                         balance = bal
+                list_hint = f"/list {_enpara_response_hint(resp, data)}"
 
     if got_ok_empty:
         notice = notice or " Enpara bu tarih aralığında hareket satırı döndürmedi."
@@ -1444,11 +1527,19 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             f"Son yanıt: {last_detail[:360]}"
         )
     if unparsed_hint:
-        hint = (
-            " Enpara 200 döndü ama hareket satırı çözümlenemedi. "
-            "status=SUCCESS boş ekstre değildir; ticket veya transactionTable beklenir."
-        )
-        raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
+        if empty_body_200:
+            hint = (
+                " Enpara HTTP 200 ama gövde boş döndü. Gateway isteği kabul ediyor, servis veri üretmiyor: "
+                "Enpara portalında Hesap Hareketleri aboneliğinin bu IBAN’a tanımlı olduğunu "
+                "ve Access Token’ın bu uygulamaya ait olduğunu doğrulayın."
+            )
+        else:
+            hint = (
+                " Enpara 200 döndü ama hareket satırı çözümlenemedi. "
+                "status=SUCCESS boş ekstre değildir; ticket veya transactionTable beklenir."
+            )
+        detail = unparsed_hint + (f" | {list_hint}" if list_hint else "")
+        raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {detail[:600]}")
 
     if best_400:
         last_detail = best_400
