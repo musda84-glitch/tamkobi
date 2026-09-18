@@ -22,10 +22,15 @@ const SECRET_OR_INTERNAL = new Set([
   "longitude",
   "location_url",
   "source",
+  // Kartın üstünde rozet olarak gösteriliyor.
+  "is_e_invoice_user",
 ]);
 
-/** Web cari kartındaki alan sırası. */
-export const CONTACT_FIELD_DEFS: { key: string; label: string; kind?: "money" | "bool" | "percent" | "days" | "pay" | "risk" | "tags" | "einv" }[] = [
+/**
+ * Web cari kartındaki alan sırası.
+ * e-Belge durumu kartın üstünde rozet olarak duruyor; TRY para birimi de bilgi taşımıyor, ikisi listeye girmez.
+ */
+export const CONTACT_FIELD_DEFS: { key: string; label: string; kind?: "money" | "bool" | "percent" | "days" | "pay" | "risk" | "tags" | "einv" | "currency" }[] = [
   { key: "company_title", label: "Ticari ünvan" },
   { key: "category", label: "Kategori" },
   { key: "contact_person", label: "Yetkili kişi" },
@@ -36,8 +41,7 @@ export const CONTACT_FIELD_DEFS: { key: string; label: string; kind?: "money" | 
   { key: "sales_rep", label: "Satış temsilcisi" },
   { key: "tax_number_or_id", label: "VKN / TCKN" },
   { key: "tax_office", label: "Vergi dairesi" },
-  { key: "is_e_invoice_user", label: "e-Belge", kind: "einv" },
-  { key: "currency", label: "Para birimi" },
+  { key: "currency", label: "Para birimi", kind: "currency" },
   { key: "payment_method", label: "Ödeme şekli", kind: "pay" },
   { key: "address", label: "Adres" },
   { key: "district", label: "İlçe" },
@@ -93,6 +97,10 @@ export function formatContactField(kind: string | undefined, value: unknown): st
     const n = Number(value);
     if (!Number.isFinite(n) || n === 0) return null;
     return `${n} gün`;
+  }
+  if (kind === "currency") {
+    const code = String(value || "").trim().toUpperCase();
+    return !code || code === "TRY" ? null : code;
   }
   if (kind === "pay") return value ? paymentMethodTr(String(value)) : null;
   if (kind === "risk") {
