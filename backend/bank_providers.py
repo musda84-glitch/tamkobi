@@ -36,7 +36,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime; iban/accountNo opsiyonel). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. IBAN 26 hane. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
+        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime yyyy-MM-ddTHH:mm:ss+HH:mm; iban/accountNo opsiyonel). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. IBAN 26 hane. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -627,6 +627,13 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
             extra = f" HTTP {resp.status_code}."
         else:
             extra = ""
+            try:
+                probe_data = resp.json()
+            except Exception:
+                probe_data = None
+            res_err = _enpara_result_error(probe_data)
+            if res_err:
+                extra = f" Servis uyarısı: {res_err[:200]}"
     if token:
         conn["access_token"] = token
     return {
@@ -1055,6 +1062,24 @@ def _ticket_candidates(data: Any) -> List[str]:
     return out[:4]
 
 
+_OK_RESULT_CODES = {"", "0", "00", "000", "0000", "200", "success", "ok", "true"}
+
+
+def _enpara_result_error(data: Any) -> str:
+    """HTTP 200 gövdesinde resultCode ile gelen iş hatası (ör. tarih formatı)."""
+    if not isinstance(data, dict):
+        return ""
+    code = _ci_get(data, "resultCode", "errorCode", "returnCode", "statusCode")
+    if code is None:
+        return ""
+    if str(code).strip().lower() in _OK_RESULT_CODES:
+        return ""
+    desc = _stringify_err_msg(
+        _ci_get(data, "resultDescription", "resultMessage", "errorMessage", "errorDescription", "message")
+    )
+    return f"resultCode={code} {desc}".strip()
+
+
 def _ticket_from_headers(resp) -> Optional[str]:
     try:
         headers = resp.headers or {}
@@ -1168,10 +1193,17 @@ def _string_params(payload: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _tr_offset(dt: datetime) -> str:
+    """Enpara: yyyy-MM-ddTHH:mm:ss+HH:mm — offset zorunlu, boşluklu format reddedilir."""
+    off = dt.strftime("%z") or "+0300"
+    return f"{off[:3]}:{off[3:5]}"
+
+
 def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
     """QNB/Enpara Gravitee Account Statement + Account Transactions şeması.
 
-    Zorunlu: startDateTime, endDateTime (string). Opsiyonel: iban (tam 26), accountNo (string).
+    Zorunlu: startDateTime, endDateTime (yyyy-MM-ddTHH:mm:ss+HH:mm).
+    Opsiyonel: iban (tam 26), accountNo (string).
     Nested object (accountInfo) JSON Schema'da yok — 400-1 'object' üretir.
     """
     del customer  # şemada yok; imza uyumu
@@ -1190,11 +1222,11 @@ def _enpara_payload_variants(start: datetime, end: datetime, account: str, custo
 
     start, end = _tr(start), _tr(end)
     start_d, end_d = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    start_off, end_off = _tr_offset(start), _tr_offset(end)
     ranges = [
+        (f"{start_d}T00:00:00{start_off}", f"{end_d}T23:59:59{end_off}"),
+        (f"{start_d}T00:00:00.000{start_off}", f"{end_d}T23:59:59.999{end_off}"),
         (f"{start_d}T00:00:00", f"{end_d}T23:59:59"),
-        (f"{start_d}T00:00:00.000", f"{end_d}T23:59:59.999"),
-        (f"{start_d} 00:00:00", f"{end_d} 23:59:59"),
-        (start_d, end_d),
     ]
     variants: List[Dict[str, Any]] = []
 
@@ -1308,6 +1340,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     unparsed_hint = ""
     list_hint = ""
     empty_body_200 = False
+    best_result_error = ""
     notice = ""
     balance: Optional[float] = None
     refreshed_token: Optional[str] = token if token and token != stored_token else None
@@ -1380,7 +1413,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     best_400 = last_detail
 
         async def _handle_statement(resp, payload: dict, label: str) -> Optional[Dict[str, Any]]:
-            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout, empty_body_200
+            nonlocal got_ok_empty, last_detail, unparsed_hint, ticket_timeout, empty_body_200, best_result_error
             if resp.status_code in (401, 403):
                 _enpara_raise_auth(resp)
             keys = ",".join((payload or {}).keys())
@@ -1396,6 +1429,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             out = _consume(data, as_statement=True)
             if out and out.get("transactions"):
                 return out
+            res_err = _enpara_result_error(data)
+            if res_err and not (out and out.get("transactions")):
+                result_error = f"{label} ({keys}): {res_err}"
+                last_detail = result_error
+                if not best_result_error or len(result_error) > len(best_result_error):
+                    best_result_error = result_error
+                return None
             strict_tid = _ticket_id_from(data) or _ticket_from_headers(resp)
             candidates = _ticket_candidates(data)
             if strict_tid and strict_tid not in candidates:
@@ -1514,7 +1554,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     if got_ok_empty:
         notice = notice or " Enpara bu tarih aralığında hareket satırı döndürmedi."
         return _pack([])
-    if balance is not None and not ticket_timeout:
+    if balance is not None and not ticket_timeout and not best_result_error:
         if unparsed_hint:
             notice = " Enpara hareket satırı çözümlenemedi; bakiye kayıtlı hesaptan alındı."
         return _pack([])
@@ -1525,6 +1565,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
         raise RuntimeError(
             "Enpara ekstre ticket'ı henüz hareket döndürmedi. Birkaç saniye sonra Senkron'u tekrar deneyin. "
             f"Son yanıt: {last_detail[:360]}"
+        )
+    if best_result_error:
+        raise RuntimeError(
+            "Enpara hesap hareketi alınamadı. Servis isteği reddetti: "
+            f"{best_result_error[:420]}"
         )
     if unparsed_hint:
         if empty_body_200:

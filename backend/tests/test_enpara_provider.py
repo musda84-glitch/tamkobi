@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+import re
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1166,6 +1167,63 @@ def test_enpara_nested_data_ticket_no_polls():
 
     out = asyncio.run(_run())
     assert out["transactions"][0]["external_id"] == "N1"
+
+
+def test_payload_dates_use_offset_format():
+    """Enpara: yyyy-MM-ddTHH:mm:ss+HH:mm — boşluklu / offsetsiz format reddediliyor."""
+    start = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 18, tzinfo=timezone.utc)
+    variants = bp._enpara_payload_variants(start, end, "TR330011100000000000000001", "")
+    first = variants[0]
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", first["startDateTime"]), first
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", first["endDateTime"]), first
+    assert first["startDateTime"].endswith("+03:00")
+    for p in variants:
+        assert " " not in p["startDateTime"]
+        assert " " not in p["endDateTime"]
+
+
+def test_enpara_result_code_error_is_reported():
+    """HTTP 200 + resultCode=500 iş hatasıdır; 'çözümlenemedi' değil."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    body = {
+        "resultCode": "500",
+        "resultDescription": "Tarih formatı geçersiz: '2026-09-11 00:00:00'. Beklenen format: yyyy-MM-ddTHH:mm:ss+HH:mm",
+    }
+    bad = MagicMock()
+    bad.status_code = 200
+    bad.text = json.dumps(body)
+    bad.headers = {"content-type": "application/json"}
+    bad.json = MagicMock(return_value=body)
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=bad)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected resultCode error"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "resultCode=500" in msg
+        assert "Tarih formatı geçersiz" in msg
+        assert "çözümlenemedi" not in msg
+
+
+def test_enpara_result_code_zero_is_not_error():
+    assert bp._enpara_result_error({"resultCode": "0"}) == ""
+    assert bp._enpara_result_error({"resultCode": "00", "resultDescription": "OK"}) == ""
+    assert "500" in bp._enpara_result_error({"resultCode": "500", "resultDescription": "hata"})
 
 
 def test_enpara_unparsed_error_shows_raw_body():
