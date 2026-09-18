@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
-import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
+import { Badge, Card, ErrorBanner, Muted, Row, Screen, StatRows } from "../components/kit";
 import { NotificationsPanel } from "../components/NotificationsPanel";
 import { goHref } from "../nav";
 import { colors } from "../theme";
@@ -14,7 +14,7 @@ import { latestNotifications, notificationRoute, unreadCount } from "../utils/no
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
-  const { client, companyId, user, activeCompany, license } = useAuth();
+  const { client, companyId, user, license } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
@@ -73,18 +73,10 @@ export function HomeScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <View>
-        <H1>Merhaba{user?.name ? `, ${user.name.split(" ")[0]}` : ""}</H1>
-        <Muted>{activeCompany?.name || "TamKobi"}</Muted>
-      </View>
       <ErrorBanner message={error} />
 
       <View testID="home-quick-menu">
-        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16, marginBottom: 4 }}>Hızlı menü</Text>
-        <Muted>Modüllere ve sık kullanılan işlemlere tek dokunuş.</Muted>
-        <View style={{ marginTop: 8 }}>
-          <ActionTiles size="md" items={quickItems} />
-        </View>
+        <ActionTiles size="md" items={quickItems} />
         {notifications ? (
           <View style={{ marginTop: 4 }}>
             <NotificationsPanel
