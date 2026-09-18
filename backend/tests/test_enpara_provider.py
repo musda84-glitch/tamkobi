@@ -986,7 +986,11 @@ def test_enpara_ticket_post_when_get_405():
     async def _post(url, **kwargs):
         path = str(url)
         if path.endswith("/account-statement/ticket"):
-            assert _json_body(kwargs).get("ticketNo") == "T9"
+            body = _json_body(kwargs)
+            assert body.get("ticketNo") == "T9"
+            # ticketNo zorunlu; pageNo/pageSize opsiyonel ama bu istemci gönderir
+            assert "pageNo" in body
+            assert "pageSize" in body
             return ready
         if path.endswith("/account-statement") and "/list" not in path:
             return stmt
@@ -1010,7 +1014,10 @@ def test_enpara_ticket_post_when_get_405():
     assert out["transactions"][0]["external_id"] == "P1"
     ticket_posts = [c for c in mock_client.post.await_args_list if str(c.args[0]).endswith("/ticket")]
     assert ticket_posts
-    assert _json_body(ticket_posts[0].kwargs)["ticketNo"] == "T9"
+    posted = _json_body(ticket_posts[0].kwargs)
+    assert posted["ticketNo"] == "T9"
+    assert posted.get("pageNo") in ("1", 1)
+    assert posted.get("pageSize") in ("100", 100)
 
 
 def _miss_resp():
@@ -1199,4 +1206,30 @@ def test_enpara_list_account_usable_balance():
     assert out["transactions"] == []
     assert out["balance"] == 42.5
     assert "account-transactions" not in str(mock_client.post.await_args_list)
+
+
+def test_enpara_pascalcase_data_transaction_table_unit():
+    rows = bp._normalize_tx_rows({
+        "Data": {
+            "TransactionTable": [
+                {
+                    "TransactionId": "P1",
+                    "Amount": "10,00",
+                    "Description": "Gelen",
+                    "TransactionDate": "2026-09-01",
+                },
+            ],
+        },
+    })
+    assert len(rows) == 1
+    assert rows[0]["external_id"] == "P1"
+    assert rows[0]["amount"] == 10.0
+    assert rows[0]["direction"] == "credit"
+
+
+def test_enpara_explicit_completed_empty_transactions_still_ok():
+    """Açık {status: completed, transactions: []} başarıdır; 200 {} değildir."""
+    assert bp._has_explicit_empty_tx_list({"status": "completed", "transactions": []}) is True
+    assert bp._has_explicit_empty_tx_list({}) is False
+    assert bp._has_explicit_empty_tx_list({"status": "SUCCESS", "ticketNo": "T9"}) is False
 
