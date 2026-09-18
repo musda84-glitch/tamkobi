@@ -6,7 +6,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mysql_store import (
     apply_update,
+    chunk_list,
     document_from_upsert,
+    has_unique_index,
     match_query,
     mysql_settings_from_env,
     project_doc,
@@ -253,3 +255,22 @@ def test_mysql_settings_no_hardcoded_password(monkeypatch):
     monkeypatch.delenv("MYSQL_PASSWORD", raising=False)
     s = mysql_settings_from_env()
     assert s["password"] == ""
+
+
+def test_chunk_list_covers_1883_products():
+    ids = [f"p{i}" for i in range(1883)]
+    chunks = chunk_list(ids, 200)
+    assert len(chunks) == 10
+    assert len(chunks[0]) == 200
+    assert len(chunks[-1]) == 83
+    assert [x for part in chunks for x in part] == ids
+    assert chunk_list([], 200) == []
+    assert chunk_list(["a"], 0) == [["a"]]
+
+
+def test_has_unique_index_skips_non_unique_product_indexes():
+    # products.sku / barcode are created without unique=True — must not scan the whole table.
+    assert has_unique_index([(("sku",), False), (("barcode",), False)]) is False
+    assert has_unique_index([(("email",), True)]) is True
+    assert has_unique_index([]) is False
+    assert has_unique_index(None) is False

@@ -18,6 +18,7 @@ import { ScanButton } from "../components/CameraScanner";
 import { SearchSelect } from "../components/SearchSelect";
 import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
 import { fmtMoney } from "../utils/documentLines";
+import { bulkProgressPercent, BULK_FLAG_TIMEOUT_MS, formatElapsed, runBulkFlagChunks } from "../utils/stockBulkFlags";
 
 import {
   Package,
@@ -42,6 +43,8 @@ import {
   Trash2,
   Sparkles,
   ShoppingCart,
+  Loader2,
+  Clock,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -85,7 +88,16 @@ export default function StockBarcodePage() {
   const [withVariants, setWithVariants] = useState(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(null);
+  const [bulkNow, setBulkNow] = useState(() => Date.now());
   const loadGenRef = useRef(0);
+
+  useEffect(() => {
+    if (!bulkProgress) return undefined;
+    setBulkNow(Date.now());
+    const t = setInterval(() => setBulkNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [bulkProgress]);
 
   const openDetail = (prod, tab = "images") => {
     setDetailTab(tab);
@@ -135,41 +147,61 @@ export default function StockBarcodePage() {
   const bulkSetFlags = async ({ show_in_b2b, track_stock } = {}) => {
     const hasB2b = typeof show_in_b2b === "boolean";
     const hasTrack = typeof track_stock === "boolean";
-    if (!selected.length || (!hasB2b && !hasTrack)) return;
+    if (bulkBusy || !selected.length || (!hasB2b && !hasTrack)) return;
     const labels = [
       hasB2b && (show_in_b2b ? "B2B aç" : "B2B kapat"),
       hasTrack && (track_stock ? "Takip aç" : "Takip kapat"),
     ].filter(Boolean).join(" + ");
     if (!window.confirm(`${selected.length} üründe ${labels} uygulansın mı?`)) return;
+    const ids = [...selected];
+    const flags = {
+      ...(hasB2b ? { show_in_b2b } : {}),
+      ...(hasTrack ? { track_stock } : {}),
+    };
+    const startedAt = Date.now();
     setBulkBusy(true);
+    setBulkProgress({ done: 0, total: ids.length, labels, startedAt, chunk: 0, chunks: 1 });
     try {
-      const body = { ids: selected, company_id: companyId };
-      if (hasB2b) body.show_in_b2b = show_in_b2b;
-      if (hasTrack) body.track_stock = track_stock;
-      const r = await axios.post(`${API_URL}/products/bulk-flags`, body);
-      const matched = Number(r.data?.matched ?? 0);
-      const modified = Number(r.data?.modified ?? 0);
-      if (matched < 1) {
+      const result = await runBulkFlagChunks({
+        ids,
+        flags,
+        companyId,
+        onProgress: (p) => setBulkProgress((prev) => ({ ...(prev || {}), ...p, labels, startedAt })),
+        postChunk: async (body) => {
+          const r = await axios.post(`${API_URL}/products/bulk-flags`, body, { timeout: BULK_FLAG_TIMEOUT_MS });
+          return r.data;
+        },
+      });
+      if (result.succeeded.length) {
+        const ok = new Set(result.succeeded);
+        setProducts((prev) => prev.map((p) => (ok.has(productId(p)) ? { ...p, ...flags } : p)));
+        await patchCached(
+          "products",
+          companyId,
+          Object.fromEntries(result.succeeded.map((id) => [id, flags])),
+        );
+        if (hasB2b) setStockF((f) => (f.b2b !== "all" ? { ...f, b2b: "all" } : f));
+        setSelected((s) => s.filter((id) => !ok.has(id)));
+      }
+      if (result.lastError) {
+        const detail = result.lastError.response?.data?.detail;
+        const extra = result.succeeded.length
+          ? ` ${result.succeeded.length}/${ids.length} ürün güncellendi.`
+          : "";
+        toast.error((typeof detail === "string" ? detail : "Toplu güncelleme başarısız.") + extra);
+        return;
+      }
+      if (result.matched < 1) {
         toast.error("Seçilen ürünler güncellenemedi (şirket/ürün eşleşmedi).");
         return;
       }
-      const patch = {
-        ...(hasB2b ? { show_in_b2b } : {}),
-        ...(hasTrack ? { track_stock } : {}),
-      };
-      setProducts((prev) => prev.map((p) => (selected.includes(productId(p)) ? { ...p, ...patch } : p)));
-      await patchCached(
-        "products",
-        companyId,
-        Object.fromEntries(selected.map((id) => [id, patch])),
-      );
-      if (hasB2b) setStockF((f) => (f.b2b !== "all" ? { ...f, b2b: "all" } : f));
-      toast.success(`${modified || matched} ürün güncellendi (${labels}).`);
+      toast.success(`${result.modified || result.succeeded.length} ürün güncellendi (${labels}).`);
       setSelected([]);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Toplu güncelleme başarısız.");
     } finally {
       setBulkBusy(false);
+      setBulkProgress(null);
     }
   };
 
@@ -564,13 +596,18 @@ export default function StockBarcodePage() {
       {selected.length > 0 && (
         <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="stock-bulk-bar">
           <span className="font-bold">{selected.length} ürün seçildi</span>
+          {bulkBusy && bulkProgress && (
+            <span className="text-amber-200 font-semibold" data-testid="stock-bulk-bar-progress">
+              {bulkProgress.done}/{bulkProgress.total} · {formatElapsed(bulkNow - bulkProgress.startedAt)}
+            </span>
+          )}
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: true })} className="px-3 py-1.5 bg-blue-500 hover:bg-blue-400 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-b2b-btn">B2B aç</button>
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: false })} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-b2b-btn">B2B kapat</button>
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ track_stock: true })} className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-track-btn">Takip aç</button>
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ track_stock: false })} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-track-btn">Takip kapat</button>
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: true, track_stock: true })} className="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-open-both-btn">B2B + Takip aç</button>
           <button type="button" disabled={bulkBusy} onClick={() => bulkSetFlags({ show_in_b2b: false, track_stock: false })} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg font-semibold disabled:opacity-50" data-testid="bulk-close-both-btn">B2B + Takip kapat</button>
-          <button type="button" onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="stock-bulk-clear-btn">Seçimi kaldır</button>
+          <button type="button" disabled={bulkBusy} onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg disabled:opacity-50" data-testid="stock-bulk-clear-btn">Seçimi kaldır</button>
         </div>
       )}
       {/* Products Table */}
@@ -1134,6 +1171,36 @@ export default function StockBarcodePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {bulkProgress && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="stock-bulk-wait" role="status" aria-live="polite">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+              <div className="font-bold text-slate-900">Lütfen bekleyin</div>
+            </div>
+            <p className="text-xs text-slate-500">{bulkProgress.labels} uygulanıyor. Sayfayı kapatmayın.</p>
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+              <span data-testid="stock-bulk-progress-count">{bulkProgress.done} / {bulkProgress.total} ürün</span>
+              <span className="inline-flex items-center gap-1 text-slate-500" data-testid="stock-bulk-elapsed">
+                <Clock className="w-3.5 h-3.5" />
+                Geçen süre {formatElapsed(bulkNow - bulkProgress.startedAt)}
+              </span>
+            </div>
+            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-600 transition-all duration-300"
+                style={{ width: `${bulkProgressPercent(bulkProgress.done, bulkProgress.total)}%` }}
+                data-testid="stock-bulk-progress-bar"
+              />
+            </div>
+            {bulkProgress.chunks > 1 && (
+              <div className="text-[11px] text-slate-400">
+                Adım {Math.max(1, bulkProgress.chunk || 1)} / {bulkProgress.chunks}
+              </div>
+            )}
           </div>
         </div>
       )}
