@@ -5784,9 +5784,20 @@ async def reject_cash_request(req_id: str, request: Request):
 # ----------------- BANKA CANLI VERİ BAĞLANTILARI -----------------
 def _mask_connection(doc: dict) -> dict:
     doc = clean_doc(doc)
-    for key in ("client_secret", "api_key", "access_token", "refresh_token"):
+    for key in ("client_secret", "api_key", "access_token", "refresh_token", "private_key"):
         if doc.get(key):
-            doc[key] = "••••" + str(doc[key])[-4:]
+            val = str(doc[key])
+            if "BEGIN" in val:
+                body = "".join(
+                    val.replace("-----BEGIN PRIVATE KEY-----", "")
+                    .replace("-----END PRIVATE KEY-----", "")
+                    .replace("-----BEGIN RSA PRIVATE KEY-----", "")
+                    .replace("-----END RSA PRIVATE KEY-----", "")
+                    .split()
+                )
+                doc[key] = "••••" + (body[-4:] if body else "")
+            else:
+                doc[key] = "••••" + val[-4:]
     return doc
 
 @api_router.get("/banking/providers")
@@ -5844,10 +5855,10 @@ async def create_bank_connection(conn: BankConnection):
 async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
     allowed = {k: v for k, v in updated.items() if k in {
         "client_id", "client_secret", "access_token", "refresh_token", "token_url",
-        "api_key", "customer_number", "bank_account_number", "base_url", "mode",
+        "api_key", "private_key", "customer_number", "bank_account_number", "base_url", "mode",
         "auto_sync", "auto_match", "linked_account_id", "provider",
     }}
-    for secret_key in ("client_secret", "api_key", "access_token", "refresh_token"):
+    for secret_key in ("client_secret", "api_key", "access_token", "refresh_token", "private_key"):
         if allowed.get(secret_key) and str(allowed[secret_key]).startswith("••••"):
             allowed.pop(secret_key)
     if "provider" in allowed and allowed["provider"] not in bank_providers.PROVIDERS:
