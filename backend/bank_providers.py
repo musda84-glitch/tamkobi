@@ -426,55 +426,105 @@ def _enpara_headers(token: str, conn: dict) -> Dict[str, str]:
 
 
 def _is_iban(ref: str) -> bool:
-    r = (ref or "").strip().upper()
-    return len(r) >= 15 and r.startswith("TR") and r[2:].replace(" ", "").isalnum()
+    r = (ref or "").strip().upper().replace(" ", "")
+    return len(r) >= 15 and r.startswith("TR") and r[2:].isalnum()
+
+
+def _iban_parts(iban: str) -> Dict[str, str]:
+    """TR IBAN: TR + 2 kontrol + 5 banka + 1 rezerv + hesap no."""
+    raw = (iban or "").strip().upper().replace(" ", "")
+    out = {"iban": raw}
+    if _is_iban(raw) and len(raw) >= 16:
+        out["bankCode"] = raw[4:9]
+        acct = raw[10:]
+        out["accountNumber"] = acct.lstrip("0") or acct
+        out["accountNumberRaw"] = acct
+    return out
+
+
+def _stringify_err_msg(val: Any) -> str:
+    if val is None or val == "":
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (int, float, bool)):
+        return str(val)
+    if isinstance(val, dict):
+        # JSON Schema: {"type":"object"} veya {en, tr}
+        for k in ("message", "msg", "detail", "tr", "en", "type", "keyword", "field", "path", "property"):
+            if val.get(k):
+                inner = _stringify_err_msg(val[k])
+                if inner:
+                    extra = val.get("field") or val.get("path") or val.get("property") or val.get("instancePath")
+                    return f"{extra} {inner}".strip() if extra and extra != val.get(k) else inner
+        try:
+            return json.dumps(val, ensure_ascii=False)
+        except Exception:
+            return str(val)
+    if isinstance(val, list):
+        return "; ".join(filter(None, (_stringify_err_msg(x) for x in val[:4])))
+    return str(val)
 
 
 def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
-    """Öncelikli, sade gövdeler (Enpara 400-1: fazla/yanlış alan).
-
-    Sıra: en olası şemalar önce; toplam ~25 deneme ile sınırlı.
-    """
+    """400-1 'object' = kökte accountInfo/account nesnesi bekleniyor. Düz iban sona bırakılır."""
     start_iso, end_iso = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
     start_tr, end_tr = start.strftime("%d.%m.%Y"), end.strftime("%d.%m.%Y")
     start_compact, end_compact = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
-    start_dt_z = f"{start_iso}T00:00:00+03:00"
-    end_dt_z = f"{end_iso}T23:59:59+03:00"
-    acc = account
+    start_dmy, end_dmy = start.strftime("%d%m%Y"), end.strftime("%d%m%Y")
+    start_dt = f"{start_iso}T00:00:00"
+    end_dt = f"{end_iso}T23:59:59"
+    parts = _iban_parts(account) if account else {}
+    acc = parts.get("iban") or (account or "").strip().upper().replace(" ", "")
+    acct_no = parts.get("accountNumber") or (acc if acc and not _is_iban(acc) else "")
+    bank_code = parts.get("bankCode") or ""
     variants: List[Dict[str, Any]] = []
 
     def add(p: Dict[str, Any]):
         variants.append(p)
 
-    if acc and _is_iban(acc):
+    if acc:
+        info_iban = {"iban": acc, "currencyCode": "TRY"}
+        info_full = {**info_iban}
+        if acct_no:
+            info_full["accountNumber"] = acct_no
+        if bank_code:
+            info_full["branchCode"] = bank_code
+            info_full["bankCode"] = bank_code
+
+        # 1) Nesne sarmalayıcılar (şema 'type: object')
+        add({"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso})
+        add({"accountInfo": info_full, "startDate": start_iso, "endDate": end_iso})
+        add({"accountInfo": info_iban, "startDate": start_dt, "endDate": end_dt})
+        add({"accountInfo": info_iban, "queryStartDate": start_iso, "queryEndDate": end_iso})
+        add({"accountInfo": info_iban, "startDate": start_compact, "endDate": end_compact})
+        add({"accountInfo": info_iban, "startDate": start_dmy, "endDate": end_dmy})
+        add({"accountInfo": info_iban, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
+        add({"account": {"iban": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
+        add({
+            "account": {"iban": acc, "currencyCode": "TRY"},
+            "period": {"startDate": start_iso, "endDate": end_iso},
+        })
+        add({
+            "accountInfo": info_iban,
+            "dateRange": {"startDate": start_iso, "endDate": end_iso},
+        })
+        add({"data": {"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso}})
+        add({"request": {"accountInfo": info_iban, "startDate": start_iso, "endDate": end_iso}})
+        add({"hesap": {"iban": acc, "paraBirimi": "TRY"}, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
+        if acct_no:
+            add({"accountInfo": {"accountNumber": acct_no, "currencyCode": "TRY", "iban": acc}, "startDate": start_iso, "endDate": end_iso})
+        if customer:
+            add({"accountInfo": {**info_iban, "customerNumber": customer}, "startDate": start_iso, "endDate": end_iso})
+
+        # 2) Düz alanlar (eski denemeler, nesne şeması tutmazsa)
         add({"iban": acc, "startDate": start_iso, "endDate": end_iso})
         add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
-        add({"iban": acc, "beginDate": start_iso, "endDate": end_iso})
-        add({"iban": acc, "fromDate": start_iso, "toDate": end_iso})
-        add({"iban": acc, "startDate": start_compact, "endDate": end_compact})
-        add({"iban": acc, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
-        add({"iban": acc, "startDate": start_dt_z, "endDate": end_dt_z})
-        add({"ibanNumber": acc, "startDate": start_iso, "endDate": end_iso})
-        add({"IBAN": acc, "StartDate": start_iso, "EndDate": end_iso})
-        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso})
-        add({"accountInfo": {"iban": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
-        add({"account": {"iban": acc}, "startDate": start_iso, "endDate": end_iso})
-        add({"queryStartDate": start_iso, "queryEndDate": end_iso, "iban": acc})
-        if customer:
-            add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "customerNumber": customer})
-            add({"iban": acc, "startDate": start_iso, "endDate": end_iso, "musteriNo": customer})
-    elif acc:
-        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso})
-        add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
-        add({"hesapNo": acc, "baslangicTarihi": start_tr, "bitisTarihi": end_tr})
-        add({"accountNo": acc, "beginDate": start_iso, "endDate": end_iso})
-        add({"accountInfo": {"accountNumber": acc, "currencyCode": "TRY"}, "startDate": start_iso, "endDate": end_iso})
-        if customer:
-            add({"accountNumber": acc, "startDate": start_iso, "endDate": end_iso, "customerNumber": customer})
+        if acct_no:
+            add({"accountNumber": acct_no, "startDate": start_iso, "endDate": end_iso, "currencyCode": "TRY"})
     else:
         add({"startDate": start_iso, "endDate": end_iso})
 
-    # Yinelenenleri ayıkla, sırayı koru
     seen = set()
     uniq = []
     for p in variants:
@@ -483,12 +533,11 @@ def _enpara_payload_variants(start: datetime, end: datetime, account: str, custo
             continue
         seen.add(key)
         uniq.append(p)
-    return uniq[:28]
-
+    return uniq[:22]
 
 
 def _api_error_detail(resp) -> str:
-    text = (getattr(resp, "text", None) or "")[:400]
+    text = (getattr(resp, "text", None) or "")[:500]
     try:
         data = resp.json()
     except Exception:
@@ -496,19 +545,24 @@ def _api_error_detail(resp) -> str:
     if not isinstance(data, dict):
         return text
     parts = []
-    if data.get("message"):
-        parts.append(str(data["message"]))
+    top_msg = _stringify_err_msg(data.get("message"))
+    if top_msg:
+        parts.append(top_msg)
     if data.get("code"):
         parts.append(f"code={data['code']}")
-    errs = data.get("errors") or data.get("error") or []
+    errs = data.get("errors") or data.get("error") or data.get("violations") or []
     if isinstance(errs, dict):
         errs = [errs]
     if isinstance(errs, list):
-        for e in errs[:3]:
+        for e in errs[:5]:
             if isinstance(e, dict):
-                msg = e.get("message") or e.get("msg") or e.get("detail") or e.get("m")
-                code = e.get("code")
-                parts.append(f"{code}: {msg}" if code and msg else str(msg or code or e))
+                msg = _stringify_err_msg(
+                    e.get("message") or e.get("msg") or e.get("detail") or e.get("reason") or e.get("description")
+                )
+                loc = e.get("field") or e.get("path") or e.get("property") or e.get("instancePath") or e.get("source")
+                code = e.get("code") or e.get("keyword")
+                bit = " ".join(x for x in (str(code) if code else "", f"[{loc}]" if loc else "", msg) if x)
+                parts.append(bit.strip() or json.dumps(e, ensure_ascii=False)[:180])
             else:
                 parts.append(str(e))
     return " | ".join(parts) if parts else text
@@ -577,7 +631,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 return {"transactions": [], "balance": balance, "access_token": refreshed_token}
             return None
 
-        # 1) Ticket — sade gövdelerle (doğrudan POST /account-statement tarih ile genelde 400)
+        # 1) Ticket — önce accountInfo nesnesi (400-1 type=object)
         ticket_id = None
         best_400 = ""
         for payload in payloads:
@@ -590,10 +644,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                         f"Enpara developer portalına production sunucu IP’nizi ekleyin. ({detail[:160]})"
                     )
                 raise RuntimeError(f"Enpara yetkilendirme hatası (HTTP {tr.status_code}). {_api_error_detail(tr)}")
-            last_detail = f"ticket HTTP {tr.status_code}: {_api_error_detail(tr)}"
+            keys = ",".join(payload.keys())
+            last_detail = f"ticket HTTP {tr.status_code} ({keys}): {_api_error_detail(tr)}"
             if tr.status_code >= 400:
-                if tr.status_code == 400 and not best_400:
-                    best_400 = last_detail
+                if tr.status_code == 400:
+                    # Daha uzun / alan adı içeren yanıtı tut (ilk 'object' mesajını ez)
+                    if (not best_400) or ("object" in best_400 and "object" not in last_detail) or len(last_detail) > len(best_400):
+                        best_400 = last_detail
                 continue
             try:
                 td = tr.json()
@@ -749,7 +806,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
         hint = " İstek reddedildi (400). IBAN’ın Enpara’ya ait olduğundan emin olun; portal API dokümanındaki alan adlarını doğrulayın."
     elif "IP" in last_detail or "not allowed" in last_detail.lower():
         hint = " Sunucu IP’si Enpara portalında izinli değil."
-    raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:280]}")
+    raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
 
 
 async def _fetch_live_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
