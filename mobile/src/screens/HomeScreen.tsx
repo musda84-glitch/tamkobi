@@ -6,13 +6,15 @@ import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, H1, Muted, Row, Screen, StatRows } from "../components/kit";
 import { goHref } from "../nav";
 import { colors } from "../theme";
-import type { Notification, Overview } from "../types";
+import type { DashboardStats, Notification, Overview } from "../types";
+import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
 import { fmtMoney } from "../utils/money";
 import { resolveMobilePath, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
   const { client, companyId, user, activeCompany, license } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,12 +41,14 @@ export function HomeScreen() {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, notes] = await Promise.all([
+      const [ov, notes, st] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId, unread_only: true }),
+        get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
       ]);
       setOverview(ov);
       setUnread((notes || []).length);
+      setStats(st);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Özet yüklenemedi."));
@@ -54,6 +58,8 @@ export function HomeScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const profitRow = netProfitRow(stats);
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -74,9 +80,10 @@ export function HomeScreen() {
       <StatRows
         testID="home-summary"
         items={[
+          { key: "sales", ...monthlySalesRow(stats, overview) },
+          ...(profitRow ? [{ key: "profit", ...profitRow, valueColor: (stats?.net_profit ?? 0) < 0 ? colors.danger : colors.primaryHover }] : []),
           { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
           { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
-          { key: "sales", label: "Bu ay satış", value: String(overview?.invoices.outgoing.month ?? "—"), hint: "Fatura adedi" },
           { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
         ]}
       />

@@ -42,6 +42,17 @@ export type Overview = {
   vat: { month: string; calculated: number; deductible: number; payable: number; days_left: number };
 };
 
+/** /dashboard/stats — web panosundaki aylık ciro / kâr rakamları. */
+export type DashboardStats = {
+  monthly_sales?: number;
+  monthly_expenses?: number;
+  net_profit?: number;
+  sales_change_pct?: number | null;
+  total_bank_balance?: number;
+  total_receivables?: number;
+  total_payables?: number;
+};
+
 export type Contact = {
   id?: string;
   _id?: string;
