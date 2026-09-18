@@ -411,9 +411,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Portal uçları: <code className="font-mono">GET /v1/account-statement</code>, <code className="font-mono">/ticket</code>, <code className="font-mono">/list</code>.
+                Portal uçları: <code className="font-mono">POST /v1/account-statement</code> JSON gövde <code className="font-mono">startDateTime</code>/<code className="font-mono">endDateTime</code>, <code className="font-mono">/ticket</code>, <code className="font-mono">/list</code>.
                 Yapıştırın: <b>Access Token</b>, <b>Refresh Token</b>, <b>Client ID</b> (sunucuda saklanır, listede görünmez). Client Secret opsiyonel.
-                401 access_denied genelde IP listesi — production sunucu IP’sini portala ekleyin. IBAN 26 karakter.
+                401 access_denied genelde IP listesi — production çıkış 85.95.240.136 portala ekli olmalı (405 METHOD NOT ALLOWED IP değildir). IBAN 26 karakter.
               </p>
             )}
             {editForm.provider === "kuveytturk" && (

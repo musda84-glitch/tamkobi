@@ -33,8 +33,28 @@ def test_providers_split_enpara_and_qnb():
     assert bp.PROVIDERS["enpara"]["fields"][0] == "access_token"
     hint = bp.PROVIDERS["enpara"]["hint"]
     assert "/v1/account-statement" in hint
+    assert "POST" in hint
+    assert "startDateTime" in hint
     assert "/ticket" in hint
     assert "/list" in hint
+    assert "METHOD NOT ALLOWED" in hint or "405" in hint
+
+
+def _is_oauth_url(url) -> bool:
+    u = str(url).lower()
+    return "oauth" in u or u.endswith("/token") or "securedomain" in u
+
+
+def _json_body(kwargs) -> dict:
+    return kwargs.get("json") or {}
+
+
+def _first_statement_post(mock_client):
+    for c in mock_client.post.await_args_list:
+        path = str(c.args[0])
+        if path.endswith("/account-statement") and "/ticket" not in path and "/list" not in path:
+            return c
+    raise AssertionError("no POST /v1/account-statement")
 
 
 def test_has_credentials_enpara_access_token_only():
@@ -76,7 +96,8 @@ def test_enpara_probe_ok_with_access_token():
     mock_resp.text = "[]"
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -88,9 +109,15 @@ def test_enpara_probe_ok_with_access_token():
     assert out["ok"] is True
     assert out["simulated"] is False
     assert "Enpara" in out["message"]
-    args, kwargs = mock_client.get.await_args
-    assert args[0] == "https://api.enpara.com/v1/account-statement/list"
+    args, kwargs = mock_client.post.await_args
+    assert args[0] == "https://api.enpara.com/v1/account-statement"
+    body = _json_body(kwargs)
+    assert "startDateTime" in body
+    assert "endDateTime" in body
+    assert "accountInfo" not in body
     assert kwargs["headers"]["Authorization"] == "Bearer tok123"
+    assert kwargs["headers"]["Content-Type"] == "application/json"
+    mock_client.get.assert_not_called()
 
 
 def test_enpara_probe_invalid_token():
@@ -101,7 +128,8 @@ def test_enpara_probe_invalid_token():
     mock_resp.text = '{"error":"Invalid Access Token"}'
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -131,8 +159,8 @@ def test_enpara_fetch_normalizes_rows():
     })
 
     mock_client = AsyncMock()
-    mock_client.post = AsyncMock()
-    mock_client.get = AsyncMock(return_value=stmt_resp)
+    mock_client.post = AsyncMock(return_value=stmt_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -147,12 +175,15 @@ def test_enpara_fetch_normalizes_rows():
     assert out["transactions"][0]["direction"] == "credit"
     assert out["transactions"][1]["direction"] == "debit"
     assert out["balance"] == 1500.25
-    args, kwargs = mock_client.get.await_args
-    assert args[0] == "https://api.enpara.com/v1/account-statement"
-    assert "startDateTime" in (kwargs.get("params") or {})
-    assert "endDateTime" in (kwargs.get("params") or {})
-    assert kwargs["params"]["iban"] == "TR330011100000000000000001"
-    mock_client.post.assert_not_called()
+    call = _first_statement_post(mock_client)
+    assert call.args[0] == "https://api.enpara.com/v1/account-statement"
+    body = _json_body(call.kwargs)
+    assert "startDateTime" in body
+    assert "endDateTime" in body
+    assert body["iban"] == "TR330011100000000000000001"
+    assert "accountInfo" not in body
+    assert call.kwargs["headers"]["Content-Type"] == "application/json"
+    mock_client.get.assert_not_called()
 
 
 def test_enpara_fetch_empty_completed_is_success():
@@ -165,8 +196,8 @@ def test_enpara_fetch_empty_completed_is_success():
     stmt_resp.json = MagicMock(return_value={"status": "completed", "transactions": [], "bakiye": 10})
 
     mock_client = AsyncMock()
-    mock_client.post = AsyncMock()
-    mock_client.get = AsyncMock(return_value=stmt_resp)
+    mock_client.post = AsyncMock(return_value=stmt_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -177,10 +208,12 @@ def test_enpara_fetch_empty_completed_is_success():
     out = asyncio.run(_run())
     assert out["transactions"] == []
     assert out["balance"] == 10.0
+    body = _json_body(_first_statement_post(mock_client).kwargs)
+    assert "startDateTime" in body and "endDateTime" in body
 
 
 def test_enpara_ticket_polls_statement_ticket():
-    """Portal: GET /account-statement → ticketNo, GET /account-statement/ticket?ticketNo=."""
+    """POST /account-statement → ticketNo, GET /account-statement/ticket?ticketNo=."""
     conn = {"provider": "enpara", "mode": "live", "access_token": "tok", "bank_account_number": "TR330011100000000000000001"}
     since = datetime.now(timezone.utc) - timedelta(days=3)
 
@@ -200,12 +233,22 @@ def test_enpara_ticket_polls_statement_ticket():
         ],
     })
 
+    async def _post(url, **kwargs):
+        path = str(url)
+        if _is_oauth_url(path):
+            raise AssertionError("unexpected oauth")
+        if path.endswith("/account-statement") and "/ticket" not in path and "/list" not in path:
+            return stmt
+        miss = MagicMock()
+        miss.status_code = 404
+        miss.text = "not found"
+        miss.json = MagicMock(side_effect=ValueError("no json"))
+        return miss
+
     async def _get(url, **kwargs):
         path = str(url)
         if path.endswith("/account-statement/ticket") and (kwargs.get("params") or {}).get("ticketNo") == "T9":
             return ready
-        if path.endswith("/account-statement"):
-            return stmt
         miss = MagicMock()
         miss.status_code = 404
         miss.text = "not found"
@@ -214,7 +257,7 @@ def test_enpara_ticket_polls_statement_ticket():
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(side_effect=_get)
-    mock_client.post = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -225,10 +268,11 @@ def test_enpara_ticket_polls_statement_ticket():
     out = asyncio.run(_run())
     assert out["transactions"][0]["external_id"] == "A1"
     assert out["balance"] == 80.0
-    mock_client.post.assert_not_called()
     ticket_calls = [c for c in mock_client.get.await_args_list if str(c.args[0]).endswith("/account-statement/ticket")]
     assert ticket_calls
     assert ticket_calls[0].kwargs["params"]["ticketNo"] == "T9"
+    ticket_posts = [c for c in mock_client.post.await_args_list if str(c.args[0]).endswith("/ticket")]
+    assert not ticket_posts
 
 
 def test_payload_variants_match_gravitee_schema():
@@ -361,8 +405,8 @@ def test_enpara_ip_block_does_not_refresh():
     blocked.json = MagicMock(return_value={"message": "Your IP is not allowed"})
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=blocked)
-    mock_client.post = AsyncMock()
+    mock_client.post = AsyncMock(return_value=blocked)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -375,7 +419,7 @@ def test_enpara_ip_block_does_not_refresh():
         assert False, "expected IP error"
     except RuntimeError as e:
         assert "IP" in str(e)
-    mock_client.post.assert_not_called()
+    assert all(not _is_oauth_url(c.args[0]) for c in mock_client.post.await_args_list)
 
 
 def test_jwt_expired_helper():
@@ -416,8 +460,8 @@ def test_enpara_unexpired_jwt_access_denied_does_not_refresh():
     denied.json = MagicMock(return_value={"error": "access_denied"})
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=denied)
-    mock_client.post = AsyncMock()
+    mock_client.post = AsyncMock(return_value=denied)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -433,7 +477,7 @@ def test_enpara_unexpired_jwt_access_denied_does_not_refresh():
         assert "access_denied" in msg
         assert "IP" in msg
         assert "Account Statement" in msg
-    mock_client.post.assert_not_called()
+    assert all(not _is_oauth_url(c.args[0]) for c in mock_client.post.await_args_list)
 
 
 def test_enpara_expired_jwt_refreshes_then_fetches():
@@ -461,12 +505,13 @@ def test_enpara_expired_jwt_refreshes_then_fetches():
     })
 
     async def _post(url, **kwargs):
-        assert "oauth" in str(url) or "token" in str(url)
-        return tok_ok
+        if _is_oauth_url(url):
+            return tok_ok
+        return stmt_resp
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(side_effect=_post)
-    mock_client.get = AsyncMock(return_value=stmt_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -477,9 +522,10 @@ def test_enpara_expired_jwt_refreshes_then_fetches():
     out = asyncio.run(_run())
     assert out["transactions"][0]["external_id"] == "R1"
     assert out["access_token"] == "NEWJWT"
-    assert mock_client.post.await_count >= 1
-    args, kwargs = mock_client.get.await_args
-    assert kwargs["headers"]["Authorization"] == "Bearer NEWJWT"
+    assert mock_client.post.await_count >= 2
+    stmt_call = _first_statement_post(mock_client)
+    assert stmt_call.kwargs["headers"]["Authorization"] == "Bearer NEWJWT"
+    assert "startDateTime" in _json_body(stmt_call.kwargs)
 
 
 def test_enpara_probe_unexpired_jwt_access_denied_skips_refresh():
@@ -494,8 +540,8 @@ def test_enpara_probe_unexpired_jwt_access_denied_skips_refresh():
     denied.json = MagicMock(return_value={"error": "access_denied"})
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=denied)
-    mock_client.post = AsyncMock()
+    mock_client.post = AsyncMock(return_value=denied)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -507,10 +553,11 @@ def test_enpara_probe_unexpired_jwt_access_denied_skips_refresh():
     assert out["ok"] is False
     assert "access_denied" in out["message"]
     assert "IP" in out["message"]
-    mock_client.post.assert_not_called()
-    args, kwargs = mock_client.get.await_args
+    assert all(not _is_oauth_url(c.args[0]) for c in mock_client.post.await_args_list)
+    args, kwargs = mock_client.post.await_args
     assert kwargs["headers"]["Authorization"] == f"Bearer {token}"
     assert kwargs["headers"]["X-Gravitee-Api-Key"] == "gk-9"
+    assert kwargs["headers"]["Content-Type"] == "application/json"
 
 
 def test_enpara_access_token_expired_without_secret_raises():
@@ -578,14 +625,18 @@ def test_enpara_fetch_never_posts_unsubscribed_paths():
     listed.text = "{}"
     listed.json = MagicMock(return_value={"bakiye": 42})
 
-    async def _get(url, **kwargs):
-        if str(url).endswith("/account-statement/list"):
+    async def _post(url, **kwargs):
+        path = str(url)
+        assert "account-transactions" not in path
+        assert "/v1/accounts" not in path
+        assert "/v1/balance" not in path
+        if path.endswith("/account-statement/list"):
             return listed
         return bad
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=_get)
-    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -595,8 +646,7 @@ def test_enpara_fetch_never_posts_unsubscribed_paths():
 
     out = asyncio.run(_run())
     assert out["balance"] == 42.0
-    mock_client.post.assert_not_called()
-    for call in mock_client.get.await_args_list:
+    for call in mock_client.post.await_args_list + mock_client.get.await_args_list:
         assert "account-transactions" not in str(call.args[0])
         assert "/v1/accounts" not in str(call.args[0])
         assert "/v1/balance" not in str(call.args[0])
@@ -663,7 +713,8 @@ def test_enpara_probe_response_has_no_token_preview():
     mock_resp.status_code = 200
     mock_resp.text = "[]"
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -689,6 +740,9 @@ def test_frontend_bank_panel_does_not_call_enpara():
     assert "Kimlik bilgisi" in text
     assert "sunucuda" in text
     assert "emptySecrets" in text
+    assert "POST /v1/account-statement" in text
+    assert "startDateTime" in text
+    assert "GET /v1/account-statement" not in text
 
 
 def test_server_mask_connection_hides_enpara_secrets():
@@ -740,14 +794,14 @@ def test_enpara_list_405_does_not_mask_as_ip_error():
     listed.text = '{ "status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED" }'
     listed.json = MagicMock(return_value={"status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
 
-    async def _get(url, **kwargs):
+    async def _post(url, **kwargs):
         if str(url).endswith("/account-statement/list"):
             return listed
         return stmt
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=_get)
-    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -762,7 +816,8 @@ def test_enpara_list_405_does_not_mask_as_ip_error():
         msg = str(e)
         assert "400" in msg
         assert "izinli değil" not in msg
-    mock_client.post.assert_not_called()
+        assert "POST /v1/account-statement" in msg or "startDateTime" in msg
+    mock_client.get.assert_not_called()
 
 
 def test_enpara_statement_200_empty_ok_when_list_405():
@@ -780,14 +835,14 @@ def test_enpara_statement_200_empty_ok_when_list_405():
     listed.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
     listed.json = MagicMock(return_value={"status": "FAILURE", "errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
 
-    async def _get(url, **kwargs):
+    async def _post(url, **kwargs):
         if str(url).endswith("/list"):
             return listed
         return stmt
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=_get)
-    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -797,10 +852,10 @@ def test_enpara_statement_200_empty_ok_when_list_405():
 
     out = asyncio.run(_run())
     assert out["transactions"] == []
-    mock_client.post.assert_not_called()
+    mock_client.get.assert_not_called()
 
 
-def test_enpara_probe_list_405_still_ok():
+def test_enpara_probe_statement_405_still_ok():
     conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
     mock_resp = MagicMock()
     mock_resp.status_code = 405
@@ -808,7 +863,8 @@ def test_enpara_probe_list_405_still_ok():
     mock_resp.json = MagicMock(return_value={"errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
 
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -819,4 +875,131 @@ def test_enpara_probe_list_405_still_ok():
     out = asyncio.run(_run())
     assert out["ok"] is True
     assert "405" in out["message"]
+    body = _json_body(mock_client.post.await_args.kwargs)
+    assert "startDateTime" in body
+    mock_client.get.assert_not_called()
+
+
+def test_enpara_fetch_get_fallback_when_post_405():
+    """Katalog GET iddiası: yalnızca POST 405 olursa query-string yedek."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    post_405 = MagicMock()
+    post_405.status_code = 405
+    post_405.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
+    post_405.json = MagicMock(return_value={"errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = "{}"
+    stmt.json = MagicMock(return_value={
+        "status": "completed",
+        "bakiye": 7,
+        "transactions": [
+            {"transactionId": "G1", "amount": 3, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-10"},
+        ],
+    })
+
+    async def _post(url, **kwargs):
+        path = str(url)
+        assert "account-transactions" not in path
+        return post_405
+
+    async def _get(url, **kwargs):
+        path = str(url)
+        if path.endswith("/account-statement") and "/ticket" not in path:
+            params = kwargs.get("params") or {}
+            assert "startDateTime" in params
+            assert "endDateTime" in params
+            return stmt
+        miss = MagicMock()
+        miss.status_code = 404
+        miss.text = "not found"
+        miss.json = MagicMock(side_effect=ValueError("no json"))
+        return miss
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "G1"
+    assert mock_client.post.await_count >= 1
+    assert mock_client.get.await_count >= 1
+    assert _first_statement_post(mock_client).args[0].endswith("/account-statement")
+
+
+def test_enpara_ticket_post_when_get_405():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    stmt = MagicMock()
+    stmt.status_code = 200
+    stmt.text = "{}"
+    stmt.json = MagicMock(return_value={"ticketNo": "T9"})
+
+    get_405 = MagicMock()
+    get_405.status_code = 405
+    get_405.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
+    get_405.json = MagicMock(return_value={"errorCode": "405", "errorMessage": "METHOD NOT ALLOWED"})
+
+    ready = MagicMock()
+    ready.status_code = 200
+    ready.text = "{}"
+    ready.json = MagicMock(return_value={
+        "status": "completed",
+        "bakiye": 11,
+        "transactions": [
+            {"transactionId": "P1", "amount": 9, "direction": "credit", "description": "Gelen", "transactionDate": "2026-09-12"},
+        ],
+    })
+
+    async def _get(url, **kwargs):
+        if str(url).endswith("/account-statement/ticket"):
+            return get_405
+        miss = MagicMock()
+        miss.status_code = 404
+        miss.text = "miss"
+        miss.json = MagicMock(side_effect=ValueError("no json"))
+        return miss
+
+    async def _post(url, **kwargs):
+        path = str(url)
+        if path.endswith("/account-statement/ticket"):
+            assert _json_body(kwargs).get("ticketNo") == "T9"
+            return ready
+        if path.endswith("/account-statement") and "/list" not in path:
+            return stmt
+        miss = MagicMock()
+        miss.status_code = 404
+        miss.text = "miss"
+        miss.json = MagicMock(side_effect=ValueError("no json"))
+        return miss
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "P1"
+    ticket_posts = [c for c in mock_client.post.await_args_list if str(c.args[0]).endswith("/ticket")]
+    assert ticket_posts
+    assert _json_body(ticket_posts[0].kwargs)["ticketNo"] == "T9"
 
