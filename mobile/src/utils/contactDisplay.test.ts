@@ -28,7 +28,6 @@ describe("contactDisplay", () => {
       "email",
       "tax_number_or_id",
       "tax_office",
-      "is_e_invoice_user",
       "address",
       "district",
       "city",
@@ -37,10 +36,18 @@ describe("contactDisplay", () => {
       "iban",
       "notes",
     ]);
-    expect(rows.find((r) => r.key === "is_e_invoice_user")?.value).toBe("e-Fatura mükellefi");
     expect(rows.find((r) => r.key === "payment_term_days")?.value).toBe("30 gün");
     expect(rows.some((r) => r.key === "b2b_token")).toBe(false);
     expect(rows.some((r) => r.key === "balance")).toBe(false);
+  });
+
+  it("drops e-belge and TRY currency noise but keeps foreign currency", () => {
+    const tryRows = contactInfoRows({ is_e_invoice_user: true, currency: "TRY", city: "İstanbul" });
+    expect(tryRows.map((r) => r.key)).toEqual(["city"]);
+
+    const fxRows = contactInfoRows({ is_e_invoice_user: false, currency: "usd", city: "İstanbul" });
+    expect(fxRows.map((r) => r.key)).toEqual(["currency", "city"]);
+    expect(fxRows[0].value).toBe("USD");
   });
 
   it("skips empty optional zeros and secrets", () => {
