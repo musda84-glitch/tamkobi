@@ -418,11 +418,24 @@ def _enpara_auth_blob(resp) -> str:
     return f"{getattr(resp, 'text', '') or ''} {_api_error_detail(resp)}".lower()
 
 
+def _enpara_method_not_allowed(resp) -> bool:
+    if getattr(resp, "status_code", 0) != 405:
+        return False
+    blob = _enpara_auth_blob(resp)
+    return "method not allowed" in blob or "405" in blob
+
+
 def _enpara_ip_blocked(resp) -> bool:
+    """Gerçek IP filtresi. 'METHOD NOT ALLOWED' içindeki 'not allowed' IP değildir."""
     if getattr(resp, "status_code", 0) not in (401, 403):
         return False
     blob = _enpara_auth_blob(resp)
-    return any(x in blob for x in ("ip", "not allowed", "whitelist", "not permitted", "proxy"))
+    if "method not allowed" in blob:
+        return False
+    return any(
+        x in blob
+        for x in ("your ip", "ip is not", "ip not allowed", "whitelist", "not permitted", "ip filtering")
+    )
 
 
 def _enpara_access_denied(resp) -> bool:
@@ -595,9 +608,19 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
                 _enpara_raise_auth(resp)
         if resp.status_code >= 500:
             raise RuntimeError(f"Enpara API sunucu hatası: HTTP {resp.status_code}")
+        if _enpara_method_not_allowed(resp):
+            extra = " /list 405 — hareket GET /v1/account-statement ile çekilir."
+        elif resp.status_code >= 400:
+            extra = f" HTTP {resp.status_code}."
+        else:
+            extra = ""
     if token:
         conn["access_token"] = token
-    return {"ok": True, "simulated": False, "message": "Enpara api.enpara.com doğrulandı (account-statement)."}
+    return {
+        "ok": True,
+        "simulated": False,
+        "message": f"Enpara api.enpara.com doğrulandı (account-statement).{extra}",
+    }
 
 
 async def test_connection(conn: dict) -> Dict[str, Any]:
@@ -1118,7 +1141,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             try:
                 data = resp.json()
             except Exception:
-                continue
+                data = {}
             out = _consume(data, as_statement=True)
             if out and out.get("transactions"):
                 return out
@@ -1129,24 +1152,28 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 polled = await _poll_ticket(tid)
                 if polled:
                     return polled
+            got_ok_empty = True
 
-        # 2) GET /v1/account-statement/list — kayıtlı hesaplar / bakiye
+        # 2) GET /v1/account-statement/list — kayıtlı hesaplar / bakiye (opsiyonel; 405 = GET değil)
         resp = await _send("/v1/account-statement/list", params={})
-        last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
-        if resp.status_code in (401, 403):
+        if _enpara_method_not_allowed(resp):
+            pass
+        elif resp.status_code in (401, 403):
             _enpara_raise_auth(resp)
-        if resp.status_code < 400:
-            try:
-                data = resp.json()
-            except Exception:
-                data = None
-            if data is not None:
-                out = _consume(data, as_statement=False)
-                if out and out.get("transactions"):
-                    return out
-                bal = _extract_balance(data)
-                if bal is not None:
-                    balance = bal
+        else:
+            last_detail = f"GET /v1/account-statement/list HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code < 400:
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = None
+                if data is not None:
+                    out = _consume(data, as_statement=False)
+                    if out and out.get("transactions"):
+                        return out
+                    bal = _extract_balance(data)
+                    if bal is not None:
+                        balance = bal
 
     if got_ok_empty or balance is not None:
         return _pack([])
@@ -1161,8 +1188,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             " İstek reddedildi (400). GET /v1/account-statement startDateTime/endDateTime ister; "
             "IBAN tam 26 karakter olmalı. Ticket: GET /v1/account-statement/ticket?ticketNo=."
         )
-    elif "IP" in last_detail or "not allowed" in last_detail.lower():
-        hint = " Sunucu IP’si Enpara portalında izinli değil."
+    elif "method not allowed" in last_detail.lower() or "HTTP 405" in last_detail:
+        hint = (
+            " GET /v1/account-statement/list 405 (METHOD NOT ALLOWED) IP engeli değildir. "
+            "Hareket GET /v1/account-statement?startDateTime&endDateTime ile alınır."
+        )
+    elif any(x in last_detail.lower() for x in ("your ip", "ip is not", "whitelist", "ip filtering")):
+        hint = " Sunucu IP’si Enpara portalında izinli değil (tamkobi.com çıkışı 85.95.240.136)."
     raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
 
 
