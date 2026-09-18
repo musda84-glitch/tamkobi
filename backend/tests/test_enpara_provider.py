@@ -1178,9 +1178,58 @@ def test_payload_dates_use_offset_format():
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", first["startDateTime"]), first
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", first["endDateTime"]), first
     assert first["startDateTime"].endswith("+03:00")
+    # Milisaniyeli ve offsetsiz biçim "index 19" ile reddediliyor; hiç denenmemeli.
     for p in variants:
-        assert " " not in p["startDateTime"]
-        assert " " not in p["endDateTime"]
+        for key in ("startDateTime", "endDateTime"):
+            assert " " not in p[key]
+            assert "." not in p[key]
+            assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", p[key]), p[key]
+
+
+def test_all_result_errors_reported_not_just_longest():
+    """Her payload varyantının reddi görünsün; en uzunu değil ilki öne çıksın."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    seen = {"n": 0}
+
+    def _resp(body):
+        r = MagicMock()
+        r.status_code = 200
+        r.text = json.dumps(body)
+        r.headers = {"content-type": "application/json"}
+        r.json = MagicMock(return_value=body)
+        return r
+
+    async def _post(url, **kwargs):
+        if str(url).endswith("/list"):
+            return _resp({"resultCode": "0"})
+        seen["n"] += 1
+        if seen["n"] == 1:
+            return _resp({"resultCode": "500", "resultDescription": "IBAN eşleşmedi"})
+        return _resp({
+            "resultCode": "500",
+            "resultDescription": "Cok daha uzun bir aciklama metni " * 4,
+        })
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected result errors"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "IBAN eşleşmedi" in msg
 
 
 def test_enpara_result_code_error_is_reported():
