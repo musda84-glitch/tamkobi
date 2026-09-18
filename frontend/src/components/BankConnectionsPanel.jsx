@@ -72,7 +72,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
   const [editConn, setEditConn] = useState(null);
-  const [editForm, setEditForm] = useState({ provider: "enpara", linked_account_id: "", client_id: "", client_secret: "", access_token: "", refresh_token: "", private_key: "", customer_number: "", bank_account_number: "", mode: "live" });
+  const [editForm, setEditForm] = useState({ provider: "enpara", linked_account_id: "", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", mode: "live" });
   const [rules, setRules] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
@@ -141,6 +141,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       client_secret: "",
       access_token: "",
       refresh_token: "",
+      api_key: "",
       private_key: "",
       customer_number: c.customer_number || "",
       bank_account_number: c.bank_account_number || "",
@@ -407,7 +408,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Mevcut: <b>{editConn.provider_name}</b> → {editConn.linked_account_name}</p>
             {editForm.provider === "enpara" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Enpara token: portal <b>Access Token</b> yapıştırın. OAuth yolu <code className="font-mono">/securedomain/oauth/token</code> (Eski <code className="font-mono">/oauth2/accesstoken</code> 404-EPG96). IBAN 26 karakter.
+                <b>401 access_denied</b> genelde IP listesi veya Account Statement aboneliğidir — production sunucu IP’sini portala ekleyin.
+                Token süresi dolduysa yeni <b>Access Token</b> yapıştırın (client_credentials yetmeyebilir).
+                API Key varsa <code className="font-mono">X-Gravitee-Api-Key</code> olarak gider. IBAN 26 karakter. OAuth: <code className="font-mono">/securedomain/oauth/token</code>.
               </p>
             )}
             {editForm.provider === "kuveytturk" && (
@@ -442,6 +445,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <>
                   <div><label className="block font-semibold mb-1">Access Token</label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Portalden Access Token yapıştırın" /></div>
                   <div><label className="block font-semibold mb-1">Refresh Token</label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" /></div>
+                  {editForm.provider === "enpara" && (
+                    <div>
+                      <label className="block font-semibold mb-1">API Key <span className="text-slate-400 font-normal">(opsiyonel — X-Gravitee-Api-Key, boşsa değişmez)</span></label>
+                      <input type="password" className={`${inputCls} font-mono`} value={editForm.api_key} onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })} data-testid="edit-conn-api-key" autoComplete="off" />
+                    </div>
+                  )}
                 </>
               )}
               <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
