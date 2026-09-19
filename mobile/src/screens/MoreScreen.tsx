@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Card, H1, Muted, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
+import { isMoreLinkVisible } from "../utils/permissions";
 
 const LINKS = [
   { title: "Personelim", path: "/personelim", screen: "Personelim", icon: "person" as const },
@@ -25,13 +26,13 @@ const LINKS = [
 ];
 
 export function MoreScreen() {
-  const { can, moduleOn, user, activeCompany, logout } = useAuth();
+  const { user, license, activeCompany, logout } = useAuth();
   return (
     <Screen>
       <H1>Daha fazla</H1>
       <Muted>{user?.email} · {activeCompany?.name}</Muted>
-      {LINKS.filter((l) => l.path === "/" || l.path === "/settings" || (can(l.path) && moduleOn(l.path))).map((l) => (
-        <Pressable key={l.screen} onPress={() => go(l.screen)} style={{ marginTop: 8 }}>
+      {LINKS.filter((l) => isMoreLinkVisible(l, user, license)).map((l) => (
+        <Pressable key={l.screen} onPress={() => go(l.screen)} testID={`more-link-${l.screen}`} style={{ marginTop: 8 }}>
           <Card>
             <Ionicons name={l.icon} size={20} color={colors.primary} />
             <Text style={{ fontWeight: "800", color: colors.text, marginTop: 4 }}>{l.title}</Text>

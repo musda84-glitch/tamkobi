@@ -26,7 +26,18 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" = "v
 
 export function moduleOn(license: License, path: string): boolean {
   if (!license?.modules) return true;
-  return license.modules[LICENSE_KEY[path] || path] !== false;
+  const key = LICENSE_KEY[path] || path;
+  if (license.modules[key] !== false) return true;
+  // Personel & Bordro web'de ayrı lisans; mobilde Personelim/Mesaim açıksa İK menüsünde dursun.
+  if (path === "/personnel") return license.modules["/mesai"] !== false;
+  return false;
+}
+
+/** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro, Personelim ile aynı kapıdan geçer. */
+export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
+  if (link.path === "/" || link.path === "/settings") return true;
+  if (link.path === "/personnel") return can(user, "/personelim") && moduleOn(license, "/personelim");
+  return can(user, link.path) && moduleOn(license, link.path);
 }
 
 export type MobileModule = { key: string; path: string; label: string; tab?: boolean };

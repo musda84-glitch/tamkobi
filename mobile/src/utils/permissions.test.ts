@@ -1,4 +1,4 @@
-import { can, moduleOn, visibleModules } from "./permissions";
+import { can, isMoreLinkVisible, moduleOn, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -32,5 +32,15 @@ describe("permissions", () => {
   it("includes finance and sales modules", () => {
     const keys = visibleModules({ role: "admin" }, null).map((m) => m.key);
     expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects", "personnel"]));
+  });
+
+  it("keeps Personel & Bordro on More when Personelim/Mesaim is licensed", () => {
+    const admin = { role: "admin" };
+    const mesaiOnly = { modules: { "/personnel": false, "/mesai": true } };
+    expect(isMoreLinkVisible({ path: "/personnel" }, admin, mesaiOnly)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/personelim" }, admin, mesaiOnly)).toBe(true);
+    expect(moduleOn(mesaiOnly, "/personnel")).toBe(true);
+    expect(isMoreLinkVisible({ path: "/personnel" }, admin, { modules: { "/personnel": false, "/mesai": false } })).toBe(false);
+    expect(isMoreLinkVisible({ path: "/settings" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
   });
 });
