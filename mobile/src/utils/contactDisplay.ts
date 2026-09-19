@@ -160,6 +160,66 @@ export function balanceHint(balance: unknown): { label: string; tone: "green" | 
   return { label: "Hesap denk", tone: "slate" };
 }
 
+export type ContactBalanceFlag = {
+  overdue_amount?: unknown;
+  installment_due_amount?: unknown;
+};
+
+export type InvoiceBalanceRow = {
+  contact_id?: string;
+  invoice_type?: string;
+  status?: string;
+  grand_total?: unknown;
+  paid_amount?: unknown;
+};
+
+/** İlk sonlu, sıfır olmayan tutarı alır; hepsi 0/boşsa 0. */
+export function firstFiniteNonZero(...values: unknown[]): number {
+  let fallback = 0;
+  let hasFallback = false;
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) continue;
+    if (n !== 0) return n;
+    if (!hasFallback) {
+      fallback = n;
+      hasFallback = true;
+    }
+  }
+  return hasFallback ? fallback : 0;
+}
+
+/** Satış faturalarının cari bazında kalan alacağı (taslak/iptal hariç). */
+export function invoiceOpenByContact(invoices: InvoiceBalanceRow[] | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const inv of invoices || []) {
+    const id = String(inv.contact_id || "");
+    if (!id) continue;
+    if (inv.status === "draft" || inv.status === "cancelled") continue;
+    if ((inv.invoice_type || "sales") !== "sales") continue;
+    const remaining = (Number(inv.grand_total) || 0) - (Number(inv.paid_amount) || 0);
+    if (!Number.isFinite(remaining) || remaining === 0) continue;
+    out[id] = (out[id] || 0) + remaining;
+  }
+  return out;
+}
+
+/** Liste / kart bakiyesi. Stored 0 ise fatura kalanı veya gecikmiş tutarı kullan. */
+export function contactDisplayBalance(
+  contact?: { balance?: unknown; open_amount?: unknown } | null,
+  summary?: { open_amount?: unknown } | null,
+  flags?: ContactBalanceFlag | null,
+): number {
+  return firstFiniteNonZero(
+    contact?.balance,
+    summary?.open_amount,
+    contact?.open_amount,
+    flags?.overdue_amount,
+    flags?.installment_due_amount,
+  );
+}
+
 export function contactSummaryRows(summary: Record<string, unknown> | null | undefined): InfoRow[] {
   if (!summary) return [];
   const n = (k: string) => Number(summary[k]) || 0;

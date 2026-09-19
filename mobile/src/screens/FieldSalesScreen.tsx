@@ -1,3 +1,4 @@
+import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { get, post } from "../api/client";
@@ -13,6 +14,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 export function FieldSalesScreen() {
   const { client, companyId, user, can } = useAuth();
   const canEdit = can("/saha", "edit");
+  const { contact_id: prefillId } = useLocalSearchParams<{ contact_id?: string }>();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -45,6 +47,12 @@ export function FieldSalesScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!prefillId) return;
+    const hit = contacts.find((row) => idOf(row) === String(prefillId));
+    if (hit) setCustomer(hit);
+  }, [contacts, prefillId]);
 
   const custHits = useMemo(() => {
     const q = custQ.trim().toLowerCase();

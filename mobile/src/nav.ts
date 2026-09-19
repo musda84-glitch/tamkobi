@@ -50,7 +50,9 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "Stock":
       return router.push("/stok");
     case "Field":
-      return router.push("/saha");
+      return params?.contact_id
+        ? router.push({ pathname: "/saha", params: { contact_id: String(params.contact_id), contact_name: String(params.contact_name || "") } })
+        : router.push("/saha");
     case "Sevk":
       return router.push("/sevk");
     case "SevkPick":
