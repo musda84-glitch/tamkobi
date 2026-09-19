@@ -56,11 +56,51 @@ NETGSM_ERRORS = {
 
 def normalize_phone(phone: str) -> Optional[str]:
     digits = re.sub(r"\D", "", phone or "")
-    if digits.startswith("90") and len(digits) == 12:
+    if digits.startswith("0090"):
+        digits = digits[4:]
+    elif digits.startswith("90") and len(digits) >= 12:
         digits = digits[2:]
     if digits.startswith("0") and len(digits) == 11:
         digits = digits[1:]
     return digits if re.fullmatch(r"5\d{9}", digits) else None
+
+
+def sms_channel_result(send: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Map _send_sms_to / sms_send payload to approval-channel {status, detail}."""
+    if not send:
+        return {"status": "failed", "detail": "SMS gönderilemedi."}
+    if send.get("simulated"):
+        return {"status": "simulated", "detail": send.get("message") or "SMS operatör bilgisi girilmedi — simüle."}
+    failed = send.get("status") == "failed" or (not send.get("sent") and send.get("failed"))
+    if failed:
+        return {"status": "failed", "detail": send.get("error") or send.get("message") or "SMS gönderilemedi."}
+    return {"status": "sent", "detail": send.get("message") or "SMS gönderildi."}
+
+
+def approval_dispatch_summary(results: Dict[str, Any]) -> Dict[str, str]:
+    """Top-level send-approval status/message from per-channel results."""
+    statuses = {k: (v or {}).get("status") for k, v in (results or {}).items()}
+    any_sent = any(s == "sent" for s in statuses.values())
+    any_sim = any(s == "simulated" for s in statuses.values())
+    notes = []
+    for key, label in (("sms", "SMS"), ("email", "E-posta")):
+        st = statuses.get(key)
+        detail = ((results or {}).get(key) or {}).get("detail") or f"{label} gönderilemedi."
+        if st == "failed":
+            notes.append(f"{label} başarısız: {detail}")
+        elif st == "simulated":
+            notes.append(detail)
+    if any_sent:
+        msg = "Onay linki gönderildi."
+        if notes:
+            msg = f"{msg} {' '.join(notes)}"
+        return {"status": "success", "message": msg}
+    if any_sim:
+        return {"status": "success", "message": notes[0] if notes else "Onay linki oluşturuldu."}
+    if notes:
+        return {"status": "failed", "message": " ".join(notes)}
+    return {"status": "failed", "message": "Hiçbir kanaldan gönderilemedi."}
+
 
 def normalize_msgheader(header: str) -> str:
     """Netgsm msgheader: trim. Dokümana göre 3–11 karakter; iç boşluk korunur."""

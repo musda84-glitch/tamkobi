@@ -21,6 +21,7 @@ export type QuoteApproval = {
   view_count?: number;
   sent_count?: number;
   responder_name?: string;
+  results?: Record<string, { status?: string; detail?: string; wa_link?: string }>;
 };
 
 export type QuoteDoc = {

@@ -18,6 +18,7 @@ import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
 import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
+import { smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
 import { mapsLink } from "../utils/geo";
 import {
   emptyPlanDraft,
@@ -392,7 +393,7 @@ export function ContactDetailScreen() {
       if (msgChannel === "sms") {
         if (!msgPhone) { setError("Telefon numarası yok."); setMsgBusy(false); return; }
         try {
-          await post(client, "/comm/sms/send", {
+          const r = await post<{ status?: string; sent?: number; failed?: number; simulated?: boolean; message?: string; error?: string }>(client, "/comm/sms/send", {
             company_id: companyId,
             phone: msgPhone,
             message: msgBody,
@@ -401,9 +402,16 @@ export function ContactDetailScreen() {
             context: "manual",
             ref_id: id,
           });
-          setMessage("SMS gönderildi.");
+          if (r.simulated || smsSendFailed(r)) {
+            await Linking.openURL(smsComposerHref(msgPhone, msgBody));
+            setMessage(r.simulated
+              ? "SMS operatörü tanımlı değil; telefon SMS uygulaması açıldı."
+              : (r.error || r.message || "SMS gönderilemedi; telefon uygulaması açıldı."));
+          } else {
+            setMessage(r.message || "SMS gönderildi.");
+          }
         } catch {
-          Linking.openURL(`sms:${msgPhone}?body=${encodeURIComponent(msgBody)}`);
+          Linking.openURL(smsComposerHref(msgPhone, msgBody)).catch(() => null);
           setMessage("SMS uygulaması açıldı.");
         }
       } else if (msgChannel === "email") {
