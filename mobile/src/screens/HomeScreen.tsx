@@ -14,9 +14,10 @@ import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { pendingSevkCount, type PickRow } from "../utils/orderPick";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
+import { openWorkOrderCount, type WorkOrder } from "../utils/shopFloor";
 
 export function HomeScreen() {
-  const { client, companyId, user, license } = useAuth();
+  const { client, companyId, user, license, can } = useAuth();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
@@ -48,7 +49,7 @@ export function HomeScreen() {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, list, st, pending, ops, unmatched, picks] = await Promise.all([
+      const [ov, list, st, pending, ops, unmatched, picks, wos] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
@@ -56,6 +57,9 @@ export function HomeScreen() {
         get<{ groups?: { key?: string; count?: number }[] }>(client, "/dashboard/ops-alerts", { company_id: companyId }).catch(() => null),
         get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
         get<PickRow[]>(client, "/order-picks", { company_id: companyId }).catch(() => []),
+        can("/atolye")
+          ? get<WorkOrder[]>(client, "/production/work-orders", { company_id: companyId, status: "ready,in_progress,paused" }).catch(() => [])
+          : Promise.resolve([] as WorkOrder[]),
       ]);
       const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
       const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
@@ -67,6 +71,7 @@ export function HomeScreen() {
         sevk: pendingSevkCount({ picks, tasks: ov?.tasks, ops: ops?.groups }),
         personnel: Number(pending?.count || 0),
         banking: Array.isArray(unmatched) ? unmatched.length : 0,
+        atolye: openWorkOrderCount(wos),
       });
       setError(null);
     } catch (err) {
@@ -74,7 +79,7 @@ export function HomeScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId, user]);
+  }, [can, client, companyId, user]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 

@@ -63,6 +63,21 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/sevk": false } }).map((t) => t.id)).not.toContain("sevk");
   });
 
+  it("places Üretim Atölye after Depo Sevkiyat and gates it on /atolye", () => {
+    const ids = QUICK_TILES.map((t) => t.id);
+    expect(ids.indexOf("atolye")).toBe(ids.indexOf("sevk") + 1);
+    expect(QUICK_TILES.find((t) => t.id === "atolye")).toMatchObject({
+      label: "Üretim Atölye",
+      path: "/atolye",
+      href: "/atolye",
+    });
+    const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit" } };
+    expect(visibleQuickTiles(production, null).map((t) => t.id)).toContain("atolye");
+    const accountant = { role: "accountant", permissions: { "/atolye": "none" } };
+    expect(visibleQuickTiles(accountant, null).map((t) => t.id)).not.toContain("atolye");
+    expect(visibleQuickTiles({ role: "admin" }, { modules: { "/atolye": false } }).map((t) => t.id)).not.toContain("atolye");
+  });
+
 });
 
 describe("splitNotificationsTile", () => {
@@ -85,6 +100,8 @@ describe("resolveMobilePath", () => {
     expect(resolveMobilePath("/stock")).toBe("/stok");
     expect(resolveMobilePath("/personnel")).toBe("/personnel");
     expect(resolveMobilePath("/sevk")).toBe("/sevk");
+    expect(resolveMobilePath("/atolye")).toBe("/atolye");
+    expect(resolveMobilePath("/production")).toBe("/atolye");
     expect(resolveMobilePath("/bilinmeyen")).toBeNull();
     expect(resolveMobilePath("")).toBeNull();
   });
