@@ -33,10 +33,9 @@ export function moduleOn(license: License, path: string): boolean {
   return false;
 }
 
-/** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro, Personelim ile aynı kapıdan geçer. */
+/** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
   if (link.path === "/" || link.path === "/settings") return true;
-  if (link.path === "/personnel") return can(user, "/personelim") && moduleOn(license, "/personelim");
   return can(user, link.path) && moduleOn(license, link.path);
 }
 
