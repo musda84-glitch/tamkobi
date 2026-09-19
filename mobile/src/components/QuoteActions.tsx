@@ -73,7 +73,7 @@ export function QuoteActions({
     },
     {
       key: "pdf",
-      label: "PDF indir",
+      label: "PDF İndir",
       icon: "download",
       tone: "indigo",
       busy: busy === "pdf",

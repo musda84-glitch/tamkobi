@@ -152,6 +152,11 @@ export function tr(map: Record<string, string>, value?: string | null): string {
   return map[value] || map[String(value).toLowerCase()] || String(value);
 }
 
+/** CSS text-transform:uppercase i→I yapar; Türkçede i→İ, ı→I olmalı. */
+export function trUpper(value: string): string {
+  return String(value || "").toLocaleUpperCase("tr-TR");
+}
+
 export const statusTr = (v?: string | null) => tr(STATUS_TR, v);
 export const leaveTr = (v?: string | null) => tr(LEAVE_TYPE_TR, v);
 export const channelTr = (v?: string | null) => tr(CHANNEL_TR, v);

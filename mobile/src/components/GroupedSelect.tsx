@@ -1,6 +1,7 @@
 import React, { createElement, useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
+import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
 
 export type SelectOption = { value: string; label: string };
@@ -64,7 +65,7 @@ function NativeGroupedSelect({
           ) : null}
           {groups.map((g) => (
             <View key={g.label}>
-              <Text style={{ paddingHorizontal: 12, paddingTop: 10, fontSize: 11, fontWeight: "800", color: colors.muted, textTransform: "uppercase" }}>{g.label}</Text>
+              <Text style={{ paddingHorizontal: 12, paddingTop: 10, fontSize: 11, fontWeight: "800", color: colors.muted }}>{trUpper(g.label)}</Text>
               {g.options.map((o) => (
                 <Pressable
                   key={o.value}

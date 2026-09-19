@@ -121,7 +121,16 @@ export function ActionTiles({
               >
                 <Ionicons name={item.busy ? "hourglass-outline" : item.icon} size={s.icon} color="#fff" />
               </View>
-              <Text style={{ fontWeight: "800", color: colors.text, fontSize: s.font, textAlign: "center" }} numberOfLines={2}>
+              <Text
+                style={{
+                  fontWeight: "800",
+                  color: colors.text,
+                  fontSize: s.font,
+                  textAlign: "center",
+                  fontFamily: Platform.OS === "web" ? 'system-ui, "Segoe UI", Roboto, Arial, sans-serif' : undefined,
+                }}
+                numberOfLines={2}
+              >
                 {item.label}
               </Text>
             </View>

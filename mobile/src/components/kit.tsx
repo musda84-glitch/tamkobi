@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
+import { trUpper } from "../utils/labels";
 import { ProductThumb } from "./ProductThumb";
 
 export function Screen({ children, onRefresh, refreshing, padded = true }: {
@@ -91,7 +92,7 @@ export function Field(props: TextInputProps & { label: string; testID?: string; 
   const { label, style, compact, ...rest } = props;
   return (
     <View style={{ marginBottom: compact ? 0 : spacing.md }}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.label}>{trUpper(label)}</Text>
       <TextInput
         placeholderTextColor={colors.muted}
         style={[styles.input, compact && styles.inputCompact, style]}
@@ -177,7 +178,7 @@ export function StatRows({ items, testID }: { items: StatRow[]; testID?: string 
       {items.map((item, i) => (
         <View key={item.key} style={[styles.statRow, i > 0 ? styles.statDivider : null]}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.statLabel}>{item.label}</Text>
+            <Text style={styles.statLabel}>{trUpper(item.label)}</Text>
             {item.hint ? <Text style={styles.statHint} numberOfLines={1}>{item.hint}</Text> : null}
           </View>
           <Text style={[styles.statValue, item.valueColor ? { color: item.valueColor } : null]}>{item.value}</Text>
@@ -190,7 +191,7 @@ export function StatRows({ items, testID }: { items: StatRow[]; testID?: string 
 export function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <View style={styles.kpi}>
-      <Text style={styles.kpiLabel}>{label}</Text>
+      <Text style={styles.kpiLabel}>{trUpper(label)}</Text>
       <Text style={styles.kpiValue}>{value}</Text>
       {sub ? <Text style={styles.muted}>{sub}</Text> : null}
     </View>
@@ -217,7 +218,7 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: "700" },
   btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
   btnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  label: { fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4, textTransform: "uppercase" },
+  label: { fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -252,10 +253,10 @@ const styles = StyleSheet.create({
   listRight: { fontWeight: "800", color: colors.text, marginLeft: 8, fontSize: 14 },
   statRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 7 },
   statDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  statLabel: { fontSize: 11, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  statLabel: { fontSize: 11, fontWeight: "700", color: colors.muted },
   statHint: { fontSize: 11, color: colors.muted, marginTop: 1 },
   statValue: { fontSize: 15, fontWeight: "800", color: colors.text },
   kpi: { flex: 1, minWidth: 140, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 10 },
-  kpiLabel: { fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" },
+  kpiLabel: { fontSize: 10, fontWeight: "700", color: colors.muted },
   kpiValue: { fontSize: 16, fontWeight: "800", color: colors.text, marginTop: 2 },
 });
