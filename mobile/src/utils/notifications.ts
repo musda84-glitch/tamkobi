@@ -8,10 +8,22 @@ const TYPE_ROLES: Record<string, string[]> = {
   attendance_late: ["admin", "manager", "accountant"],
   attendance_missing: ["admin", "manager", "accountant"],
   attendance_dispute: ["admin", "manager", "accountant"],
+  leave_request: ["admin", "manager", "accountant"],
+  advance_request: ["admin", "manager", "accountant"],
+  early_leave_request: ["admin", "manager", "accountant"],
   role_assigned: ["admin", "manager"],
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
   cash_approval: ["admin", "manager", "accountant"],
+  bank_sync: ["admin", "manager", "accountant"],
+};
+
+/** Ana ekran kutucuklarına düşen okunmamış bildirim türleri. */
+export const TILE_NOTIFICATION_TYPES: Record<string, string[]> = {
+  orders: ["b2b_order"],
+  sevk: ["order_pick_missing", "order_pick_production"],
+  personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "early_leave_request", "early_leave_decision"],
+  banking: ["cash_approval", "bank_sync"],
 };
 
 export function rolesForType(type?: string | null): string[] {
@@ -47,6 +59,43 @@ export function unreadCount(rows: Notification[] | null | undefined): number {
   return (rows || []).filter((n) => !n.is_read).length;
 }
 
+export function matchesTileType(type: string | undefined, prefixes: string[]): boolean {
+  const t = String(type || "");
+  return prefixes.some((p) => t === p || t.startsWith(`${p}_`) || t.startsWith(p));
+}
+
+/** Kutucuk başına okunmamış bildirim sayısı. */
+export function unreadByTile(rows: Notification[] | null | undefined): Record<string, number> {
+  const out: Record<string, number> = Object.fromEntries(Object.keys(TILE_NOTIFICATION_TYPES).map((k) => [k, 0]));
+  for (const n of rows || []) {
+    if (n.is_read) continue;
+    for (const [tile, types] of Object.entries(TILE_NOTIFICATION_TYPES)) {
+      if (matchesTileType(n.type, types)) out[tile] += 1;
+    }
+  }
+  return out;
+}
+
+export function tileBadgeLabel(...counts: Array<number | null | undefined>): string | undefined {
+  const n = Math.max(0, ...counts.map((c) => Number(c) || 0));
+  if (n <= 0) return undefined;
+  return n > 99 ? "99+" : String(n);
+}
+
+/** Canlı bekleyen iş + okunmamış bildirim; çift saymamak için max alınır. */
+export function tileBadges(
+  notes: Notification[] | null | undefined,
+  live?: Partial<Record<string, number>> | null,
+): Record<string, string> {
+  const unread = unreadByTile(notes);
+  const badges: Record<string, string> = {};
+  for (const tile of Object.keys(TILE_NOTIFICATION_TYPES)) {
+    const label = tileBadgeLabel(unread[tile], live?.[tile]);
+    if (label) badges[tile] = label;
+  }
+  return badges;
+}
+
 /** Sunucu created_at'e göre sıralı döner; yine de güvenceye alıp en yenileri keseriz. */
 export function latestNotifications(
   rows: Notification[] | null | undefined,
@@ -74,7 +123,7 @@ export function notificationLook(n: Notification): NotificationLook {
   if (/reddedil|iptal|silin|eksik|başarısız/.test(text)) return { icon: "close-circle", tone: "rose" };
   const type = lower(String(n.type || ""));
   if (type.startsWith("b2b")) return { icon: "cart", tone: "sky" };
-  if (type.startsWith("cash")) return { icon: "wallet", tone: "teal" };
+  if (type.startsWith("cash") || type.startsWith("bank")) return { icon: "wallet", tone: "teal" };
   if (type.startsWith("quote")) return { icon: "create", tone: "amber" };
   if (type === "role_assigned") return { icon: "people", tone: "violet" };
   if (type === "task_assigned") return { icon: "briefcase", tone: "indigo" };
@@ -88,10 +137,12 @@ const REF_ROUTES: Record<string, string> = {
   survey: "/surveys",
   project: "/projects",
   order: "/orders",
+  order_pick: "/sevk",
   invoice: "/invoices",
   contact: "/contacts",
   cheque: "/cheques",
   cash_approval: "/banking",
+  bank: "/banking",
   employee: "/personnel",
 };
 

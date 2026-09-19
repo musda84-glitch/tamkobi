@@ -8,11 +8,19 @@ export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "i
 
 export type StockBadge = { label: string; tone: "danger" | "warning" | "muted" };
 
-export function stockQtyLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
-  if (p.track_stock === false || p.type === "service") return "Takip yok";
+/** Takip kapalı / hizmet olsa da kayıtlı adet okunur. */
+export function stockQuantity(p: Pick<Product, "stock_quantity">): number {
   const qty = Number(p.stock_quantity);
-  const n = Number.isFinite(qty) ? qty : 0;
-  return `${n.toLocaleString("tr-TR")} ${p.unit || "Adet"}`;
+  return Number.isFinite(qty) ? qty : 0;
+}
+
+export function stockQtyLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
+  return `${stockQuantity(p).toLocaleString("tr-TR")} ${p.unit || "Adet"}`;
+}
+
+/** Liste sağı: SKU/barkod yok, "Takip yok" yok — yalnız stok adedi. */
+export function stockRightLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
+  return `Stok ${stockQtyLabel(p)}`;
 }
 
 export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
@@ -25,21 +33,12 @@ export function stockRowSubtitle(
   typeLabel: string,
   priceLabel: string,
 ): string {
-  const barcode = String(p.barcode || "").trim();
-  return [
-    p.sku || "SKU yok",
-    barcode ? `Barkod ${barcode}` : "Barkod yok",
-    typeLabel,
-    priceLabel,
-    p.is_active === false ? "Pasif" : "",
-  ].filter(Boolean).join(" · ");
+  return [typeLabel, priceLabel, p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ");
 }
 
-/** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. */
+/** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. Takip kapalı olsa da adet yazılır. */
 export function stockBadge(p: Pick<Product, "stock_quantity" | "unit" | "min_stock_alert" | "track_stock" | "type">): StockBadge | null {
-  if (p.track_stock === false || p.type === "service") return null;
-  const qty = Number(p.stock_quantity);
-  const n = Number.isFinite(qty) ? qty : 0;
+  const n = stockQuantity(p);
   const unit = p.unit || "Adet";
   const min = Number(p.min_stock_alert) || 0;
   const label = `${n.toLocaleString("tr-TR")} ${unit}`;

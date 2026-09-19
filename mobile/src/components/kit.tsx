@@ -126,6 +126,7 @@ export function ListRow({
   rightColor,
   rightSub,
   rightSubColor,
+  rightTestID,
   leading,
   badge,
   onPress,
@@ -137,6 +138,7 @@ export function ListRow({
   rightColor?: string;
   rightSub?: string;
   rightSubColor?: string;
+  rightTestID?: string;
   leading?: React.ReactNode;
   badge?: React.ReactNode;
   onPress?: () => void;
@@ -152,7 +154,7 @@ export function ListRow({
       {badge}
       {right || rightSub ? (
         <View style={{ alignItems: "flex-end", marginLeft: 8, minWidth: 88, maxWidth: 168 }}>
-          {right ? <Text style={[styles.listRight, rightColor ? { color: rightColor } : null]} numberOfLines={1}>{right}</Text> : null}
+          {right ? <Text testID={rightTestID} style={[styles.listRight, rightColor ? { color: rightColor } : null]} numberOfLines={1}>{right}</Text> : null}
           {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{rightSub}</Text> : null}
         </View>
       ) : null}

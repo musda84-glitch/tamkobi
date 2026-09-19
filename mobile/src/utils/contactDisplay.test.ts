@@ -1,4 +1,4 @@
-import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
+import { balanceHint, contactBalanceLabel, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
 import { fmtMoney } from "./money";
 
 describe("contactDisplay", () => {
@@ -74,8 +74,11 @@ describe("contactDisplay", () => {
 
   it("labels type and balance", () => {
     expect(contactTypeLabel("both")).toBe("Müşteri & Tedarikçi");
-    expect(balanceHint(4460).label).toMatch(/Alacak/);
+    expect(balanceHint(4460).label).toMatch(/Alacaklı/);
     expect(balanceHint(-10).tone).toBe("red");
+    expect(contactBalanceLabel(8310).label).toBe("Alacaklı");
+    expect(contactBalanceLabel(-58497).label).toBe("Borçlu");
+    expect(contactBalanceLabel(0).label).toBe("Cari bakiye");
   });
 
   it("prefers stored cari balance and falls back to open or overdue amount", () => {

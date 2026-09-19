@@ -1,14 +1,15 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
+import { View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact, Invoice } from "../types";
-import { contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
-import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
+import { contactBalanceLabel, contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
+import { CONTACT_LIST_CHIPS, filterContacts, type ContactBalanceFilter, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
 export function ContactsScreen() {
@@ -19,6 +20,7 @@ export function ContactsScreen() {
   const [flags, setFlags] = useState<Record<string, ContactBalanceFlag>>({});
   const [q, setQ] = useState("");
   const [typeF, setTypeF] = useState<ContactTypeFilter>("all");
+  const [balF, setBalF] = useState<ContactBalanceFilter>("all");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -43,7 +45,21 @@ export function ContactsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const filtered = useMemo(() => filterContacts(rows, typeF, q), [q, rows, typeF]);
+  const amountOf = useCallback(
+    (c: Contact) => contactDisplayBalance(c, { open_amount: openById[idOf(c)] }, flags[idOf(c)]),
+    [flags, openById],
+  );
+
+  const filtered = useMemo(
+    () => filterContacts(rows, typeF, q, 80, balF, amountOf),
+    [amountOf, balF, q, rows, typeF],
+  );
+
+  const chipCounts = useMemo(() => {
+    const receivable = rows.filter((c) => amountOf(c) > 0).length;
+    const payable = rows.filter((c) => amountOf(c) < 0).length;
+    return { receivable, payable };
+  }, [amountOf, rows]);
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -51,15 +67,35 @@ export function ContactsScreen() {
         <PrimaryButton title="Yeni cari ekle" onPress={() => go("ContactNew")} color={colors.primary} testID="add-contact-btn" />
       ) : null}
       <Field label="Ara" testID="contacts-search" value={q} onChangeText={setQ} placeholder="Ad, telefon, VKN" />
-      <Row style={{ flexWrap: "wrap" }}>
-        {CONTACT_TYPE_FILTERS.map((t) => (
-          <Chip key={t.key} label={t.label} active={typeF === t.key} testID={`contacts-type-${t.key}`} onPress={() => setTypeF(t.key)} />
-        ))}
-      </Row>
+      <View testID="contacts-filter-row" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+        {CONTACT_LIST_CHIPS.map((t) => {
+          const count = t.balance === "receivable" ? chipCounts.receivable : t.balance === "payable" ? chipCounts.payable : undefined;
+          const label = count != null ? `${t.label} (${count})` : t.label;
+          const active = t.balance ? balF === t.balance : typeF === t.type && (t.type !== "all" || balF === "all");
+          return (
+            <Chip
+              key={t.key}
+              label={label}
+              active={active}
+              testID={t.balance ? `contacts-balance-${t.key}` : `contacts-type-${t.key}`}
+              color={t.balance === "payable" ? colors.danger : t.balance === "receivable" ? colors.primaryHover : colors.primary}
+              onPress={() => {
+                if (t.balance) {
+                  setBalF((cur) => (cur === t.balance ? "all" : t.balance!));
+                  return;
+                }
+                setTypeF(t.type || "all");
+                if (t.type === "all") setBalF("all");
+              }}
+            />
+          );
+        })}
+      </View>
       <ErrorBanner message={error} />
       {!filtered.length ? <Empty icon="people-outline" title="Cari bulunamadı" hint={canEdit ? "Yeni cari kartı ekleyin." : undefined} /> : filtered.map((c) => {
         const id = idOf(c);
         const bal = contactDisplayBalance(c, { open_amount: openById[id] }, flags[id]);
+        const side = contactBalanceLabel(bal);
         return (
           <ListRow
             key={id}
@@ -68,8 +104,9 @@ export function ContactsScreen() {
             subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
             right={fmtMoney(bal)}
             rightColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.text}
-            rightSub={bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Cari bakiye"}
+            rightSub={side.label}
             rightSubColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.muted}
+            badge={<Badge label={side.label} tone={side.tone === "green" ? "green" : side.tone === "red" ? "red" : "slate"} />}
             onPress={() => go("ContactDetail", { id, name: c.name })}
           />
         );

@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { OrderActions } from "../components/OrderActions";
+import { Empty, ErrorBanner, Field, ListRow, Muted, Screen } from "../components/kit";
 import { go } from "../nav";
 import type { Order } from "../types";
 import { channelTr, statusTr } from "../utils/labels";
@@ -12,6 +14,7 @@ export function OrdersScreen() {
   const [rows, setRows] = useState<Order[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -38,14 +41,18 @@ export function OrdersScreen() {
     <Screen onRefresh={load} refreshing={refreshing}>
       <Field label="Ara" value={q} onChangeText={setQ} placeholder="Sipariş no / müşteri" />
       <ErrorBanner message={error} />
+      {message ? <Muted>{message}</Muted> : null}
       {!filtered.length ? <Empty icon="cart-outline" title="Sipariş yok" /> : filtered.map((o) => (
-        <ListRow
-          key={idOf(o)}
-          title={o.order_number || "Sipariş"}
-          subtitle={`${o.customer_name} · ${channelTr(o.channel)} · ${statusTr(o.order_status)} · ${fmtDate(o.order_date)}`}
-          right={fmtMoney(o.grand_total || o.total_amount)}
-          onPress={() => go("OrderDetail", { id: idOf(o) })}
-        />
+        <View key={idOf(o)} style={{ marginBottom: 8 }}>
+          <ListRow
+            testID={`order-row-${idOf(o)}`}
+            title={o.order_number || "Sipariş"}
+            subtitle={`${o.customer_name} · ${channelTr(o.channel)} · ${statusTr(o.order_status)} · ${fmtDate(o.order_date)}`}
+            right={fmtMoney(o.grand_total || o.total_amount)}
+            onPress={() => go("OrderDetail", { id: idOf(o) })}
+          />
+          <OrderActions order={o} compact onMessage={setMessage} onError={setError} />
+        </View>
       ))}
     </Screen>
   );

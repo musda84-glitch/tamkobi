@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -10,7 +11,8 @@ import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
-import { latestNotifications, notificationRoute, unreadCount, visibleNotifications } from "../utils/notifications";
+import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
+import { pendingSevkCount, type PickRow } from "../utils/orderPick";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
@@ -18,6 +20,7 @@ export function HomeScreen() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
+  const [liveBadges, setLiveBadges] = useState<Partial<Record<string, number>>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -26,30 +29,45 @@ export function HomeScreen() {
     [user, license]
   );
 
+  const badges = useMemo(() => tileBadges(notes, liveBadges), [notes, liveBadges]);
+
   const quickItems: ActionTile[] = useMemo(
     () => tiles.map((tile) => ({
       key: tile.id,
       label: tile.label,
       icon: tile.icon as ActionTile["icon"],
       tone: tile.tone,
+      badge: badges[tile.id],
       testID: `home-quick-${tile.id}`,
       onPress: () => goHref(tile.href),
     })),
-    [tiles]
+    [tiles, badges]
   );
 
   const load = useCallback(async () => {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, list, st] = await Promise.all([
+      const [ov, list, st, pending, ops, unmatched, picks] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
+        get<{ count?: number }>(client, "/personnel/pending-requests", { company_id: companyId }).catch(() => null),
+        get<{ groups?: { key?: string; count?: number }[] }>(client, "/dashboard/ops-alerts", { company_id: companyId }).catch(() => null),
+        get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
+        get<PickRow[]>(client, "/order-picks", { company_id: companyId }).catch(() => []),
       ]);
+      const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
+      const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
       setOverview(ov);
       setNotes(visibleNotifications(list || [], user));
       setStats(st);
+      setLiveBadges({
+        orders: Math.max(pendingOrders, newOrders),
+        sevk: pendingSevkCount({ picks, tasks: ov?.tasks, ops: ops?.groups }),
+        personnel: Number(pending?.count || 0),
+        banking: Array.isArray(unmatched) ? unmatched.length : 0,
+      });
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Özet yüklenemedi."));
@@ -58,7 +76,7 @@ export function HomeScreen() {
     }
   }, [client, companyId, user]);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openNotification = useCallback((n: Notification) => {
     const id = idOf(n);

@@ -6,6 +6,8 @@ import {
   pickStatusTone,
   pickStatusTr,
   pickSummaryText,
+  pendingPickCount,
+  pendingSevkCount,
   scanErrorMessage,
 } from "./orderPick";
 
@@ -39,6 +41,20 @@ describe("orderPick", () => {
     expect(adjustPayload(line, -4).picked_qty).toBe(0);
     expect(adjustPayload(line, 3)).toMatchObject({ line_index: 2, product_id: "p1" });
     expect(lineRemaining(line)).toBe(4);
+  });
+
+  it("counts waiting picks for the home Depo Sevkiyat badge", () => {
+    expect(pendingPickCount([
+      { pick_status: "idle", order_status: "approved" },
+      { pick_status: "picking", order_status: "preparing" },
+      { pick_status: "shipped", order_status: "shipped" },
+    ])).toBe(2);
+    expect(pendingSevkCount({
+      picks: [{ pick_status: "idle" }],
+      tasks: [{ key: "pick_missing", path: "/sevk", count: 4 }],
+      ops: [{ key: "pick_missing", path: "/sevk", count: 1 }],
+    })).toBe(4);
+    expect(pendingSevkCount({ picks: [], tasks: [], ops: [] })).toBe(0);
   });
 
   it("reads the overscan detail the server returns with 409", () => {

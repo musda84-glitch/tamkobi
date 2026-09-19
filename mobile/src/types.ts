@@ -2,6 +2,9 @@ export type Company = {
   id?: string;
   _id?: string;
   name: string;
+  address?: string;
+  city?: string;
+  phone?: string;
 };
 
 export type User = {
@@ -161,6 +164,11 @@ export type Order = {
   notes?: string;
   shipping_address?: string;
   city?: string;
+  district?: string;
+  cargo_tracking_number?: string;
+  cargo_carrier?: string;
+  cargo_carrier_name?: string;
+  label_printed_at?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
     carrier?: string;

@@ -20,6 +20,7 @@ export function Chip({
       testID={testID}
       onPress={onPress}
       style={{
+        flexShrink: 0,
         paddingVertical: 8,
         paddingHorizontal: 12,
         borderRadius: 999,

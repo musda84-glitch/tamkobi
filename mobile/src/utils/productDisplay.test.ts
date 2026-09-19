@@ -1,4 +1,4 @@
-import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRowSubtitle } from "./productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -14,24 +14,28 @@ describe("productDisplay", () => {
     expect(stockBadge({ stock_quantity: 40, unit: "Adet", min_stock_alert: 5 })?.tone).toBe("muted");
   });
 
-  it("hides the badge when stock is not tracked", () => {
-    expect(stockBadge({ stock_quantity: 5, track_stock: false })).toBeNull();
-    expect(stockBadge({ stock_quantity: 5, type: "service" })).toBeNull();
+  it("still shows quantity when stock is not tracked", () => {
+    expect(stockBadge({ stock_quantity: 5, track_stock: false })?.label).toBe("5 Adet");
+    expect(stockBadge({ stock_quantity: 5, type: "service" })?.label).toBe("5 Adet");
+    expect(stockRightLabel({ stock_quantity: 18, track_stock: false })).toBe("Stok 18 Adet");
+    expect(stockQtyLabel({ type: "service", stock_quantity: 3 })).toBe("3 Adet");
   });
 
-  it("always surfaces quantity and barcode on list rows", () => {
+  it("always surfaces quantity on list rows", () => {
     expect(stockQtyLabel({})).toBe("0 Adet");
     expect(stockQtyLabel({ stock_quantity: 12, unit: "Koli" })).toBe("12 Koli");
-    expect(stockQtyLabel({ type: "service" })).toBe("Takip yok");
+    expect(stockQtyLabel({ stock_quantity: -467 })).toBe("-467 Adet");
+    expect(stockRightLabel({ stock_quantity: -467 })).toBe("Stok -467 Adet");
     expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
     expect(stockBarcodeLabel({})).toBe("Barkod yok");
     expect(stockBadge({})?.label).toBe("0 Adet");
   });
 
-  it("puts barcode in the stock row subtitle", () => {
-    expect(stockRowSubtitle({ sku: "BH-1", barcode: "YUK.DRA", type: "trade" }, "Ticari Mal", "0,00 ₺"))
-      .toBe("BH-1 · Barkod YUK.DRA · Ticari Mal · 0,00 ₺");
-    expect(stockRowSubtitle({ is_active: false }, "Hizmet", "10,00 ₺"))
-      .toBe("SKU yok · Barkod yok · Hizmet · 10,00 ₺ · Pasif");
+  it("keeps SKU and barcode off the list row copy", () => {
+    expect(stockRowSubtitle({ sku: "YÜK.DRA.ÇEKME", barcode: "YÜK.DRA.ÇEKME", type: "trade" }, "Ticari Mal", "0,00 ₺"))
+      .toBe("Ticari Mal · 0,00 ₺");
+    expect(stockRowSubtitle({ is_active: false }, "Hizmet", "10,00 ₺")).toBe("Hizmet · 10,00 ₺ · Pasif");
+    expect(stockRightLabel({ stock_quantity: 0, track_stock: false })).toBe("Stok 0 Adet");
+    expect(stockRightLabel({ stock_quantity: 12, track_stock: false })).not.toMatch(/Takip|YÜK|SKU|Barkod/i);
   });
 });

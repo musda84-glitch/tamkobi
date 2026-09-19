@@ -155,9 +155,17 @@ export function contactTypeLabel(type?: string | null): string {
 
 export function balanceHint(balance: unknown): { label: string; tone: "green" | "red" | "slate" } {
   const n = Number(balance) || 0;
-  if (n > 0) return { label: "Alacak — müşteri size borçlu", tone: "green" };
-  if (n < 0) return { label: "Borç — siz bu cariye borçlusunuz", tone: "red" };
+  if (n > 0) return { label: "Alacaklı — müşteri size borçlu", tone: "green" };
+  if (n < 0) return { label: "Borçlu — siz bu cariye borçlusunuz", tone: "red" };
   return { label: "Hesap denk", tone: "slate" };
+}
+
+/** Cari listesi / kart yan etiketi. */
+export function contactBalanceLabel(balance: unknown): { label: string; tone: "green" | "red" | "slate" } {
+  const n = Number(balance) || 0;
+  if (n > 0) return { label: "Alacaklı", tone: "green" };
+  if (n < 0) return { label: "Borçlu", tone: "red" };
+  return { label: "Cari bakiye", tone: "slate" };
 }
 
 export type ContactBalanceFlag = {
