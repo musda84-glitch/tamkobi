@@ -42,10 +42,13 @@ export type PrintProduct = Pick<Product, "barcode" | "sku" | "thumbnail_url" | "
   _id?: string;
 };
 
+export type PrintDocType = "order" | "quote";
+
 export type OrderFormOptions = {
   template?: Partial<PrintTemplate> | null;
   products?: Record<string, PrintProduct>;
   mediaBase?: string;
+  docType?: PrintDocType;
 };
 
 export const DEFAULT_PRINT_TEMPLATE: PrintTemplate = {
@@ -182,7 +185,18 @@ function customerOrderNo(order: Order): string {
 }
 
 function orderDate(order: Order): string {
-  return String(order.order_date || order.created_at || "").slice(0, 10) || fmtDate(order.order_date);
+  const extra = order as Order & { issue_date?: string };
+  return String(extra.issue_date || order.order_date || order.created_at || "").slice(0, 10) || fmtDate(order.order_date);
+}
+
+function quoteExtras(order: Order): { validUntil?: string; dueDate?: string; subject?: string; terms?: string } {
+  const extra = order as Order & { valid_until?: string; due_date?: string; title?: string; terms?: string };
+  return {
+    validUntil: extra.valid_until ? String(extra.valid_until) : undefined,
+    dueDate: extra.due_date ? String(extra.due_date) : undefined,
+    subject: extra.title ? String(extra.title) : undefined,
+    terms: extra.terms ? String(extra.terms) : undefined,
+  };
 }
 
 export function orderFormHtml(order: Order, company?: PrintCompany | null, options?: OrderFormOptions): string {
@@ -197,7 +211,9 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const isModern = layout === "modern";
   const isMinimal = layout === "minimal";
   const isBold = layout === "bold";
-  const title = tpl.title_override || "SİPARİŞ FORMU";
+  const docType = options?.docType || "order";
+  const title = tpl.title_override || (docType === "quote" ? "FİYAT TEKLİFİ" : "SİPARİŞ FORMU");
+  const extras = quoteExtras(order);
   const currency = (order as Order & { currency?: string }).currency;
   const thBg = isMinimal ? "transparent" : isBold ? "#0f172a" : color;
   const thColor = isMinimal ? "#0f172a" : "#fff";
@@ -224,6 +240,8 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
       <div style="font-size:${isBold ? "28px" : "24px"};font-weight:900;letter-spacing:-0.3px;color:${isModern ? "#fff" : isBold ? "#0f172a" : color}">${esc(title)}</div>
       <div style="font-family:ui-monospace,monospace;font-weight:600;color:${isModern ? "#fff" : "#0f172a"}">${esc(order.order_number || "")}</div>
       <div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Tarih: ${esc(orderDate(order))}</div>
+      ${extras.validUntil ? `<div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Geçerlilik: ${esc(extras.validUntil)}</div>` : ""}
+      ${extras.dueDate ? `<div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Vade: ${esc(extras.dueDate)}</div>` : ""}
     </div>`;
   const header = isModern
     ? `<div style="padding:24px 40px;color:#fff;display:flex;justify-content:space-between;align-items:flex-start;background:${color}">
@@ -285,8 +303,8 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const notesBox = tpl.show_order_notes !== false && orderNotes.length
     ? `<div style="margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;color:#334155;white-space:pre-wrap"><b>Sipariş Notu:</b> ${esc(orderNotes.join(" • "))}</div>`
     : "";
-  const extraNotes = order.notes
-    ? `<div style="margin-top:24px;color:#475569;white-space:pre-wrap">${esc(order.notes)}</div>`
+  const extraNotes = (order.notes || extras.terms)
+    ? `<div style="margin-top:24px;color:#475569;white-space:pre-wrap">${order.notes ? esc(order.notes) : ""}${extras.terms ? `<div style="margin-top:8px"><b>Şartlar:</b> ${esc(extras.terms)}</div>` : ""}</div>`
     : "";
   const bank = tpl.show_bank_info && company?.iban
     ? `<div style="margin-top:24px;color:#475569"><b>Banka:</b> ${esc(company.bank_name || "")} • <b>IBAN:</b> <span style="font-family:monospace">${esc(company.iban)}</span></div>`
@@ -296,7 +314,11 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
     ${tpl.show_signature ? `<div style="text-align:center"><div style="width:160px;border-bottom:1px solid #cbd5e1;margin-bottom:4px"></div><div style="color:#64748b">Kaşe / İmza</div></div>` : ""}
   </div>`;
 
-  return `<div data-print="order" style="font-size:${fontSize};color:#1e293b;display:flex;font-family:Arial,Helvetica,sans-serif">
+  const subjectBox = extras.subject
+    ? `<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Konu</div><div style="font-weight:600">${esc(extras.subject)}</div></div>`
+    : "";
+
+  return `<div data-print="${docType}" style="font-size:${fontSize};color:#1e293b;display:flex;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif">
     ${isBold ? `<div style="width:12px;align-self:stretch;background:${color}"></div>` : ""}
     <div style="flex:1;${isModern ? "" : "padding:40px"}">
       ${header}
@@ -310,6 +332,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
             ${order.customer_phone ? `<div style="color:#64748b">${esc(order.customer_phone)}</div>` : ""}
             ${custNo ? `<div style="margin-top:8px;display:inline-block;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;padding:4px 8px;font-size:12px;font-weight:600;color:#064e3b">Müşteri sipariş no: <span style="font-family:monospace">${esc(custNo)}</span></div>` : ""}
           </div>
+          ${subjectBox}
         </div>
         <table style="width:100%;border-collapse:collapse;margin-top:24px${isModern ? ";overflow:hidden;border-radius:12px" : ""}">
           <thead><tr style="background:${thBg};color:${thColor};${thBorder}">
@@ -405,14 +428,51 @@ function documentCss(page: PrintPageKind): string {
   return `body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;padding:16px;margin:0}@media print{body{padding:8px}}`;
 }
 
-export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind }): boolean {
-  if (typeof window === "undefined" || typeof window.open !== "function") return false;
-  const page = opts?.page || "default";
-  const w = window.open("", "_blank", page === "thermal" ? "width=720,height=900" : "width=800,height=900");
-  if (!w) return false;
-  w.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>${documentCss(page)}</style>
-    </head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print()},${page === "thermal" ? 300 : 250})}</script></body></html>`);
-  w.document.close();
+function printHtmlIframe(html: string): boolean {
+  if (typeof document === "undefined") return false;
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  document.body.appendChild(iframe);
+  const win = iframe.contentWindow;
+  if (!win) {
+    iframe.remove();
+    return false;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  const cleanup = () => { try { iframe.remove(); } catch { /* already gone */ } };
+  win.addEventListener("afterprint", cleanup);
+  setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } catch {
+      cleanup();
+    }
+  }, 300);
+  setTimeout(cleanup, 60_000);
   return true;
+}
+
+export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind }): boolean {
+  if (typeof document === "undefined") return false;
+  const page = opts?.page || "default";
+  const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>${documentCss(page)}</style>
+    </head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print()},${page === "thermal" ? 300 : 250})}</script></body></html>`;
+  if (typeof window !== "undefined" && typeof window.open === "function") {
+    try {
+      const w = window.open("", "_blank", page === "thermal" ? "width=720,height=900" : "width=800,height=900");
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+        return true;
+      }
+    } catch {
+      /* popup blocked — iframe */
+    }
+  }
+  return printHtmlIframe(html);
 }
