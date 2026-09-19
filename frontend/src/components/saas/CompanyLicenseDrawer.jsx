@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2 } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2 } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 
 const cred = { withCredentials: true };
 
-export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onChanged }) => {
+export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = [], onClose, onChanged }) => {
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState("");
@@ -16,7 +17,9 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const [deleteName, setDeleteName] = useState("");
   const [providers, setProviders] = useState([]);
   const [eiProvider, setEiProvider] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  const [parentPick, setParentPick] = useState("");
+  const [parentQ, setParentQ] = useState("");
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); setParentPick(r.data.parent_company_id || ""); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
@@ -34,6 +37,22 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
   const siblings = d.license_companies || [];
+  const siblingTree = sortCompanyTree(siblings.map((c) => ({ ...c, created_at: c.created_at || "", is_primary: !!c.primary })));
+  const blocked = descendantIds(companies.length ? companies : siblings, companyId);
+  const parentPool = (companies.length ? companies : siblings).filter((c) => c.id !== companyId && !blocked.has(c.id));
+  const parentNeedle = parentQ.trim().toLowerCase();
+  const sameLicense = (c) => (c.license_id || c.id) === (d.license_id || companyId);
+  const parentChoices = parentPool.filter((c) => (parentNeedle ? `${c.name} ${c.tax_number || ""}`.toLowerCase().includes(parentNeedle) : sameLicense(c))).slice(0, 80);
+  const saveParent = async () => {
+    if (!parentPick) { toast.error("Bağlı olunacak şirketi seçin."); return; }
+    setBusy("parent");
+    try {
+      await axios.put(`${API_URL}/system/companies/${companyId}/parent`, { parent_company_id: parentPick }, cred);
+      toast.success("Üst şirket kaydedildi.");
+      await load();
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Bağlantı kaydedilemedi."); } finally { setBusy(""); }
+  };
   const limit = Number(lic.company_limit || 0);
   const canAddSibling = !limit || siblings.length < limit;
   const addSibling = async () => {
@@ -175,13 +194,30 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, onClose, onCha
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid="drawer-license-companies">
             <h3 className="font-bold text-slate-900 text-sm mb-1 flex items-center gap-1.5"><Building2 className="w-4 h-4 text-slate-400" /> Lisans şirketleri ({siblings.length}{limit ? `/${limit}` : ""})</h3>
-            <p className="text-[10px] text-slate-500 mb-3">Aynı pakette birden fazla tüzel kişi. Her şirketin carisi, faturası ve stoğu ayrıdır; müşteri hesapları birbirini görmez.</p>
-            <ul className="divide-y mb-3">{siblings.map((c) => (
-              <li key={c.id} className="py-1.5 flex items-center justify-between gap-2" data-testid={`drawer-co-${c.id}`}>
-                <span className="font-semibold text-slate-800 truncate">{c.name}</span>
-                {c.primary || c.id === companyId ? <span className="text-[10px] font-black text-amber-700">ANA</span> : <span className="text-[10px] text-slate-400">Şube</span>}
+            <p className="text-[10px] text-slate-500 mb-3">Aynı pakette birden fazla tüzel kişi. Alt şirket hangi ana şirkete bağlıysa onun altında görünür; her şirketin carisi, faturası ve stoğu ayrıdır.</p>
+            <ul className="divide-y mb-3">{siblingTree.map((c) => (
+              <li key={c.id} className="py-1.5 flex items-center justify-between gap-2" data-testid={`drawer-co-${c.id}`} style={{ paddingLeft: (c.tree_depth || 0) * 14 }}>
+                <span className="font-semibold text-slate-800 truncate">{c.tree_depth > 0 ? "└ " : ""}{c.name}</span>
+                {c.primary || c.id === d.license_id ? <span className="text-[10px] font-black text-amber-700">ANA</span> : <span className="text-[10px] text-slate-500">bağlı: {c.parent_company_name || "lisans"}</span>}
               </li>
             ))}</ul>
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 mb-3 space-y-2" data-testid="drawer-parent-box">
+              <div className="font-semibold text-slate-800 flex items-center gap-1.5"><Link2 className="w-3.5 h-3.5 text-slate-400" /> Bu şirket kime bağlı?</div>
+              {d.is_primary && !d.parent_company_id ? (
+                <p className="text-[11px] text-slate-500">Bu lisansın ana şirketidir. Alt şirket ekleyince onlar buraya bağlanır.</p>
+              ) : (
+                <p className="text-[11px] text-slate-500">{d.parent_company_name ? `Şu an bağlı: ${d.parent_company_name}.` : "Henüz üst şirket seçilmedi."} Mevcut bir şirketi alt şirket olarak bağlamak için seçin.</p>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                <input className={inputCls} placeholder="Üst şirket ara…" value={parentQ} onChange={(e) => setParentQ(e.target.value)} data-testid="drawer-parent-search" />
+                <select value={parentPick} onChange={(e) => setParentPick(e.target.value)} className={inputCls} data-testid="drawer-parent-select">
+                  <option value="">{parentNeedle ? (parentChoices.length ? "Eşleşenlerden seçin…" : "Eşleşme yok") : "Üst şirket seçin…"}</option>
+                  {parentChoices.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button type="button" disabled={!!busy || !parentPick || parentPick === (d.parent_company_id || "")} onClick={saveParent} className="px-3 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-40" data-testid="drawer-parent-save">{busy === "parent" ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : "Bağla"}</button>
+              </div>
+              <p className="text-[10px] text-slate-400">Aynı lisanstakiler listelenir. Başka bir müşteri şirketine bağlamak için adını arayın.</p>
+            </div>
             {canAddSibling ? (
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
                 <input className={inputCls + " sm:col-span-2"} placeholder="Yeni şirket unvanı" value={newCo.name} onChange={(e) => setNewCo({ ...newCo, name: e.target.value })} data-testid="drawer-new-co-name" />

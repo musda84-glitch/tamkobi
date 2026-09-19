@@ -51,7 +51,7 @@ export default function SystemAdminPage() {
               : <MissingSection page={page} />}
           </PanelBoundary>
         </div>
-        {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} onClose={() => setOpenId(null)} onChanged={changed} />}
+        {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} companies={companies} onClose={() => setOpenId(null)} onChanged={changed} />}
       </div>
     </SystemLayout>
   );
