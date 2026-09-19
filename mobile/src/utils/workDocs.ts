@@ -1,4 +1,5 @@
 import { coordValue } from "./geo";
+import { idOf } from "./money";
 
 export type WorkKind = "quote" | "project" | "survey";
 
@@ -7,8 +8,10 @@ export type WorkItem = {
   name: string;
   quantity: number;
   unit_price: number;
+  unit_price_incl?: number;
   vat_rate: number;
   unit: string;
+  price_includes_vat?: boolean;
 };
 
 export type QuoteApproval = {
@@ -113,10 +116,67 @@ export function namedItems(items: WorkItem[]): WorkItem[] {
   return items.filter((i) => (i.name || "").trim());
 }
 
+/** Stok kartı KDV dahilse birim fiyat brüttür; net+KDV ayrıca eklenmez. */
+export function workItemFromProduct(prod: {
+  id?: string;
+  _id?: string;
+  name?: string;
+  sale_price?: number;
+  vat_rate?: number;
+  unit?: string;
+  price_includes_vat?: boolean;
+}): WorkItem {
+  return {
+    ...emptyItem(),
+    product_id: idOf(prod),
+    name: String(prod.name || ""),
+    unit_price: Number(prod.sale_price) || 0,
+    vat_rate: Number(prod.vat_rate) || 20,
+    unit: prod.unit || "Adet",
+    price_includes_vat: !!prod.price_includes_vat,
+  };
+}
+
+export function hydrateWorkItem(
+  item: WorkItem,
+  product?: { price_includes_vat?: boolean } | null,
+): WorkItem {
+  const hasIncl = item.unit_price_incl != null && Number(item.unit_price_incl) > 0;
+  if (hasIncl) return { ...item, price_includes_vat: false };
+  if (item.price_includes_vat != null) return item;
+  if (product?.price_includes_vat) return { ...item, price_includes_vat: true };
+  return item;
+}
+
+export function workItemLineGross(it: WorkItem): number {
+  const qty = Number(it.quantity || 0);
+  const rate = Number(it.vat_rate || 0);
+  const price = Number(it.unit_price || 0);
+  const inclusive = !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
+  if (inclusive) return Math.round(qty * price * 100) / 100;
+  return Math.round(qty * price * (1 + rate / 100) * 100) / 100;
+}
+
 export function workItemTotals(items: WorkItem[]) {
   const rows = namedItems(items);
-  const subtotal = rows.reduce((s, it) => s + Number(it.quantity || 0) * Number(it.unit_price || 0), 0);
-  const vat = rows.reduce((s, it) => s + Number(it.quantity || 0) * Number(it.unit_price || 0) * (Number(it.vat_rate || 0) / 100), 0);
+  let subtotal = 0;
+  let vat = 0;
+  for (const it of rows) {
+    const qty = Number(it.quantity || 0);
+    const rate = Number(it.vat_rate || 0);
+    const price = Number(it.unit_price || 0);
+    const inclusive = !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
+    if (inclusive) {
+      const incl = qty * price;
+      const excl = rate ? incl / (1 + rate / 100) : incl;
+      subtotal += excl;
+      vat += incl - excl;
+    } else {
+      const excl = qty * price;
+      subtotal += excl;
+      vat += excl * (rate / 100);
+    }
+  }
   return {
     subtotal: Math.round(subtotal * 100) / 100,
     vat: Math.round(vat * 100) / 100,

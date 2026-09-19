@@ -1,5 +1,5 @@
 """Unit tests for shared order/invoice line totals (no live API)."""
-from line_totals import enrich_line, invoice_document_totals, order_document_totals, unit_excl_from_incl, unit_incl_from_excl
+from line_totals import enrich_items, enrich_line, invoice_document_totals, order_document_totals, quote_line_price_mode, unit_excl_from_incl, unit_incl_from_excl
 
 
 def test_unit_price_roundtrip():
@@ -121,6 +121,19 @@ def test_order_items_missing_vat_defaults_20_not_overwrite_zero():
     assert vat == 45.0  # 40 + 5
     assert grand == 295.0
     assert disc == 0.0
+
+
+def test_enrich_items_treats_price_includes_vat_as_gross():
+    rows = enrich_items([
+        {"name": "KDV dahil stok", "quantity": 1, "unit_price": 120, "vat_rate": 20, "price_includes_vat": True},
+        {"name": "KDV hariç", "quantity": 1, "unit_price": 100, "vat_rate": 20},
+    ], default_vat=20)
+    assert abs(rows[0]["unit_price"] - 100) < 0.01
+    assert rows[0]["total_incl"] == 120.0
+    assert rows[0]["vat_amount"] == 20.0
+    assert rows[1]["total"] == 100.0
+    assert rows[1]["total_incl"] == 120.0
+    assert quote_line_price_mode(rows[0]) == "excl"  # unit_price_incl artık dolu
 
 
 def test_inclusive_product_order_totals_consistent():

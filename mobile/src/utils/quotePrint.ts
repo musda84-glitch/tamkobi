@@ -1,7 +1,7 @@
 import type { Company } from "../types";
 import { fmtDate, fmtMoney } from "./money";
 import type { QuoteDoc, WorkItem } from "./workDocs";
-import { namedItems, workItemTotals } from "./workDocs";
+import { namedItems, workItemLineGross, workItemTotals } from "./workDocs";
 
 export type PrintCompany = Pick<Company, "name"> & { address?: string; city?: string; phone?: string; email?: string };
 
@@ -26,8 +26,7 @@ export function quoteFormHtml(quote: QuoteDoc, company?: PrintCompany | null): s
   const totals = workItemTotals(quote.items || []);
   const rows = linesOf(quote)
     .map((it) => {
-      const line = Number(it.quantity || 0) * Number(it.unit_price || 0) * (1 + Number(it.vat_rate || 0) / 100);
-      return `<tr><td>${esc(it.name)}</td><td style="text-align:right">${esc(it.quantity)} ${esc(it.unit || "")}</td><td style="text-align:right">${esc(fmtMoney(it.unit_price))}</td><td style="text-align:right">%${esc(it.vat_rate ?? 20)}</td><td style="text-align:right">${esc(fmtMoney(line))}</td></tr>`;
+      return `<tr><td>${esc(it.name)}</td><td style="text-align:right">${esc(it.quantity)} ${esc(it.unit || "")}</td><td style="text-align:right">${esc(fmtMoney(it.unit_price))}</td><td style="text-align:right">%${esc(it.vat_rate ?? 20)}</td><td style="text-align:right">${esc(fmtMoney(workItemLineGross(it)))}</td></tr>`;
     })
     .join("");
   return `
