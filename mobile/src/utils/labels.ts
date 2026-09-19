@@ -51,7 +51,52 @@ export const CHANNEL_TR: Record<string, string> = {
   n11: "N11",
   woocommerce: "WooCommerce",
   shopphp: "ShopPHP",
+  ciceksepeti: "Çiçeksepeti",
+  pazarama: "Pazarama",
 };
+
+const MARKETPLACE_CHANNELS = new Set([
+  "trendyol",
+  "hepsiburada",
+  "amazon",
+  "n11",
+  "shopify",
+  "woocommerce",
+  "ciceksepeti",
+  "pazarama",
+]);
+
+/** Web EcommercePage ile aynı kaynaklar; img ile SVG de çalışır. */
+export const CHANNEL_LOGO: Record<string, string> = {
+  trendyol: "https://cdn.dsmcdn.com/web/logo/ty-web.svg",
+  hepsiburada: "https://images.hepsiburada.net/assets/sfstatic/Content/images/favicon.ico",
+  amazon: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Amazon_logo.svg/200px-Amazon_logo.svg.png",
+  n11: "https://www.google.com/s2/favicons?domain=n11.com&sz=64",
+  shopify: "https://cdn.shopify.com/shopifycloud/web/assets/v1/favicon.ico",
+  woocommerce: "https://woocommerce.com/wp-content/uploads/2019/03/cropped-Woo_Favicon.png",
+  ciceksepeti: "https://www.google.com/s2/favicons?domain=ciceksepeti.com&sz=64",
+  pazarama: "https://www.google.com/s2/favicons?domain=pazarama.com&sz=64",
+};
+
+export function isMarketplaceChannel(channel?: string | null): boolean {
+  return MARKETPLACE_CHANNELS.has(String(channel || "").toLowerCase());
+}
+
+export function channelLogoUrl(channel?: string | null): string {
+  return CHANNEL_LOGO[String(channel || "").toLowerCase()] || "";
+}
+
+/** Liste başlığı: çıplak numara yerine “Trendyol sipariş no …” */
+export function orderNumberLabel(order: { order_number?: string; channel?: string } | null | undefined): string {
+  const no = String(order?.order_number || "").trim();
+  if (!no) return "Sipariş";
+  const ch = String(order?.channel || "").toLowerCase();
+  if (isMarketplaceChannel(ch)) return `${channelTr(ch)} sipariş no ${no}`;
+  if (ch === "shopphp") return `Web sipariş no ${no}`;
+  if (ch === "b2b") return `B2B sipariş no ${no}`;
+  if (ch === "saha") return `Saha sipariş no ${no}`;
+  return `Sipariş no ${no}`;
+}
 
 export const INVOICE_TYPE_TR: Record<string, string> = {
   sales: "Satış",
