@@ -43,7 +43,7 @@ import {
   type ProjectWithTasks,
   type SalaryCalc,
 } from "../utils/personnel";
-import { paymentTargetGroups, splitPaymentTarget, type BankAccount } from "../utils/finance";
+import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 type Tab = "payroll" | "attendance" | "leaves" | "salary";
@@ -55,6 +55,7 @@ export function PersonnelScreen() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [attendance, setAttendance] = useState<AttendancePayload | null>(null);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -85,16 +86,18 @@ export function PersonnelScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [emps, pays, accs, lvs, att] = await Promise.all([
+      const [emps, pays, accs, pars, lvs, att] = await Promise.all([
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }),
         get<Payroll[]>(client, "/personnel/payrolls", { company_id: companyId }),
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
         get<LeaveRequest[]>(client, "/personnel/leaves", { company_id: companyId }).catch(() => []),
         get<AttendancePayload>(client, "/personnel/attendance", { company_id: companyId, month }).catch(() => null),
       ]);
       setEmployees(emps || []);
       setPayrolls(pays || []);
       setAccounts(accs || []);
+      setPartners(pars || []);
       setLeaves(lvs || []);
       setAttendance(att);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
@@ -102,7 +105,9 @@ export function PersonnelScreen() {
         return [idOf(e), card?.balance] as const;
       }));
       setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance] => !!row[1])));
+      const firstPartner = (pars || []).find((p) => p.is_active !== false);
       if ((accs || []).length) setPayAccount((cur) => cur || idOf(accs[0]));
+      else if (firstPartner) setPayAccount((cur) => cur || `partner:${idOf(firstPartner)}`);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Personel verileri yüklenemedi."));
@@ -137,7 +142,8 @@ export function PersonnelScreen() {
       }
     }
     setPayItem(item);
-    setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : ""));
+    const firstPartner = partners.find((p) => p.is_active !== false);
+    setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : firstPartner ? `partner:${idOf(firstPartner)}` : ""));
   };
 
   const saveAdvance = async () => {
@@ -287,7 +293,7 @@ export function PersonnelScreen() {
 
   const loadAmount = monthlyPayrollLoad(employees);
   const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
-  const payGroups = paymentTargetGroups(accounts, [], { includePartners: true });
+  const payGroups = paymentTargetGroups(accounts, partners);
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -518,7 +524,7 @@ export function PersonnelScreen() {
         <Field label="Tutar (₺)" testID="quick-pay-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
         <Field label="Açıklama" testID="quick-pay-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="Örn: Maaş avansı" />
         <GroupedSelect
-          label="Kasa / Banka"
+          label="Kasa / Banka / Ortak"
           testID="quick-pay-account"
           value={payAccount}
           onChange={setPayAccount}
@@ -536,7 +542,7 @@ export function PersonnelScreen() {
         testID="salary-pay-sheet"
       >
         <GroupedSelect
-          label="Ödemenin yapılacağı hesap"
+          label="Ödemenin yapılacağı hesap / ortak"
           testID="salary-pay-account"
           value={payAccount}
           onChange={setPayAccount}
