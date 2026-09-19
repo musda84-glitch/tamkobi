@@ -36,10 +36,12 @@ export function OrderDetailScreen() {
       <Muted>{order.customer_name} · {fmtDate(order.order_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} />
+      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} />
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={statusTr(order.order_status)} tone="amber" />
+        {order.marketplace_status ? <Badge label={order.marketplace_status} tone="slate" /> : null}
+        {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}
         <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(order.grand_total || order.total_amount)}</Text>
         {order.shipping_address ? <Muted>{order.shipping_address} {order.city || ""}</Muted> : null}

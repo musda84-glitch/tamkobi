@@ -1,4 +1,4 @@
-import { cargoLabelHtml, cargoLabelText, orderFormHtml, orderFormText } from "./orderPrint";
+import { cargoLabelCode, cargoLabelHtml, cargoLabelText, orderFormHtml, orderFormText } from "./orderPrint";
 
 const order = {
   order_number: "11573451170",
@@ -8,7 +8,9 @@ const order = {
   city: "İstanbul",
   channel: "trendyol",
   cargo_tracking_number: "TR123",
+  cargo_barcode: "8690001928371",
   cargo_carrier: "Trendyol Express",
+  cargo_label_url: "https://cdn.trendyol.com/label.pdf",
   grand_total: 17550,
   order_date: "2026-09-06",
   items: [{ product_name: "Koltuk", quantity: 1, unit_price: 17550, total_incl: 17550 }],
@@ -27,8 +29,14 @@ describe("orderPrint", () => {
   it("builds a kargo etiketi with tracking and sender", () => {
     const html = cargoLabelHtml(order, { name: "Matek", address: "Atölye" });
     expect(html).toContain("ALICI");
-    expect(html).toContain("TR123");
+    expect(html).toContain("8690001928371");
     expect(html).toContain("Matek");
-    expect(cargoLabelText(order).includes("TR123")).toBe(true);
+    expect(cargoLabelCode(order)).toBe("8690001928371");
+    expect(cargoLabelText(order).includes("8690001928371")).toBe(true);
+  });
+
+  it("prefers cargo barcode over tracking for the printed code", () => {
+    expect(cargoLabelCode({ cargo_tracking_number: "TR", cargo_barcode: "8691" })).toBe("8691");
+    expect(cargoLabelCode({ order_number: "1157" })).toBe("1157");
   });
 });

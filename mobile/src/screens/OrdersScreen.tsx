@@ -47,11 +47,11 @@ export function OrdersScreen() {
           <ListRow
             testID={`order-row-${idOf(o)}`}
             title={o.order_number || "Sipariş"}
-            subtitle={`${o.customer_name} · ${channelTr(o.channel)} · ${statusTr(o.order_status)} · ${fmtDate(o.order_date)}`}
+            subtitle={`${o.customer_name} · ${channelTr(o.channel)}${o.marketplace_status ? ` · ${o.marketplace_status}` : ""} · ${statusTr(o.order_status)} · ${fmtDate(o.order_date)}`}
             right={fmtMoney(o.grand_total || o.total_amount)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}
           />
-          <OrderActions order={o} compact onMessage={setMessage} onError={setError} />
+          <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />
         </View>
       ))}
     </Screen>

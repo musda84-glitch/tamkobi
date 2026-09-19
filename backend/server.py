@@ -60,6 +60,7 @@ import httpx
 from urllib.parse import quote
 import comm_service
 import cargo_providers
+import cargo_label
 import rbac
 import expenses
 import finance
@@ -7323,8 +7324,19 @@ async def approve_order(order_id: str, req: Dict[str, Any] = None):
             updated["draft_invoice_number"] = draft.get("invoice_number")
     except Exception:
         logging.getLogger(__name__).exception("Sipariş onayında taslak fatura oluşturulamadı: %s", order_id)
-    await _push_order_to_shopphp(updated, reason="approve")
-    return clean_doc(updated)
+    push = await _push_order_to_marketplace(updated, reason="approve")
+    updated = await db.orders.find_one({"_id": order_id}) or updated
+    out = clean_doc(updated)
+    channel = str(updated.get("channel") or "")
+    if push and push.get("ok"):
+        out["message"] = f"Sipariş onaylandı. {channel or 'Pazaryeri'} entegrasyonuna iletildi."
+    elif push and push.get("simulated"):
+        out["message"] = "Sipariş onaylandı. Onay pazaryeri entegrasyonuna iletildi (SİMÜLE)."
+    else:
+        out["message"] = "Sipariş onaylandı."
+    if push:
+        out["marketplace_push"] = {k: push.get(k) for k in ("ok", "simulated", "error", "channel") if k in push}
+    return out
 
 @api_router.post("/orders/{order_id}/return")
 async def return_order(order_id: str, req: Dict[str, Any]):
@@ -7706,6 +7718,48 @@ async def _shopphp_write_status(client: "marketplace_providers.ShopPHPClient", o
             return "updateOrder", await client.update_order(order_no, status=status)
         except HTTPException:
             raise documented_failed
+
+async def _push_trendyol_approve(order: dict) -> Dict[str, Any]:
+    """Trendyol paketini Picking'e alır (sipariş kabul / hazırlık)."""
+    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": "trendyol", "is_active": {"$ne": False}})
+    if not cfg or not marketplace_providers.has_live_credentials(cfg):
+        return {"ok": False, "simulated": True, "channel": "trendyol"}
+    pkg_id = order.get("shipment_package_id") or order.get("external_id")
+    if not pkg_id:
+        return {"ok": False, "simulated": True, "channel": "trendyol", "error": "Pazaryeri paket id yok."}
+    lines = []
+    for it in order.get("items") or []:
+        lid = it.get("line_id") or it.get("order_line_id")
+        if lid:
+            lines.append({"lineId": lid, "quantity": it.get("quantity") or 1})
+    client = marketplace_providers.TrendyolClient(cfg)
+    try:
+        raw = await client.set_package_status(str(pkg_id), "Picking", lines)
+        await db.orders.update_one(
+            {"_id": order["_id"]},
+            {"$set": {"marketplace_status": "Picking", "marketplace_push": {"at": datetime.now(timezone.utc).isoformat(), "ok": True, "reason": "approve"}}},
+        )
+        return {"ok": True, "channel": "trendyol", "response": raw}
+    except Exception as e:
+        logger.exception("trendyol approve push failed")
+        return {"ok": False, "channel": "trendyol", "error": str(getattr(e, "detail", e))}
+    finally:
+        await client.close()
+
+
+async def _push_order_to_marketplace(order: dict, reason: str = "approve") -> Optional[Dict[str, Any]]:
+    channel = str(order.get("channel") or "")
+    if channel == "shopphp":
+        log = await _push_order_to_shopphp(order, reason=reason)
+        if not log:
+            return {"ok": False, "simulated": True, "channel": "shopphp"}
+        return {"ok": bool(log.get("ok")), "channel": "shopphp", "error": log.get("error")}
+    if channel == "trendyol":
+        return await _push_trendyol_approve(order)
+    if channel in cargo_label.MARKETPLACE_CHANNELS:
+        return {"ok": False, "simulated": True, "channel": channel}
+    return None
+
 
 async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_errors: bool = False) -> Optional[dict]:
     """Onay durumu + kargo firması/takip no + fatura no bilgisini ShopPHP mağazasına REST ile yazar."""
@@ -8565,6 +8619,84 @@ async def mark_labels_printed(req: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"label_printed_at": now}})
     return {"status": "success", "count": len(ids)}
+
+
+async def _resolve_order_cargo_label(order_id: str):
+    """Pazaryeri veya oluşturulan gönderinin resmi etiketini bulur."""
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    sh = None
+    if o.get("cargo_shipment_id"):
+        sh = await db.cargo_shipments.find_one({"_id": o["cargo_shipment_id"]})
+    if not sh:
+        sh = await db.cargo_shipments.find_one({"order_id": order_id})
+    provider: Dict[str, str] = {}
+    if not cargo_label.pick_stored_label_url(o, sh) and sh and sh.get("provider_shipment_id") and sh.get("carrier_code") == "geliver":
+        cfg = await db.cargo_configs.find_one({"company_id": o["company_id"], "carrier_code": "geliver"})
+        if cfg:
+            try:
+                info = await cargo_providers.geliver_get_shipment(cfg, sh["provider_shipment_id"])
+                provider = cargo_label.extract_provider_label(info)
+                if provider.get("label_url"):
+                    await db.cargo_shipments.update_one({"_id": sh["_id"]}, {"$set": {"label_url": provider["label_url"]}})
+                    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
+            except Exception:
+                logger.exception("geliver label refresh failed")
+    track = o.get("cargo_tracking_number") or o.get("cargo_barcode")
+    if not cargo_label.pick_stored_label_url(o, sh, provider) and str(o.get("channel") or "") == "trendyol" and track:
+        cfg = await db.integration_configs.find_one({"company_id": o["company_id"], "channel": "trendyol", "is_active": {"$ne": False}})
+        if cfg and marketplace_providers.has_live_credentials(cfg):
+            client = marketplace_providers.TrendyolClient(cfg)
+            try:
+                raw = await client.common_label(str(track))
+                provider = {**provider, **cargo_label.extract_provider_label(raw)}
+                if provider.get("label_url"):
+                    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
+            except Exception:
+                logger.exception("trendyol common label failed")
+            finally:
+                await client.close()
+    return cargo_label.resolve_from_docs(o, sh, provider)
+
+
+@api_router.get("/orders/{order_id}/cargo-label")
+async def get_order_cargo_label(order_id: str):
+    resolved = await _resolve_order_cargo_label(order_id)
+    return resolved.as_json()
+
+
+@api_router.get("/orders/{order_id}/cargo-label/file")
+async def get_order_cargo_label_file(order_id: str):
+    resolved = await _resolve_order_cargo_label(order_id)
+    filename = f"kargo-etiket-{(resolved.cargo_tracking_number or order_id)}.pdf"
+    if resolved.pdf_base64:
+        import base64
+        try:
+            data = base64.b64decode(resolved.pdf_base64)
+        except Exception:
+            raise HTTPException(status_code=502, detail="Pazaryeri etiketi okunamadı.")
+        return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
+    url = resolved.label_url
+    if url.startswith("/api/files/"):
+        try:
+            data, content_type = get_object(url[len("/api/files/"):])
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Etiket dosyası bulunamadı.")
+        return Response(content=data, media_type=content_type or "application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
+    if url.startswith("http"):
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
+                r = await http.get(url)
+            if r.status_code >= 400 or not r.content:
+                raise HTTPException(status_code=502, detail="Kargo etiketi indirilemedi.")
+            media = r.headers.get("content-type") or "application/pdf"
+            return Response(content=r.content, media_type=media.split(";")[0], headers={"Content-Disposition": f'inline; filename="{filename}"'})
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Kargo etiketi alınamadı: {e}")
+    raise HTTPException(status_code=404, detail="Pazaryeri veya oluşturulan kargo etiketi yok.")
 
 # ----------------- KARGO ENTEGRASYONLARI -----------------
 CARGO_CATALOG = [
