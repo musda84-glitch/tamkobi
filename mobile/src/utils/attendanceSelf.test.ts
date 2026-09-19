@@ -1,4 +1,4 @@
-import { earlyLeavePayload, validateEarlyLeave } from "./attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -12,5 +12,14 @@ describe("early leave request", () => {
     });
     expect(earlyLeavePayload("doktor", "9:05:00")).toEqual({ reason: "doktor", planned_time: "09:05" });
     expect(earlyLeavePayload("doktor", "")).toEqual({ reason: "doktor" });
+  });
+});
+
+describe("checkoutConfirmMessage", () => {
+  it("warns that checkout cannot be undone and mentions check-in when known", () => {
+    expect(checkoutConfirmMessage("12:25")).toContain("giriş 12:25");
+    expect(checkoutConfirmMessage("12:25")).toMatch(/geri alınamaz/);
+    expect(checkoutConfirmMessage("")).toMatch(/Yanlışlıkla bastıysanız vazgeçin/);
+    expect(checkoutConfirmMessage(null)).not.toContain("giriş");
   });
 });

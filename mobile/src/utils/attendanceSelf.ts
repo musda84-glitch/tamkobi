@@ -5,6 +5,14 @@ export function validateEarlyLeave(reason: string, plannedTime?: string): string
   return null;
 }
 
+/** Mesaim çıkış butonu: yanlışlıkla basılmasın diye ikinci adım metni. */
+export function checkoutConfirmMessage(checkIn?: string | null): string {
+  const giris = String(checkIn || "").trim();
+  return giris
+    ? `Bugünkü mesai kapatılacak (giriş ${giris}). Yanlışlıkla bastıysanız vazgeçin; çıkış geri alınamaz.`
+    : "Bugünkü mesai kapatılacak. Yanlışlıkla bastıysanız vazgeçin; çıkış geri alınamaz.";
+}
+
 export function earlyLeavePayload(reason: string, plannedTime?: string) {
   const planned = (plannedTime || "").trim();
   const hm = /^(\d{1,2}):(\d{2})/.exec(planned);

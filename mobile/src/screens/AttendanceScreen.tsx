@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 
 type AttendancePayload = {
@@ -41,6 +41,7 @@ export function AttendanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [earlyOpen, setEarlyOpen] = useState(false);
+  const [outConfirm, setOutConfirm] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
 
@@ -68,6 +69,7 @@ export function AttendanceScreen() {
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
+      if (action === "check_out") setOutConfirm(false);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -130,7 +132,26 @@ export function AttendanceScreen() {
         </Row>
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
-          <PrimaryButton title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"} onPress={() => act("check_out")} disabled={!checkedIn || checkedOut} testID="mesai-out" />
+          {outConfirm && checkedIn && !checkedOut ? (
+            <View testID="mesai-out-confirm" style={{ gap: 8 }}>
+              <Muted testID="mesai-out-confirm-text">{checkoutConfirmMessage(today?.check_in)}</Muted>
+              <PrimaryButton
+                title={busy === "check_out" ? "Kaydediliyor…" : "Çıkışı onayla"}
+                onPress={() => act("check_out")}
+                disabled={busy === "check_out"}
+                color={colors.danger}
+                testID="mesai-out-confirm-yes"
+              />
+              <PrimaryButton title="Vazgeç" onPress={() => setOutConfirm(false)} color={colors.secondary} testID="mesai-out-cancel" />
+            </View>
+          ) : (
+            <PrimaryButton
+              title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"}
+              onPress={() => setOutConfirm(true)}
+              disabled={!checkedIn || checkedOut}
+              testID="mesai-out"
+            />
+          )}
           {early?.status === "pending" ? (
             <View testID="mesai-early-pending" style={{ gap: 8 }}>
               <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
