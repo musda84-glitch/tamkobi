@@ -79,24 +79,19 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
         data-layout="sidebar"
       >
         <div className={`text-[9px] font-bold uppercase tracking-[0.14em] ${colors.label}`}>
-          Son güncelleme
+          Sürüm
         </div>
         {api === null ? (
           <div className={`text-[11px] font-mono ${colors.ok}`}>…</div>
         ) : (
           <>
-            <div className={`font-mono text-[11px] leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-sha">
+            <div className={`text-[13px] font-bold leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-version">
+              {card.version}
+            </div>
+            <div className={`font-mono text-[10px] leading-tight ${colors.meta}`} data-testid="build-stamp-sha">
               {card.sha || "—"}
-              {card.branch ? ` · ${card.branch}` : ""}
+              {card.builtAt ? ` · ${card.builtAt}` : card.branch ? ` · ${card.branch}` : ""}
             </div>
-            <div className={`text-[11px] leading-snug line-clamp-2 ${colors.msg}`} data-testid="build-stamp-message">
-              {card.message || "commit konusu yok"}
-            </div>
-            {card.builtAt ? (
-              <div className={`text-[10px] ${colors.meta}`} data-testid="build-stamp-built">
-                {card.builtAt}
-              </div>
-            ) : null}
             <div className={`text-[10px] leading-snug ${warn ? colors.warn : colors.ok}`} data-testid="build-stamp-status">
               {card.statusText}
             </div>

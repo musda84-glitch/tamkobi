@@ -11,6 +11,7 @@ def test_version_unauthenticated():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["service"] == "TamKobi API"
+    assert body.get("version")
     assert "git_sha" in body
     assert "git_sha_short" in body
     assert "git_message" in body

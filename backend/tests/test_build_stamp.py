@@ -22,6 +22,7 @@ def test_env_stamp_wins_over_git(monkeypatch):
     assert stamp["git_message"].startswith("Merge pull request #8")
     assert stamp["source"] == "env"
     assert stamp["service"] == "TamKobi API"
+    assert stamp["version"] == "2.0.0"
 
 
 def test_empty_env_falls_back_to_git(monkeypatch):
@@ -60,6 +61,7 @@ def test_no_git_and_no_env_is_unknown(monkeypatch):
     assert stamp["git_sha_short"] is None
     assert stamp["git_message"] is None
     assert stamp["source"] == "unknown"
+    assert stamp["version"] == "2.0.0"
 
 
 def test_short_sha_none():
@@ -75,6 +77,15 @@ def test_clean_message_collapses_and_truncates():
     cleaned = build_stamp.clean_message(long)
     assert cleaned.endswith("…")
     assert len(cleaned) == 160
+
+
+def test_env_version_override(monkeypatch):
+    monkeypatch.setenv("APP_VERSION", "2.1.0")
+    monkeypatch.setenv("APP_GIT_SHA", "deadbeef")
+    monkeypatch.setattr(build_stamp, "_git", lambda *a: "should-not-run")
+    stamp = build_stamp.read_stamp()
+    assert stamp["version"] == "2.1.0"
+    assert build_stamp.app_version() == "2.1.0"
 
 
 def test_rbac_skips_version_endpoint():

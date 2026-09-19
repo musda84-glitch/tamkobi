@@ -58,7 +58,8 @@ GIT_SHA_SHORT="$(git rev-parse --short HEAD)"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 GIT_MESSAGE="$(git log -1 --pretty=%s)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Dağıtılan sürüm: $GIT_SHA_SHORT ($GIT_BRANCH) — $GIT_MESSAGE"
+APP_VERSION="${APP_VERSION:-2.0.0}"
+echo "Dağıtılan sürüm: $APP_VERSION ($GIT_SHA_SHORT · $GIT_BRANCH) — $GIT_MESSAGE"
 
 echo "--- Backend bağımlılıkları"
 if [ ! -x "$ROOT/backend/venv/bin/python3" ]; then
@@ -101,6 +102,7 @@ if command -v yarn >/dev/null 2>&1; then
     REACT_APP_GIT_BRANCH="$GIT_BRANCH" \
     REACT_APP_GIT_MESSAGE="$GIT_MESSAGE" \
     REACT_APP_BUILD_TIME="$BUILD_TIME" \
+    REACT_APP_VERSION="$APP_VERSION" \
     yarn build
 elif command -v npm >/dev/null 2>&1; then
   npm install
@@ -109,6 +111,7 @@ elif command -v npm >/dev/null 2>&1; then
     REACT_APP_GIT_BRANCH="$GIT_BRANCH" \
     REACT_APP_GIT_MESSAGE="$GIT_MESSAGE" \
     REACT_APP_BUILD_TIME="$BUILD_TIME" \
+    REACT_APP_VERSION="$APP_VERSION" \
     npm run build
 else
   echo "HATA: yarn veya npm bulunamadı." >&2
@@ -155,7 +158,7 @@ fi
 mkdir -p "/etc/systemd/system/${UNIT}.service.d"
 # Commit konusu boşluk / tırnak içerir; systemd Environment= satırını
 # Python ile kaçırıyoruz (ham heredoc boşlukta kesilir).
-export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME UNIT
+export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME APP_VERSION UNIT
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -177,7 +180,8 @@ dropin.mkdir(parents=True, exist_ok=True)
     f'Environment="APP_GIT_SHA={esc(os.environ.get("GIT_SHA", ""))}"\n'
     f'Environment="APP_GIT_BRANCH={esc(os.environ.get("GIT_BRANCH", ""))}"\n'
     f'Environment="APP_GIT_MESSAGE={esc(msg)}"\n'
-    f'Environment="APP_BUILD_TIME={esc(os.environ.get("BUILD_TIME", ""))}"\n',
+    f'Environment="APP_BUILD_TIME={esc(os.environ.get("BUILD_TIME", ""))}"\n'
+    f'Environment="APP_VERSION={esc(os.environ.get("APP_VERSION", "2.0.0"))}"\n',
     encoding="utf-8",
 )
 print(f"stamp.conf → {dropin / 'stamp.conf'}")

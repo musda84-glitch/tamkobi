@@ -10564,7 +10564,7 @@ app.include_router(data_sync.router)
 @app.get("/")
 async def root():
     stamp = read_stamp()
-    return {"status": "healthy", "service": "TamKobi API", "version": "2.0.0", "git_sha": stamp.get("git_sha_short")}
+    return {"status": "healthy", "service": "TamKobi API", "version": stamp.get("version") or "2.0.0", "git_sha": stamp.get("git_sha_short")}
 
 
 @app.get("/api/version")

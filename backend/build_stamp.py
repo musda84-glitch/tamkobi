@@ -15,7 +15,9 @@ _ENV_SHA = "APP_GIT_SHA"
 _ENV_BRANCH = "APP_GIT_BRANCH"
 _ENV_BUILT = "APP_BUILD_TIME"
 _ENV_MESSAGE = "APP_GIT_MESSAGE"
+_ENV_VERSION = "APP_VERSION"
 _MESSAGE_MAX = 160
+DEFAULT_VERSION = "2.0.0"
 
 
 def _env(name: str) -> str:
@@ -57,6 +59,10 @@ def clean_message(raw: Optional[str]) -> Optional[str]:
     return text
 
 
+def app_version() -> str:
+    return _env(_ENV_VERSION) or DEFAULT_VERSION
+
+
 def read_stamp() -> Dict[str, Any]:
     env_sha = _env(_ENV_SHA)
     sha = env_sha or _git("rev-parse", "HEAD")
@@ -71,6 +77,7 @@ def read_stamp() -> Dict[str, Any]:
         source = "unknown"
     return {
         "service": "TamKobi API",
+        "version": app_version(),
         "git_sha": sha or None,
         "git_sha_short": short_sha(sha),
         "git_branch": branch or None,
