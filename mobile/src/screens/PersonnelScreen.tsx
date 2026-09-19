@@ -1,7 +1,7 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post } from "../api/client";
+import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -26,9 +26,16 @@ import {
   payrollStatusTr,
   remainingDue,
   unpaidPayrollTotal,
+  assignEmployeeToTasks,
+  overtimePayload,
+  projectSelectGroups,
+  taskSelectGroups,
   validateAdvance,
   validateEmployee,
+  validateIsoDate,
   validateLeave,
+  validateOvertime,
+  validateTaskAssign,
   type AttendancePayload,
   type AttendanceSummary,
   type Employee,
@@ -37,6 +44,7 @@ import {
   type EmployeeDraft,
   type LeaveRequest,
   type Payroll,
+  type ProjectWithTasks,
   type SalaryCalc,
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount } from "../utils/finance";
@@ -70,6 +78,15 @@ export function PersonnelScreen() {
   const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
   const [calcAmount, setCalcAmount] = useState("50000");
   const [calc, setCalc] = useState<SalaryCalc | null>(null);
+  const [otEmp, setOtEmp] = useState<Employee | null>(null);
+  const [otHours, setOtHours] = useState("");
+  const [otDate, setOtDate] = useState(todayIso());
+  const [otNote, setOtNote] = useState("");
+  const [taskEmp, setTaskEmp] = useState<Employee | null>(null);
+  const [projects, setProjects] = useState<ProjectWithTasks[]>([]);
+  const [taskProjectId, setTaskProjectId] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -182,6 +199,67 @@ export function PersonnelScreen() {
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Avans kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openOvertime = (emp: Employee) => {
+    setOtEmp(emp);
+    setOtHours("");
+    setOtDate(todayIso());
+    setOtNote("");
+  };
+
+  const saveOvertime = async () => {
+    if (!otEmp) return;
+    const invalid = validateOvertime(otHours) || validateIsoDate(otDate);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote));
+      setOtEmp(null);
+      setMessage(r?.message || `${otEmp.full_name} için fazla mesai yazıldı.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fazla mesai yazılamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openTaskAssign = async (emp: Employee) => {
+    setTaskEmp(emp);
+    setTaskProjectId("");
+    setTaskId("");
+    setTaskTitle("");
+    setBusy(true);
+    try {
+      const rows = await get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 });
+      setProjects(rows || []);
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Projeler yüklenemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTaskAssign = async () => {
+    if (!taskEmp) return;
+    const invalid = validateTaskAssign(taskProjectId, taskId, taskTitle);
+    if (invalid) { setError(invalid); return; }
+    const project = projects.find((p) => idOf(p) === taskProjectId);
+    if (!project) { setError("Proje bulunamadı."); return; }
+    const next = assignEmployeeToTasks(project.tasks, taskEmp, { taskId, title: taskTitle });
+    if (next.error) { setError(next.error); return; }
+    setBusy(true);
+    try {
+      await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
+      setTaskEmp(null);
+      setMessage(`${taskEmp.full_name} ${project.name || "projeye"} atandı.`);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
     } finally {
       setBusy(false);
     }
@@ -320,6 +398,8 @@ export function PersonnelScreen() {
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     <PayChip title="Avans" color="#B45309" bg={colors.amber50} testID={`emp-card-advance-btn-${eid}`} onPress={() => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); }} />
                     <PayChip title="Maaş öde" color={colors.primaryHover} bg={colors.emerald50} testID={`emp-card-salary-btn-${eid}`} onPress={() => openSalaryPay(emp)} />
+                    <PayChip title="Göreve ata" color={colors.indigo} bg={colors.indigo50} testID={`emp-card-task-btn-${eid}`} onPress={() => openTaskAssign(emp)} />
+                    <PayChip title="+ Mesai" color="#6D28D9" bg={colors.indigo50} testID={`emp-card-ot-btn-${eid}`} onPress={() => openOvertime(emp)} />
                   </View>
                 ) : null}
               </Card>
@@ -510,6 +590,48 @@ export function PersonnelScreen() {
           emptyLabel="Hesap seçin"
         />
         <PrimaryButton title="Ödemeyi tamamla" testID="confirm-salary-pay-btn" loading={busy} onPress={paySalary} />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!otEmp}
+        title="+ Mesai yaz"
+        subtitle={otEmp ? `${otEmp.full_name} · beklenen çıkış mesai bitişi + atanan saat` : undefined}
+        onClose={() => setOtEmp(null)}
+        testID="overtime-assign-sheet"
+      >
+        <Field label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} placeholder="YYYY-MM-DD" />
+        <Field label="Saat" testID="ot-hours-input" value={otHours} onChangeText={setOtHours} keyboardType="numeric" placeholder="Örn: 2" />
+        <Field label="Not" testID="ot-note-input" value={otNote} onChangeText={setOtNote} placeholder="Opsiyonel" />
+        <PrimaryButton title="Mesaiyi kaydet" testID="ot-save-btn" color={colors.indigo} loading={busy} onPress={saveOvertime} />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!taskEmp}
+        title="Göreve ata"
+        subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
+        onClose={() => setTaskEmp(null)}
+        testID="task-assign-sheet"
+      >
+        <GroupedSelect
+          label="Proje"
+          testID="task-project-select"
+          value={taskProjectId}
+          onChange={(v) => { setTaskProjectId(v); setTaskId(""); }}
+          groups={projectSelectGroups(projects)}
+          emptyLabel="Proje seçin"
+        />
+        <GroupedSelect
+          label="Mevcut görev"
+          testID="task-existing-select"
+          value={taskId}
+          onChange={setTaskId}
+          groups={taskSelectGroups(projects.find((p) => idOf(p) === taskProjectId)?.tasks)}
+          emptyLabel="Yeni görev yaz"
+        />
+        {!taskId ? (
+          <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
+        ) : null}
+        <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
       </B2BSheet>
     </Screen>
   );

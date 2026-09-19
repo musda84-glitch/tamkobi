@@ -271,6 +271,134 @@ export function advancePayload(employeeId: string, amount: string, period: strin
   };
 }
 
+export function validateOvertime(hours: string): string | null {
+  if (!String(hours || "").trim()) return "Mesai saati girin.";
+  const n = num(hours);
+  if (!(n > 0)) return "Mesai saati 0'dan büyük olmalı.";
+  return null;
+}
+
+export function validateIsoDate(date: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || "").trim())) return "Tarih YYYY-AA-GG formatında olmalı.";
+  return null;
+}
+
+export function overtimePayload(employeeId: string, date: string, hours: string, note: string) {
+  return {
+    employee_id: employeeId,
+    date: date.trim(),
+    hours: Math.round(num(hours) * 100) / 100,
+    note: note.trim(),
+  };
+}
+
+export type ProjectTask = {
+  id?: string;
+  title?: string;
+  name?: string;
+  done?: boolean;
+  status?: string;
+  assignee_id?: string | null;
+  assignee_name?: string | null;
+};
+
+export type ProjectWithTasks = {
+  id?: string;
+  _id?: string;
+  name?: string;
+  project_number?: string;
+  status?: string;
+  tasks?: ProjectTask[];
+};
+
+export function newTaskId(now = Date.now(), rand = Math.random().toString(36).slice(2, 7)): string {
+  return `t_${now}_${rand}`;
+}
+
+export function normalizeProjectTasks(tasks?: ProjectTask[] | null): ProjectTask[] {
+  return (tasks || [])
+    .map((t, i) => ({
+      id: t.id || `t_${i}`,
+      title: (t.title || t.name || "").trim(),
+      done: !!(t.done || t.status === "done" || t.status === "completed"),
+      assignee_id: t.assignee_id || null,
+      assignee_name: t.assignee_name || null,
+    }))
+    .filter((t) => t.title);
+}
+
+export function assignEmployeeToTasks(
+  tasks: ProjectTask[] | undefined,
+  employee: Pick<Employee, "id" | "_id" | "full_name">,
+  opts: { taskId?: string; title?: string; newId?: string },
+): { tasks: ProjectTask[]; error: string | null } {
+  const empId = idOf(employee);
+  const empName = employee.full_name || "Personel";
+  const existing = normalizeProjectTasks(tasks);
+  if (opts.taskId) {
+    const idx = existing.findIndex((t) => t.id === opts.taskId);
+    if (idx < 0) return { tasks: existing, error: "Görev bulunamadı." };
+    return {
+      tasks: existing.map((t, i) => (i === idx ? { ...t, assignee_id: empId, assignee_name: empName } : t)),
+      error: null,
+    };
+  }
+  const title = (opts.title || "").trim();
+  if (!title) return { tasks: existing, error: "Görev adı girin." };
+  return {
+    tasks: [...existing, {
+      id: opts.newId || newTaskId(),
+      title,
+      done: false,
+      assignee_id: empId,
+      assignee_name: empName,
+    }],
+    error: null,
+  };
+}
+
+export function validateTaskAssign(projectId: string, taskId: string, title: string): string | null {
+  if (!projectId) return "Proje seçin.";
+  if (!taskId && !title.trim()) return "Görev seçin veya yeni görev adı girin.";
+  return null;
+}
+
+export function projectSelectGroups(projects: ProjectWithTasks[]) {
+  return [{
+    label: "Projeler",
+    options: (projects || []).map((p) => ({
+      value: idOf(p),
+      label: `${p.name || "Proje"}${p.project_number ? ` · ${p.project_number}` : ""}`,
+    })),
+  }];
+}
+
+export function taskSelectGroups(tasks?: ProjectTask[] | null) {
+  const rows = normalizeProjectTasks(tasks);
+  const open = rows.filter((t) => !t.done);
+  const done = rows.filter((t) => t.done);
+  const groups: { label: string; options: { value: string; label: string }[] }[] = [];
+  if (open.length) {
+    groups.push({
+      label: "Açık görevler",
+      options: open.map((t) => ({
+        value: t.id || "",
+        label: t.assignee_name ? `${t.title} · ${t.assignee_name}` : String(t.title || ""),
+      })),
+    });
+  }
+  if (done.length) {
+    groups.push({
+      label: "Tamamlanan",
+      options: done.map((t) => ({
+        value: t.id || "",
+        label: String(t.title || ""),
+      })),
+    });
+  }
+  return groups;
+}
+
 export function payrollBreakdown(p: Payroll): string {
   const bits: string[] = [];
   if ((p.overtime_pay || 0) > 0) bits.push(`+${p.overtime_pay} ₺ mesai${p.overtime_hours ? ` (${p.overtime_hours} sa)` : ""}`);
