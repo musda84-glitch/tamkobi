@@ -98,6 +98,7 @@ class Contact(BaseDocument):
     kvkk_accepted: bool = False
     kvkk_accepted_at: Optional[str] = None
     legal_accept: Optional[Dict[str, Any]] = None
+    logo_url: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Stok & Ürünler
