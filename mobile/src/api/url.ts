@@ -72,3 +72,21 @@ export function fileUrl(base: string, url?: string | null): string {
   if (raw.startsWith("api/")) return `${origin}/${raw}`;
   return `${apiRoot(base)}/files/${raw.replace(/^\/+/, "")}`;
 }
+
+/**
+ * Web önizlemede /api/files same-origin kalsın (Metro proxy).
+ * CDN / data / blob adreslerine dokunulmaz.
+ */
+export function displayFileUrl(base: string, url?: string | null, sameOrigin = false): string {
+  const absolute = fileUrl(base, url);
+  if (!absolute || !sameOrigin) return absolute;
+  try {
+    const parsed = new URL(absolute);
+    if (parsed.pathname.startsWith("/api/") || parsed.pathname.startsWith("/files/")) {
+      return `${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    /* keep absolute */
+  }
+  return absolute;
+}

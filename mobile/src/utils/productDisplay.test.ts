@@ -5,6 +5,9 @@ describe("productDisplay", () => {
     expect(productImage({ thumbnail_url: "t.jpg", image_url: "m.jpg", images: ["g.jpg"] })).toBe("t.jpg");
     expect(productImage({ image_url: "m.jpg", images: ["g.jpg"] })).toBe("m.jpg");
     expect(productImage({ images: ["", "g.jpg"] })).toBe("g.jpg");
+    expect(productImage({ images: [{ url: "/api/files/x.jpg" }] as unknown as string[] })).toBe("/api/files/x.jpg");
+    expect(productImage({ images: [{ image_url: "g.jpg" }] as unknown as string[] })).toBe("g.jpg");
+    expect(productImage({ image: "cover.jpg" })).toBe("cover.jpg");
     expect(productImage({})).toBe("");
   });
 
