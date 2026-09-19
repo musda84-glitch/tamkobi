@@ -479,26 +479,29 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 </Pressable>
               ) : null}
             </Row>
-            <Field
-              label={it.is_service ? "Hizmet adı" : "Stok / kalem adı"}
-              testID={`inv-item-name-${idx}`}
-              value={it.name}
-              onChangeText={(v) => patchLine(idx, "name", v)}
-            />
-            <Row>
-              <View style={{ flex: 1 }}>
-                <Field label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
+            <Row style={{ alignItems: "flex-start", gap: 6 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Field
+                  compact
+                  label={it.is_service ? "Hizmet adı" : "Ad"}
+                  testID={`inv-item-name-${idx}`}
+                  value={it.name}
+                  onChangeText={(v) => patchLine(idx, "name", v)}
+                />
               </View>
-              <View style={{ flex: 1 }}>
-                <Field label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
+              <View style={{ width: 56 }}>
+                <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
+              </View>
+              <View style={{ width: 84 }}>
+                <Field compact label="Fiyat" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
-            <Row>
+            <Row style={{ alignItems: "flex-start", gap: 6 }}>
               <View style={{ flex: 1 }}>
-                <Field label="Birim (KDV'siz)" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
+                <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
               <View style={{ flex: 1 }}>
-                <Field label="Birim (KDV'li)" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
+                <Field compact label="KDV'li" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
             <Row>

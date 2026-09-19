@@ -87,14 +87,14 @@ export function PrimaryButton({
   );
 }
 
-export function Field(props: TextInputProps & { label: string; testID?: string }) {
-  const { label, style, ...rest } = props;
+export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean }) {
+  const { label, style, compact, ...rest } = props;
   return (
-    <View style={{ marginBottom: spacing.md }}>
+    <View style={{ marginBottom: compact ? 0 : spacing.md }}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         placeholderTextColor={colors.muted}
-        style={[styles.input, style]}
+        style={[styles.input, compact && styles.inputCompact, style]}
         {...rest}
       />
     </View>
@@ -228,6 +228,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.text,
     backgroundColor: "#fff",
+  },
+  inputCompact: {
+    minHeight: 40,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 14,
   },
   empty: { alignItems: "center", paddingVertical: 24, gap: 6 },
   emptyTitle: { fontWeight: "700", color: colors.text },
