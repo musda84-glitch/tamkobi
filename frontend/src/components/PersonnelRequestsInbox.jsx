@@ -23,14 +23,17 @@ export function EmployeeRequestChips({
   onDecideEarly,
   onDecideAdvance,
   onViewDispute,
+  maxVisible = 3,
 }) {
   if (!items?.length) return null;
+  const shown = items.slice(0, maxVisible);
+  const extra = items.length - shown.length;
   return (
     <div className="space-y-1.5 pt-2 border-t border-amber-100" data-testid={testId}>
       <div className="flex items-center gap-1 text-[10px] font-bold text-amber-800 uppercase tracking-wide">
         <Bell className="w-3 h-3" /> Talepler ({items.length})
       </div>
-      {items.map((it) => {
+      {shown.map((it) => {
         const meta = KIND_META[it.kind] || KIND_META.leave;
         const Icon = meta.Icon;
         const busy = busyId === it.id;
@@ -85,6 +88,11 @@ export function EmployeeRequestChips({
           </div>
         );
       })}
+      {extra > 0 && (
+        <div className="text-[10px] text-amber-800 font-semibold" data-testid={`${testId}-more`}>
+          +{extra} talep daha — üstteki Personel Talepleri kutusundan bakın
+        </div>
+      )}
     </div>
   );
 }
