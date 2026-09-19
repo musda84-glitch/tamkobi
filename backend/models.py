@@ -604,6 +604,7 @@ class Employee(BaseDocument):
     status: str = "active"  # active, on_leave, terminated
     annual_leave_days: int = 14
     used_leave_days: int = 0
+    photo_url: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class Payroll(BaseDocument):

@@ -150,8 +150,22 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
         <div className="flex items-start justify-between p-5 border-b gap-3">
-          <div className="flex items-center gap-3 min-w-0"><div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-lg shrink-0">{e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
-            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">Başlangıç: {e.start_date} · TCKN: {e.tc_kimlik}</div></div></div>
+          <div className="flex items-center gap-3 min-w-0">
+            <label className="relative w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-lg shrink-0 overflow-hidden cursor-pointer" title="Fotoğraf yükle" data-testid="emp-card-photo">
+              {e.photo_url ? <img src={resolveImageUrl(e.photo_url)} alt="" className="w-full h-full object-cover" /> : (e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("") || "?")}
+              <input type="file" accept="image/*" className="hidden" onChange={async (ev) => {
+                const raw = ev.target.files?.[0]; ev.target.value = ""; if (!raw) return;
+                try {
+                  const file = await compressImageFile(raw);
+                  const fd = new FormData(); fd.append("file", file);
+                  const r = await axios.post(`${API_URL}/files/upload?entity=employee_photo&entity_id=${encodeURIComponent(id)}&company_id=${encodeURIComponent(companyId)}`, fd);
+                  toast.success(r.data?.saved_pct ? `Fotoğraf yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Fotoğraf yüklendi.");
+                  reload(); onChanged?.();
+                } catch (err) { toast.error(err.response?.data?.detail || "Fotoğraf yüklenemedi."); }
+              }} data-testid="emp-card-photo-input" />
+            </label>
+            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">Başlangıç: {e.start_date} · TCKN: {e.tc_kimlik}</div></div>
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
             <button type="button" onClick={() => setQuickPay("advance")} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
             <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>

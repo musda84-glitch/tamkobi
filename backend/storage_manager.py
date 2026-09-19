@@ -44,6 +44,8 @@ _AREA_BY_ENTITY.update({
     "products": "products",
     "expense": "expenses",
     "employee": "employees",
+    "employee_photo": "employees",
+    "personnel_photo": "employees",
     "support": "support",
     "support_ticket": "support",
     "quote": "quotes",

@@ -4,6 +4,8 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { printPayslip } from "../utils/payslip";
 import { toast } from "sonner";
+import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
@@ -34,6 +36,8 @@ import {
   ClipboardList,
   Timer,
   Bell,
+  Upload,
+  Image as ImageIcon,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -73,6 +77,7 @@ export default function PersonnelPage() {
     email: "",
     salary: 35000,
     start_date: new Date().toISOString().split("T")[0],
+    photo_url: "",
   };
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
 
@@ -92,12 +97,30 @@ export default function PersonnelPage() {
       email: emp.email || "",
       salary: emp.salary ?? 0,
       start_date: emp.start_date || new Date().toISOString().split("T")[0],
+      photo_url: emp.photo_url || "",
     });
     setShowAddModal(true);
   };
   const closeEmployeeModal = () => {
     setShowAddModal(false);
     setEditingEmp(null);
+  };
+
+  const uploadEmployeePhoto = async (e) => {
+    const raw = e.target.files?.[0];
+    e.target.value = "";
+    if (!raw) return;
+    try {
+      const file = await compressImageFile(raw);
+      const fd = new FormData();
+      fd.append("file", file);
+      const eid = editingEmp?.id || editingEmp?._id || "";
+      const r = await axios.post(`${API_URL}/files/upload?entity=employee_photo&entity_id=${encodeURIComponent(eid)}&company_id=${encodeURIComponent(companyId)}`, fd);
+      setNewEmployee((prev) => ({ ...prev, photo_url: r.data.url }));
+      toast.success(r.data?.saved_pct ? `Fotoğraf yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Fotoğraf yüklendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Fotoğraf yüklenemedi.");
+    }
   };
 
   const loadPersonnelData = useCallback(async () => {
@@ -388,10 +411,15 @@ export default function PersonnelPage() {
           >
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
+                    {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
                   <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {empReqs.length > 0 && (
@@ -628,6 +656,18 @@ export default function PersonnelPage() {
               </button>
             </div>
             <form onSubmit={handleSaveEmployee} className="space-y-3 text-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-16 h-16 rounded-2xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0" data-testid="employee-photo-preview">
+                  {newEmployee.photo_url ? <img src={resolveImageUrl(newEmployee.photo_url)} alt="" className="w-full h-full object-cover" /> : <ImageIcon className="w-7 h-7 text-slate-300" />}
+                </div>
+                <div className="space-y-1">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold">
+                    <Upload className="w-3.5 h-3.5" /> Fotoğraf Yükle
+                    <input type="file" accept="image/*" className="hidden" onChange={uploadEmployeePhoto} data-testid="employee-photo-input" />
+                  </label>
+                  {newEmployee.photo_url ? <button type="button" onClick={() => setNewEmployee({ ...newEmployee, photo_url: "" })} className="block text-[11px] text-slate-500 hover:text-rose-600 font-semibold" data-testid="employee-photo-clear">Fotoğrafı kaldır</button> : <p className="text-[11px] text-slate-500">Personel kartında görünür.</p>}
+                </div>
+              </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Ad Soyad</label>
                 <input

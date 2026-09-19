@@ -16,6 +16,9 @@ ADMIN_PW = os.environ.get("TEST_ADMIN_PASSWORD", "admin123")
 def test_area_for_entity_aliases():
     assert sm.area_for_entity("product") == "products"
     assert sm.area_for_entity("products") == "products"
+    assert sm.area_for_entity("employee") == "employees"
+    assert sm.area_for_entity("employee_photo") == "employees"
+    assert sm.area_for_entity("personnel_photo") == "employees"
     assert sm.area_for_entity("quote") == "quotes"
     assert sm.area_for_entity("purchase_invoice") == "purchase_invoices"
     assert sm.area_for_entity("unknown_x") == "misc"
