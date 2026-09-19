@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -11,6 +12,7 @@ import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
+import { pendingSevkCount, type PickRow } from "../utils/orderPick";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
@@ -53,18 +55,16 @@ export function HomeScreen() {
         get<{ count?: number }>(client, "/personnel/pending-requests", { company_id: companyId }).catch(() => null),
         get<{ groups?: { key?: string; count?: number }[] }>(client, "/dashboard/ops-alerts", { company_id: companyId }).catch(() => null),
         get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
-        get<unknown[]>(client, "/order-picks", { company_id: companyId }).catch(() => []),
+        get<PickRow[]>(client, "/order-picks", { company_id: companyId }).catch(() => []),
       ]);
       const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
       const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
-      const pickMissing = Number((ov?.tasks || []).find((t) => t.key === "pick_missing")?.count || 0);
-      const opsPick = Number((ops?.groups || []).find((g) => g.key === "pick_missing")?.count || 0);
       setOverview(ov);
       setNotes(visibleNotifications(list || [], user));
       setStats(st);
       setLiveBadges({
         orders: Math.max(pendingOrders, newOrders),
-        sevk: Math.max(Array.isArray(picks) ? picks.length : 0, pickMissing, opsPick),
+        sevk: pendingSevkCount({ picks, tasks: ov?.tasks, ops: ops?.groups }),
         personnel: Number(pending?.count || 0),
         banking: Array.isArray(unmatched) ? unmatched.length : 0,
       });
@@ -76,7 +76,7 @@ export function HomeScreen() {
     }
   }, [client, companyId, user]);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openNotification = useCallback((n: Notification) => {
     const id = idOf(n);

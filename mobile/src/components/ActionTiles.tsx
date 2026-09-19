@@ -49,10 +49,32 @@ export function ActionTiles({
             style={({ pressed }) => ({
               width,
               padding: 4,
+              position: "relative",
+              overflow: "visible",
               opacity: item.disabled ? 0.45 : pressed ? 0.85 : 1,
               transform: [{ scale: pressed ? 0.97 : 1 }],
             })}
           >
+            {item.badge ? (
+              <View
+                testID={item.testID ? `${item.testID}-badge` : undefined}
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: 2,
+                  zIndex: 2,
+                  minWidth: 20,
+                  paddingHorizontal: 6,
+                  paddingVertical: 2,
+                  borderRadius: 999,
+                  backgroundColor: colors.danger,
+                  borderWidth: 2,
+                  borderColor: "#fff",
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800", textAlign: "center" }}>{item.badge}</Text>
+              </View>
+            ) : null}
             <View
               style={{
                 backgroundColor: tone.bg,
@@ -64,6 +86,7 @@ export function ActionTiles({
                 alignItems: "center",
                 gap: s.gap,
                 minHeight: s.minHeight,
+                overflow: "visible",
                 ...Platform.select({
                   web: { boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)" },
                   default: {
@@ -101,11 +124,6 @@ export function ActionTiles({
               <Text style={{ fontWeight: "800", color: colors.text, fontSize: s.font, textAlign: "center" }} numberOfLines={2}>
                 {item.label}
               </Text>
-              {item.badge ? (
-                <View testID={item.testID ? `${item.testID}-badge` : undefined} style={{ position: "absolute", top: 6, right: 6, minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.danger }}>
-                  <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800", textAlign: "center" }}>{item.badge}</Text>
-                </View>
-              ) : null}
             </View>
           </Pressable>
         );

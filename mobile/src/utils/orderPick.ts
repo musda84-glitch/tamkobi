@@ -95,6 +95,35 @@ export function canShip(progress?: PickProgress | null): boolean {
   return !!progress?.complete;
 }
 
+const DONE_SEVK = new Set(["shipped", "completed", "cancelled", "returned", "partially_returned", "delivered"]);
+
+/** Toplanmamış / sevk edilmemiş sipariş. */
+export function isPendingSevk(row?: { pick_status?: string; order_status?: string } | null): boolean {
+  if (!row) return false;
+  const pick = String(row.pick_status || "").toLowerCase();
+  const order = String(row.order_status || "").toLowerCase();
+  if (DONE_SEVK.has(pick) || DONE_SEVK.has(order)) return false;
+  return true;
+}
+
+export function pendingPickCount(rows?: Array<{ pick_status?: string; order_status?: string }> | null): number {
+  return (rows || []).filter(isPendingSevk).length;
+}
+
+/** Ana ekran Depo Sevkiyat rozeti: bekleyen toplama + depo bildirimleri. */
+export function pendingSevkCount(input: {
+  picks?: Array<{ pick_status?: string; order_status?: string }> | null;
+  tasks?: Array<{ key?: string; path?: string; count?: number }> | null;
+  ops?: Array<{ key?: string; path?: string; count?: number }> | null;
+}): number {
+  const picks = pendingPickCount(input.picks);
+  const fromPath = (rows?: Array<{ key?: string; path?: string; count?: number }> | null) =>
+    (rows || [])
+      .filter((t) => t.key === "pick_missing" || String(t.path || "").includes("/sevk"))
+      .reduce((sum, t) => sum + (Number(t.count) || 0), 0);
+  return Math.max(picks, fromPath(input.tasks), fromPath(input.ops));
+}
+
 export function adjustPayload(line: PickLine, nextQty: number) {
   const ordered = num(line.ordered_qty);
   return {
