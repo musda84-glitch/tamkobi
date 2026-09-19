@@ -6090,6 +6090,16 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         bal_note = f" Güncel bakiye: {float(bank_balance):,.2f} ₺."
     elif balance_delta:
         bal_note = f" Bakiye farkı: {balance_delta:+,.2f} ₺."
+    if inserted:
+        import notify as _notify
+        await db.notifications.insert_one(_notify.notification_doc(
+            doc["company_id"], "bank_sync",
+            f"{inserted} yeni banka hareketi",
+            f"{acc.get('account_name') or 'Hesap'}: {inserted} eşleşmemiş hareket geldi.{bal_note}",
+            link="/banking",
+            ref_type="bank",
+            ref_id=str(acc.get("_id") or ""),
+        ))
     return {
         "status": "success",
         "simulated": result["simulated"],

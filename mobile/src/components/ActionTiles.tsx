@@ -102,7 +102,7 @@ export function ActionTiles({
                 {item.label}
               </Text>
               {item.badge ? (
-                <View style={{ position: "absolute", top: 6, right: 6, minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.danger }}>
+                <View testID={item.testID ? `${item.testID}-badge` : undefined} style={{ position: "absolute", top: 6, right: 6, minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.danger }}>
                   <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800", textAlign: "center" }}>{item.badge}</Text>
                 </View>
               ) : null}

@@ -20,6 +20,7 @@ TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "b2b_order": ("admin", "manager", "sales"),
     "quote_response": ("admin", "manager", "sales"),
     "cash_approval": ("admin", "manager", "accountant"),
+    "bank_sync": ("admin", "manager", "accountant"),
     "license": ("admin",),
 }
 
