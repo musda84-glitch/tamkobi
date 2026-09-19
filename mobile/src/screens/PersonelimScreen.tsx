@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post } from "../api/client";
+import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
+import { advanceRequestPayload, validateAdvance } from "../utils/personnel";
 
 type TabId = "ozet" | "alacak" | "gorevler" | "emirler" | "mesai";
 
@@ -37,7 +38,7 @@ type PersonelimPayload = {
   leaves?: { id?: string; _id?: string; type?: string; start_date?: string; end_date?: string; days?: number; status?: string; reason?: string }[];
   leave_balance?: { annual?: number; used?: number; remaining?: number; pending?: number } | null;
   payrolls?: { id?: string; _id?: string; period?: string; status?: string; net_salary?: number; final_payable?: number; overtime_pay?: number; overtime_hours?: number; second_salary?: number }[];
-  bonuses?: { id?: string; _id?: string; type?: string; amount?: number; status?: string; period?: string; note?: string }[];
+  bonuses?: { id?: string; _id?: string; type?: string; amount?: number; status?: string; period?: string; note?: string; source?: string }[];
   balance?: {
     remaining?: number;
     unpaid_payroll?: number;
@@ -107,6 +108,9 @@ export function PersonelimScreen() {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [leaveBusy, setLeaveBusy] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
+  const [advanceBusy, setAdvanceBusy] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -134,6 +138,7 @@ export function PersonelimScreen() {
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
   const leaves = data?.leaves || [];
+  const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
 
   const submitLeave = async () => {
     setLeaveBusy(true);
@@ -155,6 +160,62 @@ export function PersonelimScreen() {
       setLeaveBusy(false);
     }
   };
+
+  const submitAdvance = async () => {
+    const invalid = validateAdvance(advanceAmount);
+    if (invalid) { setError(invalid); return; }
+    setAdvanceBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/bonuses/self", advanceRequestPayload(advanceAmount, advanceNote, month));
+      setMessage(r?.message || "Avans talebi gönderildi.");
+      setAdvanceAmount("");
+      setAdvanceNote("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Avans talebi gönderilemedi."));
+    } finally {
+      setAdvanceBusy(false);
+    }
+  };
+
+  const cancelAdvance = async (id: string) => {
+    setAdvanceBusy(true);
+    setError(null);
+    try {
+      const r = await del<{ message?: string }>(client, `/personnel/bonuses/self/${id}`);
+      setMessage(r?.message || "Talep iptal edildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Talep iptal edilemedi."));
+    } finally {
+      setAdvanceBusy(false);
+    }
+  };
+
+  const advanceForm = (
+    <Card testID="personelim-advance-form">
+      <Muted>AVANS TALEBİ</Muted>
+      {pendingAdvance ? (
+        <View style={{ gap: 8 }} testID="personelim-advance-pending">
+          <Muted>Bekleyen talep: {fmtMoney(pendingAdvance.amount)}{pendingAdvance.note ? ` · ${pendingAdvance.note}` : ""}</Muted>
+          <PrimaryButton
+            title={advanceBusy ? "İptal ediliyor…" : "Talebi iptal et"}
+            onPress={() => cancelAdvance(idOf(pendingAdvance))}
+            color={colors.danger}
+            testID="personelim-advance-cancel"
+          />
+        </View>
+      ) : (
+        <>
+          <Field label="Tutar (₺)" testID="personelim-advance-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
+          <Field label="Açıklama" testID="personelim-advance-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="İsteğe bağlı" />
+          <PrimaryButton title={advanceBusy ? "Gönderiliyor…" : "Avans talep et"} onPress={submitAdvance} disabled={advanceBusy} color="#D97706" testID="personelim-advance-submit" />
+        </>
+      )}
+    </Card>
+  );
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -230,6 +291,7 @@ export function PersonelimScreen() {
             <Field label="Açıklama" testID="personelim-leave-reason" value={reason} onChangeText={setReason} placeholder="İsteğe bağlı" />
             <PrimaryButton title={leaveBusy ? "Gönderiliyor…" : "İzin talep et"} onPress={submitLeave} disabled={leaveBusy || !startDate} testID="personelim-leave-submit" />
           </Card>
+          {advanceForm}
           {leaves.slice(0, 8).map((l) => (
             <ListRow
               key={idOf(l) || `${l.start_date}-${l.end_date}`}
@@ -255,6 +317,7 @@ export function PersonelimScreen() {
             <Kpi label="Yemek alacağı" value={fmtMoney(bal?.meal_due)} />
             <Kpi label="Yol alacağı" value={fmtMoney(bal?.transport_due)} />
           </Row>
+          {advanceForm}
           <Card>
             <Text style={{ fontWeight: "800", color: colors.text }}>Bordrolar</Text>
             {!payrolls.length ? <Muted>Bordro kaydı yok.</Muted> : payrolls.map((p) => (

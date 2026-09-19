@@ -6895,6 +6895,24 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "link": "/personnel?tab=attendance",
             "meta": {"date": att.get("date"), "dispute_note": att.get("dispute_note")},
         })
+    advances = await db.bonus_payments.find({
+        "company_id": company_id, "type": "advance", "source": "self", "status": "pending",
+    }).sort("created_at", -1).to_list(200)
+    for adv in advances:
+        amt = adv.get("amount") or 0
+        items.append({
+            "kind": "advance",
+            "id": adv.get("_id") or adv.get("id"),
+            "employee_id": adv.get("employee_id"),
+            "employee_name": adv.get("employee_name") or "—",
+            "title": "Avans talebi",
+            "detail": f"{float(amt):,.2f} ₺"
+                      + (f" · {adv.get('period')}" if adv.get("period") else "")
+                      + (f" · {adv.get('note')}" if adv.get("note") else ""),
+            "created_at": adv.get("created_at") or "",
+            "link": "/personnel?tab=payroll",
+            "meta": {"amount": amt, "period": adv.get("period"), "note": adv.get("note")},
+        })
     items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return {"count": len(items), "items": items}
 
@@ -7053,6 +7071,20 @@ async def create_bonus(req: Dict[str, Any]):
            "status": status_val, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.bonus_payments.insert_one(doc)
     return clean_doc(doc)
+
+@api_router.post("/personnel/bonuses/{bonus_id}/decide")
+async def decide_bonus(bonus_id: str, req: Dict[str, Any]):
+    rec = await db.bonus_payments.find_one({"_id": bonus_id})
+    if not rec or rec.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen avans talebi yok.")
+    status_val = req.get("status")
+    if status_val not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="Geçersiz karar.")
+    await db.bonus_payments.update_one(
+        {"_id": bonus_id},
+        {"$set": {"status": status_val, "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": req.get("note", "")}},
+    )
+    return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
 @api_router.delete("/personnel/bonuses/{bonus_id}")
 async def delete_bonus(bonus_id: str):
@@ -9368,7 +9400,7 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     transport_due = _allowance_due(transport, TRANSPORT_CAT, expenses, month)
     bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") != "advance" and b.get("status") != "paid"), 2)
     payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
-    advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") == "advance" and str(b.get("period") or "").startswith(month)), 2)
+    advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
     extra_advance = round(max(0.0, advances - payroll_adv), 2)
     remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance, 2)
     return {
@@ -9548,7 +9580,7 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     bonus_public = [{
         "id": b.get("id") or b.get("_id"), "type": b.get("type"), "amount": b.get("amount"),
         "status": b.get("status"), "period": b.get("period"), "note": b.get("note") or b.get("description"),
-        "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
+        "source": b.get("source"), "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
     } for b in bonuses]
 
     return {

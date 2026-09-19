@@ -11,6 +11,7 @@ def test_roles_for_known_types():
     assert "warehouse" in roles_for_type("order_pick_missing")
     assert "production" in roles_for_type("order_pick_production")
     assert "accountant" in roles_for_type("attendance_late")
+    assert "accountant" in roles_for_type("advance_request")
     assert roles_for_type("task_assigned") == []
     assert roles_for_type("unknown_type") == ["admin"]
     assert role_label("warehouse") == "Depo"

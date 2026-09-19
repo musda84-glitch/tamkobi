@@ -29,7 +29,7 @@ class TestPersonnelPendingRequests:
         assert isinstance(data["items"], list)
         assert data["count"] == len(data["items"])
         for it in data["items"][:20]:
-            assert it.get("kind") in ("leave", "early_leave", "dispute")
+            assert it.get("kind") in ("leave", "early_leave", "dispute", "advance")
             assert it.get("id")
             assert "employee_name" in it
             assert "title" in it
