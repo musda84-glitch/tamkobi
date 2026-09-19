@@ -103,6 +103,14 @@ class TrendyolClient:
             body["params"]["invoiceNumber"] = invoice_number
         return await self._call("PUT", f"/integration/order/sellers/{self.seller_id}/shipment-packages/{package_id}", json=body)
 
+    async def common_label(self, cargo_tracking_number: str) -> Any:
+        """Pazaryerinin oluşturduğu kargo etiketi (PDF / URL)."""
+        path = f"/integration/sellers/{self.seller_id}/common-label/{cargo_tracking_number}"
+        data = await self._call("GET", path)
+        if data:
+            return data
+        return await self._call("POST", path, params={"format": "PDF"})
+
     async def products(self, size: int = 200, approved: Optional[bool] = None) -> List[dict]:
         """Satıcının Trendyol ürün listesi (barkod, başlık, satış/liste fiyatı, stok, onay durumu)."""
         out, page = [], 0

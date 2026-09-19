@@ -166,9 +166,15 @@ export type Order = {
   city?: string;
   district?: string;
   cargo_tracking_number?: string;
+  cargo_barcode?: string;
   cargo_carrier?: string;
   cargo_carrier_name?: string;
+  cargo_label_url?: string;
+  cargo_tracking_url?: string;
+  cargo_shipment_id?: string;
   label_printed_at?: string;
+  marketplace_status?: string;
+  source?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
     carrier?: string;

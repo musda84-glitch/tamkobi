@@ -93,10 +93,12 @@ export function OrderActions({
   const printLabel = async () => {
     setBusy("label");
     try {
-      const full = await ensure();
-      await printCargoLabel(full, activeCompany);
+      const full = await get<Order>(client, `/orders/${idOf(order)}`);
+      const kind = await printCargoLabel(full, activeCompany, client);
       post(client, "/orders/mark-labels-printed", { ids: [idOf(full)] }).catch(() => null);
-      onMessage?.("Kargo etiketi yazdırmaya gönderildi.");
+      onMessage?.(kind === "official"
+        ? "Pazaryeri / kargo etiketi yazdırmaya gönderildi."
+        : "Kargo etiketi yazdırmaya gönderildi.");
     } catch (err) {
       onError?.(apiErrorMessage(err, "Etiket yazdırılamadı."));
     } finally {

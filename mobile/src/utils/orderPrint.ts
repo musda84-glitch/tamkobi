@@ -41,8 +41,12 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null): stri
   `;
 }
 
+export function cargoLabelCode(order: Order): string {
+  return String(order.cargo_barcode || order.cargo_tracking_number || order.order_number || "").trim();
+}
+
 export function cargoLabelHtml(order: Order, company?: PrintCompany | null): string {
-  const track = order.cargo_tracking_number || order.order_number || "—";
+  const track = cargoLabelCode(order) || "—";
   const pieces = itemsOf(order).reduce((s, it) => s + it.qty, 0);
   const lines = itemsOf(order).map((it) => `${it.qty}× ${esc(it.name)}`).join(", ");
   return `
@@ -88,12 +92,13 @@ export function orderFormText(order: Order, company?: PrintCompany | null): stri
 }
 
 export function cargoLabelText(order: Order, company?: PrintCompany | null): string {
+  const track = cargoLabelCode(order) || "Kargo oluşturulmadı";
   return [
     `KARGO ETİKETİ · ${order.order_number || ""}`,
     `Alıcı: ${order.customer_name || "—"}`,
     [order.shipping_address, order.city, order.customer_phone].filter(Boolean).join(" · "),
     `Gönderici: ${company?.name || ""}`,
-    `Takip: ${order.cargo_tracking_number || "Kargo oluşturulmadı"}`,
+    `Takip: ${track}`,
   ].filter(Boolean).join("\n");
 }
 
