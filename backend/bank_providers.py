@@ -605,11 +605,13 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
     since = end - timedelta(days=1)
     account = _enpara_account_ref(conn)
     customer = (conn.get("customer_number") or "").strip()
-    payloads = _enpara_payload_variants(since, end, account, customer)
+    w_start, w_end = _enpara_day_windows(end, end)[-1]
+    payloads = _enpara_payload_variants(w_start, w_end, account, customer)
     body = payloads[0] if payloads else {
-        "startDateTime": since.strftime("%Y-%m-%dT00:00:00"),
-        "endDateTime": end.strftime("%Y-%m-%dT23:59:59"),
+        "startDateTime": f"{w_start:%Y-%m-%dT00:00:00}{_tr_offset(w_start)}",
+        "endDateTime": f"{w_end:%Y-%m-%dT23:59:59}{_tr_offset(w_end)}",
     }
+    del since
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(f"{base}/v1/account-statement", headers=headers, json=body)
         if resp.status_code in (401, 403):
@@ -1199,6 +1201,39 @@ def _tr_offset(dt: datetime) -> str:
     return f"{off[:3]}:{off[3:5]}"
 
 
+def _istanbul_tz():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo("Europe/Istanbul")
+    except Exception:
+        return timezone(timedelta(hours=3))
+
+
+def _enpara_day_windows(start: datetime, end: datetime, *, max_days: int = 31) -> List[tuple]:
+    """Enpara tek istekte en fazla 24 saat veriyor (resultCode 364470)."""
+    tz = _istanbul_tz()
+
+    def _tr(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz)
+
+    start, end = _tr(start), _tr(end)
+    if end < start:
+        start, end = end, start
+    day = start.date()
+    last = end.date()
+    windows: List[tuple] = []
+    while day <= last and len(windows) < max_days:
+        midnight = datetime(day.year, day.month, day.day, tzinfo=tz)
+        windows.append((midnight, midnight.replace(hour=23, minute=59, second=59)))
+        day += timedelta(days=1)
+    if not windows:
+        midnight = datetime(start.year, start.month, start.day, tzinfo=tz)
+        windows.append((midnight, midnight.replace(hour=23, minute=59, second=59)))
+    return windows[-max_days:]
+
+
 def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
     """QNB/Enpara Gravitee Account Statement + Account Transactions şeması.
 
@@ -1333,7 +1368,8 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     end = datetime.now(timezone.utc)
     if (end - since).days > 30:
         since = end - timedelta(days=30)
-    payloads = _enpara_payload_variants(since, end, account, customer)
+    windows = _enpara_day_windows(since, end)
+    payloads = _enpara_payload_variants(windows[-1][0], windows[-1][1], account, customer)
     last_detail = ""
     got_ok_empty = False
     ticket_timeout = False
@@ -1495,30 +1531,64 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     return out
             return None
 
-        # 1) POST /v1/account-statement JSON {startDateTime, endDateTime, iban?, accountNo?}
+        # 1) POST /v1/account-statement — gün gün (Enpara tek istekte 24 saat veriyor)
+        collected: List[Dict[str, Any]] = []
+        seen_ext: set = set()
+        preferred_keys: Optional[tuple] = None
+
+        def _collect(rows: List[Dict[str, Any]]) -> None:
+            for row in rows or []:
+                ext = row.get("external_id")
+                if ext and ext in seen_ext:
+                    continue
+                if ext:
+                    seen_ext.add(ext)
+                collected.append(row)
+
+        def _window_payloads(w_start: datetime, w_end: datetime) -> List[Dict[str, Any]]:
+            variants = _enpara_payload_variants(w_start, w_end, account, customer)
+            if preferred_keys:
+                narrowed = [p for p in variants if tuple(sorted(p)) == preferred_keys]
+                if narrowed:
+                    return narrowed
+            return variants
+
         statement_post_405 = False
-        for payload in payloads:
-            resp = await _post("/v1/account-statement", json_body=payload)
-            if _enpara_method_not_allowed(resp):
-                statement_post_405 = True
-                last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
-                break
-            out = await _handle_statement(resp, payload, "POST /v1/account-statement")
-            if out is not None:
-                return out
-            if ticket_timeout:
+        for w_start, w_end in windows:
+            for payload in _window_payloads(w_start, w_end):
+                resp = await _post("/v1/account-statement", json_body=payload)
+                if _enpara_method_not_allowed(resp):
+                    statement_post_405 = True
+                    last_detail = f"POST /v1/account-statement HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                    break
+                out = await _handle_statement(resp, payload, "POST /v1/account-statement")
+                if out is not None:
+                    preferred_keys = tuple(sorted(payload))
+                    _collect(out.get("transactions") or [])
+                    break
+                if ticket_timeout:
+                    break
+            if statement_post_405 or ticket_timeout:
                 break
 
         # Katalog GET iddiası: yalnızca POST 405 olursa query-string yedek
         if statement_post_405:
-            for payload in payloads:
-                qs = _string_params(payload)
-                resp = await _get("/v1/account-statement", params=qs)
-                out = await _handle_statement(resp, payload, "GET /v1/account-statement")
-                if out is not None:
-                    return out
+            for w_start, w_end in windows:
+                for payload in _window_payloads(w_start, w_end):
+                    qs = _string_params(payload)
+                    resp = await _get("/v1/account-statement", params=qs)
+                    out = await _handle_statement(resp, payload, "GET /v1/account-statement")
+                    if out is not None:
+                        preferred_keys = tuple(sorted(payload))
+                        _collect(out.get("transactions") or [])
+                        break
+                    if ticket_timeout:
+                        break
                 if ticket_timeout:
                     break
+
+        if collected:
+            return _pack(collected)
 
         # 2) POST /v1/account-statement/list — kayıtlı hesaplar / bakiye (GET production’da 405)
         list_body: Dict[str, Any] = {}

@@ -1186,6 +1186,75 @@ def test_payload_dates_use_offset_format():
             assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", p[key]), p[key]
 
 
+def test_day_windows_never_exceed_24h():
+    """Enpara resultCode 364470: tek istekte 24 saatten fazla aralık yok."""
+    start = datetime(2026, 9, 11, 9, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
+    windows = bp._enpara_day_windows(start, end)
+    assert len(windows) == 4
+    for w_start, w_end in windows:
+        assert w_end > w_start
+        assert (w_end - w_start) < timedelta(hours=24)
+        assert w_start.strftime("%Y-%m-%d") == w_end.strftime("%Y-%m-%d")
+    assert bp._enpara_day_windows(end, end) and len(bp._enpara_day_windows(end, end)) == 1
+    assert len(bp._enpara_day_windows(datetime(2026, 1, 1, tzinfo=timezone.utc), end)) <= 31
+
+
+def test_enpara_fetch_splits_range_into_daily_requests():
+    """Çok günlük senkron gün gün sorgulanır ve sonuçlar birleştirilir."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=2)
+    calls = []
+
+    async def _post(url, **kwargs):
+        body = _json_body(kwargs)
+        if str(url).endswith("/list"):
+            return _miss_resp()
+        calls.append(body["startDateTime"][:10])
+        day = body["startDateTime"][:10].replace("-", "")
+        payload = {
+            "status": "completed",
+            "transactions": [
+                {
+                    "transactionId": f"D{day}",
+                    "amount": 10,
+                    "direction": "credit",
+                    "description": "Gelen",
+                    "transactionDate": body["startDateTime"][:10],
+                },
+            ],
+        }
+        r = MagicMock()
+        r.status_code = 200
+        r.text = json.dumps(payload)
+        r.headers = {"content-type": "application/json"}
+        r.json = MagicMock(return_value=payload)
+        return r
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert len(set(calls)) == 3
+    assert len(out["transactions"]) == 3
+    assert len({t["external_id"] for t in out["transactions"]}) == 3
+    for call in mock_client.post.await_args_list:
+        body = _json_body(call.kwargs)
+        if "startDateTime" not in body:
+            continue
+        assert body["startDateTime"][:10] == body["endDateTime"][:10]
+
+
 def test_all_result_errors_reported_not_just_longest():
     """Her payload varyantının reddi görünsün; en uzunu değil ilki öne çıksın."""
     conn = {
