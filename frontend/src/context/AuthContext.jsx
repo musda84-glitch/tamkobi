@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { API_URL } from "../api/client";
 import { groupIdOf } from "../navGroups";
 import { loadRadialSlots, normalizeRadialSlots, saveRadialSlotsLocal } from "../utils/radialQuickMenu";
+import { selfPersonnelNavAllowed } from "../utils/selfPersonnelNav";
 
 const AuthContext = createContext(null);
 
@@ -66,7 +67,7 @@ export const AuthProvider = ({ children }) => {
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const addonOn = (key) => !license?.addons || license.addons[key] !== false;
-  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
+  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
     if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
