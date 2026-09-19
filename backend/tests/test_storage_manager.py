@@ -19,6 +19,8 @@ def test_area_for_entity_aliases():
     assert sm.area_for_entity("employee") == "employees"
     assert sm.area_for_entity("employee_photo") == "employees"
     assert sm.area_for_entity("personnel_photo") == "employees"
+    assert sm.area_for_entity("contact") == "contacts"
+    assert sm.area_for_entity("contacts") == "contacts"
     assert sm.area_for_entity("quote") == "quotes"
     assert sm.area_for_entity("purchase_invoice") == "purchase_invoices"
     assert sm.area_for_entity("unknown_x") == "misc"
@@ -33,7 +35,7 @@ def test_object_path_account_layout():
 
 def test_default_areas_cover_uploadables():
     keys = {a["key"] for a in sm.STORAGE_AREAS}
-    for need in ("products", "company", "expenses", "employees", "edocs", "misc"):
+    for need in ("products", "company", "contacts", "expenses", "employees", "edocs", "misc"):
         assert need in keys
 
 

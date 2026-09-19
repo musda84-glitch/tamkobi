@@ -98,6 +98,7 @@ class Contact(BaseDocument):
     kvkk_accepted: bool = False
     kvkk_accepted_at: Optional[str] = None
     legal_accept: Optional[Dict[str, Any]] = None
+    logo_url: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Stok & Ürünler
@@ -601,6 +602,7 @@ class Employee(BaseDocument):
     meal_allowance: float = 0.0  # Aylık yemek
     transport_allowance: float = 0.0  # Aylık yol / ulaşım
     start_date: str
+    end_date: Optional[str] = None  # işten ayrılma / çıkarılma
     status: str = "active"  # active, on_leave, terminated
     annual_leave_days: int = 14
     used_leave_days: int = 0

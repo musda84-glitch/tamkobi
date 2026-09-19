@@ -5,6 +5,12 @@ export type Company = {
   address?: string;
   city?: string;
   phone?: string;
+  email?: string;
+  tax_number?: string;
+  tax_office?: string;
+  logo_url?: string | null;
+  iban?: string;
+  bank_name?: string;
 };
 
 export type User = {
@@ -172,6 +178,16 @@ export type Order = {
   cargo_label_url?: string;
   cargo_tracking_url?: string;
   cargo_shipment_id?: string;
+  payment_type?: string;
+  currency?: string;
+  subtotal?: number;
+  vat_total?: number;
+  discount_total?: number;
+  contact_name?: string;
+  customer_note?: string;
+  order_note?: string;
+  customer_notes?: string;
+  created_at?: string;
   label_printed_at?: string;
   marketplace_status?: string;
   shipment_package_id?: string | number;

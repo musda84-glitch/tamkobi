@@ -21,6 +21,7 @@ _db = None
 STORAGE_AREAS = (
     {"key": "products", "label": "Ürün görselleri", "entity": "products", "icon": "package"},
     {"key": "company", "label": "Firma (logo / belgeler)", "entity": "company", "icon": "building"},
+    {"key": "contacts", "label": "Cari logoları", "entity": "contact", "icon": "building"},
     {"key": "expenses", "label": "Gider fişleri", "entity": "expense", "icon": "receipt"},
     {"key": "employees", "label": "Personel belgeleri", "entity": "employee", "icon": "users"},
     {"key": "support", "label": "Destek ekleri", "entity": "support_ticket", "icon": "headset"},
@@ -42,6 +43,8 @@ for _a in STORAGE_AREAS:
 _AREA_BY_ENTITY.update({
     "product": "products",
     "products": "products",
+    "contact": "contacts",
+    "contacts": "contacts",
     "expense": "expenses",
     "employee": "employees",
     "employee_photo": "employees",

@@ -959,7 +959,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 @api_router.post("/files/upload")
 async def upload_generic_file(file: UploadFile = File(...), entity: str = Query("misc"), entity_id: str = Query(""), company_id: str = Query("comp_nexus_main_01")):
-    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
+    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF, HEIC veya PDF yükleyebilirsiniz.")
@@ -990,11 +990,11 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     }
     await db.files.insert_one(file_doc)
     url = f"/api/files/{result['path']}"
-    if entity in ("quote", "project", "survey", "company", "employee_photo") and entity_id:
-        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "employee_photo": db.employees}[entity]
+    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo") and entity_id:
+        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees}[entity]
         # Match by id or _id — clients may send either after clean_doc
         q = {"$or": [{"_id": entity_id}, {"id": entity_id}]}
-        if entity == "company":
+        if entity in ("company", "contact"):
             await coll.update_one(q, {"$set": {"logo_url": url}})
         elif entity == "employee_photo":
             await coll.update_one(q, {"$set": {"photo_url": url}})
@@ -9558,24 +9558,23 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/employees")
 async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
-    employees = await db.employees.find({"company_id": company_id}).to_list(100)
+    employees = await db.employees.find({"company_id": company_id}).to_list(2000)
     month = datetime.now(timezone.utc).strftime("%Y-%m")
-    ids = [e["_id"] for e in employees]
-    if not ids:
+    if not employees:
         return []
-    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}}).to_list(4000)
-    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}}).to_list(4000)
-    expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
+    payrolls = await db.payrolls.find({"company_id": company_id}).to_list(8000)
+    bonuses = await db.bonus_payments.find({"company_id": company_id}).to_list(8000)
+    expenses = await db.expenses.find({"company_id": company_id}).to_list(12000)
     pmap, bmap, emap = {}, {}, {}
     for p in payrolls:
-        pmap.setdefault(p.get("employee_id"), []).append(p)
+        pmap.setdefault(str(p.get("employee_id") or ""), []).append(p)
     for b in bonuses:
-        bmap.setdefault(b.get("employee_id"), []).append(b)
+        bmap.setdefault(str(b.get("employee_id") or ""), []).append(b)
     for x in expenses:
-        emap.setdefault(x.get("employee_id"), []).append(x)
+        emap.setdefault(str(x.get("employee_id") or ""), []).append(x)
     out = []
     for e in employees:
-        eid = e["_id"]
+        eid = str(e.get("_id") or e.get("id") or "")
         bal = await _employee_receivable(e, pmap.get(eid) or [], bmap.get(eid) or [], month, expenses=emap.get(eid) or [])
         doc = clean_doc(e)
         doc["balance"] = bal
@@ -9588,7 +9587,7 @@ async def create_employee(emp: Employee):
     await db.employees.insert_one(doc)
     return clean_doc(doc)
 
-EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "status", "annual_leave_days", "used_leave_days",
+EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "meal_allowance", "transport_allowance"}
 EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
@@ -9615,7 +9614,10 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     emp_id = emp.get("_id") or emp.get("id")
     if expenses is None:
         expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
-    unpaid_payroll = round(sum(_emp_num(p.get("final_payable"), _emp_num(p.get("net_salary"))) for p in payrolls if p.get("status") != "paid"), 2)
+    unpaid_payroll = round(sum(
+        _emp_num(p.get("final_payable") if p.get("final_payable") not in (None, "") else None, _emp_num(p.get("net_salary")))
+        for p in payrolls if p.get("status") != "paid"
+    ), 2)
     unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
     meal = round(_emp_num(emp.get("meal_allowance")), 2)
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
@@ -9631,6 +9633,42 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         "meal_due": meal_due, "transport_due": transport_due, "bonus_pending": bonus_pending, "advances": extra_advance,
         "meal_allowance": meal, "transport_allowance": transport, "month": month,
     }
+
+
+async def _employee_assigned_work(company_id: str, emp_id: str):
+    tasks = []
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1},
+    ):
+        for t in (proj.get("tasks") or []):
+            if t.get("assignee_id") != emp_id:
+                continue
+            done = bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
+            tasks.append({
+                "id": t.get("id") or t.get("_id"),
+                "title": t.get("title") or t.get("name") or "Görev",
+                "done": done,
+                "due_date": t.get("due_date"),
+                "project_id": proj["_id"],
+                "project_name": proj.get("name"),
+                "project_number": proj.get("project_number"),
+                "project_status": proj.get("status"),
+            })
+    tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
+    wo_rows = clean_docs(await db.work_orders.find({"company_id": company_id, "assigned_to": emp_id}).sort([("planned_date", 1), ("order_code", 1)]).to_list(200))
+    work_orders = [{
+        "id": w.get("id") or w.get("_id"),
+        "order_code": w.get("order_code") or w.get("code"),
+        "product_name": w.get("product_name") or w.get("name"),
+        "station": w.get("station"),
+        "step_no": w.get("step_no"),
+        "status": w.get("status"),
+        "planned_date": w.get("planned_date"),
+        "qty": w.get("qty") or w.get("quantity"),
+        "assigned_name": w.get("assigned_name"),
+    } for w in wo_rows]
+    return tasks, work_orders
 
 @api_router.put("/personnel/employees/{emp_id}")
 async def update_employee(emp_id: str, data: Dict[str, Any]):
@@ -9656,6 +9694,19 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             v = None
         if k in ("annual_leave_days", "used_leave_days") and v is not None:
             v = int(v)
+        if k in ("start_date", "end_date"):
+            if v in (None, ""):
+                if k == "end_date":
+                    v = None
+                else:
+                    continue
+            else:
+                parsed = attendance._ymd(v)
+                if not parsed:
+                    raise HTTPException(status_code=400, detail=f"{k} YYYY-MM-DD olmalı.")
+                v = parsed
+        if k == "status" and v not in (None, "", "active", "on_leave", "terminated"):
+            raise HTTPException(status_code=400, detail="status active, on_leave veya terminated olmalı.")
         if k == "work_schedule" and v is not None:
             if not isinstance(v, dict):
                 raise HTTPException(status_code=400, detail="work_schedule nesne olmalı.")
@@ -9704,14 +9755,61 @@ async def employee_card(emp_id: str):
     user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
     invite = await db.user_invites.find_one({"employee_id": emp_id, "accepted_at": None})
     used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
+    company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    schedule = attendance.merge_schedule(company, emp)
+    att_sum = attendance.summarize(att)
+    ot = await attendance.overtime_pay_for_period(company, emp, month)
+    tasks, work_orders = await _employee_assigned_work(emp.get("company_id"), emp_id)
+    expected = attendance.expected_work_dates(month, schedule.get("work_days"), emp.get("start_date"), emp.get("end_date"))
+    perf = attendance.performance_scores(att, leaves, tasks, work_orders, expected, month)
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
             "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
-            "attendance": {"month": month, "days_present": sum(1 for r in att if r.get("status") == "present"), "days_absent": sum(1 for r in att if r.get("status") == "absent"), "days_leave": sum(1 for r in att if r.get("status") == "leave"), "total_hours": round(sum(r.get("hours", 0) for r in att), 1), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in att), 1)},
+            "attendance": {"month": month, **att_sum},
+            "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
+                         "amount": ot["amount"], "method": ot["method"], "weekday_rate": ot["weekday_rate"], "holiday_rate": ot["holiday_rate"]},
+            "performance": perf,
             "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
             "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
             "pending_invite": clean_doc(invite) if invite else None,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
             "balance": await _employee_receivable(emp, payrolls, bonuses, month)}
+
+
+def _truthy_confirm(v) -> bool:
+    if v is True:
+        return True
+    if isinstance(v, (int, float)) and v == 1:
+        return True
+    return str(v or "").strip().lower() in ("1", "true", "yes", "on", "evet")
+
+
+@api_router.post("/personnel/employees/{emp_id}/terminate")
+async def terminate_employee(emp_id: str, data: Dict[str, Any]):
+    """İşten çıkar: onay zorunlu; kartı terminated + end_date yapar, bağlı kullanıcıyı pasifleştirir."""
+    payload = data or {}
+    if not _truthy_confirm(payload.get("confirm")):
+        raise HTTPException(status_code=400, detail="İşten çıkarma için onay gerekli.")
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    if emp.get("status") == "terminated":
+        raise HTTPException(status_code=400, detail="Personel zaten işten çıkarılmış.")
+    end_date = attendance._ymd(payload.get("end_date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    hire = attendance._ymd(emp.get("start_date"))
+    if hire and end_date < hire:
+        raise HTTPException(status_code=400, detail="İşten ayrılma tarihi işe girişten önce olamaz.")
+    now = datetime.now(timezone.utc).isoformat()
+    upd = {"status": "terminated", "end_date": end_date, "updated_at": now}
+    reason = (payload.get("reason") or "").strip()
+    if reason:
+        upd["termination_reason"] = reason[:300]
+    await db.employees.update_one({"_id": emp_id}, {"$set": upd})
+    await db.users.update_many(
+        {"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]},
+        {"$set": {"is_active": False}},
+    )
+    res = await db.employees.find_one({"_id": emp_id})
+    return {"status": "success", "message": f"{emp.get('full_name') or 'Personel'} işten çıkarıldı.", "employee": clean_doc(res)}
 
 
 @api_router.get("/personnel/me")
@@ -9898,17 +9996,28 @@ async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period
 @api_router.post("/personnel/generate-payroll")
 async def generate_payroll(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    period = req.get("period", datetime.now().strftime("%Y-%m"))
-    employees = await db.employees.find({"company_id": company_id, "status": "active"}).to_list(100)
+    period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
+    employees = await db.employees.find({"company_id": company_id}).to_list(2000)
+    employees = [e for e in employees if (e.get("status") or "active") != "terminated"]
+    only_id = str(req.get("employee_id") or "").strip()
+    if only_id:
+        employees = [e for e in employees if str(e.get("_id") or e.get("id") or "") == only_id]
+        if not employees:
+            raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     company = await db.companies.find_one({"_id": company_id}) or {}
 
     generated = []
     for emp in employees:
+        emp_id = str(emp.get("_id") or emp.get("id") or "")
+        if not emp_id:
+            continue
         net = float(emp.get("salary", 30000.0) or 0)
         gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
         second = float(emp.get("second_salary") or 0)
         ot = await attendance.overtime_pay_for_period(company, emp, period)
-        existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": str(emp["_id"]), "period": period})
+        existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": emp_id, "period": period})
+        if not existing and emp.get("_id") != emp_id:
+            existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": emp.get("_id"), "period": period})
         if existing and existing.get("status") == "paid":
             continue
         bonus = float((existing or {}).get("bonus") or 0)
@@ -9917,7 +10026,7 @@ async def generate_payroll(req: Dict[str, Any]):
         payroll_doc = {
             "_id": existing["_id"] if existing else f"pay_{uuid.uuid4().hex[:8]}",
             "company_id": company_id,
-            "employee_id": str(emp.get("_id", emp.get("id"))),
+            "employee_id": emp_id,
             "employee_name": emp.get("full_name"),
             "period": period,
             "net_salary": net,

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -10,13 +10,26 @@ import { compressImageFile } from "../utils/compressImage";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
 import { empIdOf, nextTasksAfterAssign, validateEmployeeTaskAssign } from "../utils/employeeTaskAssign";
+import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
 const LEAVE = { annual: "Yıllık", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
 const ST = { pending: ["Bekliyor", "bg-amber-100 text-amber-700"], approved: ["Onaylı", "bg-emerald-100 text-emerald-700"], rejected: ["Red", "bg-rose-100 text-rose-700"], paid: ["Ödendi", "bg-emerald-100 text-emerald-700"], unpaid: ["Ödenmedi", "bg-slate-100 text-slate-600"] };
+const TONE = { emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700", slate: "text-slate-900" };
+const BAR = { emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", slate: "bg-slate-400" };
 const Badge = ({ s }) => { const [l, c] = ST[s] || [s, "bg-slate-100 text-slate-600"]; return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${c}`}>{l}</span>; };
-const Stat = ({ label, value, sub, testid }) => <div className="bg-slate-50 rounded-xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className="text-sm font-bold text-slate-900" data-testid={testid}>{value}</div>{sub && <div className="text-[10px] text-slate-500">{sub}</div>}</div>;
+const Stat = ({ label, value, sub, testid, valueClass }) => <div className="bg-slate-50 rounded-xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className={`text-sm font-bold ${valueClass || "text-slate-900"}`} data-testid={testid}>{value}</div>{sub && <div className="text-[10px] text-slate-500">{sub}</div>}</div>;
+const PerfBar = ({ label, pct, sub, testid }) => {
+  const tone = performanceTone(pct);
+  return (
+    <div className="space-y-1" data-testid={testid}>
+      <div className="flex justify-between gap-2"><span className="font-semibold text-slate-600">{label}</span><span className={`font-bold ${TONE[tone]}`}>%{pct ?? 0}</span></div>
+      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className={`h-1.5 rounded-full ${BAR[tone]}`} style={{ width: `${Math.max(0, Math.min(100, Number(pct) || 0))}%` }} /></div>
+      {sub ? <div className="text-[10px] text-slate-400">{sub}</div> : null}
+    </div>
+  );
+};
 
 const Docs = ({ card, companyId, reload }) => {
   const ref = useRef(null);
@@ -95,8 +108,13 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
+  const [termOpen, setTermOpen] = useState(false);
+  const [termOk, setTermOk] = useState(false);
+  const [termDate, setTermDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [busyTerm, setBusyTerm] = useState(false);
   useEscape(() => {
     if (quickPay) return;
+    if (termOpen) { setTermOpen(false); setTermOk(false); return; }
     if (taskOpen) { setTaskOpen(false); return; }
     if (payItem) { setPayItem(null); return; }
     onClose();
@@ -121,7 +139,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
       setBusyPay(true);
       try {
         const period = new Date().toISOString().slice(0, 7);
-        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period, employee_id: id });
         const r = await axios.get(`${API_URL}/personnel/employees/${id}/card`);
         setCard(r.data);
         item = (r.data.payrolls || []).find((p) => p.status !== "paid");
@@ -145,7 +163,24 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
       toast.error(err.response?.data?.detail || "Maaş ödemesi gerçekleştirilemedi.");
     } finally { setBusyPay(false); }
   };
+  const confirmTerminate = async () => {
+    if (!termOk) return;
+    setBusyTerm(true);
+    try {
+      const res = await axios.post(`${API_URL}/personnel/employees/${id}/terminate`, { confirm: true, end_date: termDate });
+      toast.success(res.data.message || "Personel işten çıkarıldı.");
+      setTermOpen(false);
+      setTermOk(false);
+      reload();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşten çıkarılamadı.");
+    } finally { setBusyTerm(false); }
+  };
   const btn = "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap";
+  const remaining = Number(card?.balance?.remaining) || 0;
+  const ot = card?.overtime || {};
+  const perf = card?.performance || {};
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
@@ -164,7 +199,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 } catch (err) { toast.error(err.response?.data?.detail || "Fotoğraf yüklenemedi."); }
               }} data-testid="emp-card-photo-input" />
             </label>
-            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">Başlangıç: {e.start_date} · TCKN: {e.tc_kimlik}</div></div>
+            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div></div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
             <button type="button" onClick={() => setQuickPay("advance")} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
@@ -182,9 +217,29 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <Stat label="Net Maaş" value={`${fmt(e.salary)} ₺`} sub={`Bordro brüt ${fmt(e.payroll_salary || e.salary * 1.4)} ₺${e.second_salary ? ` · 2. maaş ${fmt(e.second_salary)} ₺` : ""}`} testid="emp-stat-salary" /><Stat label="Kalan İzin" value={`${card.leave_balance.remaining} / ${card.leave_balance.annual} gün`} testid="emp-stat-leave" />
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
+                  <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={card.balance?.month ? `Dönem ${card.balance.month}` : undefined} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
+                  <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(ot.amount || 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
+                  <Stat label="İşe Giriş" value={formatTrDate(e.start_date)} testid="emp-stat-start" />
+                  <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {e.status === "active" ? "Aktif" : e.status}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {empStatusLabel(e.status)}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
+                <div className="border border-slate-100 rounded-xl p-3 space-y-3" data-testid="emp-performance">
+                  <div className="flex items-center justify-between"><div className="font-bold text-slate-800">Performans</div><div className={`text-sm font-black ${TONE[performanceTone(perf.overall)]}`} data-testid="emp-perf-overall">%{perf.overall ?? 0}</div></div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <PerfBar label="Giriş" pct={perf.check_in?.pct} sub={`${perf.check_in?.ok ?? 0} / ${perf.check_in?.expected ?? 0} iş günü`} testid="emp-perf-checkin" />
+                    <PerfBar label="Çıkış" pct={perf.check_out?.pct} sub={`${perf.check_out?.ok ?? 0} / ${perf.check_out?.expected ?? 0} iş günü`} testid="emp-perf-checkout" />
+                    <PerfBar label="İzin" pct={perf.leave?.pct} sub={`Onaylı ${perf.leave?.approved_days ?? 0} gün · devamsız ${perf.leave?.absent_days ?? 0}`} testid="emp-perf-leave" />
+                    <PerfBar label="Görev" pct={perf.task?.pct} sub={`${perf.task?.done ?? 0} / ${perf.task?.total ?? 0} tamamlandı`} testid="emp-perf-task" />
+                  </div>
+                </div>
                 <div className="text-slate-500">Belgeler: {card.documents.length} · Bordro: {card.payrolls.length} dönem · Ödenen maaş toplamı: {fmt(card.totals.paid_salary)} ₺</div>
+                {e.status !== "terminated" ? (
+                  <div className="pt-1">
+                    <button type="button" onClick={() => { setTermDate(new Date().toISOString().slice(0, 10)); setTermOk(false); setTermOpen(true); }} className={`${btn} bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200`} data-testid="emp-terminate-btn">
+                      <UserMinus className="w-3.5 h-3.5 inline mr-1" /> İşten çıkar
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )}
             {tab === "docs" && <Docs card={card} companyId={companyId} reload={reload} />}
@@ -224,6 +279,31 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             <div className="flex justify-end gap-2 pt-2 border-t">
               <button type="button" onClick={() => setPayItem(null)} className="px-3 py-1.5 border rounded-lg text-xs">İptal</button>
               <button type="button" onClick={confirmSalaryPay} disabled={busyPay || !payAccountId} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="emp-card-salary-confirm">Ödemeyi Tamamla</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {termOpen && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setTermOpen(false); setTermOk(false); }} data-testid="emp-terminate-modal">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-base font-bold text-rose-800 flex items-center gap-1.5"><UserMinus className="w-4 h-4" /> İşten çıkar</h3>
+              <button type="button" onClick={() => { setTermOpen(false); setTermOk(false); }} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="text-xs text-slate-700 space-y-3">
+              <p><strong>{e.full_name}</strong> işten çıkarılacak. Bağlı sistem kullanıcısı pasifleşir; personel kartı silinmez.</p>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">İşten ayrılma tarihi</label>
+                <input type="date" value={termDate} onChange={(ev) => setTermDate(ev.target.value)} className="w-full border rounded-lg p-2" data-testid="emp-terminate-date" />
+              </div>
+              <label className="flex items-start gap-2 text-slate-700">
+                <input type="checkbox" checked={termOk} onChange={(ev) => setTermOk(ev.target.checked)} className="mt-0.5" data-testid="emp-terminate-confirm-check" />
+                <span><strong>{e.full_name}</strong> adlı personeli işten çıkarmayı onaylıyorum.</span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button type="button" onClick={() => { setTermOpen(false); setTermOk(false); }} className="px-3 py-1.5 border rounded-lg text-xs">İptal</button>
+              <button type="button" onClick={confirmTerminate} disabled={busyTerm || !termOk} className="px-4 py-1.5 bg-rose-600 text-white rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="emp-terminate-confirm">İşten çıkar</button>
             </div>
           </div>
         </div>

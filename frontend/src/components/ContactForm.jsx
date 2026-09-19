@@ -3,12 +3,14 @@ import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote } from "lucide-react";
+import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote, Upload, Image as ImageIcon } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
-const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "" };
+const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "" };
 
 export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [tab, setTab] = useState("general");
@@ -18,6 +20,22 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const F = (k, l, type = "text", extra = {}) => <div className={extra.span ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={extra.ph || ""} className={inp} data-testid={`cf-${k}`} /></div>;
   const S = (k, l, opts) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><select value={f[k] ?? ""} onChange={set(k)} className={inp} data-testid={`cf-${k}`}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>;
   const C = (k, l) => <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer"><input type="checkbox" checked={!!f[k]} onChange={set(k)} data-testid={`cf-${k}`} /><span className="font-semibold text-slate-700">{l}</span></label>;
+  const uploadLogo = async (e) => {
+    const raw = e.target.files?.[0];
+    e.target.value = "";
+    if (!raw) return;
+    try {
+      const file = await compressImageFile(raw);
+      const fd = new FormData();
+      fd.append("file", file);
+      const cid = contact?.id || "";
+      const r = await axios.post(`${API_URL}/files/upload?entity=contact&entity_id=${encodeURIComponent(cid)}&company_id=${encodeURIComponent(companyId || "")}`, fd);
+      setF((prev) => ({ ...prev, logo_url: r.data.url }));
+      toast.success(r.data?.saved_pct ? `Logo yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Logo yüklendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Logo yüklenemedi.");
+    }
+  };
   const save = async (e) => {
     e.preventDefault();
     if (!f.name || !f.tax_number_or_id) { setTab("general"); return toast.error("Cari adı ve VKN/TCKN zorunludur."); }
@@ -41,6 +59,18 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
         <div className="flex gap-1 px-6 pt-3 overflow-x-auto shrink-0">{TABS.map(([k, l, Icon]) => <button type="button" key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`cf-tab-${k}`}><Icon className="w-3.5 h-3.5" />{l}</button>)}</div>
         <div className="p-6 overflow-y-auto text-xs space-y-3 flex-1 min-h-0">
           {tab === "general" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2 flex items-center gap-4">
+              <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0" data-testid="cf-logo-preview">
+                {f.logo_url ? <img src={resolveImageUrl(f.logo_url)} alt="cari logo" className="w-full h-full object-contain" /> : <ImageIcon className="w-8 h-8 text-slate-300" />}
+              </div>
+              <div className="space-y-1.5">
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold">
+                  <Upload className="w-3.5 h-3.5" /> Logo Yükle
+                  <input type="file" accept="image/*" className="hidden" onChange={uploadLogo} data-testid="cf-logo-input" />
+                </label>
+                {f.logo_url ? <button type="button" onClick={() => setF({ ...f, logo_url: "" })} className="block text-[11px] text-slate-500 hover:text-rose-600 font-semibold" data-testid="cf-logo-clear">Logoyu kaldır</button> : <p className="text-[11px] text-slate-500">PNG, JPG — cari kartında görünür.</p>}
+              </div>
+            </div>
             {S("type", "Cari Türü", [["customer", "Müşteri"], ["supplier", "Tedarikçi"], ["both", "Müşteri & Tedarikçi"]])}{F("category", "Kategori / Grup", "text", { ph: "Genel Bayi, Toptan, Perakende…" })}
             {F("name", "Cari Adı *", "text", { span: true })}{F("company_title", "Ticari Ünvan", "text", { span: true })}
             {F("contact_person", "Yetkili Kişi")}{F("contact_person_phone", "Yetkili Telefon")}{F("phone", "Telefon")}{F("email", "E-posta", "email")}{F("website", "Web Sitesi")}{F("sales_rep", "Satış Temsilcisi")}

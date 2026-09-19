@@ -214,9 +214,12 @@ class TestPersonnelCard:
         r = requests.get(f"{API}/personnel/employees/{emp_id}/card", timeout=30)
         assert r.status_code == 200, r.text
         c = r.json()
-        for k in ("employee", "payrolls", "leaves", "bonuses", "leave_balance", "attendance", "documents", "totals"):
+        for k in ("employee", "payrolls", "leaves", "bonuses", "leave_balance", "attendance", "documents", "totals", "balance", "overtime", "performance"):
             assert k in c, k
         assert c["employee"]["id"] == emp_id
+        assert "remaining" in c["balance"]
+        assert "hours" in c["overtime"]
+        assert "overall" in c["performance"]
         for k in ("annual", "used", "remaining", "pending"):
             assert k in c["leave_balance"]
         assert c["leave_balance"]["remaining"] == c["leave_balance"]["annual"] - c["leave_balance"]["used"]
