@@ -18,6 +18,7 @@ import {
   type PartnerSummary,
 } from "../utils/finance";
 import { fmtMoney, idOf } from "../utils/money";
+import { BankingMatchPanel } from "./BankingMatchPanel";
 import { BankingPartnersPanel } from "./BankingPartnersScreen";
 
 type CashApproval = {
@@ -65,10 +66,11 @@ function Approvals({
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
-  const [tab, setTab] = useState<"accounts" | "partners">("accounts");
+  const [tab, setTab] = useState<"accounts" | "partners" | "match">("accounts");
   const [rows, setRows] = useState<BankAccount[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
   const [approvals, setApprovals] = useState<CashApproval[]>([]);
+  const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [q, setQ] = useState("");
   const [groupF, setGroupF] = useState<string>("all");
   const [error, setError] = useState<string | null>(null);
@@ -77,14 +79,16 @@ export function BankingScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [accs, ps, appr] = await Promise.all([
+      const [accs, ps, appr, unmatched] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<PartnerSummary>(client, "/banking/partners/summary", { company_id: companyId }).catch(() => null),
         get<CashApproval[]>(client, "/banking/cash-approvals", { company_id: companyId, status: "pending" }).catch(() => []),
+        get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
       ]);
       setRows(accs || []);
       setPartnerSummary(ps);
       setApprovals(appr || []);
+      setUnmatchedCount((unmatched || []).length);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Hesaplar yüklenemedi."));
@@ -110,6 +114,7 @@ export function BankingScreen() {
     canEdit && { key: "new", label: "Yeni hesap", icon: "add-circle" as const, tone: "emerald" as const, testID: "bank-new", onPress: () => go("BankingNew") },
     canEdit && virmanOk && { key: "virman", label: "Virman", icon: "swap-horizontal" as const, tone: "indigo" as const, testID: "bank-virman", onPress: () => go("BankingVirman") },
     { key: "partners", label: "Ortaklar", icon: "people" as const, tone: "amber" as const, testID: "bank-partners-tile", onPress: () => setTab("partners") },
+    { key: "match", label: "Eşleşme", icon: "git-compare" as const, tone: "violet" as const, testID: "bank-match-tile", badge: unmatchedCount ? String(unmatchedCount) : undefined, onPress: () => setTab("match") },
     { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "bank-refresh", onPress: load },
   ].filter(Boolean) as ActionTile[];
 
@@ -129,10 +134,13 @@ export function BankingScreen() {
       <Row style={{ flexWrap: "wrap" }}>
         <Chip label="Hesaplar" active={tab === "accounts"} testID="banking-tab-accounts" onPress={() => setTab("accounts")} />
         <Chip label={`Ortaklar${partnerSummary?.partner_count ? ` (${partnerSummary.partner_count})` : ""}`} active={tab === "partners"} testID="banking-tab-partners" color="#B45309" onPress={() => setTab("partners")} />
+        <Chip label={`Eşleşme${unmatchedCount ? ` (${unmatchedCount})` : ""}`} active={tab === "match"} testID="banking-tab-match" color="#7C3AED" onPress={() => setTab("match")} />
       </Row>
 
       {tab === "partners" ? (
         <BankingPartnersPanel accounts={rows} onChanged={load} />
+      ) : tab === "match" ? (
+        <BankingMatchPanel accounts={rows} onChanged={load} />
       ) : (
         <>
           {actions.length ? <ActionTiles items={actions} /> : null}
