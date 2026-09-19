@@ -228,6 +228,26 @@ export function validateLeave(employeeId: string, start: string, end: string): s
   return null;
 }
 
+export function validateSelfLeave(start: string, end: string): string | null {
+  if (!start) return "Başlangıç tarihi seçin.";
+  const endDate = end || start;
+  if (!endDate) return "Bitiş tarihi seçin.";
+  if (leaveDays(start, endDate) <= 0) return "Bitiş tarihi başlangıçtan önce olamaz.";
+  return null;
+}
+
+export function selfLeavePayload(type: string, start: string, end: string, reason: string) {
+  const start_date = start.trim();
+  const end_date = (end || start).trim();
+  return {
+    type,
+    start_date,
+    end_date,
+    days: leaveDays(start_date, end_date),
+    reason: reason.trim().slice(0, 300),
+  };
+}
+
 export function employeeSelectGroups(employees: Employee[]) {
   return [{
     label: "Çalışanlar",

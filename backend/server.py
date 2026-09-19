@@ -2103,15 +2103,18 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1} if lite else None
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     docs = clean_docs(contacts)
     if not lite:
-        opens = await _contact_open_amounts(company_id)
-        for c in docs:
-            cid = c.get("id") or c.get("_id")
-            if cid in opens:
-                c["open_amount"] = opens[cid]
+        try:
+            opens = await _contact_open_amounts(company_id)
+            for c in docs:
+                cid = c.get("id") or c.get("_id")
+                if cid in opens:
+                    c["open_amount"] = opens[cid]
+        except Exception:
+            logging.exception("contact open amounts")
     return docs
 
 
@@ -2125,7 +2128,16 @@ async def _contact_open_amounts(company_id: Optional[str]) -> dict:
             "paid": {"$sum": {"$ifNull": ["$paid_amount", 0]}},
         }},
     ]).to_list(10000)
-    return {r["_id"]: round(float(r.get("invoiced") or 0) - float(r.get("paid") or 0), 2) for r in rows if r.get("_id")}
+    out = {}
+    for r in rows:
+        cid = r.get("_id")
+        if not cid:
+            continue
+        try:
+            out[str(cid)] = round(float(r.get("invoiced") or 0) - float(r.get("paid") or 0), 2)
+        except (TypeError, ValueError):
+            continue
+    return out
 
 @api_router.post("/contacts")
 async def create_contact(contact: Contact):

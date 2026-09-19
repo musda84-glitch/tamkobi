@@ -27,17 +27,23 @@ export function ContactsScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [data, invoiceRows, flagRows] = await Promise.all([
-        get<Contact[]>(client, "/contacts", { company_id: companyId }),
-        get<Invoice[]>(client, "/invoices", { company_id: companyId }).catch(() => []),
-        get<Record<string, ContactBalanceFlag>>(client, "/contacts/flags", { company_id: companyId }).catch(() => ({})),
-      ]);
+      const data = await get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true });
       setRows(data || []);
-      setOpenById(invoiceOpenByContact(invoiceRows || []));
-      setFlags(flagRows || {});
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Cariler yüklenemedi."));
+      setRefreshing(false);
+      return;
+    }
+    try {
+      const [invoiceRows, flagRows] = await Promise.all([
+        get<Invoice[]>(client, "/invoices", { company_id: companyId }).catch(() => []),
+        get<Record<string, ContactBalanceFlag>>(client, "/contacts/flags", { company_id: companyId }).catch(() => ({})),
+      ]);
+      setOpenById(invoiceOpenByContact(invoiceRows || []));
+      setFlags(flagRows || {});
+    } catch {
+      /* Kayıtlı bakiye listedeyse fatura/flag hatası cariyi gizlemesin. */
     } finally {
       setRefreshing(false);
     }

@@ -1,30 +1,57 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
-import { Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
+import React, { createElement, useMemo, useState } from "react";
+import { Modal, Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
-import { monthGrid, monthTitle, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
+import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
 
 type DateFieldProps = {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   testID?: string;
+  min?: string;
 };
 
-export function DateField({ label, value, onChangeText, testID }: DateFieldProps) {
+const webInputStyle: Record<string, string | number> = {
+  width: "100%",
+  boxSizing: "border-box",
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: colors.border,
+  borderRadius: 10,
+  paddingLeft: 12,
+  paddingRight: 12,
+  paddingTop: 10,
+  paddingBottom: 10,
+  minHeight: 44,
+  fontSize: 15,
+  color: colors.text,
+  backgroundColor: "#fff",
+};
+
+export function DateField({ label, value, onChangeText, testID, min }: DateFieldProps) {
   const [open, setOpen] = useState(false);
-  const selected = parseYmd(value);
+  const ymd = normalizeYmd(value);
+  const minYmd = normalizeYmd(min || "");
+  const selected = parseYmd(ymd);
   const seed = selected || new Date();
   const [cursor, setCursor] = useState({ year: seed.getFullYear(), month0: seed.getMonth() });
   const cells = useMemo(() => monthGrid(cursor.year, cursor.month0), [cursor.year, cursor.month0]);
 
+  const commit = (next: string) => {
+    const clean = normalizeYmd(next);
+    onChangeText(clean);
+  };
+
   const pick = (day: number) => {
-    onChangeText(toYmd(new Date(cursor.year, cursor.month0, day)));
+    const next = toYmd(new Date(cursor.year, cursor.month0, day));
+    if (minYmd && next < minYmd) return;
+    commit(next);
     setOpen(false);
   };
 
   const openCal = () => {
-    const d = parseYmd(value) || new Date();
+    const d = parseYmd(ymd) || new Date();
     setCursor({ year: d.getFullYear(), month0: d.getMonth() });
     setOpen(true);
   };
@@ -33,24 +60,17 @@ export function DateField({ label, value, onChangeText, testID }: DateFieldProps
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4, textTransform: "uppercase" }}>{label}</Text>
       {Platform.OS === "web" ? (
-        <View style={{ position: "relative" }}>
-          <TextInput
-            testID={testID}
-            value={value}
-            onChangeText={onChangeText}
-            placeholder="Tarih seçin"
-            placeholderTextColor={colors.muted}
-            style={inputStyle}
-            {...({ type: "date" } as object)}
-            onFocus={(e) => {
-              const target = (e as unknown as { target?: { showPicker?: () => void } }).target;
-              try { target?.showPicker?.(); } catch { openCal(); }
-            }}
-          />
-        </View>
+        createElement("input", {
+          type: "date",
+          value: ymd,
+          min: minYmd || undefined,
+          onChange: (e: { target: { value: string } }) => commit(e.target.value),
+          "data-testid": testID,
+          style: webInputStyle,
+        })
       ) : (
         <Pressable testID={testID} onPress={openCal} style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
-          <Text style={{ color: value ? colors.text : colors.muted, fontSize: 15 }}>{value || "Tarih seçin"}</Text>
+          <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
           <Ionicons name="calendar-outline" size={18} color={colors.muted} />
         </Pressable>
       )}
@@ -78,12 +98,13 @@ export function DateField({ label, value, onChangeText, testID }: DateFieldProps
             {Array.from({ length: cells.length / 7 }, (_, row) => (
               <View key={row} style={{ flexDirection: "row" }}>
                 {cells.slice(row * 7, row * 7 + 7).map((day, col) => {
-                  const ymd = day ? toYmd(new Date(cursor.year, cursor.month0, day)) : "";
-                  const active = Boolean(day && ymd === value);
+                  const next = day ? toYmd(new Date(cursor.year, cursor.month0, day)) : "";
+                  const active = Boolean(day && next === ymd);
+                  const blocked = Boolean(day && minYmd && next < minYmd);
                   return (
                     <Pressable
                       key={`${row}-${col}`}
-                      disabled={!day}
+                      disabled={!day || blocked}
                       onPress={() => day && pick(day)}
                       style={{
                         flex: 1,
@@ -92,6 +113,7 @@ export function DateField({ label, value, onChangeText, testID }: DateFieldProps
                         justifyContent: "center",
                         borderRadius: 999,
                         backgroundColor: active ? colors.primary : "transparent",
+                        opacity: blocked ? 0.35 : 1,
                       }}
                     >
                       <Text style={{ fontWeight: "700", color: !day ? "transparent" : active ? "#fff" : colors.text }}>{day || ""}</Text>

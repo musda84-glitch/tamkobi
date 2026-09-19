@@ -5,6 +5,7 @@ import {
   leaveDays,
   leaveStatusTr,
   leaveTypeTr,
+  selfLeavePayload,
   monthlyPayrollLoad,
   payrollBreakdown,
   payrollStatusTr,
@@ -21,6 +22,7 @@ import {
   validateEmployee,
   validateIsoDate,
   validateLeave,
+  validateSelfLeave,
   validateOvertime,
   validateTaskAssign,
 } from "./personnel";
@@ -83,6 +85,16 @@ describe("leave helpers", () => {
     expect(validateLeave("", "2026-09-01", "2026-09-02")).toBe("Çalışan seçin.");
     expect(validateLeave("e1", "2026-09-03", "2026-09-01")).toBe("Bitiş tarihi başlangıçtan önce olamaz.");
     expect(validateLeave("e1", "2026-09-01", "2026-09-02")).toBeNull();
+    expect(validateSelfLeave("", "")).toBe("Başlangıç tarihi seçin.");
+    expect(validateSelfLeave("2026-09-03", "2026-09-01")).toBe("Bitiş tarihi başlangıçtan önce olamaz.");
+    expect(validateSelfLeave("2026-09-01", "")).toBeNull();
+    expect(selfLeavePayload("annual", "2026-09-01", "2026-09-03", "  aile  ")).toEqual({
+      type: "annual",
+      start_date: "2026-09-01",
+      end_date: "2026-09-03",
+      days: 3,
+      reason: "aile",
+    });
     expect(leaveTypeTr("annual")).toBe("Yıllık İzin");
     expect(leaveStatusTr("approved")).toBe("Onaylandı");
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);

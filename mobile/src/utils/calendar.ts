@@ -19,6 +19,14 @@ export function parseYmd(value: string): Date | null {
   return d;
 }
 
+/** RN-web date/time inputs sometimes emit ISO datetimes or HH:MM — keep only a real day. */
+export function normalizeYmd(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const isoDay = raw.slice(0, 10);
+  return parseYmd(isoDay) ? isoDay : "";
+}
+
 export function monthTitle(year: number, month0: number): string {
   return new Date(year, month0, 1).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
 }

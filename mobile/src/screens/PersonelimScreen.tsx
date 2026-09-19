@@ -6,9 +6,10 @@ import { DateField } from "../components/DateField";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
+import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { advanceRequestPayload, validateAdvance } from "../utils/personnel";
+import { advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
 type TabId = "ozet" | "alacak" | "gorevler" | "emirler" | "mesai";
 
@@ -140,23 +141,40 @@ export function PersonelimScreen() {
   const bonuses = data?.bonuses || [];
   const leaves = data?.leaves || [];
   const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
+  const leaveDayCount = leaveDays(startDate, endDate || startDate);
 
   const submitLeave = async () => {
+    const start = normalizeYmd(startDate);
+    const end = normalizeYmd(endDate) || start;
+    const invalid = validateSelfLeave(start, end);
+    if (invalid) { setError(invalid); return; }
     setLeaveBusy(true);
     setError(null);
     setMessage(null);
     try {
-      await post(client, "/personnel/leaves/self", {
-        type: leaveType,
-        start_date: startDate,
-        end_date: endDate || startDate,
-        reason,
-      });
+      await post(client, "/personnel/leaves/self", selfLeavePayload(leaveType, start, end, reason));
       setMessage("İzin talebi gönderildi.");
       setReason("");
+      setStartDate("");
+      setEndDate("");
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İzin talebi gönderilemedi."));
+    } finally {
+      setLeaveBusy(false);
+    }
+  };
+
+  const cancelLeave = async (id: string) => {
+    if (!id) return;
+    setLeaveBusy(true);
+    setError(null);
+    try {
+      await del(client, `/personnel/leaves/self/${id}`);
+      setMessage("İzin talebi iptal edildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "İzin talebi iptal edilemedi."));
     } finally {
       setLeaveBusy(false);
     }
@@ -292,22 +310,38 @@ export function PersonelimScreen() {
               testID="personelim-leave-start"
               value={startDate}
               onChangeText={(d) => {
-                setStartDate(d);
-                if (!endDate || endDate < d) setEndDate(d);
+                const next = normalizeYmd(d);
+                setStartDate(next);
+                if (!endDate || endDate < next) setEndDate(next);
               }}
             />
-            <DateField label="Bitiş" testID="personelim-leave-end" value={endDate} onChangeText={setEndDate} />
+            <DateField label="Bitiş" testID="personelim-leave-end" value={endDate} min={startDate} onChangeText={(d) => setEndDate(normalizeYmd(d))} />
             <Field label="Açıklama" testID="personelim-leave-reason" value={reason} onChangeText={setReason} placeholder="İsteğe bağlı" />
-            <PrimaryButton title={leaveBusy ? "Gönderiliyor…" : "İzin talep et"} onPress={submitLeave} disabled={leaveBusy || !startDate} testID="personelim-leave-submit" />
+            <PrimaryButton
+              title={leaveBusy ? "Gönderiliyor…" : leaveDayCount ? `İzin talep et (${leaveDayCount} gün)` : "İzin talep et"}
+              onPress={submitLeave}
+              disabled={leaveBusy}
+              testID="personelim-leave-submit"
+            />
           </Card>
           {advanceForm}
           {leaves.slice(0, 8).map((l) => (
-            <ListRow
-              key={idOf(l) || `${l.start_date}-${l.end_date}`}
-              title={`${leaveTr(l.type)} · ${l.days ?? "—"} gün`}
-              subtitle={`${l.start_date || "—"} → ${l.end_date || "—"}${l.reason ? ` · ${l.reason}` : ""}`}
-              right={statusTr(l.status)}
-            />
+            <View key={idOf(l) || `${l.start_date}-${l.end_date}`}>
+              <ListRow
+                title={`${leaveTr(l.type)} · ${l.days ?? "—"} gün`}
+                subtitle={`${l.start_date || "—"} → ${l.end_date || "—"}${l.reason ? ` · ${l.reason}` : ""}`}
+                right={statusTr(l.status)}
+              />
+              {l.status === "pending" ? (
+                <Pressable
+                  testID={`personelim-leave-cancel-${idOf(l)}`}
+                  onPress={() => cancelLeave(idOf(l))}
+                  style={{ alignSelf: "flex-end", paddingVertical: 6, paddingHorizontal: 4 }}
+                >
+                  <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>Talebi iptal et</Text>
+                </Pressable>
+              ) : null}
+            </View>
           ))}
         </>
       ) : null}

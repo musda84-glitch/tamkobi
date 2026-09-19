@@ -29,11 +29,63 @@ export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
 }
 
 export function stockRowSubtitle(
-  p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active">,
+  p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active" | "category">,
   typeLabel: string,
   priceLabel: string,
 ): string {
-  return [typeLabel, priceLabel, p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ");
+  return [p.category, typeLabel, priceLabel, p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ");
+}
+
+export type ProductCategory = { name?: string; count?: number };
+
+/** API kategorileri varsa onları, yoksa listedeki benzersiz kategorileri kullan. */
+export function productCategoryGroups(
+  saved?: ProductCategory[] | null,
+  products?: Array<{ category?: string }> | null,
+): { label: string; options: { value: string; label: string }[] }[] {
+  const names = new Map<string, number>();
+  for (const c of saved || []) {
+    const name = String(c.name || "").trim();
+    if (name) names.set(name, Number(c.count) || 0);
+  }
+  if (!names.size) {
+    for (const p of products || []) {
+      const name = String(p.category || "").trim();
+      if (name) names.set(name, (names.get(name) || 0) + 1);
+    }
+  }
+  const options = [...names.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "tr"))
+    .map(([name, count]) => ({ value: name, label: count ? `${name} (${count})` : name }));
+  return [
+    { label: "Filtre", options: [{ value: "all", label: "Tüm Kategoriler" }] },
+    ...(options.length ? [{ label: "Kategoriler", options }] : []),
+  ];
+}
+
+export function matchesProductCategory(category: string | undefined, filter: string): boolean {
+  if (!filter || filter === "all") return true;
+  return String(category || "") === filter;
+}
+
+export function matchesProductSearch(
+  p: Pick<Product, "name" | "sku" | "barcode" | "category">,
+  query: string,
+): boolean {
+  const s = query.trim().toLowerCase();
+  if (!s) return true;
+  return [p.name, p.sku, p.barcode, p.category].some((v) => String(v || "").toLowerCase().includes(s));
+}
+
+export function filterProducts<T extends Pick<Product, "name" | "sku" | "barcode" | "category">>(
+  rows: T[] | null | undefined,
+  query: string,
+  category = "all",
+  limit = 100,
+): T[] {
+  return (rows || [])
+    .filter((p) => matchesProductCategory(p.category, category) && matchesProductSearch(p, query))
+    .slice(0, limit);
 }
 
 /** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. Takip kapalı olsa da adet yazılır. */
