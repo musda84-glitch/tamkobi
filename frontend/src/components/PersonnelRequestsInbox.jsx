@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, X } from "lucide-react";
+import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, Wallet, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
@@ -10,6 +10,7 @@ const KIND_META = {
   leave: { label: "İzin", Icon: CalendarDays, chip: "bg-indigo-50 text-indigo-700 border-indigo-100" },
   early_leave: { label: "Erken çıkış", Icon: Clock, chip: "bg-amber-50 text-amber-800 border-amber-100" },
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
+  advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
 };
 
 /** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
@@ -41,6 +42,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     try {
       await axios.post(`${API_URL}/personnel/leaves/${id}/decide`, { status });
       toast.success(status === "approved" ? "İzin onaylandı." : "İzin reddedildi.");
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decideAdvance = async (id, status) => {
+    setBusyId(id);
+    try {
+      await axios.post(`${API_URL}/personnel/bonuses/${id}/decide`, { status });
+      toast.success(status === "approved" ? "Avans talebi onaylandı." : "Avans talebi reddedildi.");
       await load();
       onChanged?.();
     } catch (err) {
@@ -100,7 +115,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, erken çıkış veya puantaj itirazı yok.
+          Şu an onay bekleyen izin, avans, erken çıkış veya puantaj itirazı yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
@@ -137,6 +152,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                         <Check className="w-3 h-3" /> Onayla
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-early-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "advance" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideAdvance(it.id, "approved")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-advance-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideAdvance(it.id, "rejected")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-advance-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
                       </button>
                     </>

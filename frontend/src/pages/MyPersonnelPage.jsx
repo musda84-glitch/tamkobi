@@ -41,6 +41,9 @@ export default function MyPersonnelPage() {
   const [tab, setTab] = useState("ozet");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
+  const [advanceBusy, setAdvanceBusy] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -70,6 +73,70 @@ export default function MyPersonnelPage() {
   const wos = data?.work_orders || [];
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
+  const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
+
+  const submitAdvance = async (e) => {
+    e?.preventDefault?.();
+    const amount = Number(String(advanceAmount).replace(",", "."));
+    if (!(amount > 0)) { toast.error("Avans tutarı girin."); return; }
+    setAdvanceBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/bonuses/self`, { amount, note: advanceNote, period: month }, { withCredentials: true });
+      toast.success(r.data?.message || "Avans talebi gönderildi.");
+      setAdvanceAmount("");
+      setAdvanceNote("");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Avans talebi gönderilemedi.");
+    } finally {
+      setAdvanceBusy(false);
+    }
+  };
+
+  const cancelAdvance = async () => {
+    if (!pendingAdvance?.id) return;
+    setAdvanceBusy(true);
+    try {
+      const r = await axios.delete(`${API_URL}/personnel/bonuses/self/${pendingAdvance.id}`, { withCredentials: true });
+      toast.success(r.data?.message || "Talep iptal edildi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Talep iptal edilemedi.");
+    } finally {
+      setAdvanceBusy(false);
+    }
+  };
+
+  const AdvanceForm = (
+    <form onSubmit={submitAdvance} className="bg-white border border-amber-200 rounded-2xl p-4 space-y-3" data-testid="my-personnel-advance-form">
+      <div className="text-[10px] uppercase font-semibold text-amber-700 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> Avans talebi</div>
+      {pendingAdvance ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="my-personnel-advance-pending">
+          <span className="font-semibold text-slate-800">Bekleyen talep: {money(pendingAdvance.amount)}</span>
+          {pendingAdvance.note && <span className="text-slate-500">{pendingAdvance.note}</span>}
+          <button type="button" disabled={advanceBusy} onClick={cancelAdvance} className="ml-auto px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold disabled:opacity-50" data-testid="my-personnel-advance-cancel">
+            {advanceBusy ? "İptal…" : "Talebi iptal et"}
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
+          <div className="sm:col-span-2">
+            <label className="block font-semibold text-slate-600 mb-0.5">Tutar (₺)</label>
+            <input required value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} placeholder="Örn: 5000" className="w-full bg-slate-50 border rounded-lg p-2" data-testid="my-personnel-advance-amount" />
+          </div>
+          <div className="sm:col-span-3">
+            <label className="block font-semibold text-slate-600 mb-0.5">Açıklama</label>
+            <input value={advanceNote} onChange={(e) => setAdvanceNote(e.target.value)} placeholder="İsteğe bağlı" className="w-full bg-slate-50 border rounded-lg p-2" data-testid="my-personnel-advance-note" />
+          </div>
+          <div className="sm:col-span-1 flex items-end">
+            <button type="submit" disabled={advanceBusy} className="w-full px-3 py-2 rounded-lg bg-amber-500 text-slate-900 font-bold disabled:opacity-50" data-testid="my-personnel-advance-submit">
+              {advanceBusy ? "…" : "Talep et"}
+            </button>
+          </div>
+        </div>
+      )}
+    </form>
+  );
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-personnel-page">
@@ -148,6 +215,7 @@ export default function MyPersonnelPage() {
               </Link>
             </div>
           </div>
+          {AdvanceForm}
         </div>
       )}
 
@@ -161,6 +229,7 @@ export default function MyPersonnelPage() {
             <Stat label="Yol alacağı" value={money(bal?.transport_due)} testId="my-pers-bal-transport" />
             <Stat label="Avans (mahsup)" value={money(bal?.advances)} tone="amber" testId="my-pers-bal-advance" />
           </div>
+          {AdvanceForm}
           <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
             <div className="px-4 py-3 border-b text-xs font-bold text-slate-700">Bordrolar</div>
             {payrolls.length === 0 ? (

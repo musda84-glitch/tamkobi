@@ -15,6 +15,7 @@ import {
   overtimePayload,
   projectSelectGroups,
   taskSelectGroups,
+  advanceRequestPayload,
   validateAdvance,
   validateEmployee,
   validateIsoDate,
@@ -66,6 +67,11 @@ describe("payroll helpers", () => {
     expect(remainingDue(null, 12000)).toBe(12000);
     expect(validateAdvance("")).toBe("Avans tutarı girin.");
     expect(validateAdvance("2500")).toBeNull();
+    expect(advanceRequestPayload(" 2500 ", " maaş ", "2026-09")).toEqual({
+      amount: 2500,
+      note: "maaş",
+      period: "2026-09",
+    });
   });
 });
 

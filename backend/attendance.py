@@ -849,6 +849,87 @@ async def my_leaves(request: Request):
             "balance": {"annual": annual, "used": used, "remaining": annual - used, "pending_days": pending_days}}
 
 
+def parse_advance_self(req: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        amount = float(str(req.get("amount") or "").replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        amount = 0.0
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Avans tutarı sıfırdan büyük olmalı.")
+    period = (req.get("period") or "").strip() or datetime.now(timezone.utc).strftime("%Y-%m")
+    if len(period) != 7 or period[4] != "-" or not period[:4].isdigit() or not period[5:].isdigit():
+        raise HTTPException(status_code=400, detail="Dönem YYYY-AA formatında olmalı.")
+    return {"amount": round(amount, 2), "note": (req.get("note") or "").strip()[:300], "period": period}
+
+
+def bonus_counts_as_advance(b: Dict[str, Any]) -> bool:
+    """Bekleyen self-servis avans talebi kalan alacaktan düşülmez."""
+    if (b.get("type") or "") != "advance":
+        return False
+    if b.get("status") in ("rejected",):
+        return False
+    if b.get("source") == "self" and b.get("status") == "pending":
+        return False
+    return True
+
+
+@router.post("/personnel/bonuses/self")
+async def request_my_advance(req: Dict[str, Any], request: Request):
+    """Personel avans talebi: yönetici onaylar; kasa çıkışı sonradan yapılır."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
+    parsed = parse_advance_self(req)
+    existing = await _db.bonus_payments.find_one({
+        "employee_id": emp["_id"], "type": "advance", "source": "self", "status": "pending",
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="Bekleyen bir avans talebiniz var.")
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": emp["company_id"],
+        "employee_id": emp["_id"],
+        "employee_name": emp["full_name"],
+        "type": "advance",
+        "type_label": "Avans",
+        "period": parsed["period"],
+        "amount": parsed["amount"],
+        "note": parsed["note"],
+        "is_official": False,
+        "account_id": None,
+        "partner_id": None,
+        "account_name": None,
+        "status": "pending",
+        "source": "self",
+        "created_at": _now(),
+    }
+    await _db.bonus_payments.insert_one(doc)
+    when = f" ({parsed['period']})"
+    await notify_managers(
+        emp["company_id"],
+        "advance_request",
+        f"Avans talebi: {emp['full_name']}",
+        f"{emp['full_name']} {parsed['amount']:,.2f} ₺ avans talep etti{when}. {parsed['note']}".strip(),
+        link="/personnel?tab=payroll",
+        dedupe_key=f"advance:{emp['_id']}:{parsed['period']}",
+    )
+    return {**_clean(doc), "message": "Avans talebiniz yöneticiye iletildi."}
+
+
+@router.delete("/personnel/bonuses/self/{bonus_id}")
+async def cancel_my_advance(bonus_id: str, request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    rec = await _db.bonus_payments.find_one({"_id": bonus_id})
+    if not rec or not emp or rec.get("employee_id") != emp["_id"] or rec.get("source") != "self":
+        raise HTTPException(status_code=404, detail="Avans talebi bulunamadı.")
+    if rec.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
+    await _db.bonus_payments.delete_one({"_id": bonus_id})
+    return {"status": "success", "message": "Avans talebi iptal edildi."}
+
+
 @router.post("/personnel/leaves/self")
 async def create_my_leave(req: Dict[str, Any], request: Request):
     user = await _current_user(request)

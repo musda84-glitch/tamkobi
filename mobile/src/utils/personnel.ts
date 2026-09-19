@@ -260,6 +260,14 @@ export function validateAdvance(amount: string): string | null {
   return null;
 }
 
+export function advanceRequestPayload(amount: string, note: string, period: string) {
+  return {
+    amount: num(amount),
+    note: note.trim(),
+    period: period.trim(),
+  };
+}
+
 export function advancePayload(employeeId: string, amount: string, period: string, accountId: string, note: string) {
   return {
     employee_id: employeeId,
