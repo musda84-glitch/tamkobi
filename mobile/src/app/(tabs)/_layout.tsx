@@ -61,7 +61,7 @@ export default function TabsLayout() {
         name="personelim"
         options={{
           title: "Benim Sayfam",
-          tabBarLabel: "Personelim",
+          tabBarLabel: "Benim Sayfam",
           href: show("/personelim") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
         }}

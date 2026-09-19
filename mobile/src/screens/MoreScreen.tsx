@@ -8,7 +8,7 @@ import { colors } from "../theme";
 import { isMoreLinkVisible } from "../utils/permissions";
 
 const LINKS = [
-  { title: "Personelim", path: "/personelim", screen: "Personelim", icon: "person" as const },
+  { title: "Benim Sayfam", path: "/personelim", screen: "Personelim", icon: "person" as const },
   { title: "Personel & Bordro", path: "/personnel", screen: "Personnel", icon: "people-circle" as const },
   { title: "Cariler", path: "/contacts", screen: "Contacts", icon: "people" as const },
   { title: "Faturalar", path: "/invoices", screen: "Invoices", icon: "document-text" as const },

@@ -129,28 +129,27 @@ export function AttendanceScreen() {
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
           <PrimaryButton title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"} onPress={() => act("check_out")} disabled={!checkedIn || checkedOut} testID="mesai-out" />
-          {!checkedOut && data?.employee ? (
-            early?.status === "pending" ? (
-              <View testID="mesai-early-pending" style={{ gap: 8 }}>
-                <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
-                <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
-              </View>
-            ) : early?.status === "approved" || today?.early_leave_approved ? (
-              <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış yapabilirsiniz{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
-            ) : !checkedIn ? (
-              <Muted>Erken çıkış talep etmek için önce giriş yapın.</Muted>
-            ) : earlyOpen ? (
-              <View testID="mesai-early-form" style={{ gap: 8 }}>
-                {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
-                <Field label="Neden" testID="mesai-early-reason" value={earlyReason} onChangeText={setEarlyReason} placeholder="Örn: doktor randevusu" />
-                <Field label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} placeholder="HH:MM (opsiyonel)" />
-                <PrimaryButton title={busy === "early" ? "Gönderiliyor…" : "Talebi gönder"} onPress={requestEarly} color="#D97706" testID="mesai-early-submit" />
-                <PrimaryButton title="Vazgeç" onPress={() => setEarlyOpen(false)} color={colors.secondary} testID="mesai-early-close" />
-              </View>
-            ) : (
-              <PrimaryButton title="Erken çıkış talep et" onPress={() => setEarlyOpen(true)} color="#D97706" testID="mesai-early-open" />
-            )
-          ) : null}
+          {early?.status === "pending" ? (
+            <View testID="mesai-early-pending" style={{ gap: 8 }}>
+              <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
+              <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
+            </View>
+          ) : earlyOpen ? (
+            <View testID="mesai-early-form" style={{ gap: 8 }}>
+              {early?.status === "approved" || today?.early_leave_approved ? (
+                <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış yapabilirsiniz{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
+              ) : null}
+              {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
+              {!checkedIn ? <Muted>Talebi göndermeden önce giriş yapın.</Muted> : null}
+              {checkedOut ? <Muted>Bugün zaten çıkış yapılmış — yeni talep gönderilemez.</Muted> : null}
+              <Field label="Neden" testID="mesai-early-reason" value={earlyReason} onChangeText={setEarlyReason} placeholder="Örn: doktor randevusu" />
+              <Field label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} placeholder="HH:MM (opsiyonel)" />
+              <PrimaryButton title={busy === "early" ? "Gönderiliyor…" : "Talebi gönder"} onPress={requestEarly} disabled={!checkedIn || checkedOut} color="#D97706" testID="mesai-early-submit" />
+              <PrimaryButton title="Vazgeç" onPress={() => setEarlyOpen(false)} color={colors.secondary} testID="mesai-early-close" />
+            </View>
+          ) : (
+            <PrimaryButton title="Erken çıkış talep et" onPress={() => setEarlyOpen(true)} color="#D97706" testID="mesai-early-open" />
+          )}
         </View>
       </Card>
       {(data?.records || []).slice(0, 14).map((r) => (
