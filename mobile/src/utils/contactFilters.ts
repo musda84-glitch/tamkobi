@@ -12,6 +12,12 @@ export const CONTACT_BALANCE_FILTERS: { key: ContactBalanceFilter; label: string
   { key: "payable", label: "Borçlu Olanlar" },
 ];
 
+/** Cari listesinin tek çip şeridi: tip + alacaklı/borçlu. */
+export const CONTACT_LIST_CHIPS: { key: string; label: string; type?: ContactTypeFilter; balance?: ContactBalanceFilter }[] = [
+  ...CONTACT_TYPE_FILTERS.map((t) => ({ key: t.key, label: t.label, type: t.key })),
+  ...CONTACT_BALANCE_FILTERS.map((t) => ({ key: t.key, label: t.label, balance: t.key })),
+];
+
 type FilterableContact = {
   name?: string;
   company_title?: string;

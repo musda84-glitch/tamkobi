@@ -1,4 +1,4 @@
-import { CONTACT_BALANCE_FILTERS, CONTACT_TYPE_FILTERS, filterContacts, matchesContactBalance, matchesContactSearch, matchesContactType } from "./contactFilters";
+import { CONTACT_BALANCE_FILTERS, CONTACT_LIST_CHIPS, CONTACT_TYPE_FILTERS, filterContacts, matchesContactBalance, matchesContactSearch, matchesContactType } from "./contactFilters";
 
 const rows = [
   { name: "Acme", type: "customer", city: "İstanbul", phone: "5330000000" },
@@ -11,6 +11,7 @@ describe("contactFilters", () => {
   it("offers type chips plus receivable/payable chips", () => {
     expect(CONTACT_TYPE_FILTERS.map((f) => f.key)).toEqual(["all", "customer", "supplier"]);
     expect(CONTACT_BALANCE_FILTERS.map((f) => f.label)).toEqual(["Alacaklı Olanlar", "Borçlu Olanlar"]);
+    expect(CONTACT_LIST_CHIPS.map((f) => f.label)).toEqual(["Tümü", "Müşteri", "Tedarikçi", "Alacaklı Olanlar", "Borçlu Olanlar"]);
   });
 
   it("filters by display balance", () => {
