@@ -5,11 +5,12 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { ProductPickRow } from "../components/ProductPickRow";
+import { ChannelLogo } from "../components/ChannelLogo";
 import { Card, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Order, Product } from "../types";
 import { addOrBump, cartTotals, lineFromProduct, type CartLine } from "../utils/cart";
-import { statusTr } from "../utils/labels";
+import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function FieldSalesScreen() {
@@ -203,7 +204,7 @@ export function FieldSalesScreen() {
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü saha siparişleri</Text>
         {!todayOrders.length ? <Empty icon="clipboard-outline" title="Henüz saha siparişi yok" /> : todayOrders.map((o) => (
-          <ListRow key={idOf(o)} title={o.order_number || "Sipariş"} subtitle={`${o.customer_name} · ${statusTr(o.order_status)}`} right={fmtMoney(o.grand_total || o.total_amount)} />
+          <ListRow key={idOf(o)} title={orderNumberLabel({ ...o, channel: o.channel || "saha" })} subtitle={`${o.customer_name} · ${statusTr(o.order_status)}`} leading={<ChannelLogo channel={o.channel || "saha"} />} right={fmtMoney(o.grand_total || o.total_amount)} />
         ))}
       </Card>
       <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookupBarcode} />

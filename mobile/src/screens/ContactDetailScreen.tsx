@@ -9,10 +9,11 @@ import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { TabStrip, type TabStripItem } from "../components/TabStrip";
+import { ChannelLogo } from "../components/ChannelLogo";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import { invoiceTypeTr, riskStatusTr, statusTr } from "../utils/labels";
+import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
 import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
@@ -756,7 +757,8 @@ export function ContactDetailScreen() {
           <ListRow
             key={idOf(o) || idx}
             testID={`detail-ord-${idOf(o) || idx}`}
-            title={o.order_number || "Sipariş"}
+            title={orderNumberLabel(o)}
+            leading={<ChannelLogo channel={o.channel} />}
             subtitle={[statusTr(o.status), fmtDate(o.order_date || o.created_at)].filter(Boolean).join(" · ")}
             right={fmtMoney(o.grand_total || o.total)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}

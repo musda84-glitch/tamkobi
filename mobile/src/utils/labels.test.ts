@@ -1,4 +1,4 @@
-import { channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, leaveTr, paymentMethodTr, productTypeTr, statusTr, tradeKindTr } from "./labels";
+import { channelLogoUrl, channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, isMarketplaceChannel, leaveTr, orderNumberLabel, paymentMethodTr, productTypeTr, statusTr, tradeKindTr } from "./labels";
 
 describe("labels", () => {
   it("maps known statuses", () => {
@@ -11,6 +11,16 @@ describe("labels", () => {
   it("maps channels", () => {
     expect(channelTr("saha")).toBe("Saha");
     expect(channelTr("trendyol")).toBe("Trendyol");
+  });
+
+  it("labels order numbers and marketplace logos", () => {
+    expect(orderNumberLabel({ order_number: "11573451170", channel: "trendyol" })).toBe("Trendyol sipariş no 11573451170");
+    expect(orderNumberLabel({ order_number: "SO-1", channel: "manual" })).toBe("Sipariş no SO-1");
+    expect(orderNumberLabel({ order_number: "B2B-1", channel: "b2b" })).toBe("B2B sipariş no B2B-1");
+    expect(orderNumberLabel({})).toBe("Sipariş");
+    expect(isMarketplaceChannel("trendyol")).toBe(true);
+    expect(isMarketplaceChannel("saha")).toBe(false);
+    expect(channelLogoUrl("trendyol")).toContain("dsmcdn");
   });
 
   it("maps leave and bonus-like statuses", () => {

@@ -1,13 +1,14 @@
 import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ChannelLogo } from "../components/ChannelLogo";
 import { OrderActions } from "../components/OrderActions";
-import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Order } from "../types";
-import { channelTr, statusTr } from "../utils/labels";
+import { channelTr, orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney } from "../utils/money";
 
 export function OrderDetailScreen() {
@@ -32,7 +33,12 @@ export function OrderDetailScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <H1>{order.order_number}</H1>
+      <Row style={{ alignItems: "center", gap: 10 }}>
+        <ChannelLogo channel={order.channel} size={40} testID="order-detail-channel" />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <H1>{orderNumberLabel(order)}</H1>
+        </View>
+      </Row>
       <Muted>{order.customer_name} · {fmtDate(order.order_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}

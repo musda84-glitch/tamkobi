@@ -2,15 +2,17 @@ import React, { useState } from "react";
 import { Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ChannelLogo } from "../components/ChannelLogo";
 import { Card, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
+import { orderNumberLabel } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 
 type SearchHit = {
   contacts: { id?: string; _id?: string; name: string; balance?: number }[];
   products: { id?: string; _id?: string; name: string; sku?: string; sale_price?: number }[];
-  orders: { id?: string; _id?: string; order_number?: string; customer_name?: string }[];
+  orders: { id?: string; _id?: string; order_number?: string; customer_name?: string; channel?: string }[];
   invoices: { id?: string; _id?: string; invoice_number?: string; contact_name?: string; grand_total?: number }[];
 };
 
@@ -56,7 +58,7 @@ export function SearchScreen() {
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Siparişler</Text>
           {hits.orders.map((o) => (
-            <ListRow key={idOf(o)} title={o.order_number || "Sipariş"} subtitle={o.customer_name} onPress={() => go("OrderDetail", { id: idOf(o) })} />
+            <ListRow key={idOf(o)} title={orderNumberLabel(o)} subtitle={o.customer_name} leading={<ChannelLogo channel={o.channel} />} onPress={() => go("OrderDetail", { id: idOf(o) })} />
           ))}
         </Card>
       ) : null}
