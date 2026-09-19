@@ -6,23 +6,23 @@ import { Empty, ErrorBanner, ListRow, Screen } from "../components/kit";
 import { goHref } from "../nav";
 import type { Notification } from "../types";
 import { fmtDate, idOf } from "../utils/money";
-import { notificationLook, notificationRoute, notificationText, notificationTitle } from "../utils/notifications";
+import { notificationLook, notificationRoute, notificationText, notificationTitle, visibleNotifications } from "../utils/notifications";
 import { QUICK_TONE_COLORS } from "../utils/quickMenu";
 
 export function NotificationsScreen() {
-  const { client, companyId } = useAuth();
+  const { client, companyId, user } = useAuth();
   const [rows, setRows] = useState<Notification[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await get<Notification[]>(client, "/notifications", { company_id: companyId });
-      setRows(data || []);
+      setRows(visibleNotifications(data || [], user));
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Bildirimler yüklenemedi."));
     }
-  }, [client, companyId]);
+  }, [client, companyId, user]);
 
   useEffect(() => { load(); }, [load]);
 

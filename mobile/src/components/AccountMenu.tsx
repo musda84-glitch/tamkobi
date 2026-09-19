@@ -42,17 +42,17 @@ function Item({ item, onDone }: { item: MenuItem; onDone: () => void }) {
 
 /** Başlıktaki "..." düğmesi: hesap, şirket seçimi ve oturum işlemleri. */
 export function AccountMenu() {
-  const { user, activeCompany, companies, switchCompany, logout, baseUrl, can, moduleOn } = useAuth();
+  const { user, activeCompany, companies, switchCompany, logout, can, moduleOn } = useAuth();
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
 
   const items: MenuItem[] = [
     ...(can("/personelim") && moduleOn("/personelim")
-      ? [{ key: "personelim", label: "Personelim", icon: "person-circle" as const, onPress: () => go("Personelim") }]
+      ? [{ key: "personelim", label: "Benim Sayfam", icon: "person-circle" as const, onPress: () => go("Personelim") }]
       : []),
     { key: "notifications", label: "Bildirimler", icon: "notifications", onPress: () => go("Notifications") },
     { key: "search", label: "Ara", icon: "search", onPress: () => go("Search") },
-    { key: "settings", label: "Ayarlar", hint: baseUrl.replace(/^https?:\/\//, ""), icon: "settings", onPress: () => go("Settings") },
+    { key: "settings", label: "Ayarlar", hint: "Şifre yenile", icon: "settings", onPress: () => go("Settings") },
   ];
 
   return (

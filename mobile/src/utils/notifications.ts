@@ -1,6 +1,37 @@
 import type { Ionicons } from "@expo/vector-icons";
-import type { Notification } from "../types";
+import type { Notification, User } from "../types";
 import { resolveMobilePath, type QuickTone } from "./quickMenu";
+
+const TYPE_ROLES: Record<string, string[]> = {
+  order_pick_missing: ["admin", "manager", "warehouse"],
+  order_pick_production: ["admin", "manager", "warehouse", "production"],
+  attendance_late: ["admin", "manager", "accountant"],
+  attendance_missing: ["admin", "manager", "accountant"],
+  attendance_dispute: ["admin", "manager", "accountant"],
+  role_assigned: ["admin", "manager"],
+  b2b_order: ["admin", "manager", "sales"],
+  quote_response: ["admin", "manager", "sales"],
+  cash_approval: ["admin", "manager", "accountant"],
+};
+
+export function rolesForType(type?: string | null): string[] {
+  return TYPE_ROLES[String(type || "")] || ["admin"];
+}
+
+/** Ana ekranda kişi kendi rolüne veya kendisine atanan kayıtlara bakar. */
+export function visibleNotifications(rows: Notification[] | null | undefined, user?: User | null): Notification[] {
+  const list = rows || [];
+  if (!user) return list;
+  if (user.is_super_admin || user.role === "admin") return list;
+  const mine = new Set([user.id, user.employee_id].filter(Boolean).map(String));
+  const role = (user.role || "").toLowerCase();
+  return list.filter((n) => {
+    if (n.user_id && mine.has(String(n.user_id))) return true;
+    if (n.employee_id && mine.has(String(n.employee_id))) return true;
+    const roles = n.roles != null ? n.roles : rolesForType(n.type);
+    return !!role && roles.includes(role);
+  });
+}
 
 /** Ana ekranda gösterilen bildirim sayısı. */
 export const NOTIFICATION_PREVIEW = 3;
@@ -45,6 +76,10 @@ export function notificationLook(n: Notification): NotificationLook {
   if (type.startsWith("b2b")) return { icon: "cart", tone: "sky" };
   if (type.startsWith("cash")) return { icon: "wallet", tone: "teal" };
   if (type.startsWith("quote")) return { icon: "create", tone: "amber" };
+  if (type === "role_assigned") return { icon: "people", tone: "violet" };
+  if (type === "task_assigned") return { icon: "briefcase", tone: "indigo" };
+  if (type === "overtime_assigned") return { icon: "time", tone: "indigo" };
+  if (type.startsWith("attendance") || type.startsWith("order_pick")) return { icon: "alert-circle", tone: "amber" };
   return { icon: "information-circle", tone: "indigo" };
 }
 
@@ -57,6 +92,7 @@ const REF_ROUTES: Record<string, string> = {
   contact: "/contacts",
   cheque: "/cheques",
   cash_approval: "/banking",
+  employee: "/personnel",
 };
 
 /** Web'deki link/ref_type yönlendirmesinin mobilde karşılığı olan rotası. */

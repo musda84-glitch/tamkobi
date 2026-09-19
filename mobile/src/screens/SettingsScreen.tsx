@@ -1,43 +1,34 @@
 import React, { useState } from "react";
 import { Pressable, Text } from "react-native";
-import { get } from "../api/client";
+import { post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
+import { passwordChangePayload, validatePasswordChange } from "../utils/account";
 import { idOf } from "../utils/money";
 
 export function SettingsScreen() {
-  const { baseUrl, setServer, companies, activeCompany, switchCompany, user, logout } = useAuth();
-  const [url, setUrl] = useState(baseUrl);
+  const { client, companies, activeCompany, switchCompany, user, logout } = useAuth();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const [probe, setProbe] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const save = async () => {
+  const savePassword = async () => {
+    const invalid = validatePasswordChange(current, next, confirm);
+    if (invalid) { setError(invalid); return; }
     setBusy(true);
     setError(null);
     try {
-      await setServer(url);
-      setProbe("Adres kaydedildi. Yeniden giriş yapın.");
+      const r = await post<{ message?: string }>(client, "/auth/change-password", passwordChangePayload(current, next));
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setMessage(r?.message || "Şifreniz güncellendi.");
     } catch (err) {
-      setError(apiErrorMessage(err, "Adres kaydedilemedi."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const ping = async () => {
-    setBusy(true);
-    try {
-      const data = await get<{ app?: string; min_app_version?: string; version?: { git_sha_short?: string } }>(
-        { baseUrl: url, token: null },
-        "/mobile/manifest"
-      );
-      setProbe(`${data.app || "TamKobi"} · min ${data.min_app_version} · API ${data.version?.git_sha_short || "?"}`);
-      setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "API yanıt vermedi."));
-      setProbe(null);
+      setError(apiErrorMessage(err, "Şifre değiştirilemedi."));
     } finally {
       setBusy(false);
     }
@@ -47,11 +38,18 @@ export function SettingsScreen() {
     <Screen>
       <H1>Ayarlar</H1>
       <Muted>{user?.email} · {user?.role_name || user?.role}</Muted>
-      <Field label="API adresi" autoCapitalize="none" value={url} onChangeText={setUrl} />
       <ErrorBanner message={error} />
-      {probe ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{probe}</Text></Card> : null}
-      <PrimaryButton title="Bağlantıyı dene" onPress={ping} loading={busy} color={colors.primary} />
-      <PrimaryButton title="Kaydet" onPress={save} loading={busy} />
+      {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
+
+      <Card testID="settings-change-password">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Şifre yenile</Text>
+        <Muted>Mevcut şifre doğrulanır. Yeni şifre en az 6 karakter olmalı.</Muted>
+        <Field label="Mevcut şifre" testID="settings-pw-current" value={current} onChangeText={setCurrent} secureTextEntry autoCapitalize="none" autoComplete="current-password" />
+        <Field label="Yeni şifre" testID="settings-pw-new" value={next} onChangeText={setNext} secureTextEntry autoCapitalize="none" autoComplete="new-password" />
+        <Field label="Yeni şifre (tekrar)" testID="settings-pw-confirm" value={confirm} onChangeText={setConfirm} secureTextEntry autoCapitalize="none" autoComplete="new-password" />
+        <PrimaryButton title="Şifreyi değiştir" testID="settings-pw-save" onPress={savePassword} loading={busy} color={colors.primary} />
+      </Card>
+
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Aktif şirket</Text>
         {companies.map((c) => {

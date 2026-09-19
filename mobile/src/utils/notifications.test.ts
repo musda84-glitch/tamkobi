@@ -5,6 +5,7 @@ import {
   notificationRoute,
   notificationTitle,
   unreadCount,
+  visibleNotifications,
 } from "./notifications";
 
 const at = (iso: string) => ({ created_at: iso });
@@ -43,6 +44,22 @@ describe("notificationLook", () => {
     expect(notificationLook({ type: "b2b_order", title: "Yeni B2B siparişi" }).icon).toBe("cart");
     expect(notificationLook({ type: "cash_approval", title: "Kasa işlemi bekliyor" }).icon).toBe("wallet");
     expect(notificationLook({ type: "other", title: "Duyuru" }).icon).toBe("information-circle");
+    expect(notificationLook({ type: "role_assigned", title: "Rol atandı: Depo" }).tone).toBe("violet");
+    expect(notificationLook({ type: "overtime_assigned" }).icon).toBe("time");
+  });
+});
+
+describe("visibleNotifications", () => {
+  it("keeps role-matched and personal rows for warehouse staff", () => {
+    const rows = [
+      { type: "order_pick_missing", title: "depo" },
+      { type: "attendance_late", title: "geç" },
+      { type: "task_assigned", title: "görev", user_id: "u1", roles: [] },
+      { type: "role_assigned", title: "rol", user_id: "u1" },
+    ];
+    const user = { id: "u1", email: "w@x", name: "Ali", role: "warehouse" };
+    expect(visibleNotifications(rows, user).map((n) => n.title)).toEqual(["depo", "görev", "rol"]);
+    expect(visibleNotifications(rows, { ...user, role: "admin" })).toHaveLength(4);
   });
 });
 

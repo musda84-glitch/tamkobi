@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Card, Empty, ErrorBanner, Field, H1, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { leaveTr, statusTr } from "../utils/labels";
@@ -158,7 +158,6 @@ export function PersonelimScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <H1>Personelim</H1>
       <Muted>
         {emp
           ? [emp.full_name, emp.department, emp.position].filter(Boolean).join(" · ")

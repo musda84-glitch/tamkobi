@@ -4,6 +4,7 @@ import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { Text } from "react-native";
 
 function tabIconColor(color: unknown): string {
   return typeof color === "string" && color ? color : colors.muted;
@@ -60,7 +61,10 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="personelim"
         options={{
-          title: "Personelim",
+          title: "Benim Sayfam",
+          tabBarLabel: ({ color }) => (
+            <Text style={{ color, fontSize: 9, fontWeight: "700", textAlign: "center" }}>Benim Sayfam</Text>
+          ),
           href: show("/personelim") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
         }}
