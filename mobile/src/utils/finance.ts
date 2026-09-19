@@ -79,9 +79,18 @@ export type BankTx = {
   currency?: string;
   description?: string;
   date?: string;
+  contact_id?: string;
   contact_name?: string;
   source?: string;
   is_simulated?: boolean;
+  match_status?: string;
+  matched_via?: string;
+  suggested_contact_id?: string;
+  suggested_contact_name?: string;
+  related_invoice_id?: string;
+  related_invoice_number?: string;
+  target_account_id?: string;
+  target_account_name?: string;
 };
 
 export type Partner = {
