@@ -1,4 +1,4 @@
-import { apiRoot, extraApiUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
+import { apiRoot, displayFileUrl, extraApiUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
 
 describe("normalizeApiBase", () => {
   it("defaults empty to production", () => {
@@ -38,5 +38,12 @@ describe("normalizeApiBase", () => {
     expect(fileUrl("https://tamkobi.com", "tamkobi/survey/x.jpg")).toBe("https://tamkobi.com/api/files/tamkobi/survey/x.jpg");
     expect(fileUrl("https://tamkobi.com", "https://cdn.test/x.jpg")).toBe("https://cdn.test/x.jpg");
     expect(fileUrl("https://tamkobi.com", "")).toBe("");
+  });
+
+  it("keeps file paths same-origin in the browser preview", () => {
+    expect(displayFileUrl("https://tamkobi.com", "/api/files/x.jpg", true)).toBe("/api/files/x.jpg");
+    expect(displayFileUrl("https://tamkobi.com", "tamkobi/p.jpg", true)).toBe("/api/files/tamkobi/p.jpg");
+    expect(displayFileUrl("https://tamkobi.com", "https://cdn.test/x.jpg", true)).toBe("https://cdn.test/x.jpg");
+    expect(displayFileUrl("https://tamkobi.com", "/api/files/x.jpg", false)).toBe("https://tamkobi.com/api/files/x.jpg");
   });
 });

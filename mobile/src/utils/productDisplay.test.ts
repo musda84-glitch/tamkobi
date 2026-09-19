@@ -1,10 +1,13 @@
-import { filterProducts, productCategoryGroups, productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { filterProducts, productCategoryGroups, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
     expect(productImage({ thumbnail_url: "t.jpg", image_url: "m.jpg", images: ["g.jpg"] })).toBe("t.jpg");
     expect(productImage({ image_url: "m.jpg", images: ["g.jpg"] })).toBe("m.jpg");
     expect(productImage({ images: ["", "g.jpg"] })).toBe("g.jpg");
+    expect(productImage({ images: [{ url: "/api/files/x.jpg" }] as unknown as string[] })).toBe("/api/files/x.jpg");
+    expect(productImage({ images: [{ image_url: "g.jpg" }] as unknown as string[] })).toBe("g.jpg");
+    expect(productImage({ image: "cover.jpg" })).toBe("cover.jpg");
     expect(productImage({})).toBe("");
   });
 
@@ -28,6 +31,10 @@ describe("productDisplay", () => {
     expect(stockRightLabel({ stock_quantity: -467 })).toBe("Stok -467 Adet");
     expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
     expect(stockBarcodeLabel({})).toBe("Barkod yok");
+    expect(productSkuLabel({ sku: "DRD-CAM" })).toBe("SKU DRD-CAM");
+    expect(productSkuLabel({})).toBe("SKU —");
+    expect(productPickSubtitle({ sku: "DRD-CAM", barcode: "8690001" })).toBe("SKU DRD-CAM · Barkod 8690001");
+    expect(productPickSubtitle({})).toBe("SKU — · Barkod —");
     expect(stockBadge({})?.label).toBe("0 Adet");
   });
 

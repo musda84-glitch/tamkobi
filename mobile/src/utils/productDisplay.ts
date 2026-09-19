@@ -1,9 +1,25 @@
 import type { Product } from "../types";
 
+/** String, {url} / {image_url} galeri öğesi veya boş. */
+export function mediaRef(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return mediaRef(o.url ?? o.image_url ?? o.thumbnail_url ?? o.src ?? o.path ?? o.file);
+  }
+  return "";
+}
+
 /** Liste küçük resmi: thumbnail → ana görsel → ilk galeri görseli. */
-export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "images">): string {
-  const first = Array.isArray(p.images) ? p.images.find((x) => String(x || "").trim()) : "";
-  return String(p.thumbnail_url || p.image_url || first || "").trim();
+export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "images"> & {
+  image?: unknown;
+  photo?: unknown;
+}): string {
+  const gallery = Array.isArray(p.images)
+    ? p.images.map(mediaRef).find(Boolean) || ""
+    : mediaRef(p.images);
+  return mediaRef(p.thumbnail_url) || mediaRef(p.image_url) || mediaRef(p.image) || mediaRef(p.photo) || gallery;
 }
 
 export type StockBadge = { label: string; tone: "danger" | "warning" | "muted" };
@@ -26,6 +42,17 @@ export function stockRightLabel(p: Pick<Product, "stock_quantity" | "unit" | "tr
 export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
   const code = String(p.barcode || "").trim();
   return code || "Barkod yok";
+}
+
+export function productSkuLabel(p: Pick<Product, "sku">): string {
+  const sku = String(p.sku || "").trim();
+  return sku ? `SKU ${sku}` : "SKU —";
+}
+
+/** Teklif / keşif ürün seçici: SKU + barkod her zaman yazılır. */
+export function productPickSubtitle(p: Pick<Product, "sku" | "barcode">): string {
+  const barcode = String(p.barcode || "").trim();
+  return `${productSkuLabel(p)} · Barkod ${barcode || "—"}`;
 }
 
 export function stockRowSubtitle(

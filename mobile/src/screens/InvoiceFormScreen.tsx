@@ -6,6 +6,7 @@ import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
@@ -451,7 +452,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         </Row>
         <Field label="Ürün ara ve ekle" testID="inv-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
         {prodHits.map((p) => (
-          <ListRow key={idOf(p)} title={p.name} subtitle={`${p.sku || ""} · stok ${p.stock_quantity ?? "—"}`} right={fmtMoney(p.sale_price)} onPress={() => addProduct(p)} />
+          <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
         ))}
         {draft.items.map((it, idx) => (
           <View key={idx} style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, gap: 8 }} testID={`inv-item-${idx}`}>

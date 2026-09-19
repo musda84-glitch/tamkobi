@@ -1,5 +1,5 @@
 import { ApiHttpError, apiErrorMessage } from "./errors";
-import { API_BASE_HEADER, apiRoot, fileUrl, normalizeApiBase, requestTarget } from "./url";
+import { API_BASE_HEADER, apiRoot, displayFileUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
 
 export type Query = Record<string, string | number | boolean | null | undefined>;
 
@@ -90,4 +90,4 @@ export const put = <T,>(c: ApiClient, path: string, body?: unknown, query?: Quer
   request<T>(c, "PUT", path, { body: body ?? {}, query });
 export const del = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "DELETE", path, { query });
 
-export { normalizeApiBase, apiRoot, fileUrl };
+export { normalizeApiBase, apiRoot, fileUrl, displayFileUrl };

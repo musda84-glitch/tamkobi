@@ -10,11 +10,14 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
+import { ProductPickRow } from "../components/ProductPickRow";
+import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
 import { coordText } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { filterProducts } from "../utils/productDisplay";
 import {
   PROJECT_STATUSES,
   QUOTE_STATUSES,
@@ -158,7 +161,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   };
   const totals = workItemTotals(items);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
-  const prodHits = prodQ.trim().length < 2 ? [] : products.filter((p) => [p.name, p.sku].some((v) => String(v || "").toLowerCase().includes(prodQ.trim().toLowerCase()))).slice(0, 8);
+  const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
   const statuses = kind === "quote" ? QUOTE_STATUSES : kind === "project" ? PROJECT_STATUSES : SURVEY_STATUSES;
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
@@ -335,10 +338,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
           <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
           {prodHits.map((p) => (
-            <ListRow
+            <ProductPickRow
               key={idOf(p)}
-              title={p.name}
-              right={fmtMoney(p.sale_price)}
+              product={p}
+              testID={`q-prod-${idOf(p)}`}
               onPress={() => {
                 setItems((rows) => {
                   const emptyIdx = rows.findIndex((it) => !it.name);
@@ -388,6 +391,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <Card>
           <Muted>Teklif {fmtMoney(project.quoted_total)} · Fatura {fmtMoney(project.invoiced_total)} · Masraf {fmtMoney(project.expense_total)}</Muted>
         </Card>
+      ) : null}
+      {!isNew && kind === "quote" && quote ? (
+        <QuoteActions
+          quote={{ ...quote, title, contact_name: contactName, valid_until: validUntil, notes, items, grand_total: totals.grandTotal }}
+          contact={contacts.find((c) => idOf(c) === contactId) || null}
+          onReloaded={loadDoc}
+          onMessage={setMessage}
+          onError={setError}
+        />
       ) : null}
       {!isNew && canEdit ? (
         <Pressable onPress={remove} testID={`${kind}-delete`} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>

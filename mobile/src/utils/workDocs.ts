@@ -11,6 +11,15 @@ export type WorkItem = {
   unit: string;
 };
 
+export type QuoteApproval = {
+  status?: string;
+  link?: string;
+  token?: string;
+  view_count?: number;
+  sent_count?: number;
+  responder_name?: string;
+};
+
 export type QuoteDoc = {
   id?: string;
   _id?: string;
@@ -20,12 +29,17 @@ export type QuoteDoc = {
   contact_name?: string;
   status?: string;
   valid_until?: string;
+  issue_date?: string;
   notes?: string;
+  terms?: string;
+  subtotal?: number;
+  vat_total?: number;
   grand_total?: number;
   items?: WorkItem[];
   project_id?: string;
   invoice_id?: string;
   survey_id?: string;
+  approval?: QuoteApproval;
 };
 
 export type ProjectDoc = {

@@ -1,3 +1,6 @@
 import { FieldSalesScreen } from "@/screens/FieldSalesScreen";
 
-export default FieldSalesScreen;
+/** Saha ürün aramasında satır solda ürün fotoğrafı gösterir. */
+export default function SahaTab() {
+  return <FieldSalesScreen />;
+}
