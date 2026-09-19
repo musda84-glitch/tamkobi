@@ -8,6 +8,7 @@ import {
   validateProjectName,
   validateQuoteItems,
   workItemTotals,
+  itemStripe,
 } from "./workDocs";
 
 describe("workDocs", () => {
@@ -60,5 +61,11 @@ describe("workDocs", () => {
     expect(newButtonLabel("quote")).toBe("Yeni Teklif");
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
+  });
+
+  it("stripes item rows in alternating tones", () => {
+    expect(itemStripe(0).backgroundColor).toBe("#F1F5F9");
+    expect(itemStripe(1).backgroundColor).toBe("#EEF2FF");
+    expect(itemStripe(2).backgroundColor).not.toBe(itemStripe(1).backgroundColor);
   });
 });

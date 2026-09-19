@@ -195,3 +195,8 @@ export function newButtonLabel(kind: WorkKind): string {
   if (kind === "project") return "Yeni Proje";
   return "Yeni Keşif";
 }
+
+/** Kalem satırlarını birbirinden ayıran zebra tonları. */
+export function itemStripe(index: number): { backgroundColor: string } {
+  return { backgroundColor: index % 2 === 0 ? "#F1F5F9" : "#EEF2FF" };
+}

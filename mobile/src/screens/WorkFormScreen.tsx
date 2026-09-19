@@ -44,6 +44,7 @@ import {
   validateProjectName,
   validateQuoteItems,
   workItemTotals,
+  itemStripe,
   type ProjectDoc,
   type QuoteDoc,
   type SurveyDoc,
@@ -403,18 +404,29 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             />
           ))}
           {items.map((it, i) => (
-            <View key={i} style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 8 }}>
-              <Row style={{ alignItems: "flex-start", gap: 6 }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Field compact label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
-                </View>
-                <View style={{ width: 56 }}>
-                  <Field compact label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                </View>
-                <View style={{ width: 84 }}>
-                  <Field compact label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                </View>
-              </Row>
+            <View
+              key={i}
+              testID={`q-item-row-${i}`}
+              style={{
+                ...itemStripe(i),
+                borderRadius: 10,
+                paddingHorizontal: 8,
+                paddingVertical: 8,
+                flexDirection: "row",
+                flexWrap: "nowrap",
+                alignItems: "flex-start",
+                gap: 6,
+              }}
+            >
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Field compact label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
+              </View>
+              <View style={{ width: 58, flexShrink: 0 }}>
+                <Field compact label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+              </View>
+              <View style={{ width: 86, flexShrink: 0 }}>
+                <Field compact label="Birim fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+              </View>
             </View>
           ))}
           <PrimaryButton title="Kalem ekle" color={colors.indigo} testID="q-add-item-btn" onPress={() => setItems((rows) => [...rows, emptyItem()])} />
