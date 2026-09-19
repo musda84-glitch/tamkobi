@@ -9586,7 +9586,7 @@ async def create_employee(emp: Employee):
     await db.employees.insert_one(doc)
     return clean_doc(doc)
 
-EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "status", "annual_leave_days", "used_leave_days",
+EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "meal_allowance", "transport_allowance"}
 EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
@@ -9630,6 +9630,42 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         "meal_allowance": meal, "transport_allowance": transport, "month": month,
     }
 
+
+async def _employee_assigned_work(company_id: str, emp_id: str):
+    tasks = []
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1},
+    ):
+        for t in (proj.get("tasks") or []):
+            if t.get("assignee_id") != emp_id:
+                continue
+            done = bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
+            tasks.append({
+                "id": t.get("id") or t.get("_id"),
+                "title": t.get("title") or t.get("name") or "Görev",
+                "done": done,
+                "due_date": t.get("due_date"),
+                "project_id": proj["_id"],
+                "project_name": proj.get("name"),
+                "project_number": proj.get("project_number"),
+                "project_status": proj.get("status"),
+            })
+    tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
+    wo_rows = clean_docs(await db.work_orders.find({"company_id": company_id, "assigned_to": emp_id}).sort([("planned_date", 1), ("order_code", 1)]).to_list(200))
+    work_orders = [{
+        "id": w.get("id") or w.get("_id"),
+        "order_code": w.get("order_code") or w.get("code"),
+        "product_name": w.get("product_name") or w.get("name"),
+        "station": w.get("station"),
+        "step_no": w.get("step_no"),
+        "status": w.get("status"),
+        "planned_date": w.get("planned_date"),
+        "qty": w.get("qty") or w.get("quantity"),
+        "assigned_name": w.get("assigned_name"),
+    } for w in wo_rows]
+    return tasks, work_orders
+
 @api_router.put("/personnel/employees/{emp_id}")
 async def update_employee(emp_id: str, data: Dict[str, Any]):
     if not await db.employees.find_one({"_id": emp_id}):
@@ -9654,6 +9690,19 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             v = None
         if k in ("annual_leave_days", "used_leave_days") and v is not None:
             v = int(v)
+        if k in ("start_date", "end_date"):
+            if v in (None, ""):
+                if k == "end_date":
+                    v = None
+                else:
+                    continue
+            else:
+                parsed = attendance._ymd(v)
+                if not parsed:
+                    raise HTTPException(status_code=400, detail=f"{k} YYYY-MM-DD olmalı.")
+                v = parsed
+        if k == "status" and v not in (None, "", "active", "on_leave", "terminated"):
+            raise HTTPException(status_code=400, detail="status active, on_leave veya terminated olmalı.")
         if k == "work_schedule" and v is not None:
             if not isinstance(v, dict):
                 raise HTTPException(status_code=400, detail="work_schedule nesne olmalı.")
@@ -9702,14 +9751,61 @@ async def employee_card(emp_id: str):
     user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
     invite = await db.user_invites.find_one({"employee_id": emp_id, "accepted_at": None})
     used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
+    company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    schedule = attendance.merge_schedule(company, emp)
+    att_sum = attendance.summarize(att)
+    ot = await attendance.overtime_pay_for_period(company, emp, month)
+    tasks, work_orders = await _employee_assigned_work(emp.get("company_id"), emp_id)
+    expected = attendance.expected_work_dates(month, schedule.get("work_days"), emp.get("start_date"), emp.get("end_date"))
+    perf = attendance.performance_scores(att, leaves, tasks, work_orders, expected, month)
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
             "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
-            "attendance": {"month": month, "days_present": sum(1 for r in att if r.get("status") == "present"), "days_absent": sum(1 for r in att if r.get("status") == "absent"), "days_leave": sum(1 for r in att if r.get("status") == "leave"), "total_hours": round(sum(r.get("hours", 0) for r in att), 1), "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in att), 1)},
+            "attendance": {"month": month, **att_sum},
+            "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
+                         "amount": ot["amount"], "method": ot["method"], "weekday_rate": ot["weekday_rate"], "holiday_rate": ot["holiday_rate"]},
+            "performance": perf,
             "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
             "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
             "pending_invite": clean_doc(invite) if invite else None,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
             "balance": await _employee_receivable(emp, payrolls, bonuses, month)}
+
+
+def _truthy_confirm(v) -> bool:
+    if v is True:
+        return True
+    if isinstance(v, (int, float)) and v == 1:
+        return True
+    return str(v or "").strip().lower() in ("1", "true", "yes", "on", "evet")
+
+
+@api_router.post("/personnel/employees/{emp_id}/terminate")
+async def terminate_employee(emp_id: str, data: Dict[str, Any]):
+    """İşten çıkar: onay zorunlu; kartı terminated + end_date yapar, bağlı kullanıcıyı pasifleştirir."""
+    payload = data or {}
+    if not _truthy_confirm(payload.get("confirm")):
+        raise HTTPException(status_code=400, detail="İşten çıkarma için onay gerekli.")
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    if emp.get("status") == "terminated":
+        raise HTTPException(status_code=400, detail="Personel zaten işten çıkarılmış.")
+    end_date = attendance._ymd(payload.get("end_date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    hire = attendance._ymd(emp.get("start_date"))
+    if hire and end_date < hire:
+        raise HTTPException(status_code=400, detail="İşten ayrılma tarihi işe girişten önce olamaz.")
+    now = datetime.now(timezone.utc).isoformat()
+    upd = {"status": "terminated", "end_date": end_date, "updated_at": now}
+    reason = (payload.get("reason") or "").strip()
+    if reason:
+        upd["termination_reason"] = reason[:300]
+    await db.employees.update_one({"_id": emp_id}, {"$set": upd})
+    await db.users.update_many(
+        {"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]},
+        {"$set": {"is_active": False}},
+    )
+    res = await db.employees.find_one({"_id": emp_id})
+    return {"status": "success", "message": f"{emp.get('full_name') or 'Personel'} işten çıkarıldı.", "employee": clean_doc(res)}
 
 
 @api_router.get("/personnel/me")

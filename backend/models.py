@@ -602,6 +602,7 @@ class Employee(BaseDocument):
     meal_allowance: float = 0.0  # Aylık yemek
     transport_allowance: float = 0.0  # Aylık yol / ulaşım
     start_date: str
+    end_date: Optional[str] = None  # işten ayrılma / çıkarılma
     status: str = "active"  # active, on_leave, terminated
     annual_leave_days: int = 14
     used_leave_days: int = 0

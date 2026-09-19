@@ -1,7 +1,7 @@
 """Mesai saatleri, personel self-servis puantaj (giriş/çıkış/onay) ve otomatik fazla mesai hesabı."""
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
 
@@ -327,6 +327,118 @@ def summarize(rows: list) -> dict:
             "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in present), 2), "late_count": sum(1 for r in present if r.get("late_minutes", 0) > 0),
             "late_minutes": sum(r.get("late_minutes", 0) for r in present), "off_day_count": sum(1 for r in present if r.get("is_off_day")),
             "unconfirmed": sum(1 for r in rows if not r.get("employee_confirmed"))}
+
+
+def _ymd(v) -> Optional[str]:
+    s = str(v or "").strip()[:10]
+    if len(s) != 10:
+        return None
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return s
+
+
+def _pct(num: float, den: float) -> int:
+    if den <= 0:
+        return 100
+    return max(0, min(100, int(round(100.0 * float(num) / float(den)))))
+
+
+def month_bounds(month: str):
+    y, m = int(month[:4]), int(month[5:7])
+    start = datetime(y, m, 1).date()
+    if m == 12:
+        end = datetime(y + 1, 1, 1).date()
+    else:
+        end = datetime(y, m + 1, 1).date()
+    return start, end - timedelta(days=1)
+
+
+def expected_work_dates(month: str, work_days=None, hire_date=None, end_date=None, today=None) -> list:
+    """Ay içindeki beklenen iş günleri (işe giriş–ayrılış ve bugün ile kırpılır)."""
+    work_days = set(int(d) for d in (work_days if work_days is not None else DEFAULT_SCHEDULE["work_days"]))
+    start, last = month_bounds(month)
+    today_s = _ymd(today) or local_now().strftime("%Y-%m-%d")
+    today_d = datetime.strptime(today_s, "%Y-%m-%d").date()
+    end = min(last, today_d)
+    hire_s = _ymd(hire_date)
+    if hire_s:
+        start = max(start, datetime.strptime(hire_s, "%Y-%m-%d").date())
+    term_s = _ymd(end_date)
+    if term_s:
+        end = min(end, datetime.strptime(term_s, "%Y-%m-%d").date())
+    if end < start:
+        return []
+    out = []
+    d = start
+    while d <= end:
+        if d.weekday() in work_days:
+            out.append(d.isoformat())
+        d += timedelta(days=1)
+    return out
+
+
+def expand_leave_dates(leaves: list, start: str, end: str) -> set:
+    """Onaylı izin günlerini [start, end] aralığında küme olarak döner."""
+    a, b = _ymd(start), _ymd(end)
+    if not a or not b:
+        return set()
+    ad = datetime.strptime(a, "%Y-%m-%d").date()
+    bd = datetime.strptime(b, "%Y-%m-%d").date()
+    days = set()
+    for lv in leaves or []:
+        if lv.get("status") != "approved":
+            continue
+        ls, le = _ymd(lv.get("start_date")), _ymd(lv.get("end_date") or lv.get("start_date"))
+        if not ls:
+            continue
+        if not le:
+            le = ls
+        d = max(datetime.strptime(ls, "%Y-%m-%d").date(), ad)
+        last = min(datetime.strptime(le, "%Y-%m-%d").date(), bd)
+        while d <= last:
+            days.add(d.isoformat())
+            d += timedelta(days=1)
+    return days
+
+
+def performance_scores(att_rows: list, leaves: list, tasks: list, work_orders: list,
+                       expected: list, month: str) -> dict:
+    """Giriş / çıkış / izin / görev işlemlerinin yüzde performansı."""
+    by_date = {r.get("date"): r for r in (att_rows or []) if r.get("date")}
+    leave_days = expand_leave_dates(leaves, expected[0] if expected else f"{month}-01",
+                                    expected[-1] if expected else f"{month}-28")
+    checkin_ok = checkout_ok = tracked = 0
+    absent = 0
+    covered_leave = 0
+    for d in expected or []:
+        rec = by_date.get(d) or {}
+        on_leave = d in leave_days or rec.get("status") == "leave"
+        if on_leave:
+            covered_leave += 1
+            continue
+        tracked += 1
+        if rec.get("check_in"):
+            checkin_ok += 1
+        if rec.get("check_out"):
+            checkout_ok += 1
+        missing = not rec.get("check_in") and not rec.get("check_out")
+        if rec.get("status") == "absent" or missing:
+            absent += 1
+    task_done = sum(1 for t in (tasks or []) if t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
+    task_total = len(tasks or [])
+    wo_done_st = {"done", "completed", "tamamlandi"}
+    wo_done = sum(1 for w in (work_orders or []) if (w.get("status") or "") in wo_done_st)
+    wo_total = len(work_orders or [])
+    work_done, work_total = task_done + wo_done, task_total + wo_total
+    check_in = {"pct": _pct(checkin_ok, tracked), "ok": checkin_ok, "expected": tracked}
+    check_out = {"pct": _pct(checkout_ok, tracked), "ok": checkout_ok, "expected": tracked}
+    leave = {"pct": _pct(covered_leave, covered_leave + absent), "approved_days": covered_leave, "absent_days": absent}
+    task = {"pct": _pct(work_done, work_total) if work_total else 100, "done": work_done, "total": work_total}
+    overall = int(round((check_in["pct"] + check_out["pct"] + leave["pct"] + task["pct"]) / 4.0))
+    return {"check_in": check_in, "check_out": check_out, "leave": leave, "task": task, "overall": overall, "month": month}
 
 
 # ---------- Çalışma saatleri ----------
