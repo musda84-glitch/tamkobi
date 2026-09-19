@@ -1,11 +1,10 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { Text, View } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { Pressable, Text, View } from "react-native";
+import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
-import { Chip, confirmAction } from "../components/chips";
+import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
@@ -13,24 +12,34 @@ import { colors } from "../theme";
 import {
   LEAVE_TYPES,
   SALARY_CALC_ROWS,
-  draftFromEmployee,
-  employeePayload,
   employeeSelectGroups,
-  emptyEmployeeDraft,
   leaveDays,
   leaveStatusTr,
   leaveTypeTr,
   monthlyPayrollLoad,
+  openPayroll,
+  advancePayload,
   payrollBreakdown,
   payrollStatusTr,
-  validateEmployee,
+  remainingDue,
+  unpaidPayrollTotal,
+  assignEmployeeToTasks,
+  overtimePayload,
+  projectSelectGroups,
+  taskSelectGroups,
+  validateAdvance,
+  validateIsoDate,
   validateLeave,
+  validateOvertime,
+  validateTaskAssign,
   type AttendancePayload,
   type AttendanceSummary,
   type Employee,
-  type EmployeeDraft,
+  type EmployeeBalance,
+  type EmployeeCard,
   type LeaveRequest,
   type Payroll,
+  type ProjectWithTasks,
   type SalaryCalc,
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount } from "../utils/finance";
@@ -52,15 +61,25 @@ export function PersonnelScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Employee | null>(null);
-  const [draft, setDraft] = useState<EmployeeDraft>(emptyEmployeeDraft(todayIso()));
+  const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
+  const [advanceEmp, setAdvanceEmp] = useState<Employee | null>(null);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
   const [calcAmount, setCalcAmount] = useState("50000");
   const [calc, setCalc] = useState<SalaryCalc | null>(null);
+  const [otEmp, setOtEmp] = useState<Employee | null>(null);
+  const [otHours, setOtHours] = useState("");
+  const [otDate, setOtDate] = useState(todayIso());
+  const [otNote, setOtNote] = useState("");
+  const [taskEmp, setTaskEmp] = useState<Employee | null>(null);
+  const [projects, setProjects] = useState<ProjectWithTasks[]>([]);
+  const [taskProjectId, setTaskProjectId] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -77,6 +96,11 @@ export function PersonnelScreen() {
       setAccounts(accs || []);
       setLeaves(lvs || []);
       setAttendance(att);
+      const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
+        const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
+        return [idOf(e), card?.balance] as const;
+      }));
+      setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance] => !!row[1])));
       if ((accs || []).length) setPayAccount((cur) => cur || idOf(accs[0]));
       setError(null);
     } catch (err) {
@@ -88,57 +112,110 @@ export function PersonnelScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const openAdd = () => {
-    setEditing(null);
-    setDraft(emptyEmployeeDraft(todayIso()));
-    setFormOpen(true);
-  };
-  const openEdit = (emp: Employee) => {
-    setEditing(emp);
-    setDraft(draftFromEmployee(emp, todayIso()));
-    setFormOpen(true);
+  const openSalaryPay = async (emp: Employee) => {
+    let item = openPayroll(idOf(emp), payrolls);
+    if (!item) {
+      setBusy(true);
+      try {
+        await post(client, "/personnel/generate-payroll", {
+          company_id: companyId,
+          period: new Date().toISOString().slice(0, 7),
+        });
+        const pays = await get<Payroll[]>(client, "/personnel/payrolls", { company_id: companyId });
+        setPayrolls(pays || []);
+        item = openPayroll(idOf(emp), pays || []);
+        if (!item) {
+          setMessage("Bu dönemin maaşı zaten ödenmiş.");
+          return;
+        }
+      } catch (err) {
+        setError(apiErrorMessage(err, "Bordro hazırlanamadı."));
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    setPayItem(item);
+    setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : ""));
   };
 
-  const saveEmployee = async () => {
-    const invalid = validateEmployee(draft);
+  const saveAdvance = async () => {
+    if (!advanceEmp) return;
+    const invalid = validateAdvance(advanceAmount);
     if (invalid) { setError(invalid); return; }
     setBusy(true);
     try {
-      if (editing) await put(client, `/personnel/employees/${idOf(editing)}`, employeePayload(draft));
-      else await post(client, "/personnel/employees", employeePayload(draft, companyId));
-      setFormOpen(false);
-      setMessage(editing ? "Personel güncellendi." : "Personel kaydedildi.");
+      await post(client, "/personnel/bonuses", {
+        ...advancePayload(idOf(advanceEmp), advanceAmount, new Date().toISOString().slice(0, 7), payAccount, advanceNote),
+      });
+      setAdvanceEmp(null);
+      setAdvanceAmount("");
+      setAdvanceNote("");
+      setMessage(`${advanceEmp.full_name} için avans kaydedildi.`);
       await load();
     } catch (err) {
-      setError(apiErrorMessage(err, editing ? "Personel güncellenemedi." : "Personel kaydedilemedi."));
+      setError(apiErrorMessage(err, "Avans kaydedilemedi."));
     } finally {
       setBusy(false);
     }
   };
 
-  const removeEmployee = (emp: Employee) => {
-    confirmAction("Personeli sil", `${emp.full_name} personel kaydı silinsin mi? (Çöp kutusuna taşınır)`, async () => {
-      try {
-        await del(client, `/personnel/employees/${idOf(emp)}`);
-        setMessage("Personel çöp kutusuna taşındı.");
-        await load();
-      } catch (err) {
-        setError(apiErrorMessage(err, "Personel silinemedi."));
-      }
-    });
+  const openOvertime = (emp: Employee) => {
+    setOtEmp(emp);
+    setOtHours("");
+    setOtDate(todayIso());
+    setOtNote("");
   };
 
-  const generatePayroll = async () => {
+  const saveOvertime = async () => {
+    if (!otEmp) return;
+    const invalid = validateOvertime(otHours) || validateIsoDate(otDate);
+    if (invalid) { setError(invalid); return; }
     setBusy(true);
     try {
-      const r = await post<{ message?: string }>(client, "/personnel/generate-payroll", {
-        company_id: companyId,
-        period: new Date().toISOString().slice(0, 7),
-      });
-      setMessage(r?.message || "Bordro hesaplandı.");
+      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote));
+      setOtEmp(null);
+      setMessage(r?.message || `${otEmp.full_name} için fazla mesai yazıldı.`);
       await load();
     } catch (err) {
-      setError(apiErrorMessage(err, "Bordro hesaplanamadı."));
+      setError(apiErrorMessage(err, "Fazla mesai yazılamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openTaskAssign = async (emp: Employee) => {
+    setTaskEmp(emp);
+    setTaskProjectId("");
+    setTaskId("");
+    setTaskTitle("");
+    setBusy(true);
+    try {
+      const rows = await get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 });
+      setProjects(rows || []);
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Projeler yüklenemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTaskAssign = async () => {
+    if (!taskEmp) return;
+    const invalid = validateTaskAssign(taskProjectId, taskId, taskTitle);
+    if (invalid) { setError(invalid); return; }
+    const project = projects.find((p) => idOf(p) === taskProjectId);
+    if (!project) { setError("Proje bulunamadı."); return; }
+    const next = assignEmployeeToTasks(project.tasks, taskEmp, { taskId, title: taskTitle });
+    if (next.error) { setError(next.error); return; }
+    setBusy(true);
+    try {
+      await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
+      setTaskEmp(null);
+      setMessage(`${taskEmp.full_name} ${project.name || "projeye"} atandı.`);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
     } finally {
       setBusy(false);
     }
@@ -232,33 +309,51 @@ export function PersonnelScreen() {
 
       {tab === "payroll" ? (
         <>
-          <ActionTiles
-            items={[
-              canEdit && { key: "add", label: "Yeni çalışan", icon: "person-add" as const, tone: "emerald" as const, testID: "add-employee-btn", onPress: openAdd },
-              canEdit && { key: "gen", label: "Bordro hesapla", icon: "calculator" as const, tone: "indigo" as const, testID: "generate-payroll-btn", busy, onPress: generatePayroll },
-              { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "personnel-refresh", onPress: load },
-            ].filter(Boolean) as never}
-          />
           {!employees.length ? (
-            <Empty icon="people-outline" title="Çalışan yok" hint={canEdit ? "Yeni çalışan ekleyin." : undefined} />
-          ) : employees.map((emp) => (
-            <Card key={idOf(emp)} testID={`employee-card-${emp.tc_kimlik || idOf(emp)}`}>
-              <Row style={{ justifyContent: "space-between" }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
-                  <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
-                  <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
-                </View>
-                <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(emp.salary)}</Text>
-              </Row>
-              {canEdit ? (
-                <Row>
-                  <PrimaryButton title="Düzenle" color={colors.secondary} testID={`employee-edit-${emp.tc_kimlik || idOf(emp)}`} onPress={() => openEdit(emp)} />
-                  <PrimaryButton title="Sil" color={colors.danger} testID={`employee-delete-${emp.tc_kimlik || idOf(emp)}`} onPress={() => removeEmployee(emp)} />
+            <Empty icon="people-outline" title="Çalışan yok" />
+          ) : employees.map((emp) => {
+            const eid = idOf(emp);
+            const unpaid = unpaidPayrollTotal(eid, payrolls);
+            const due = remainingDue(balances[eid], unpaid);
+            const bal = balances[eid];
+            return (
+              <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
+                <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                    <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                    <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
+                    <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Muted>Net maaş</Muted>
+                    <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(emp.salary)}</Text>
+                  </View>
                 </Row>
-              ) : null}
-            </Card>
-          ))}
+                <Row style={{ justifyContent: "space-between", paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  <View>
+                    <Muted>Kalan alacak</Muted>
+                    <Text style={{ fontWeight: "800", color: due > 0 ? colors.danger : colors.text }} testID={`emp-remaining-${eid}`}>
+                      {fmtMoney(due)}
+                    </Text>
+                  </View>
+                  {bal?.advances ? (
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Muted>Avans</Muted>
+                      <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(bal.advances)}</Text>
+                    </View>
+                  ) : null}
+                </Row>
+                {canEdit ? (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    <PayChip title="Avans" color="#B45309" bg={colors.amber50} testID={`emp-card-advance-btn-${eid}`} onPress={() => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); }} />
+                    <PayChip title="Maaş öde" color={colors.primaryHover} bg={colors.emerald50} testID={`emp-card-salary-btn-${eid}`} onPress={() => openSalaryPay(emp)} />
+                    <PayChip title="Göreve ata" color={colors.indigo} bg={colors.indigo50} testID={`emp-card-task-btn-${eid}`} onPress={() => openTaskAssign(emp)} />
+                    <PayChip title="+ Mesai" color="#6D28D9" bg={colors.indigo50} testID={`emp-card-ot-btn-${eid}`} onPress={() => openOvertime(emp)} />
+                  </View>
+                ) : null}
+              </Card>
+            );
+          })}
 
           <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }}>Bordro & maaş ödemeleri</Text>
           {!payrolls.length ? <Muted>Bordro kaydı yok. Aylık bordro hesaplayın.</Muted> : payrolls.map((p) => {
@@ -393,19 +488,23 @@ export function PersonnelScreen() {
       ) : null}
 
       <B2BSheet
-        visible={formOpen}
-        title={editing ? "Personeli düzenle" : "Yeni personel ekle"}
-        onClose={() => setFormOpen(false)}
-        testID="employee-form-modal"
+        visible={!!advanceEmp}
+        title="Avans ver"
+        subtitle={advanceEmp ? `${advanceEmp.full_name} · ${new Date().toISOString().slice(0, 7)} dönemi · bordroda mahsup edilir` : undefined}
+        onClose={() => setAdvanceEmp(null)}
+        testID="advance-pay-sheet"
       >
-        <Field label="Ad soyad" testID="employee-name-input" value={draft.full_name} onChangeText={(v) => setDraft({ ...draft, full_name: v })} placeholder="Örn: Mehmet Özkan" />
-        <Field label="TC kimlik no" testID="employee-tc-input" value={draft.tc_kimlik} onChangeText={(v) => setDraft({ ...draft, tc_kimlik: v })} placeholder="11 haneli" keyboardType="number-pad" />
-        <Field label="Net maaş (₺)" testID="employee-salary-input" value={draft.salary} onChangeText={(v) => setDraft({ ...draft, salary: v })} keyboardType="numeric" />
-        <Field label="Departman" testID="employee-department-input" value={draft.department} onChangeText={(v) => setDraft({ ...draft, department: v })} />
-        <Field label="Pozisyon / görev" testID="employee-position-input" value={draft.position} onChangeText={(v) => setDraft({ ...draft, position: v })} />
-        <Field label="Telefon" testID="employee-phone-input" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })} placeholder="05…" keyboardType="phone-pad" />
-        <Field label="E-posta" testID="employee-email-input" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} placeholder="ornek@tamkobi.com" autoCapitalize="none" />
-        <PrimaryButton title={editing ? "Güncelle" : "Personeli kaydet"} testID="save-employee-btn" loading={busy} onPress={saveEmployee} />
+        <Field label="Tutar (₺)" testID="quick-pay-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
+        <Field label="Açıklama" testID="quick-pay-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="Örn: Maaş avansı" />
+        <GroupedSelect
+          label="Kasa / Banka"
+          testID="quick-pay-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Hesap seçilmedi (sadece kayıt)"
+        />
+        <PrimaryButton title="Avansı kaydet" testID="quick-pay-submit" color="#D97706" loading={busy} onPress={saveAdvance} />
       </B2BSheet>
 
       <B2BSheet
@@ -425,6 +524,79 @@ export function PersonnelScreen() {
         />
         <PrimaryButton title="Ödemeyi tamamla" testID="confirm-salary-pay-btn" loading={busy} onPress={paySalary} />
       </B2BSheet>
+
+      <B2BSheet
+        visible={!!otEmp}
+        title="+ Mesai yaz"
+        subtitle={otEmp ? `${otEmp.full_name} · beklenen çıkış mesai bitişi + atanan saat` : undefined}
+        onClose={() => setOtEmp(null)}
+        testID="overtime-assign-sheet"
+      >
+        <Field label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} placeholder="YYYY-MM-DD" />
+        <Field label="Saat" testID="ot-hours-input" value={otHours} onChangeText={setOtHours} keyboardType="numeric" placeholder="Örn: 2" />
+        <Field label="Not" testID="ot-note-input" value={otNote} onChangeText={setOtNote} placeholder="Opsiyonel" />
+        <PrimaryButton title="Mesaiyi kaydet" testID="ot-save-btn" color={colors.indigo} loading={busy} onPress={saveOvertime} />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!taskEmp}
+        title="Göreve ata"
+        subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
+        onClose={() => setTaskEmp(null)}
+        testID="task-assign-sheet"
+      >
+        <GroupedSelect
+          label="Proje"
+          testID="task-project-select"
+          value={taskProjectId}
+          onChange={(v) => { setTaskProjectId(v); setTaskId(""); }}
+          groups={projectSelectGroups(projects)}
+          emptyLabel="Proje seçin"
+        />
+        <GroupedSelect
+          label="Mevcut görev"
+          testID="task-existing-select"
+          value={taskId}
+          onChange={setTaskId}
+          groups={taskSelectGroups(projects.find((p) => idOf(p) === taskProjectId)?.tasks)}
+          emptyLabel="Yeni görev yaz"
+        />
+        {!taskId ? (
+          <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
+        ) : null}
+        <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
+      </B2BSheet>
     </Screen>
+  );
+}
+
+function PayChip({
+  title,
+  color,
+  bg,
+  onPress,
+  testID,
+}: {
+  title: string;
+  color: string;
+  bg: string;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={{
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        backgroundColor: bg,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <Text style={{ fontWeight: "800", fontSize: 12, color }}>{title}</Text>
+    </Pressable>
   );
 }

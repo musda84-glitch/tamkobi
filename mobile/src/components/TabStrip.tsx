@@ -23,11 +23,14 @@ export function TabStrip<K extends string>({
   testID?: string;
 }) {
   return (
+    <View style={{ flexGrow: 0, flexShrink: 0 }} testID={`${testID}-wrap`}>
     <ScrollView
       horizontal
+      nestedScrollEnabled
       showsHorizontalScrollIndicator={false}
       testID={testID}
-      contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+      style={{ flexGrow: 0 }}
+      contentContainerStyle={{ gap: 6, paddingVertical: 2, alignItems: "center", flexGrow: 0 }}
     >
       {items.map((item) => {
         const active = item.key === value;
@@ -60,5 +63,6 @@ export function TabStrip<K extends string>({
         );
       })}
     </ScrollView>
+    </View>
   );
 }
