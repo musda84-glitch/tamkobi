@@ -111,12 +111,44 @@ def assigned_overtime_hours(rec: Optional[dict]) -> float:
     return max(0.0, _as_float(rec.get("assigned_overtime_hours"), 0.0))
 
 
+def approved_intraday_gap_minutes(rec: Optional[dict]) -> int:
+    """Onaylı gün içi izin (çıkış–dönüş) dakikası; check_in/out penceresine sıkıştırılır."""
+    if not isinstance(rec, dict):
+        return 0
+    req = rec.get("intraday_leave_request") or {}
+    if not (rec.get("intraday_leave_approved") or req.get("status") == "approved"):
+        return 0
+    out_t = (req.get("out_time") or "").strip()[:5]
+    ret_t = (req.get("return_time") or "").strip()[:5]
+    if not out_t or not ret_t:
+        return 0
+    try:
+        a, b = _hm(out_t), _hm(ret_t)
+    except Exception:
+        return 0
+    if b <= a:
+        return 0
+    ci, co = rec.get("check_in"), rec.get("check_out")
+    if ci and co:
+        try:
+            cia, cob = _hm(str(ci)[:5]), _hm(str(co)[:5])
+            if cob < cia:
+                cob += 24 * 60
+            start = max(cia, a)
+            end = min(cob, b)
+            return max(0, end - start)
+        except Exception:
+            return max(0, b - a)
+    return max(0, b - a)
+
+
 def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     """check_in/check_out (HH:MM) → hours, normal_hours, overtime_hours, late_minutes, early_leave_minutes, is_off_day.
     Atanan fazla mesai beklenen çıkışı (expected_end) uzatır; erken çıkış buna göre, fazla mesai mesai bitişine göre hesaplanır.
+    Onaylı gün içi izin (çıkış–dönüş) çalışılan dakikadan düşülür.
     """
     out = {"hours": 0.0, "normal_hours": 0.0, "overtime_hours": 0.0, "late_minutes": 0, "early_leave_minutes": 0, "is_off_day": False,
-           "assigned_overtime_hours": 0.0, "expected_end": None}
+           "assigned_overtime_hours": 0.0, "expected_end": None, "intraday_leave_minutes": 0}
     try:
         wd = datetime.strptime(rec.get("date"), "%Y-%m-%d").weekday()
     except Exception:
@@ -139,6 +171,8 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         expected_end_m = end_m + add_m
         expected_end_hm = _add_minutes(win["end"], add_m)
     out["expected_end"] = expected_end_hm
+    leave_m = approved_intraday_gap_minutes(rec)
+    out["intraday_leave_minutes"] = leave_m
     if ci and not out["is_off_day"]:
         out["late_minutes"] = max(0, _hm(ci) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
     if not (ci and co):
@@ -146,7 +180,7 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     a, b = _hm(ci), _hm(co)
     if b < a:
         b += 24 * 60
-    worked = max(0, b - a - win["break_minutes"])
+    worked = max(0, b - a - win["break_minutes"] - leave_m)
     if out["is_off_day"]:
         ot = worked
     else:
@@ -254,6 +288,11 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
            "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
         rec.update({"check_in": None, "check_out": None})
+    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved"):
+        if k in patch:
+            rec[k] = patch[k]
+        elif existing.get(k) is not None:
+            rec[k] = existing[k]
     plan = await _db.shift_plans.find_one({"employee_id": employee["_id"], "date": date})
     rec.update(compute_day(rec, schedule, plan))
     try:
@@ -547,6 +586,148 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
     })
     return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})),
             "message": "Erken çıkış talebi onaylandı." if approved else "Erken çıkış talebi reddedildi."}
+
+
+def _req_hhmm(v: Any, label: str) -> str:
+    raw = (v or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail=f"{label} gerekli (HH:MM).")
+    try:
+        return _valid_time(raw[:5] if len(raw) >= 5 else raw)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail=f"Geçersiz {label} (HH:MM).")
+
+
+@router.post("/personnel/attendance/intraday-leave-request")
+async def request_intraday_leave(req: Dict[str, Any], request: Request):
+    """Personel bugün için çıkış–dönüş saatli gün içi izin talebi oluşturur (çıkış yapılmış olsa da)."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    reason = (req.get("reason") or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="Gün içi izin nedeni en az 3 karakter olmalı.")
+    out_time = _req_hhmm(req.get("out_time"), "Çıkış saati")
+    return_time = _req_hhmm(req.get("return_time"), "Dönüş (giriş) saati")
+    if _hm(return_time) <= _hm(out_time):
+        raise HTTPException(status_code=400, detail="Dönüş saati çıkış saatinden sonra olmalı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    prev = existing.get("intraday_leave_request") or {}
+    if prev.get("status") == "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen bir gün içi izin talebiniz var.")
+    if prev.get("status") == "approved":
+        raise HTTPException(status_code=400, detail="Gün içi izin talebiniz zaten onaylandı.")
+    ilr = {
+        "status": "pending",
+        "reason": reason[:400],
+        "out_time": out_time,
+        "return_time": return_time,
+        "requested_at": _now(),
+        "requested_by": str(user.get("_id") or user.get("id") or ""),
+        "decided_at": None,
+        "decided_by": None,
+        "decision_note": "",
+    }
+    if existing.get("_id"):
+        await _db.attendance.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": False, "updated_at": _now()}},
+        )
+        rec = _clean(await _db.attendance.find_one({"_id": existing["_id"]}))
+    else:
+        rec = await apply_day(emp, today, {"status": "present"}, source=existing.get("source") or "self", confirmed=True)
+        await _db.attendance.update_one(
+            {"_id": rec["id"]},
+            {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": False}},
+        )
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
+    mins = max(0, _hm(return_time) - _hm(out_time))
+    await notify_managers(
+        emp["company_id"],
+        "intraday_leave_request",
+        f"Gün içi izin talebi: {emp['full_name']}",
+        f"{emp['full_name']} bugün {out_time}–{return_time} ({mins} dk) gün içi izin talep etti: {reason[:200]}",
+        link="/personnel?tab=attendance",
+        dedupe_key=f"intraday:{emp['_id']}:{today}",
+    )
+    return {"status": "success", "record": rec, "message": "Gün içi izin talebiniz yöneticiye iletildi."}
+
+
+@router.delete("/personnel/attendance/intraday-leave-request")
+async def cancel_intraday_leave_request(request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Personel kartı bulunamadı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    if not existing or (existing.get("intraday_leave_request") or {}).get("status") != "pending":
+        raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
+    await _db.attendance.update_one(
+        {"_id": existing["_id"]},
+        {"$unset": {"intraday_leave_request": ""}, "$set": {"intraday_leave_approved": False, "updated_at": _now()}},
+    )
+    return {"status": "success", "message": "Gün içi izin talebi iptal edildi."}
+
+
+@router.post("/personnel/attendance/{att_id}/intraday-leave-decision")
+async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Gün içi izin onaylamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    ilr = rec.get("intraday_leave_request") or {}
+    if ilr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen gün içi izin talebi yok.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
+    approved = decision in ("approve", "approved")
+    ilr = {
+        **ilr,
+        "status": "approved" if approved else "rejected",
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "decision_note": (req.get("note") or "")[:300],
+    }
+    emp = await _db.employees.find_one({"_id": rec["employee_id"]})
+    if emp:
+        saved = await apply_day(
+            emp,
+            rec["date"],
+            {"intraday_leave_request": ilr, "intraday_leave_approved": approved},
+            source=rec.get("source") or "self",
+        )
+    else:
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": approved, "updated_at": _now()}},
+        )
+        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+    await _db.notifications.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": rec.get("employee_id"),
+        "type": "intraday_leave_decision",
+        "title": "Gün içi izin " + ("onaylandı" if approved else "reddedildi"),
+        "message": f"{rec.get('employee_name')} — {ilr.get('out_time')}–{ilr.get('return_time')} · {ilr['status']}. {ilr.get('decision_note') or ''}".strip(),
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    return {
+        "status": "success",
+        "record": saved,
+        "message": "Gün içi izin talebi onaylandı." if approved else "Gün içi izin talebi reddedildi.",
+    }
 
 
 @router.put("/personnel/attendance/assign-overtime")

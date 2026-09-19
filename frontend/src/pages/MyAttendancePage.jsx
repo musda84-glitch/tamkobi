@@ -2,10 +2,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen } from "lucide-react";
+import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
+import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -28,6 +29,8 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
         {r.overtime_hours > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil günü)" : ""}</span>}
         {r.late_minutes > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}
         {r.early_leave_minutes > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${r.early_leave_approved || r.early_leave_request?.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.early_leave_minutes} dk erken çıkış{r.early_leave_approved || r.early_leave_request?.status === "approved" ? " (onaylı)" : ""}</span>}{r.early_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">erken çıkış talebi</span>}
+        {(r.intraday_leave_minutes > 0 || r.intraday_leave_request?.status === "approved" || r.intraday_leave_approved) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">{r.intraday_leave_minutes || 0} dk gün içi izin{(r.intraday_leave_request?.out_time && r.intraday_leave_request?.return_time) ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>}
+        {r.intraday_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">gün içi izin talebi</span>}
         <span className="ml-auto flex items-center gap-2">
           {r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Onaylandı</span>
             : <>
@@ -51,6 +54,10 @@ export default function MyAttendancePage() {
   const [earlyOpen, setEarlyOpen] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
+  const [intraOpen, setIntraOpen] = useState(false);
+  const [intraReason, setIntraReason] = useState("");
+  const [intraOut, setIntraOut] = useState("");
+  const [intraReturn, setIntraReturn] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => setData(r.data)).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
   const act = async (action) => {
@@ -87,6 +94,27 @@ export default function MyAttendancePage() {
     } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
     finally { setBusy(null); }
   };
+  const requestIntra = async (e) => {
+    e.preventDefault();
+    const errMsg = validateIntradayLeave(intraReason, intraOut, intraReturn);
+    if (errMsg) { toast.error(errMsg); return; }
+    setBusy("intra");
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/intraday-leave-request`, intradayLeavePayload(intraReason, intraOut, intraReturn), { withCredentials: true });
+      toast.success(r.data.message || "Gün içi izin talebi gönderildi.");
+      setIntraOpen(false); setIntraReason(""); setIntraOut(""); setIntraReturn("");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Talep gönderilemedi."); }
+    finally { setBusy(null); }
+  };
+  const cancelIntra = async () => {
+    setBusy("intra-cancel");
+    try {
+      const r = await axios.delete(`${API_URL}/personnel/attendance/intraday-leave-request`, { withCredentials: true });
+      toast.success(r.data.message || "Talep iptal edildi."); load();
+    } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
+    finally { setBusy(null); }
+  };
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
@@ -96,7 +124,7 @@ export default function MyAttendancePage() {
         <div><h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-att-title"><Clock className="w-7 h-7 text-emerald-600 shrink-0" /> Personel Giriş Çıkış Kayıtları</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-att-month" />
       </div>
-      {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1" data-testid="my-att-no-employee"><p>Giriş/çıkış ve <b>erken çıkış talebi</b> için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</p><p className="text-amber-700/80">Bağlantı sonrası bugün giriş yaptığınızda “Erken çıkış talep et” butonu görünür.</p></div>}
+      {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1" data-testid="my-att-no-employee"><p>Giriş/çıkış, <b>erken çıkış</b> ve <b>gün içi izin</b> talebi için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</p><p className="text-amber-700/80">Bağlantı sonrası bugün kartta “Gün içi izin talep et” görünür (çıkış yapılmış olsa da).</p></div>}
       {data.employee && (
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-5" data-testid="my-att-today">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -118,12 +146,13 @@ export default function MyAttendancePage() {
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}<span className="text-lg sm:text-base">Çıkış Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">{t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? "çıkış bekleniyor" : "önce giriş yapın"}</span>
             </button>
           </div>
-          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours) ? (
+          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes) ? (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
               {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
               {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || sch.end}</span> : null}
               {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
+              {t?.intraday_leave_minutes ? <span className="px-2.5 py-1 rounded-lg bg-sky-500/30 text-sky-100 font-bold" data-testid="my-att-intraday-mins">{t.intraday_leave_minutes} dk gün içi izin düşüldü</span> : null}
             </div>
           ) : null}
           {!t?.check_out && (
@@ -169,7 +198,53 @@ export default function MyAttendancePage() {
             </div>
           )}
 
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin; yönetici onayından sonra çıkış yapın.</div>
+          <div className="rounded-xl bg-white/10 border border-white/10 p-3 space-y-2" data-testid="my-att-intraday-leave">
+            {(() => {
+              const ilr = t?.intraday_leave_request || {};
+              const dur = intradayLeaveMinutes(intraOut, intraReturn);
+              if (ilr.status === "pending") {
+                return (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-sky-200"><ArrowLeftRight className="w-3.5 h-3.5" /> Gün içi izin talebi bekliyor</span>
+                    <span className="font-mono text-slate-300">{ilr.out_time}–{ilr.return_time}</span>
+                    <span className="text-slate-300 truncate max-w-[280px]">{ilr.reason}</span>
+                    <button type="button" onClick={cancelIntra} disabled={!!busy} className="ml-auto px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 font-semibold" data-testid="my-att-intraday-cancel">İptal</button>
+                  </div>
+                );
+              }
+              if (ilr.status === "approved" || t?.intraday_leave_approved) {
+                return (
+                  <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-intraday-approved">
+                    <ArrowLeftRight className="w-3.5 h-3.5" /> Gün içi izin onaylandı · {ilr.out_time}–{ilr.return_time}
+                    {t?.intraday_leave_minutes ? ` (${t.intraday_leave_minutes} dk düşüldü)` : ""}
+                  </div>
+                );
+              }
+              return (
+                <>
+                  {ilr.status === "rejected" && (
+                    <div className="text-xs text-rose-200" data-testid="my-att-intraday-rejected">Gün içi izin talebi reddedildi{ilr.decision_note ? `: ${ilr.decision_note}` : ""}. Yeniden talep edebilirsiniz.</div>
+                  )}
+                  {!intraOpen ? (
+                    <button type="button" onClick={() => setIntraOpen(true)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-sky-500/90 hover:bg-sky-400 text-slate-900 font-bold text-sm" data-testid="my-att-intraday-open"><ArrowLeftRight className="w-4 h-4" /> Gün içi izin talep et</button>
+                  ) : (
+                    <form onSubmit={requestIntra} className="grid grid-cols-1 sm:grid-cols-8 gap-2 text-xs" data-testid="my-att-intraday-form">
+                      <div className="sm:col-span-3"><label className="block text-[10px] text-slate-300 mb-0.5">Neden</label><input required minLength={3} value={intraReason} onChange={(e) => setIntraReason(e.target.value)} placeholder="Örn. banka / doktor" className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-intraday-reason" /></div>
+                      <div className="sm:col-span-1"><label className="block text-[10px] text-slate-300 mb-0.5">Çıkış saati</label><input type="time" required value={intraOut} onChange={(e) => setIntraOut(e.target.value)} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-intraday-out" /></div>
+                      <div className="sm:col-span-1"><label className="block text-[10px] text-slate-300 mb-0.5">Dönüş (giriş)</label><input type="time" required value={intraReturn} onChange={(e) => setIntraReturn(e.target.value)} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-intraday-return" /></div>
+                      <div className="sm:col-span-3 flex items-end gap-2">
+                        <button type="button" onClick={() => setIntraOpen(false)} className="flex-1 px-3 py-2 rounded-lg border border-white/20 font-semibold" data-testid="my-att-intraday-dismiss">Vazgeç</button>
+                        <button type="submit" disabled={busy === "intra" || !!validateIntradayLeave(intraReason, intraOut, intraReturn)} className="flex-1 px-3 py-2 rounded-lg bg-sky-400 text-slate-900 font-bold disabled:opacity-50" data-testid="my-att-intraday-submit">{busy === "intra" ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : null} Gönder</button>
+                      </div>
+                      {dur ? <div className="sm:col-span-8 text-[10px] text-sky-200" data-testid="my-att-intraday-hint">{dur} dk — onaylanınca çalışılan süreden düşülür. Çıkış yapılmış olsa da talep edebilirsiniz.</div> : <div className="sm:col-span-8 text-[10px] text-slate-400">Çıkış ve dönüş saatini yazın (aynı gün). Onaylanan aralık puantajdan düşülür.</div>}
+                    </form>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

@@ -1869,7 +1869,10 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         db.quotes.count_documents({"company_id": company_id, "status": {"$in": ["sent", "pending", "draft"]}}),
         db.products.find({"company_id": company_id, "track_stock": {"$ne": False}}, {"stock_quantity": 1, "min_stock_alert": 1}).to_list(5000),
         db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
-        db.attendance.count_documents({"company_id": company_id, "early_leave_request.status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "$or": [
+            {"early_leave_request.status": "pending"},
+            {"intraday_leave_request.status": "pending"},
+        ]}),
         expenses.get_budgets(company_id),
     )
     def bucket(t):
@@ -6887,10 +6890,13 @@ _LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid":
 
 @api_router.get("/personnel/pending-requests")
 async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_main_01"):
-    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış ve puantaj itirazları."""
+    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış, gün içi izin ve puantaj itirazları."""
     leaves = await db.leave_requests.find({"company_id": company_id, "status": "pending"}).sort("created_at", -1).to_list(200)
     early = await db.attendance.find(
         {"company_id": company_id, "early_leave_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    intraday = await db.attendance.find(
+        {"company_id": company_id, "intraday_leave_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     disputes = await db.attendance.find(
         {
@@ -6929,6 +6935,21 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "created_at": elr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
             "link": "/personnel?tab=attendance",
             "meta": {"date": att.get("date"), "planned_time": planned, "reason": elr.get("reason")},
+        })
+    for att in intraday:
+        ilr = att.get("intraday_leave_request") or {}
+        window = f"{ilr.get('out_time') or '?'}–{ilr.get('return_time') or '?'}"
+        items.append({
+            "kind": "intraday_leave",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Gün içi izin talebi",
+            "detail": f"{att.get('date') or ''} · {window}"
+                      + (f" · {ilr.get('reason')}" if ilr.get("reason") else ""),
+            "created_at": ilr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {"date": att.get("date"), "out_time": ilr.get("out_time"), "return_time": ilr.get("return_time"), "reason": ilr.get("reason")},
         })
     for att in disputes:
         items.append({

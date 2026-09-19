@@ -113,6 +113,8 @@ export type AttendanceRecord = {
   late_minutes?: number;
   early_leave_minutes?: number;
   early_leave_request?: { status?: string; planned_time?: string; reason?: string };
+  intraday_leave_minutes?: number;
+  intraday_leave_request?: { status?: string; out_time?: string; return_time?: string; reason?: string };
 };
 
 export type AttendancePayload = {

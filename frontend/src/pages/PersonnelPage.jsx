@@ -297,6 +297,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideIntraday = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideAdvance = async (id, status) => {
     setBusyReqId(id);
     try {
@@ -431,6 +444,7 @@ export default function PersonnelPage() {
               busyId={busyReqId}
               onDecideLeave={decideLeave}
               onDecideEarly={decideEarly}
+              onDecideIntraday={decideIntraday}
               onDecideAdvance={decideAdvance}
               onViewDispute={() => setTab("attendance")}
             />

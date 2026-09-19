@@ -12,6 +12,8 @@ TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "attendance_missing": ("admin", "manager", "accountant"),
     "attendance_dispute": ("admin", "manager", "accountant"),
     "early_leave_decision": (),
+    "intraday_leave_request": ("admin", "manager", "accountant"),
+    "intraday_leave_decision": (),
     "leave_request": ("admin", "manager", "accountant"),
     "advance_request": ("admin", "manager", "accountant"),
     "role_assigned": ("admin", "manager"),

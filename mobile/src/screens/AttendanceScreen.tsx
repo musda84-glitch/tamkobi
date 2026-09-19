@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 
 type AttendancePayload = {
@@ -20,6 +20,9 @@ type AttendancePayload = {
     late_minutes?: number;
     early_leave_approved?: boolean;
     early_leave_request?: { status?: string; reason?: string; planned_time?: string; decision_note?: string } | null;
+    intraday_leave_approved?: boolean;
+    intraday_leave_minutes?: number;
+    intraday_leave_request?: { status?: string; reason?: string; out_time?: string; return_time?: string; decision_note?: string } | null;
   } | null;
   location?: { label?: string; radius_m?: number } | null;
   schedule?: { require_geo?: boolean; start?: string; end?: string };
@@ -44,6 +47,10 @@ export function AttendanceScreen() {
   const [outConfirm, setOutConfirm] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
+  const [intraOpen, setIntraOpen] = useState(false);
+  const [intraReason, setIntraReason] = useState("");
+  const [intraOut, setIntraOut] = useState("");
+  const [intraReturn, setIntraReturn] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -111,10 +118,45 @@ export function AttendanceScreen() {
     }
   };
 
+  const requestIntra = async () => {
+    const invalid = validateIntradayLeave(intraReason, intraOut, intraReturn);
+    if (invalid) { setError(invalid); return; }
+    setBusy("intra");
+    setError(null);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/attendance/intraday-leave-request", intradayLeavePayload(intraReason, intraOut, intraReturn));
+      setMessage(r?.message || "Gün içi izin talebi gönderildi.");
+      setIntraOpen(false);
+      setIntraReason("");
+      setIntraOut("");
+      setIntraReturn("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Gün içi izin talebi gönderilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancelIntra = async () => {
+    setBusy("intra-cancel");
+    setError(null);
+    try {
+      const r = await del<{ message?: string }>(client, "/personnel/attendance/intraday-leave-request");
+      setMessage(r?.message || "Talep iptal edildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Talep iptal edilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
   const early = today?.early_leave_request;
+  const intra = today?.intraday_leave_request;
 
   return (
     <Screen onRefresh={load}>
@@ -172,6 +214,28 @@ export function AttendanceScreen() {
             </View>
           ) : (
             <PrimaryButton title="Erken çıkış talep et" onPress={() => setEarlyOpen(true)} color="#D97706" testID="mesai-early-open" />
+          )}
+          {intra?.status === "pending" ? (
+            <View testID="mesai-intraday-pending" style={{ gap: 8 }}>
+              <Muted>Gün içi izin talebi bekliyor{intra.out_time && intra.return_time ? ` · ${intra.out_time}–${intra.return_time}` : ""}{intra.reason ? ` · ${intra.reason}` : ""}</Muted>
+              <PrimaryButton title={busy === "intra-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelIntra} color={colors.danger} testID="mesai-intraday-cancel" />
+            </View>
+          ) : intraOpen ? (
+            <View testID="mesai-intraday-form" style={{ gap: 8 }}>
+              {intra?.status === "approved" || today?.intraday_leave_approved ? (
+                <Muted testID="mesai-intraday-approved">Gün içi izin onaylandı · {intra?.out_time}–{intra?.return_time}{today?.intraday_leave_minutes ? ` (${today.intraday_leave_minutes} dk)` : ""}.</Muted>
+              ) : null}
+              {intra?.status === "rejected" ? <Muted>Önceki talep reddedildi{intra.decision_note ? `: ${intra.decision_note}` : ""}.</Muted> : null}
+              <Field label="Neden" testID="mesai-intraday-reason" value={intraReason} onChangeText={setIntraReason} placeholder="Örn: banka / doktor" />
+              <TimeField label="Çıkış saati" testID="mesai-intraday-out" value={intraOut} onChangeText={setIntraOut} />
+              <TimeField label="Dönüş (giriş)" testID="mesai-intraday-return" value={intraReturn} onChangeText={setIntraReturn} />
+              <PrimaryButton title={busy === "intra" ? "Gönderiliyor…" : "Gün içi izin gönder"} onPress={requestIntra} color="#0284C7" testID="mesai-intraday-submit" />
+              <PrimaryButton title="Vazgeç" onPress={() => setIntraOpen(false)} color={colors.secondary} testID="mesai-intraday-close" />
+            </View>
+          ) : intra?.status === "approved" || today?.intraday_leave_approved ? (
+            <Muted testID="mesai-intraday-approved">Gün içi izin onaylandı · {intra?.out_time}–{intra?.return_time}</Muted>
+          ) : (
+            <PrimaryButton title="Gün içi izin talep et" onPress={() => setIntraOpen(true)} color="#0284C7" testID="mesai-intraday-open" />
           )}
         </View>
       </Card>
