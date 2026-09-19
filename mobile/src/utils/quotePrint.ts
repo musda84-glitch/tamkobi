@@ -22,6 +22,20 @@ export function quotePdfFilename(quote: QuoteDoc): string {
   return `${raw || "teklif"}.pdf`;
 }
 
+export function isPdfMagic(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+}
+
+export function isPdfContentType(type: string | null | undefined): boolean {
+  return /pdf/i.test(String(type || ""));
+}
+
+export function quotePrintDocument(title: string, bodyHtml: string): string {
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>@page{size:A4;margin:12mm}html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}body{padding:8px}</style>
+</head><body>${bodyHtml}</body></html>`;
+}
+
 export function quoteFormHtml(quote: QuoteDoc, company?: PrintCompany | null): string {
   const totals = workItemTotals(quote.items || []);
   const rows = linesOf(quote)

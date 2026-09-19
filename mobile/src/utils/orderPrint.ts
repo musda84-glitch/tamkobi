@@ -405,14 +405,51 @@ function documentCss(page: PrintPageKind): string {
   return `body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;padding:16px;margin:0}@media print{body{padding:8px}}`;
 }
 
-export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind }): boolean {
-  if (typeof window === "undefined" || typeof window.open !== "function") return false;
-  const page = opts?.page || "default";
-  const w = window.open("", "_blank", page === "thermal" ? "width=720,height=900" : "width=800,height=900");
-  if (!w) return false;
-  w.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>${documentCss(page)}</style>
-    </head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print()},${page === "thermal" ? 300 : 250})}</script></body></html>`);
-  w.document.close();
+function printHtmlIframe(html: string): boolean {
+  if (typeof document === "undefined") return false;
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  document.body.appendChild(iframe);
+  const win = iframe.contentWindow;
+  if (!win) {
+    iframe.remove();
+    return false;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  const cleanup = () => { try { iframe.remove(); } catch { /* already gone */ } };
+  win.addEventListener("afterprint", cleanup);
+  setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } catch {
+      cleanup();
+    }
+  }, 300);
+  setTimeout(cleanup, 60_000);
   return true;
+}
+
+export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind }): boolean {
+  if (typeof document === "undefined") return false;
+  const page = opts?.page || "default";
+  const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>${documentCss(page)}</style>
+    </head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print()},${page === "thermal" ? 300 : 250})}</script></body></html>`;
+  if (typeof window !== "undefined" && typeof window.open === "function") {
+    try {
+      const w = window.open("", "_blank", page === "thermal" ? "width=720,height=900" : "width=800,height=900");
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+        return true;
+      }
+    } catch {
+      /* popup blocked — iframe */
+    }
+  }
+  return printHtmlIframe(html);
 }
