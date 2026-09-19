@@ -17,6 +17,7 @@ import {
   type InvoiceLine,
   VAT_OPTIONS,
 } from "../utils/documentLines";
+import { itemStripe } from "../utils/workDocs";
 import {
   applyTradeKind,
   CURRENCIES,
@@ -455,7 +456,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
         ))}
         {draft.items.map((it, idx) => (
-          <View key={idx} style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, gap: 8 }} testID={`inv-item-${idx}`}>
+          <View key={idx} style={{ ...itemStripe(idx), borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, gap: 8 }} testID={`inv-item-${idx}`}>
             <Row style={{ justifyContent: "space-between" }}>
               <Chip
                 label={it.is_service ? "Hizmet" : "Ürün"}
