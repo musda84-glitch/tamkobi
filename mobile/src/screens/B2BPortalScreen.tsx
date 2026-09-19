@@ -6,10 +6,12 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
 import { B2BSheet } from "../components/b2b/B2BSheet";
+import { B2BTopBar } from "../components/b2b/B2BTopBar";
 import { B2BTrackingCard } from "../components/b2b/B2BTrackingCard";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { confirmAction } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { Badge, Card, Empty, ErrorBanner, Field, H1, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
 import { addCartLine, cartCount, formatOrderItemLabel, parseStoredCart, setCartLineQty, type B2BCart } from "../utils/b2bCart";
@@ -104,6 +106,8 @@ export function B2BPortalScreen() {
   const [cancel, setCancel] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [legal, setLegal] = useState<{ title: string; text: string } | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!b2bToken) return;
@@ -192,6 +196,7 @@ export function B2BPortalScreen() {
       setCart({});
       setNote("");
       setCustomerOrderNo("");
+      setCartOpen(false);
       setMessage(res.message || "Sipariş gönderildi.");
       setError(null);
       setTab("orders");
@@ -309,23 +314,20 @@ export function B2BPortalScreen() {
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
       <View testID="b2b-portal">
-        <Row style={{ justifyContent: "space-between" }}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Row>
-              {logo ? <Image source={{ uri: logo }} style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: "#fff" }} /> : <Ionicons name="storefront" size={28} color={colors.primary} />}
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <H1>{data?.company?.name || "Bayi Portalı"}</H1>
-                <Muted>{data?.contact?.name || b2bName || "B2B"}</Muted>
-                {data?.company?.phone ? (
-                  <Pressable onPress={() => Linking.openURL(`tel:${data.company.phone}`)}>
-                    <Muted>{data.company.phone}</Muted>
-                  </Pressable>
-                ) : null}
-              </View>
-            </Row>
-          </View>
-          <Badge label="B2B" tone="green" />
-        </Row>
+        <B2BTopBar
+          logo={logo}
+          company={data?.company?.name}
+          contact={data?.contact?.name || b2bName}
+          count={count}
+          allowOrders={allowOrders}
+          onCart={() => setCartOpen(true)}
+          onMenu={() => setMenuOpen(true)}
+        />
+        {data?.company?.phone ? (
+          <Pressable onPress={() => Linking.openURL(`tel:${data.company.phone}`)}>
+            <Muted>{data.company.phone}</Muted>
+          </Pressable>
+        ) : null}
         <ErrorBanner message={error} />
         {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
         {done ? (
@@ -470,47 +472,6 @@ export function B2BPortalScreen() {
                 </Card>
               );
             })}
-            {allowOrders && count > 0 ? (
-              <Card testID="b2b-cart">
-                <Text style={{ fontWeight: "800", color: colors.text }}>Sepet · {count} kalem</Text>
-                {lines.map((l) => (
-                  <Row key={l.key} style={{ justifyContent: "space-between" }}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={{ color: colors.text, fontWeight: "700" }}>{l.p.name}</Text>
-                      <Muted>{l.qty} × {showPrices ? fmtMoney(b2bGross(l.p)) : ""}{l.note ? ` · ${l.note}` : ""}</Muted>
-                    </View>
-                    <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty - 1))} testID={`b2b-qty-dec-${l.p.id}`}>
-                      <Ionicons name="remove-circle" size={26} color={colors.muted} />
-                    </Pressable>
-                    <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty + 1))} testID={`b2b-qty-inc-${l.p.id}`}>
-                      <Ionicons name="add-circle" size={26} color={colors.primary} />
-                    </Pressable>
-                    <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, 0))} testID={`b2b-qty-del-${l.p.id}`}>
-                      <Ionicons name="trash-outline" size={22} color={colors.danger} />
-                    </Pressable>
-                  </Row>
-                ))}
-                {showPrices ? (
-                  <View>
-                    <Muted>Ara toplam {fmtMoney(sub)} · KDV {fmtMoney(vat)}</Muted>
-                    <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }}>{fmtMoney(cartTotal)}</Text>
-                    {minOrder > 0 ? <Muted>Minimum sipariş {fmtMoney(minOrder)}</Muted> : null}
-                  </View>
-                ) : null}
-                <Field label="Sipariş notu (teslimat, adres…)" value={note} onChangeText={setNote} testID="b2b-order-note" />
-                <Field label="Sizin sipariş no" value={customerOrderNo} onChangeText={setCustomerOrderNo} testID="b2b-po-number" autoCapitalize="none" />
-                {(data?.legal || []).length ? (
-                  <Row style={{ flexWrap: "wrap" }}>
-                    {data?.legal?.map((doc) => (
-                      <Pressable key={doc.slug} onPress={() => openLegal(doc.slug, doc.title)} testID={`b2b-legal-${doc.slug}`}>
-                        <Text style={{ color: colors.indigo, fontWeight: "700", fontSize: 12, marginRight: 10 }}>{doc.title}</Text>
-                      </Pressable>
-                    ))}
-                  </Row>
-                ) : null}
-                <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
-              </Card>
-            ) : null}
           </View>
         ) : null}
 
@@ -599,25 +560,77 @@ export function B2BPortalScreen() {
           </View>
         ) : null}
 
-        <Card>
-          <Pressable onPress={() => setPwOpen((v) => !v)} testID="b2b-password-toggle">
-            <Text style={{ fontWeight: "800", color: colors.text }}>{data?.contact?.has_password === false ? "Şifre belirle" : "Şifre değiştir"}</Text>
-          </Pressable>
-          {pwOpen ? (
-            <View>
-              {data?.contact?.has_password !== false ? <Field label="Mevcut şifre" secureTextEntry value={currentPw} onChangeText={setCurrentPw} testID="b2b-current-password" /> : null}
-              <Field label="Yeni şifre" secureTextEntry value={newPw} onChangeText={setNewPw} testID="b2b-new-password" />
-              <Field label="Yeni şifre (tekrar)" secureTextEntry value={newPw2} onChangeText={setNewPw2} />
-              <PrimaryButton title={busy ? "Kaydediliyor…" : "Şifreyi güncelle"} onPress={changePassword} loading={busy} color={colors.primary} testID="b2b-password-save" />
-            </View>
-          ) : null}
-        </Card>
-        <Pressable onPress={() => logout()} testID="b2b-logout">
-          <Card>
-            <Text style={{ fontWeight: "800", color: colors.danger }}>Çıkış yap</Text>
-          </Card>
-        </Pressable>
       </View>
+
+      <B2BSheet visible={cartOpen} title={`Sepet · ${count} kalem`} onClose={() => setCartOpen(false)} testID="b2b-cart">
+        {!lines.length ? <Empty icon="cart-outline" title="Sepet boş" /> : (
+          <View>
+            {lines.map((l) => (
+              <Row key={l.key} style={{ justifyContent: "space-between" }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ color: colors.text, fontWeight: "700" }}>{l.p.name}</Text>
+                  <Muted>{l.qty} × {showPrices ? fmtMoney(b2bGross(l.p)) : ""}{l.note ? ` · ${l.note}` : ""}</Muted>
+                </View>
+                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty - 1))} testID={`b2b-qty-dec-${l.p.id}`}>
+                  <Ionicons name="remove-circle" size={26} color={colors.muted} />
+                </Pressable>
+                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty + 1))} testID={`b2b-qty-inc-${l.p.id}`}>
+                  <Ionicons name="add-circle" size={26} color={colors.primary} />
+                </Pressable>
+                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, 0))} testID={`b2b-qty-del-${l.p.id}`}>
+                  <Ionicons name="trash-outline" size={22} color={colors.danger} />
+                </Pressable>
+              </Row>
+            ))}
+            {showPrices ? (
+              <View>
+                <Muted>Ara toplam {fmtMoney(sub)} · KDV {fmtMoney(vat)}</Muted>
+                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }}>{fmtMoney(cartTotal)}</Text>
+                {minOrder > 0 ? <Muted>Minimum sipariş {fmtMoney(minOrder)}</Muted> : null}
+              </View>
+            ) : null}
+            <Field label="Sipariş notu (teslimat, adres…)" value={note} onChangeText={setNote} testID="b2b-order-note" />
+            <Field label="Sizin sipariş no" value={customerOrderNo} onChangeText={setCustomerOrderNo} testID="b2b-po-number" autoCapitalize="none" />
+            {(data?.legal || []).length ? (
+              <Row style={{ flexWrap: "wrap" }}>
+                {data?.legal?.map((doc) => (
+                  <Pressable key={doc.slug} onPress={() => openLegal(doc.slug, doc.title)} testID={`b2b-legal-${doc.slug}`}>
+                    <Text style={{ color: colors.indigo, fontWeight: "700", fontSize: 12, marginRight: 10 }}>{doc.title}</Text>
+                  </Pressable>
+                ))}
+              </Row>
+            ) : null}
+            <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
+          </View>
+        )}
+      </B2BSheet>
+
+      <B2BSheet visible={menuOpen} title={data?.contact?.name || b2bName || "Hesap"} onClose={() => setMenuOpen(false)} testID="b2b-account-menu">
+        <Pressable
+          testID="b2b-password-toggle"
+          onPress={() => { setMenuOpen(false); setPwOpen(true); }}
+          style={{ paddingVertical: 12 }}
+        >
+          <Text style={{ fontWeight: "800", color: colors.text }}>{data?.contact?.has_password === false ? "Şifre belirle" : "Şifre değiştir"}</Text>
+        </Pressable>
+        <Pressable
+          testID="b2b-logout"
+          onPress={() => {
+            setMenuOpen(false);
+            confirmAction("Çıkış", "Oturumu kapatmak istiyor musunuz?", () => logout());
+          }}
+          style={{ paddingVertical: 12 }}
+        >
+          <Text style={{ fontWeight: "800", color: colors.danger }}>Çıkış yap</Text>
+        </Pressable>
+      </B2BSheet>
+
+      <B2BSheet visible={pwOpen} title={data?.contact?.has_password === false ? "Şifre belirle" : "Şifre değiştir"} onClose={() => setPwOpen(false)} testID="b2b-password-sheet">
+        {data?.contact?.has_password !== false ? <Field label="Mevcut şifre" secureTextEntry value={currentPw} onChangeText={setCurrentPw} testID="b2b-current-password" /> : null}
+        <Field label="Yeni şifre" secureTextEntry value={newPw} onChangeText={setNewPw} testID="b2b-new-password" />
+        <Field label="Yeni şifre (tekrar)" secureTextEntry value={newPw2} onChangeText={setNewPw2} />
+        <PrimaryButton title={busy ? "Kaydediliyor…" : "Şifreyi güncelle"} onPress={changePassword} loading={busy} color={colors.primary} testID="b2b-password-save" />
+      </B2BSheet>
 
       <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={(code) => { setQ(normalizeScanText(code)); setScan(false); }} />
 
