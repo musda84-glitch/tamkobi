@@ -13,7 +13,7 @@ test("versionLabel v öneki ekler", () => {
 
 test("ikisi de yoksa missing", () => {
   expect(compareStamps({}, {}).reason).toBe("missing");
-  expect(stampLabel({}, {})).toBe("v2.0.0 · derleme bilgisi yok");
+  expect(stampLabel({}, {})).toBe("v2.0.0");
 });
 
 test("yalnızca api varsa partial", () => {

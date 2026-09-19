@@ -68,7 +68,7 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
   const stamp = api || {};
   const cmp = compareStamps(ui, stamp);
   const colors = TONE[tone] || TONE.dark;
-  const warn = cmp.reason === "mismatch" || cmp.reason === "missing" || cmp.reason === "partial";
+  const warn = cmp.reason === "mismatch" || cmp.reason === "partial";
   if (layout === "sidebar") {
     const card = updateCard(ui, stamp);
     return (
@@ -88,13 +88,17 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
             <div className={`text-[13px] font-bold leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-version">
               {card.version}
             </div>
-            <div className={`font-mono text-[10px] leading-tight ${colors.meta}`} data-testid="build-stamp-sha">
-              {card.sha || "—"}
-              {card.builtAt ? ` · ${card.builtAt}` : card.branch ? ` · ${card.branch}` : ""}
-            </div>
-            <div className={`text-[10px] leading-snug ${warn ? colors.warn : colors.ok}`} data-testid="build-stamp-status">
-              {card.statusText}
-            </div>
+            {card.sha ? (
+              <div className={`font-mono text-[10px] leading-tight ${colors.meta}`} data-testid="build-stamp-sha">
+                {card.sha}
+                {card.builtAt ? ` · ${card.builtAt}` : card.branch ? ` · ${card.branch}` : ""}
+              </div>
+            ) : null}
+            {card.statusText ? (
+              <div className={`text-[10px] leading-snug ${warn ? colors.warn : colors.ok}`} data-testid="build-stamp-status">
+                {card.statusText}
+              </div>
+            ) : null}
             {cmp.reason === "mismatch" ? (
               <button
                 type="button"

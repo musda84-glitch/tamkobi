@@ -67,7 +67,7 @@ export function stampLabel(ui, api) {
   const uiShort = shortSha(ui && ui.git_sha);
   const apiShort = shortSha(api && api.git_sha);
   if (cmp.reason === "mismatch") return `${ver} · arayüz ${uiShort} ≠ api ${apiShort}`;
-  if (cmp.reason === "missing") return `${ver} · derleme bilgisi yok`;
+  if (cmp.reason === "missing") return ver;
   if (cmp.reason === "partial") {
     if (uiShort) return `${ver} · arayüz ${uiShort}`;
     return `${ver} · api ${apiShort}`;
@@ -116,7 +116,7 @@ export function updateCard(ui, api) {
   const message = cleanMessage((api && api.git_message) || (ui && ui.git_message) || "");
   const builtAt = formatBuiltAt((api && api.built_at) || (ui && ui.built_at));
   let statusKind = "muted";
-  let statusText = "Derleme bilgisi yok";
+  let statusText = null;
   if (cmp.reason === "match") {
     statusKind = "ok";
     statusText = "Sunucu bu sürümü çalıştırıyor";
