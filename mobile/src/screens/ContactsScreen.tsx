@@ -3,11 +3,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact, Invoice } from "../types";
-import { contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
+import { contactBalanceLabel, contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
 import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -60,6 +60,7 @@ export function ContactsScreen() {
       {!filtered.length ? <Empty icon="people-outline" title="Cari bulunamadı" hint={canEdit ? "Yeni cari kartı ekleyin." : undefined} /> : filtered.map((c) => {
         const id = idOf(c);
         const bal = contactDisplayBalance(c, { open_amount: openById[id] }, flags[id]);
+        const side = contactBalanceLabel(bal);
         return (
           <ListRow
             key={id}
@@ -68,8 +69,9 @@ export function ContactsScreen() {
             subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
             right={fmtMoney(bal)}
             rightColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.text}
-            rightSub={bal > 0 ? "Alacaklı" : bal < 0 ? "Borçlu" : "Cari bakiye"}
+            rightSub={side.label}
             rightSubColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.muted}
+            badge={<Badge label={side.label} tone={side.tone === "green" ? "green" : side.tone === "red" ? "red" : "slate"} />}
             onPress={() => go("ContactDetail", { id, name: c.name })}
           />
         );
