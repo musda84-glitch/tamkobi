@@ -68,7 +68,7 @@ export function ContactsScreen() {
             subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
             right={fmtMoney(bal)}
             rightColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.text}
-            rightSub={bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Cari bakiye"}
+            rightSub={bal > 0 ? "Alacaklı" : bal < 0 ? "Borçlu" : "Cari bakiye"}
             rightSubColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.muted}
             onPress={() => go("ContactDetail", { id, name: c.name })}
           />

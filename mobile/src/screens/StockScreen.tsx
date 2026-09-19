@@ -120,7 +120,9 @@ export function StockScreen() {
             leading={<ProductThumb uri={productImage(p)} />}
             title={p.name}
             subtitle={stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}
-            right={stockBarcodeLabel(p)}
+            right={qty}
+            rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
+            rightSub={stockBarcodeLabel(p)}
             badge={<Badge label={qty} tone={qtyTone} />}
             onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
           />
