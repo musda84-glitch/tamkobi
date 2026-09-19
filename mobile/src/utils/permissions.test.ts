@@ -31,6 +31,6 @@ describe("permissions", () => {
 
   it("includes finance and sales modules", () => {
     const keys = visibleModules({ role: "admin" }, null).map((m) => m.key);
-    expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects"]));
+    expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects", "personnel"]));
   });
 });

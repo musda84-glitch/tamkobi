@@ -1,0 +1,430 @@
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
+import { Text, View } from "react-native";
+import { del, get, post, put } from "../api/client";
+import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { ActionTiles } from "../components/ActionTiles";
+import { B2BSheet } from "../components/b2b/B2BSheet";
+import { Chip, confirmAction } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
+import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
+import { TabStrip } from "../components/TabStrip";
+import { colors } from "../theme";
+import {
+  LEAVE_TYPES,
+  SALARY_CALC_ROWS,
+  draftFromEmployee,
+  employeePayload,
+  employeeSelectGroups,
+  emptyEmployeeDraft,
+  leaveDays,
+  leaveStatusTr,
+  leaveTypeTr,
+  monthlyPayrollLoad,
+  payrollBreakdown,
+  payrollStatusTr,
+  validateEmployee,
+  validateLeave,
+  type AttendancePayload,
+  type AttendanceSummary,
+  type Employee,
+  type EmployeeDraft,
+  type LeaveRequest,
+  type Payroll,
+  type SalaryCalc,
+} from "../utils/personnel";
+import { paymentTargetGroups, splitPaymentTarget, type BankAccount } from "../utils/finance";
+import { fmtMoney, idOf, todayIso } from "../utils/money";
+
+type Tab = "payroll" | "attendance" | "leaves" | "salary";
+
+export function PersonnelScreen() {
+  const { client, companyId, can } = useAuth();
+  const canEdit = can("/personnel", "edit");
+  const [tab, setTab] = useState<Tab>("payroll");
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [payrolls, setPayrolls] = useState<Payroll[]>([]);
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [attendance, setAttendance] = useState<AttendancePayload | null>(null);
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Employee | null>(null);
+  const [draft, setDraft] = useState<EmployeeDraft>(emptyEmployeeDraft(todayIso()));
+  const [payItem, setPayItem] = useState<Payroll | null>(null);
+  const [payAccount, setPayAccount] = useState("");
+  const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
+  const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
+  const [calcAmount, setCalcAmount] = useState("50000");
+  const [calc, setCalc] = useState<SalaryCalc | null>(null);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [emps, pays, accs, lvs, att] = await Promise.all([
+        get<Employee[]>(client, "/personnel/employees", { company_id: companyId }),
+        get<Payroll[]>(client, "/personnel/payrolls", { company_id: companyId }),
+        get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
+        get<LeaveRequest[]>(client, "/personnel/leaves", { company_id: companyId }).catch(() => []),
+        get<AttendancePayload>(client, "/personnel/attendance", { company_id: companyId, month }).catch(() => null),
+      ]);
+      setEmployees(emps || []);
+      setPayrolls(pays || []);
+      setAccounts(accs || []);
+      setLeaves(lvs || []);
+      setAttendance(att);
+      if ((accs || []).length) setPayAccount((cur) => cur || idOf(accs[0]));
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Personel verileri yüklenemedi."));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [client, companyId, month]);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const openAdd = () => {
+    setEditing(null);
+    setDraft(emptyEmployeeDraft(todayIso()));
+    setFormOpen(true);
+  };
+  const openEdit = (emp: Employee) => {
+    setEditing(emp);
+    setDraft(draftFromEmployee(emp, todayIso()));
+    setFormOpen(true);
+  };
+
+  const saveEmployee = async () => {
+    const invalid = validateEmployee(draft);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      if (editing) await put(client, `/personnel/employees/${idOf(editing)}`, employeePayload(draft));
+      else await post(client, "/personnel/employees", employeePayload(draft, companyId));
+      setFormOpen(false);
+      setMessage(editing ? "Personel güncellendi." : "Personel kaydedildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, editing ? "Personel güncellenemedi." : "Personel kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeEmployee = (emp: Employee) => {
+    confirmAction("Personeli sil", `${emp.full_name} personel kaydı silinsin mi? (Çöp kutusuna taşınır)`, async () => {
+      try {
+        await del(client, `/personnel/employees/${idOf(emp)}`);
+        setMessage("Personel çöp kutusuna taşındı.");
+        await load();
+      } catch (err) {
+        setError(apiErrorMessage(err, "Personel silinemedi."));
+      }
+    });
+  };
+
+  const generatePayroll = async () => {
+    setBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/generate-payroll", {
+        company_id: companyId,
+        period: new Date().toISOString().slice(0, 7),
+      });
+      setMessage(r?.message || "Bordro hesaplandı.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Bordro hesaplanamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const paySalary = async () => {
+    if (!payItem) return;
+    setBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, `/personnel/payrolls/${idOf(payItem)}/pay`, splitPaymentTarget(payAccount));
+      setMessage(r?.message || "Maaş ödemesi yapıldı.");
+      setPayItem(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Maaş ödemesi gerçekleştirilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const attAct = async (employeeId: string, body: Record<string, unknown>) => {
+    try {
+      await post(client, "/personnel/attendance", { employee_id: employeeId, ...body });
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Puantaj kaydedilemedi."));
+    }
+  };
+
+  const saveLeave = async () => {
+    const invalid = validateLeave(leaveForm.employee_id, leaveForm.start_date, leaveForm.end_date);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/leaves", { ...leaveForm, days: leaveDays(leaveForm.start_date, leaveForm.end_date) });
+      setLeaveForm({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
+      setMessage("İzin talebi oluşturuldu.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "İzin kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decideLeave = async (id: string, status: "approved" | "rejected") => {
+    try {
+      await post(client, `/personnel/leaves/${id}/decide`, { status });
+      setMessage(status === "approved" ? "İzin onaylandı." : "İzin reddedildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "İşlem başarısız."));
+    }
+  };
+
+  const runCalc = async () => {
+    setBusy(true);
+    try {
+      const r = await post<SalaryCalc>(client, "/personnel/salary-calc", { mode: calcMode, amount: Number(calcAmount) || 0 });
+      setCalc(r);
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Hesaplanamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadAmount = monthlyPayrollLoad(employees);
+  const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
+  const payGroups = paymentTargetGroups(accounts, [], { includePartners: true });
+
+  return (
+    <Screen onRefresh={load} refreshing={refreshing}>
+      <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }} testID="personnel-title">Personel & Bordro</Text>
+      <Muted>Aylık net maaş yükü: {fmtMoney(loadAmount)}</Muted>
+      <ErrorBanner message={error} />
+      {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
+
+      <TabStrip
+        testID="personnel-tab"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "payroll", label: "Bordro", icon: "people", count: employees.length },
+          { key: "attendance", label: "Puantaj", icon: "time" },
+          { key: "leaves", label: "İzinler", icon: "calendar", count: pendingLeaves || undefined },
+          { key: "salary", label: "Hesapla", icon: "calculator" },
+        ]}
+      />
+
+      {tab === "payroll" ? (
+        <>
+          <ActionTiles
+            items={[
+              canEdit && { key: "add", label: "Yeni çalışan", icon: "person-add" as const, tone: "emerald" as const, testID: "add-employee-btn", onPress: openAdd },
+              canEdit && { key: "gen", label: "Bordro hesapla", icon: "calculator" as const, tone: "indigo" as const, testID: "generate-payroll-btn", busy, onPress: generatePayroll },
+              { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "personnel-refresh", onPress: load },
+            ].filter(Boolean) as never}
+          />
+          {!employees.length ? (
+            <Empty icon="people-outline" title="Çalışan yok" hint={canEdit ? "Yeni çalışan ekleyin." : undefined} />
+          ) : employees.map((emp) => (
+            <Card key={idOf(emp)} testID={`employee-card-${emp.tc_kimlik || idOf(emp)}`}>
+              <Row style={{ justifyContent: "space-between" }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                  <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
+                  <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
+                </View>
+                <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(emp.salary)}</Text>
+              </Row>
+              {canEdit ? (
+                <Row>
+                  <PrimaryButton title="Düzenle" color={colors.secondary} testID={`employee-edit-${emp.tc_kimlik || idOf(emp)}`} onPress={() => openEdit(emp)} />
+                  <PrimaryButton title="Sil" color={colors.danger} testID={`employee-delete-${emp.tc_kimlik || idOf(emp)}`} onPress={() => removeEmployee(emp)} />
+                </Row>
+              ) : null}
+            </Card>
+          ))}
+
+          <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }}>Bordro & maaş ödemeleri</Text>
+          {!payrolls.length ? <Muted>Bordro kaydı yok. Aylık bordro hesaplayın.</Muted> : payrolls.map((p) => {
+            const extra = payrollBreakdown(p);
+            const unpaid = p.status !== "paid";
+            return (
+              <ListRow
+                key={idOf(p)}
+                testID={`payroll-row-${idOf(p)}`}
+                title={p.employee_name || "Personel"}
+                subtitle={[`${p.period} dönemi`, extra, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · ")}
+                right={fmtMoney(p.final_payable ?? p.net_salary)}
+                rightSub={unpaid && canEdit ? "Maaşı öde" : undefined}
+                rightSubColor={colors.primary}
+                onPress={unpaid && canEdit ? () => { setPayItem(p); setPayAccount(payAccount || (accounts[0] ? idOf(accounts[0]) : "")); } : undefined}
+              />
+            );
+          })}
+        </>
+      ) : null}
+
+      {tab === "attendance" ? (
+        <>
+          <Field label="Ay" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
+          {!(attendance?.summary || []).length ? (
+            <Empty icon="time-outline" title="Puantaj yok" hint="Çalışan ekleyince giriş/çıkış burada görünür." />
+          ) : (attendance?.summary || []).map((s: AttendanceSummary) => (
+            <Card key={s.employee_id} testID={`att-row-${s.employee_id}`}>
+              <Text style={{ fontWeight: "800", color: colors.text }}>{s.employee_name}</Text>
+              <Muted>
+                Bugün {s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}` : "—"}
+                {s.today?.late_minutes ? ` · ${s.today.late_minutes} dk geç` : ""}
+              </Muted>
+              <Muted>Gün {s.days_present || 0} · devamsız {s.days_absent || 0} · izin {s.days_leave || 0} · {s.total_hours || 0} sa · mesai {s.overtime_hours || 0} sa</Muted>
+              {canEdit ? (
+                <Row style={{ flexWrap: "wrap" }}>
+                  <PrimaryButton title="Giriş" color={colors.primary} testID={`att-in-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { action: "check_in" })} />
+                  <PrimaryButton title="Çıkış" color={colors.secondary} testID={`att-out-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { action: "check_out" })} />
+                  <PrimaryButton title="Devamsız" color={colors.danger} testID={`att-absent-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { status: "absent" })} />
+                </Row>
+              ) : null}
+            </Card>
+          ))}
+          {(attendance?.records || []).slice(0, 30).map((r) => (
+            <ListRow
+              key={idOf(r)}
+              testID={`att-rec-${idOf(r)}`}
+              title={r.employee_name || "Personel"}
+              subtitle={[r.date, r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
+              right={r.hours != null ? `${r.hours} sa` : undefined}
+            />
+          ))}
+        </>
+      ) : null}
+
+      {tab === "leaves" ? (
+        <>
+          {canEdit ? (
+            <Card testID="leave-form">
+              <Text style={{ fontWeight: "800", color: colors.text }}>İzin talebi</Text>
+              <GroupedSelect
+                label="Çalışan"
+                testID="leave-employee-select"
+                value={leaveForm.employee_id}
+                onChange={(v) => setLeaveForm({ ...leaveForm, employee_id: v })}
+                groups={employeeSelectGroups(employees)}
+                emptyLabel="Çalışan seçin"
+              />
+              <GroupedSelect
+                label="Tür"
+                testID="leave-type-select"
+                value={leaveForm.type}
+                onChange={(v) => setLeaveForm({ ...leaveForm, type: v })}
+                groups={[{ label: "İzin türü", options: LEAVE_TYPES.map((t) => ({ value: t.key, label: t.label })) }]}
+              />
+              <Field label="Başlangıç" testID="leave-start-input" value={leaveForm.start_date} onChangeText={(v) => setLeaveForm({ ...leaveForm, start_date: v })} placeholder="YYYY-MM-DD" />
+              <Field label="Bitiş" testID="leave-end-input" value={leaveForm.end_date} onChangeText={(v) => setLeaveForm({ ...leaveForm, end_date: v })} placeholder="YYYY-MM-DD" />
+              <Field label="Açıklama" testID="leave-reason-input" value={leaveForm.reason} onChangeText={(v) => setLeaveForm({ ...leaveForm, reason: v })} placeholder="Opsiyonel" />
+              <PrimaryButton title="Kaydet" testID="save-leave-btn" color={colors.indigo} loading={busy} onPress={saveLeave} />
+            </Card>
+          ) : null}
+          {!leaves.length ? <Empty icon="calendar-outline" title="İzin talebi yok" /> : leaves.map((l) => (
+            <Card key={idOf(l)} testID={`leave-row-${idOf(l)}`}>
+              <Row style={{ justifyContent: "space-between" }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>{l.employee_name}</Text>
+                  <Muted>{leaveTypeTr(l.type)} · {l.start_date} → {l.end_date} · {l.days} gün</Muted>
+                </View>
+                <Text style={{ fontWeight: "700", color: l.status === "approved" ? colors.primary : l.status === "rejected" ? colors.danger : colors.warning }}>
+                  {leaveStatusTr(l.status)}
+                </Text>
+              </Row>
+              {canEdit && l.status === "pending" ? (
+                <Row>
+                  <PrimaryButton title="Onayla" color={colors.primary} testID={`approve-leave-${idOf(l)}`} onPress={() => decideLeave(idOf(l), "approved")} />
+                  <PrimaryButton title="Reddet" color={colors.danger} testID={`reject-leave-${idOf(l)}`} onPress={() => decideLeave(idOf(l), "rejected")} />
+                </Row>
+              ) : null}
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {tab === "salary" ? (
+        <Card testID="salary-calculator">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Maaş hesaplama (brüt ⇄ net)</Text>
+          <Row>
+            <Chip label="Brütten nete" active={calcMode === "gross"} testID="salary-mode-gross" onPress={() => setCalcMode("gross")} />
+            <Chip label="Netten brüte" active={calcMode === "net"} testID="salary-mode-net" onPress={() => setCalcMode("net")} />
+          </Row>
+          <Field
+            label={calcMode === "gross" ? "Brüt maaş (₺)" : "Net maaş (₺)"}
+            testID="salary-amount-input"
+            value={calcAmount}
+            onChangeText={setCalcAmount}
+            keyboardType="numeric"
+          />
+          <PrimaryButton title="Hesapla" testID="salary-calc-btn" color={colors.indigo} loading={busy} onPress={runCalc} />
+          <Muted>2026 yaklaşık oranlar; resmi bordro için mali müşavirinizle doğrulayın.</Muted>
+          {calc ? (
+            <StatRows
+              testID="salary-result"
+              items={SALARY_CALC_ROWS.map((row) => ({
+                key: row.key,
+                label: row.label,
+                value: fmtMoney(calc[row.key]),
+                valueColor: row.tone === "green" ? colors.primary : row.tone === "red" ? colors.danger : undefined,
+              }))}
+            />
+          ) : null}
+        </Card>
+      ) : null}
+
+      <B2BSheet
+        visible={formOpen}
+        title={editing ? "Personeli düzenle" : "Yeni personel ekle"}
+        onClose={() => setFormOpen(false)}
+        testID="employee-form-modal"
+      >
+        <Field label="Ad soyad" testID="employee-name-input" value={draft.full_name} onChangeText={(v) => setDraft({ ...draft, full_name: v })} placeholder="Örn: Mehmet Özkan" />
+        <Field label="TC kimlik no" testID="employee-tc-input" value={draft.tc_kimlik} onChangeText={(v) => setDraft({ ...draft, tc_kimlik: v })} placeholder="11 haneli" keyboardType="number-pad" />
+        <Field label="Net maaş (₺)" testID="employee-salary-input" value={draft.salary} onChangeText={(v) => setDraft({ ...draft, salary: v })} keyboardType="numeric" />
+        <Field label="Departman" testID="employee-department-input" value={draft.department} onChangeText={(v) => setDraft({ ...draft, department: v })} />
+        <Field label="Pozisyon / görev" testID="employee-position-input" value={draft.position} onChangeText={(v) => setDraft({ ...draft, position: v })} />
+        <Field label="Telefon" testID="employee-phone-input" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })} placeholder="05…" keyboardType="phone-pad" />
+        <Field label="E-posta" testID="employee-email-input" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} placeholder="ornek@tamkobi.com" autoCapitalize="none" />
+        <PrimaryButton title={editing ? "Güncelle" : "Personeli kaydet"} testID="save-employee-btn" loading={busy} onPress={saveEmployee} />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!payItem}
+        title="Maaş ödemesi onayı"
+        subtitle={payItem ? `${payItem.employee_name} · ${payItem.period} · ${fmtMoney(payItem.final_payable)}` : undefined}
+        onClose={() => setPayItem(null)}
+        testID="salary-pay-sheet"
+      >
+        <GroupedSelect
+          label="Ödemenin yapılacağı hesap"
+          testID="salary-pay-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Hesap seçin"
+        />
+        <PrimaryButton title="Ödemeyi tamamla" testID="confirm-salary-pay-btn" loading={busy} onPress={paySalary} />
+      </B2BSheet>
+    </Screen>
+  );
+}

@@ -34,6 +34,7 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "stock", label: "Stok", path: "/stock", href: "/stok", icon: "cube", tone: "indigo" },
   { id: "barcode", label: "Barkod", path: "/stock", href: "/stok?scan=1", icon: "barcode", tone: "indigo" },
   { id: "sevk", label: "Depo Sevkiyat", path: "/sevk", href: "/sevk", icon: "cube", tone: "teal" },
+  { id: "personnel", label: "Personel & Bordro", path: "/personnel", href: "/personnel", icon: "people-circle", tone: "violet" },
   { id: "notifications", label: "Bildirimler", path: "/", href: "/notifications", icon: "notifications", tone: "rose", always: true },
 ];
 
@@ -66,7 +67,7 @@ const TASK_PATH_MAP: Record<string, string> = {
   "/saha": "/saha",
   "/mesai": "/mesai",
   "/personelim": "/personelim",
-  "/personnel": "/personelim",
+  "/personnel": "/personnel",
   "/notifications": "/notifications",
   "/settings": "/settings",
   "/search": "/search",

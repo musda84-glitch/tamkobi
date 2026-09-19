@@ -76,7 +76,7 @@ describe("resolveMobilePath", () => {
   it("maps dashboard task paths onto mobile routes", () => {
     expect(resolveMobilePath("/invoices")).toBe("/invoices");
     expect(resolveMobilePath("/stock")).toBe("/stok");
-    expect(resolveMobilePath("/personnel")).toBe("/personelim");
+    expect(resolveMobilePath("/personnel")).toBe("/personnel");
     expect(resolveMobilePath("/sevk")).toBe("/sevk");
     expect(resolveMobilePath("/bilinmeyen")).toBeNull();
     expect(resolveMobilePath("")).toBeNull();
