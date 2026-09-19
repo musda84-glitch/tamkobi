@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
@@ -143,7 +144,7 @@ export function AttendanceScreen() {
               {!checkedIn ? <Muted>Talebi göndermeden önce giriş yapın.</Muted> : null}
               {checkedOut ? <Muted>Bugün zaten çıkış yapılmış — yeni talep gönderilemez.</Muted> : null}
               <Field label="Neden" testID="mesai-early-reason" value={earlyReason} onChangeText={setEarlyReason} placeholder="Örn: doktor randevusu" />
-              <Field label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} placeholder="HH:MM (opsiyonel)" />
+              <TimeField label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} optional />
               <PrimaryButton title={busy === "early" ? "Gönderiliyor…" : "Talebi gönder"} onPress={requestEarly} disabled={!checkedIn || checkedOut} color="#D97706" testID="mesai-early-submit" />
               <PrimaryButton title="Vazgeç" onPress={() => setEarlyOpen(false)} color={colors.secondary} testID="mesai-early-close" />
             </View>
