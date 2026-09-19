@@ -1,6 +1,14 @@
-import { channelLogoUrl, channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, isMarketplaceChannel, leaveTr, orderNumberLabel, paymentMethodTr, productTypeTr, statusTr, tradeKindTr } from "./labels";
+import { channelLogoUrl, channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, isMarketplaceChannel, leaveTr, orderNumberLabel, paymentMethodTr, productTypeTr, statusTr, tradeKindTr, trUpper } from "./labels";
 
 describe("labels", () => {
+  it("uppercases Turkish i/ı for form labels", () => {
+    expect(trUpper("Miktar")).toBe("MİKTAR");
+    expect(trUpper("Birim fiyat")).toBe("BİRİM FİYAT");
+    expect(trUpper("indir")).toBe("İNDİR");
+    expect(trUpper("PDF indir")).toBe("PDF İNDİR");
+    expect("Miktar".toUpperCase()).toBe("MIKTAR");
+  });
+
   it("maps known statuses", () => {
     expect(statusTr("pending")).toBe("Beklemede");
     expect(statusTr("shipped")).toBe("Kargolandı");

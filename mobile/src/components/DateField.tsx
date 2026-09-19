@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { createElement, useMemo, useState } from "react";
 import { Modal, Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
+import { trUpper } from "../utils/labels";
 import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
 
 type DateFieldProps = {
@@ -58,7 +59,7 @@ export function DateField({ label, value, onChangeText, testID, min }: DateField
 
   return (
     <View style={{ marginBottom: spacing.md }}>
-      <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4, textTransform: "uppercase" }}>{label}</Text>
+      <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
       {Platform.OS === "web" ? (
         createElement("input", {
           type: "date",

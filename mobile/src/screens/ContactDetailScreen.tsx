@@ -13,7 +13,7 @@ import { ChannelLogo } from "../components/ChannelLogo";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr } from "../utils/labels";
+import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
 import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
@@ -64,7 +64,7 @@ const TABS: TabStripItem<TabKey>[] = [
 function InfoLine({ label, value }: { label: string; value: string }) {
   return (
     <View style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
-      <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 11, textTransform: "uppercase" }}>{label}</Text>
+      <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 11 }}>{trUpper(label)}</Text>
       <Text style={{ color: colors.text, fontWeight: "600", marginTop: 2 }}>{value}</Text>
     </View>
   );

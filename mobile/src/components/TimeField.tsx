@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
+import { trUpper } from "../utils/labels";
 import { formatHm, hourOptions, minuteOptions, parseHm } from "../utils/clock";
 
 type TimeFieldProps = {
@@ -34,7 +35,7 @@ export function TimeField({ label, value, onChangeText, testID, optional }: Time
 
   return (
     <View style={{ marginBottom: spacing.md }}>
-      <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4, textTransform: "uppercase" }}>{label}</Text>
+      <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
       <Pressable
         testID={testID}
         onPress={openPicker}
