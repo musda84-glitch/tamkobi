@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -9,6 +9,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
+import { empIdOf, nextTasksAfterAssign, validateEmployeeTaskAssign } from "../utils/employeeTaskAssign";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Maaş Geçmişi", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -90,11 +91,13 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [schedule, setSchedule] = useState(null);
   const [accounts, setAccounts] = useState(accountsProp || []);
   const [quickPay, setQuickPay] = useState(null);
+  const [taskOpen, setTaskOpen] = useState(false);
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
   useEscape(() => {
     if (quickPay) return;
+    if (taskOpen) { setTaskOpen(false); return; }
     if (payItem) { setPayItem(null); return; }
     onClose();
   });
@@ -152,6 +155,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
             <button type="button" onClick={() => setQuickPay("advance")} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
             <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>
+            <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
             <button type="button" onClick={() => setQuickPay("expense")} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
           </div>
@@ -188,6 +192,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         </div>
       </div>
       {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
+      {taskOpen ? <AssignEmployeeTaskModal employee={e} companyId={companyId} onClose={() => setTaskOpen(false)} /> : null}
       {payItem && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
@@ -212,3 +217,73 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     </div>
   );
 };
+
+function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
+  const [projects, setProjects] = useState([]);
+  const [projectId, setProjectId] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } })
+      .then((r) => setProjects(r.data || []))
+      .catch(() => toast.error("Projeler yüklenemedi."));
+  }, [companyId]);
+  const project = projects.find((p) => empIdOf(p) === projectId);
+  const tasks = (project?.tasks || []).map((t, i) => ({
+    id: t.id || `t_${i}`,
+    title: t.title || t.name || "",
+    done: !!(t.done || t.status === "done" || t.status === "completed"),
+    assignee_name: t.assignee_name || "",
+  }));
+  const save = async (e) => {
+    e.preventDefault();
+    const invalid = validateEmployeeTaskAssign(projectId, taskId, title);
+    if (invalid) { toast.error(invalid); return; }
+    const next = nextTasksAfterAssign(project?.tasks, employee, { taskId, title });
+    if (next.error) { toast.error(next.error); return; }
+    setBusy(true);
+    try {
+      await axios.put(`${API_URL}/projects/${projectId}`, { tasks: next.tasks });
+      toast.success(`${employee.full_name} ${project?.name || "projeye"} atandı.`);
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görev ataması kaydedilemedi.");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); onClose(); }} data-testid="emp-card-task-modal">
+      <form className="bg-white rounded-2xl max-w-md w-full p-6 space-y-3 shadow-2xl border border-slate-200 text-xs" onClick={(ev) => ev.stopPropagation()} onSubmit={save}>
+        <div className="flex items-center justify-between border-b pb-2">
+          <h3 className="text-base font-bold text-slate-900">Görev ata</h3>
+          <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-slate-600">{employee.full_name} · proje görevi seçin veya yeni yazın</p>
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1">Proje</label>
+          <select value={projectId} onChange={(ev) => { setProjectId(ev.target.value); setTaskId(""); }} className="w-full border rounded-lg p-2" data-testid="emp-card-task-project">
+            <option value="">Proje seçin</option>
+            {projects.map((p) => <option key={empIdOf(p)} value={empIdOf(p)}>{p.name || "Proje"}{p.project_number ? ` · ${p.project_number}` : ""}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1">Mevcut görev</label>
+          <select value={taskId} onChange={(ev) => setTaskId(ev.target.value)} className="w-full border rounded-lg p-2" data-testid="emp-card-task-existing" disabled={!projectId}>
+            <option value="">Yeni görev yaz</option>
+            {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}{t.assignee_name ? ` · ${t.assignee_name}` : ""}{t.done ? " (bitti)" : ""}</option>)}
+          </select>
+        </div>
+        {!taskId ? (
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Yeni görev adı</label>
+            <input value={title} onChange={(ev) => setTitle(ev.target.value)} placeholder="Örn: Keşif, montaj" className="w-full border rounded-lg p-2" data-testid="emp-card-task-title" />
+          </div>
+        ) : null}
+        <div className="flex justify-end gap-2 pt-2 border-t">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
+          <button type="submit" disabled={busy} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-card-task-save">Personeli ata</button>
+        </div>
+      </form>
+    </div>
+  );
+}

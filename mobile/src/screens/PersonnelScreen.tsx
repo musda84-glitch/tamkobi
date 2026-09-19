@@ -23,6 +23,7 @@ import {
   payrollStatusTr,
   remainingDue,
   unpaidPayrollTotal,
+  EMPLOYEE_CARD_ACTIONS,
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
@@ -344,11 +345,31 @@ export function PersonnelScreen() {
                   ) : null}
                 </Row>
                 {canEdit ? (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    <PayChip title="Avans" color="#B45309" bg={colors.amber50} testID={`emp-card-advance-btn-${eid}`} onPress={() => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); }} />
-                    <PayChip title="Maaş öde" color={colors.primaryHover} bg={colors.emerald50} testID={`emp-card-salary-btn-${eid}`} onPress={() => openSalaryPay(emp)} />
-                    <PayChip title="Göreve ata" color={colors.indigo} bg={colors.indigo50} testID={`emp-card-task-btn-${eid}`} onPress={() => openTaskAssign(emp)} />
-                    <PayChip title="+ Mesai" color="#6D28D9" bg={colors.indigo50} testID={`emp-card-ot-btn-${eid}`} onPress={() => openOvertime(emp)} />
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
+                    {EMPLOYEE_CARD_ACTIONS.map((action) => {
+                      const press = {
+                        advance: () => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); },
+                        salary: () => openSalaryPay(emp),
+                        task: () => openTaskAssign(emp),
+                        overtime: () => openOvertime(emp),
+                      }[action.key];
+                      const tone = {
+                        advance: { color: "#B45309", bg: colors.amber50 },
+                        salary: { color: colors.primaryHover, bg: colors.emerald50 },
+                        task: { color: colors.indigo, bg: colors.indigo50 },
+                        overtime: { color: "#6D28D9", bg: colors.indigo50 },
+                      }[action.key];
+                      return (
+                        <PayChip
+                          key={action.key}
+                          title={action.title}
+                          color={tone.color}
+                          bg={tone.bg}
+                          testID={`emp-card-${action.key}-btn-${eid}`}
+                          onPress={press}
+                        />
+                      );
+                    })}
                   </View>
                 ) : null}
               </Card>
@@ -540,7 +561,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!taskEmp}
-        title="Göreve ata"
+        title="Görev ata"
         subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
         onClose={() => setTaskEmp(null)}
         testID="task-assign-sheet"

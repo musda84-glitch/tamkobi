@@ -11,6 +11,7 @@ import {
   remainingDue,
   remainingLeaveDays,
   unpaidPayrollTotal,
+  employeeCardActionTitles,
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
@@ -101,6 +102,15 @@ describe("overtime assign", () => {
       hours: 2.5,
       note: "keşif",
     });
+  });
+});
+
+describe("employee card actions", () => {
+  it("shows Görev ata and never Düzenle/Sil", () => {
+    const titles = employeeCardActionTitles();
+    expect(titles).toEqual(["Avans", "Maaş öde", "Görev ata", "+ Mesai"]);
+    expect(titles).not.toContain("Düzenle");
+    expect(titles).not.toContain("Sil");
   });
 });
 
