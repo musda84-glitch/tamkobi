@@ -1,4 +1,4 @@
-import { filterProducts, productCategoryGroups, productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { filterProducts, productCategoryGroups, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -28,6 +28,10 @@ describe("productDisplay", () => {
     expect(stockRightLabel({ stock_quantity: -467 })).toBe("Stok -467 Adet");
     expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
     expect(stockBarcodeLabel({})).toBe("Barkod yok");
+    expect(productSkuLabel({ sku: "DRD-CAM" })).toBe("SKU DRD-CAM");
+    expect(productSkuLabel({})).toBe("SKU —");
+    expect(productPickSubtitle({ sku: "DRD-CAM", barcode: "8690001" })).toBe("SKU DRD-CAM · Barkod 8690001");
+    expect(productPickSubtitle({})).toBe("SKU — · Barkod —");
     expect(stockBadge({})?.label).toBe("0 Adet");
   });
 

@@ -7,15 +7,17 @@ import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
-import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
+import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
 import { coordText } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { filterProducts, productImage, productPickSubtitle, stockBadge, stockRightLabel } from "../utils/productDisplay";
 import {
   PROJECT_STATUSES,
   QUOTE_STATUSES,
@@ -159,7 +161,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   };
   const totals = workItemTotals(items);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
-  const prodHits = prodQ.trim().length < 2 ? [] : products.filter((p) => [p.name, p.sku].some((v) => String(v || "").toLowerCase().includes(prodQ.trim().toLowerCase()))).slice(0, 8);
+  const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
   const statuses = kind === "quote" ? QUOTE_STATUSES : kind === "project" ? PROJECT_STATUSES : SURVEY_STATUSES;
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
@@ -335,22 +337,32 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
           <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-          {prodHits.map((p) => (
-            <ListRow
-              key={idOf(p)}
-              title={p.name}
-              right={fmtMoney(p.sale_price)}
-              onPress={() => {
-                setItems((rows) => {
-                  const emptyIdx = rows.findIndex((it) => !it.name);
-                  const line = { ...emptyItem(), product_id: idOf(p), name: p.name, unit_price: Number(p.sale_price) || 0, vat_rate: Number(p.vat_rate) || 20, unit: p.unit || "Adet" };
-                  if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
-                  return [...rows, line];
-                });
-                setProdQ("");
-              }}
-            />
-          ))}
+          {prodHits.map((p) => {
+            const badge = stockBadge(p);
+            const qtyTone = badge?.tone === "danger" ? "red" : badge?.tone === "warning" ? "amber" : "green";
+            return (
+              <ListRow
+                key={idOf(p)}
+                testID={`q-prod-${idOf(p)}`}
+                leading={<ProductThumb uri={productImage(p)} />}
+                title={p.name}
+                subtitle={productPickSubtitle(p)}
+                right={fmtMoney(p.sale_price)}
+                rightSub={stockRightLabel(p)}
+                rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
+                badge={<Badge label={badge?.label || stockRightLabel(p)} tone={qtyTone} />}
+                onPress={() => {
+                  setItems((rows) => {
+                    const emptyIdx = rows.findIndex((it) => !it.name);
+                    const line = { ...emptyItem(), product_id: idOf(p), name: p.name, unit_price: Number(p.sale_price) || 0, vat_rate: Number(p.vat_rate) || 20, unit: p.unit || "Adet" };
+                    if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
+                    return [...rows, line];
+                  });
+                  setProdQ("");
+                }}
+              />
+            );
+          })}
           {items.map((it, i) => (
             <View key={i} style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 6 }}>
               <Field label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />

@@ -1,47 +1,18 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { View } from "react-native";
-import { fileUrl, get } from "../api/client";
+import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { ProductThumb } from "../components/ProductThumb";
 import { go } from "../nav";
-import { colors, radius } from "../theme";
+import { colors } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 import { filterProducts, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
-
-function ProductThumb({ uri }: { uri: string }) {
-  const { client } = useAuth();
-  const box = {
-    width: 46,
-    height: 46,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.slate100,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-    overflow: "hidden" as const,
-  };
-  if (!uri) {
-    return (
-      <View style={box}>
-        <Ionicons name="cube-outline" size={20} color={colors.muted} />
-      </View>
-    );
-  }
-  return (
-    <View style={box}>
-      <Image source={{ uri: fileUrl(client.baseUrl, uri) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
-    </View>
-  );
-}
 
 export function StockScreen() {
   const { client, companyId, can } = useAuth();

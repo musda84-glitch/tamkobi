@@ -28,6 +28,17 @@ export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
   return code || "Barkod yok";
 }
 
+export function productSkuLabel(p: Pick<Product, "sku">): string {
+  const sku = String(p.sku || "").trim();
+  return sku ? `SKU ${sku}` : "SKU —";
+}
+
+/** Teklif / keşif ürün seçici: SKU + barkod her zaman yazılır. */
+export function productPickSubtitle(p: Pick<Product, "sku" | "barcode">): string {
+  const barcode = String(p.barcode || "").trim();
+  return `${productSkuLabel(p)} · Barkod ${barcode || "—"}`;
+}
+
 export function stockRowSubtitle(
   p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active" | "category">,
   typeLabel: string,
