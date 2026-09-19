@@ -1,16 +1,24 @@
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { get, post } from "../api/client";
+import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Badge, Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
+import { earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
 
 type AttendancePayload = {
   employee?: { full_name: string } | null;
   now?: string;
   today_date?: string;
-  today?: { check_in?: string; check_out?: string; hours?: number; late_minutes?: number } | null;
+  today?: {
+    check_in?: string;
+    check_out?: string;
+    hours?: number;
+    late_minutes?: number;
+    early_leave_approved?: boolean;
+    early_leave_request?: { status?: string; reason?: string; planned_time?: string; decision_note?: string } | null;
+  } | null;
   location?: { label?: string; radius_m?: number } | null;
   schedule?: { require_geo?: boolean; start?: string; end?: string };
   records?: { id?: string; date: string; check_in?: string; check_out?: string; hours?: number; status?: string }[];
@@ -30,6 +38,9 @@ export function AttendanceScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [earlyOpen, setEarlyOpen] = useState(false);
+  const [earlyReason, setEarlyReason] = useState("");
+  const [earlyTime, setEarlyTime] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -63,9 +74,43 @@ export function AttendanceScreen() {
     }
   };
 
+  const requestEarly = async () => {
+    const invalid = validateEarlyLeave(earlyReason, earlyTime);
+    if (invalid) { setError(invalid); return; }
+    setBusy("early");
+    setError(null);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/attendance/early-leave-request", earlyLeavePayload(earlyReason, earlyTime));
+      setMessage(r?.message || "Erken çıkış talebi gönderildi.");
+      setEarlyOpen(false);
+      setEarlyReason("");
+      setEarlyTime("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Erken çıkış talebi gönderilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancelEarly = async () => {
+    setBusy("early-cancel");
+    setError(null);
+    try {
+      const r = await del<{ message?: string }>(client, "/personnel/attendance/early-leave-request");
+      setMessage(r?.message || "Talep iptal edildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Talep iptal edilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
+  const early = today?.early_leave_request;
 
   return (
     <Screen onRefresh={load}>
@@ -84,6 +129,28 @@ export function AttendanceScreen() {
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
           <PrimaryButton title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"} onPress={() => act("check_out")} disabled={!checkedIn || checkedOut} testID="mesai-out" />
+          {!checkedOut && data?.employee ? (
+            early?.status === "pending" ? (
+              <View testID="mesai-early-pending" style={{ gap: 8 }}>
+                <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
+                <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
+              </View>
+            ) : early?.status === "approved" || today?.early_leave_approved ? (
+              <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış yapabilirsiniz{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
+            ) : !checkedIn ? (
+              <Muted>Erken çıkış talep etmek için önce giriş yapın.</Muted>
+            ) : earlyOpen ? (
+              <View testID="mesai-early-form" style={{ gap: 8 }}>
+                {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
+                <Field label="Neden" testID="mesai-early-reason" value={earlyReason} onChangeText={setEarlyReason} placeholder="Örn: doktor randevusu" />
+                <Field label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} placeholder="HH:MM (opsiyonel)" />
+                <PrimaryButton title={busy === "early" ? "Gönderiliyor…" : "Talebi gönder"} onPress={requestEarly} color="#D97706" testID="mesai-early-submit" />
+                <PrimaryButton title="Vazgeç" onPress={() => setEarlyOpen(false)} color={colors.secondary} testID="mesai-early-close" />
+              </View>
+            ) : (
+              <PrimaryButton title="Erken çıkış talep et" onPress={() => setEarlyOpen(true)} color="#D97706" testID="mesai-early-open" />
+            )
+          ) : null}
         </View>
       </Card>
       {(data?.records || []).slice(0, 14).map((r) => (

@@ -60,7 +60,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="personelim"
         options={{
-          title: "Personelim",
+          title: "Benim Sayfam",
+          tabBarLabel: "Personelim",
           href: show("/personelim") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
         }}
