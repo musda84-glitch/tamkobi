@@ -42,7 +42,7 @@ export function QuoteActions({
 }) {
   const { client, activeCompany } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
-  const [panel, setPanel] = useState(false);
+  const [panel, setPanel] = useState(true);
   const [phone, setPhone] = useState(contact?.phone || "");
   const [email, setEmail] = useState(contact?.email || "");
   const [flags, setFlags] = useState(() => defaultApprovalFlags(contact?.phone, contact?.email));
@@ -92,7 +92,7 @@ export function QuoteActions({
     },
     {
       key: "approval",
-      label: quote.approval ? "Onay linki" : "Onaya gönder",
+      label: "Onay iste",
       icon: "send",
       tone: "teal",
       busy: busy === "send",
@@ -125,8 +125,22 @@ export function QuoteActions({
     }
   };
 
+  const openPanel = () => {
+    setPhone((p) => p || contact?.phone || "");
+    setEmail((e) => e || contact?.email || "");
+    setFlags((f) => (f.sms || f.email || f.whatsapp ? f : defaultApprovalFlags(contact?.phone, contact?.email)));
+    setPanel(true);
+  };
+
   return (
     <View style={{ gap: 10 }}>
+      <PrimaryButton
+        title={busy === "send" ? "Gönderiliyor…" : "Onay iste"}
+        onPress={() => { openPanel(); if (panel) send(); }}
+        disabled={!!busy}
+        color={colors.primary}
+        testID="quote-ask-approval"
+      />
       <ActionTiles items={tiles} columns={3} size="sm" />
       {quote.approval ? (
         <Muted testID="quote-approval-status">
@@ -145,7 +159,7 @@ export function QuoteActions({
           <Field label="Telefon" testID="quote-approval-phone" value={phone} onChangeText={setPhone} placeholder="05XX…" keyboardType="phone-pad" />
           <Field label="E-posta" testID="quote-approval-email" value={email} onChangeText={setEmail} placeholder="musteri@firma.com" autoCapitalize="none" />
           <PrimaryButton
-            title={busy === "send" ? "Gönderiliyor…" : quote.approval?.sent_count ? "Tekrar gönder" : "Onay linki gönder"}
+            title={busy === "send" ? "Gönderiliyor…" : quote.approval?.sent_count ? "Tekrar onay iste" : "Onay iste"}
             onPress={send}
             disabled={!!busy}
             color={colors.primary}
