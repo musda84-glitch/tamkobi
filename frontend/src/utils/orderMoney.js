@@ -1,3 +1,13 @@
+/** KDV dahil birim fiyat. unit_price_incl varsa o kullanılır. */
+export const lineUnitGross = (it) => {
+  if (!it) return 0;
+  if (it.unit_price_incl != null && it.unit_price_incl !== "") return Number(it.unit_price_incl) || 0;
+  const unit = Number(it.unit_price) || 0;
+  const vat = Number(it.vat_rate) || 0;
+  if (!vat) return unit;
+  return Math.round(unit * (1 + vat / 100) * 100) / 100;
+};
+
 /** KDV dahil satır tutarı. total_incl varsa o kullanılır; aksi halde net total + KDV. */
 export const lineGross = (it) => {
   if (!it) return 0;

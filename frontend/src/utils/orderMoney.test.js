@@ -1,4 +1,9 @@
-import { lineGross, orderFooterTotals, orderGross } from "./orderMoney";
+import { lineGross, lineUnitGross, orderFooterTotals, orderGross } from "./orderMoney";
+
+test("lineUnitGross prefers unit_price_incl then net + KDV", () => {
+  expect(lineUnitGross({ unit_price: 260, unit_price_incl: 286, vat_rate: 10 })).toBe(286);
+  expect(lineUnitGross({ unit_price: 260, vat_rate: 10 })).toBe(286);
+});
 
 test("lineGross prefers total_incl and never treats net total as gross via price_includes_vat", () => {
   expect(lineGross({ total_incl: 120, total: 100, vat_rate: 20, price_includes_vat: true })).toBe(120);
