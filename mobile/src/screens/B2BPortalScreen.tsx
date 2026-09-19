@@ -13,7 +13,7 @@ import { Badge, Card, Empty, ErrorBanner, Field, H1, Kpi, ListRow, Muted, Primar
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
 import { addCartLine, cartCount, formatOrderItemLabel, parseStoredCart, setCartLineQty, type B2BCart } from "../utils/b2bCart";
-import { canAddProduct, catalogCategories, filterCatalog, hasListDiscount, parseDraftQty } from "../utils/b2bCatalog";
+import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
 import {
   addEditProduct,
   canCancelOrder,
@@ -146,7 +146,7 @@ export function B2BPortalScreen() {
   }, [data, tabs, tab]);
 
   const products = data?.products || [];
-  const cats = useMemo(() => catalogCategories(products), [products]);
+  const catGroups = useMemo(() => categorySelectGroups(products), [products]);
   const prods = useMemo(() => filterCatalog(products, q, cat), [products, q, cat]);
   const lines = useMemo(
     () =>
@@ -376,12 +376,14 @@ export function B2BPortalScreen() {
                 }}
               />
             ) : null}
-            {cats.length > 1 ? (
-              <Row style={{ flexWrap: "wrap" }}>
-                {cats.map((c) => (
-                  <Chip key={c} label={c === "all" ? "Tümü" : c} active={cat === c} onPress={() => setCat(c)} testID={`b2b-cat-${c === "all" ? "all" : c}`} />
-                ))}
-              </Row>
+            {catGroups.some((g) => g.label === "Kategoriler") ? (
+              <GroupedSelect
+                label="Kategori"
+                testID="b2b-cat"
+                value={cat}
+                onChange={setCat}
+                groups={catGroups}
+              />
             ) : null}
             <Row>
               <TextInput
@@ -403,8 +405,13 @@ export function B2BPortalScreen() {
                   backgroundColor: "#fff",
                 }}
               />
-              <Pressable testID="b2b-scan" onPress={() => setScan(true)} style={{ paddingHorizontal: 12, justifyContent: "center" }}>
+              <Pressable
+                testID="b2b-scan"
+                onPress={() => setScan(true)}
+                style={{ paddingHorizontal: 12, minHeight: 48, justifyContent: "center", alignItems: "center" }}
+              >
                 <Ionicons name="barcode-outline" size={26} color={colors.indigo} />
+                <Text style={{ color: colors.indigo, fontSize: 10, fontWeight: "800" }}>Okut</Text>
               </Pressable>
             </Row>
             {!prods.length ? <Empty icon="cube-outline" title="Ürün yok" hint={q ? "Aramayı daraltın." : "Katalog boş."} /> : prods.slice(0, 200).map((p) => {
@@ -612,7 +619,7 @@ export function B2BPortalScreen() {
         </Pressable>
       </View>
 
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={(code) => { setQ(String(code || "").trim()); setScan(false); }} />
+      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={(code) => { setQ(normalizeScanText(code)); setScan(false); }} />
 
       <B2BSheet visible={!!preview} title="Sipariş önizleme" subtitle={preview?.order_number} onClose={() => setPreview(null)} testID="b2b-order-preview">
         {preview ? (

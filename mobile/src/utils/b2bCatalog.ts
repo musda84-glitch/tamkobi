@@ -11,6 +11,24 @@ export function catalogCategories(products: B2BProduct[] | null | undefined): st
   return ["all", ...Array.from(seen)];
 }
 
+/** Tümü + kategori grupları; chip yerine GroupedSelect için. */
+export function categorySelectGroups(products: B2BProduct[] | null | undefined): { label: string; options: { value: string; label: string }[] }[] {
+  const names = catalogCategories(products).filter((c) => c !== "all");
+  return [
+    { label: "Filtre", options: [{ value: "all", label: "Tümü" }] },
+    ...(names.length ? [{ label: "Kategoriler", options: names.map((c) => ({ value: c, label: c })) }] : []),
+  ];
+}
+
+/** GS1 / kamera öneklerini temizler; arama kutusuna ham kod düşmesin. */
+export function normalizeScanText(raw?: string | null): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^\]C1/i, "")
+    .replace(/\u001d/g, "")
+    .trim();
+}
+
 export function filterCatalog(
   products: B2BProduct[] | null | undefined,
   query?: string | null,
