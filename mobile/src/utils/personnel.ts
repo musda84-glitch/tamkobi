@@ -11,6 +11,8 @@ export type Employee = {
   phone?: string;
   email?: string;
   salary?: number;
+  meal_allowance?: number;
+  transport_allowance?: number;
   start_date?: string;
   status?: string;
   annual_leave_days?: number;
@@ -42,6 +44,8 @@ export type EmployeeBalance = {
   advances?: number;
   meal_due?: number;
   transport_due?: number;
+  meal_allowance?: number;
+  transport_allowance?: number;
 };
 
 export type EmployeeCard = {
@@ -266,6 +270,18 @@ export function unpaidPayrollTotal(employeeId: string, payrolls: Payroll[]): num
 
 export function openPayroll(employeeId: string, payrolls: Payroll[]): Payroll | undefined {
   return (payrolls || []).find((p) => p.employee_id === employeeId && p.status !== "paid");
+}
+
+export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalance | null): { key: string; label: string; value: number }[] {
+  const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
+  const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
+  const salary = Number(emp?.salary) || 0;
+  return [
+    { key: "meal", label: "Yemek", value: meal },
+    { key: "yol", label: "Yol", value: yol },
+    { key: "salary", label: "Maaş", value: salary },
+    { key: "total", label: "Toplam", value: meal + yol + salary },
+  ];
 }
 
 export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 0): number {

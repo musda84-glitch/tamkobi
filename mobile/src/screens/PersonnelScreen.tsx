@@ -22,6 +22,7 @@ import {
   payrollBreakdown,
   payrollStatusTr,
   remainingDue,
+  employeeCompRows,
   unpaidPayrollTotal,
   EMPLOYEE_CARD_ACTIONS,
   assignEmployeeToTasks,
@@ -331,33 +332,43 @@ export function PersonnelScreen() {
             const unpaid = unpaidPayrollTotal(eid, payrolls);
             const due = remainingDue(balances[eid], unpaid);
             const bal = balances[eid];
+            const comp = employeeCompRows(emp, bal);
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
-                <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
-                    <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
-                    <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
-                    <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Muted>Net maaş</Muted>
-                    <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(emp.salary)}</Text>
-                  </View>
-                </Row>
-                <Row style={{ justifyContent: "space-between", paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
-                  <View>
-                    <Muted>Kalan alacak</Muted>
-                    <Text style={{ fontWeight: "800", color: due > 0 ? colors.danger : colors.text }} testID={`emp-remaining-${eid}`}>
-                      {fmtMoney(due)}
-                    </Text>
-                  </View>
-                  {bal?.advances ? (
-                    <View style={{ alignItems: "flex-end" }}>
-                      <Muted>Avans</Muted>
-                      <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(bal.advances)}</Text>
+                <View>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                  <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
+                  <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
+                </View>
+                <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  {comp.map((row) => (
+                    <View key={row.key} style={{ minWidth: 72, paddingRight: 8, paddingBottom: 4 }}>
+                      <Muted>{row.label}</Muted>
+                      <Text
+                        testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
+                        style={{ fontWeight: "800", color: row.key === "total" ? colors.primary : colors.text }}
+                      >
+                        {fmtMoney(row.value)}
+                      </Text>
                     </View>
-                  ) : null}
+                  ))}
                 </Row>
+                {due !== comp[3].value || bal?.advances ? (
+                  <Row style={{ justifyContent: "space-between" }}>
+                    {due !== comp[3].value ? (
+                      <View>
+                        <Muted>Kalan alacak</Muted>
+                        <Text style={{ fontWeight: "700", color: due > 0 ? colors.danger : colors.text }}>{fmtMoney(due)}</Text>
+                      </View>
+                    ) : null}
+                    {bal?.advances ? (
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Muted>Avans</Muted>
+                        <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(bal.advances)}</Text>
+                      </View>
+                    ) : null}
+                  </Row>
+                ) : null}
                 {canEdit ? (
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
                     {EMPLOYEE_CARD_ACTIONS.map((action) => {
