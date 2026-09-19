@@ -139,7 +139,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
       setBusyPay(true);
       try {
         const period = new Date().toISOString().slice(0, 7);
-        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period, employee_id: id });
         const r = await axios.get(`${API_URL}/personnel/employees/${id}/card`);
         setCard(r.data);
         item = (r.data.payrolls || []).find((p) => p.status !== "paid");

@@ -9997,6 +9997,11 @@ async def generate_payroll(req: Dict[str, Any]):
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
     employees = await db.employees.find({"company_id": company_id}).to_list(2000)
     employees = [e for e in employees if (e.get("status") or "active") != "terminated"]
+    only_id = str(req.get("employee_id") or "").strip()
+    if only_id:
+        employees = [e for e in employees if str(e.get("_id") or e.get("id") or "") == only_id]
+        if not employees:
+            raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     company = await db.companies.find_one({"_id": company_id}) or {}
 
     generated = []

@@ -219,7 +219,7 @@ export default function PersonnelPage() {
       setBusySalaryId(eid);
       try {
         const period = new Date().toISOString().slice(0, 7);
-        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period, employee_id: eid });
         const payRes = await axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`);
         setPayrolls(payRes.data);
         loadPersonnelData();

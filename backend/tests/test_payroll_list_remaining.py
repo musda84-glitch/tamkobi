@@ -55,7 +55,7 @@ def test_generate_payroll_shows_remaining_on_employee_list(api_client):
 
     gen = api_client.post(
         f"{API}/personnel/generate-payroll",
-        json={"company_id": COMPANY, "period": PERIOD},
+        json={"company_id": COMPANY, "period": PERIOD, "employee_id": eid},
         timeout=60,
     )
     assert gen.status_code == 200, gen.text
