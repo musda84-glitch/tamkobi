@@ -45,6 +45,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/mesai");
     case "Personelim":
       return router.push("/personelim");
+    case "Personnel":
+      return router.push("/personnel");
     case "Stock":
       return router.push("/stok");
     case "Field":
