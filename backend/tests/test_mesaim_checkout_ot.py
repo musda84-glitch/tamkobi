@@ -115,7 +115,7 @@ def test_assign_overtime_and_recompute(client, emp):
 
 
 def test_assign_overtime_from_time_range(client, emp):
-    date = "2026-09-12"
+    date = "2026-09-14"  # Pazartesi — tatil gününde expected_end uzamaz
     eid = emp.get("id") or emp.get("_id")
     r = client.post(f"{API}/personnel/attendance", json={
         "employee_id": eid, "date": date, "check_in": "09:00", "check_out": "18:00", "status": "present",
