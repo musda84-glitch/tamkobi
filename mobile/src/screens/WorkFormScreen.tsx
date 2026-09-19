@@ -451,7 +451,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <PrimaryButton title="Kalem ekle" color={colors.indigo} testID="q-add-item-btn" onPress={() => setItems((rows) => [...rows, emptyItem()])} />
           {namedItems(items).length ? (
             <Row style={{ justifyContent: "space-between" }}>
-              <Text style={{ fontWeight: "800" }}>Toplam</Text>
+              <Text style={{ fontWeight: "800" }}>Toplam (KDV Dahil)</Text>
               <Text style={{ fontWeight: "800", color: colors.primary }}>{fmtMoney(totals.grandTotal)}</Text>
             </Row>
           ) : null}

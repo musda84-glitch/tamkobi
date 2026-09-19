@@ -33,6 +33,7 @@ from models import (
 from line_totals import (
     enrich_line,
     enrich_items,
+    drop_stale_inclusive_markup,
     invoice_document_totals,
     order_document_totals,
     order_items_to_invoice_items,
@@ -3451,6 +3452,7 @@ async def list_products(
     # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
     proj = {
         "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
+        "price_includes_vat": 1,
         "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
         # üretim / stok uyarıları (maliyet geçmişi yok — hızlı liste)
         "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
@@ -4391,8 +4393,15 @@ async def _fill_stock_codes(company_id: str, items: list):
             _line_set(it, "sku", src.get("sku") or p.get("sku") or "")
         if not barcode:
             _line_set(it, "barcode", src.get("barcode") or p.get("barcode") or "")
-        if _line_get(it, "price_includes_vat", None) is None and p.get("price_includes_vat"):
+        if p.get("price_includes_vat"):
             _line_set(it, "price_includes_vat", True)
+            if isinstance(it, dict):
+                drop_stale_inclusive_markup(it, p)
+            else:
+                d = {k: _line_get(it, k) for k in ("unit_price", "unit_price_incl", "price_includes_vat", "vat_rate")}
+                drop_stale_inclusive_markup(d, p)
+                if d.get("unit_price_incl") in (None, ""):
+                    _line_set(it, "unit_price_incl", None)
     return items
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------

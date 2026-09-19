@@ -30,6 +30,18 @@ describe("workDocs", () => {
     const saved = hydrateWorkItem({ name: "Koltuk", quantity: 1, unit_price: 100, unit_price_incl: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true });
     expect(saved.price_includes_vat).toBe(false);
     expect(workItemTotals([saved]).grandTotal).toBe(120);
+    const stale = hydrateWorkItem(
+      { name: "Raf", quantity: 1, unit_price: 260, unit_price_incl: 286, vat_rate: 10, unit: "Adet" },
+      { price_includes_vat: true, sale_price: 260 },
+    );
+    expect(stale.price_includes_vat).toBe(true);
+    expect(stale.unit_price_incl).toBeUndefined();
+    expect(workItemTotals([stale]).grandTotal).toBe(260);
+    const fromLite = hydrateWorkItem(
+      { name: "Raf", quantity: 2, unit_price: 260, vat_rate: 10, unit: "Adet" },
+      { price_includes_vat: true, sale_price: 260 },
+    );
+    expect(workItemTotals([fromLite]).grandTotal).toBe(520);
   });
 
   it("totals quote lines with VAT", () => {

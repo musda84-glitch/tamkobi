@@ -143,14 +143,30 @@ export function workItemFromProduct(prod: {
   };
 }
 
+function nearly(a: number, b: number, eps = 0.05): boolean {
+  return Math.abs(a - b) <= eps;
+}
+
 export function hydrateWorkItem(
   item: WorkItem,
-  product?: { price_includes_vat?: boolean } | null,
+  product?: { price_includes_vat?: boolean; sale_price?: number } | null,
 ): WorkItem {
-  const hasIncl = item.unit_price_incl != null && Number(item.unit_price_incl) > 0;
+  const fromProd = !!product?.price_includes_vat;
+  const net = Number(item.unit_price || 0);
+  const incl = Number(item.unit_price_incl || 0);
+  const hasIncl = item.unit_price_incl != null && incl > 0;
+  const sale = Number(product?.sale_price || 0);
+
+  // KDV dahil rafta 260 dururken satıra 260 + unit_price_incl=286 yazılmışsa tekrar KDV ekleme.
+  if (fromProd && sale && nearly(net, sale) && hasIncl) {
+    return { ...item, price_includes_vat: true, unit_price_incl: undefined };
+  }
+  if (hasIncl && fromProd && sale && nearly(incl, sale)) {
+    return { ...item, price_includes_vat: false };
+  }
   if (hasIncl) return { ...item, price_includes_vat: false };
   if (item.price_includes_vat != null) return item;
-  if (product?.price_includes_vat) return { ...item, price_includes_vat: true };
+  if (fromProd) return { ...item, price_includes_vat: true };
   return item;
 }
 
