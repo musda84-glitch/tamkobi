@@ -12,6 +12,7 @@ import {
   type TextInputProps,
   type ViewProps,
 } from "react-native";
+import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
 
 export function Screen({ children, onRefresh, refreshing, padded = true }: {
@@ -113,7 +114,7 @@ export function ErrorBanner({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
     <View style={styles.error}>
-      <Text style={styles.errorText}>{message}</Text>
+      <Text style={styles.errorText}>{publicErrorMessage(message)}</Text>
     </View>
   );
 }
