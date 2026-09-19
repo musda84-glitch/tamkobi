@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { DateField } from "../components/DateField";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -286,8 +287,16 @@ export function PersonelimScreen() {
                 <Chip key={t.key} label={t.label} active={leaveType === t.key} onPress={() => setLeaveType(t.key)} />
               ))}
             </Row>
-            <Field label="Başlangıç (YYYY-AA-GG)" testID="personelim-leave-start" value={startDate} onChangeText={setStartDate} placeholder="2026-09-16" autoCapitalize="none" />
-            <Field label="Bitiş (YYYY-AA-GG)" testID="personelim-leave-end" value={endDate} onChangeText={setEndDate} placeholder="2026-09-16" autoCapitalize="none" />
+            <DateField
+              label="Başlangıç"
+              testID="personelim-leave-start"
+              value={startDate}
+              onChangeText={(d) => {
+                setStartDate(d);
+                if (!endDate || endDate < d) setEndDate(d);
+              }}
+            />
+            <DateField label="Bitiş" testID="personelim-leave-end" value={endDate} onChangeText={setEndDate} />
             <Field label="Açıklama" testID="personelim-leave-reason" value={reason} onChangeText={setReason} placeholder="İsteğe bağlı" />
             <PrimaryButton title={leaveBusy ? "Gönderiliyor…" : "İzin talep et"} onPress={submitLeave} disabled={leaveBusy || !startDate} testID="personelim-leave-submit" />
           </Card>
