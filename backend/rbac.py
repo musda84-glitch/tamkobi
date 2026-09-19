@@ -54,9 +54,16 @@ DEFAULT_ROLES = [
     {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {**_all("view"), "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/expenses": "edit", "/loans": "edit", "/cheques": "edit", "/reports": "edit", "/accountant": "edit", "/support": "edit", "/settings": "none", "/production": "none", "/atolye": "none", "/ecommerce": "none", "/cargo": "none", "/saha": "none", "/sevk": "none"}},
     {"code": "sales", "name": "Satış", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit", "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit", "/orders": "edit", "/hizli-satis": "edit", "/saha": "edit", "/stock": "view", "/installments": "view", "/communication": "edit", "/support": "edit", "/ecommerce": "view", "/cargo": "edit"}},
     {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {**_all("none"), "/": "view", "/stock": "edit", "/sayim": "edit", "/warehouses": "edit", "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit", "/support": "view"}},
-    {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/stock": "view", "/warehouses": "view", "/support": "view"}},
+    {"code": "production", "name": "Üretim", "is_system": True, "permissions": {**_all("none"), "/": "view", "/production": "edit", "/atolye": "edit", "/warehouses": "view", "/support": "view"}},
+    {"code": "personel", "name": "Personel", "is_system": True, "permissions": {**_all("none"), "/": "view", "/mesai": "edit", "/atolye": "edit", "/support": "view"}},
     {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {**_all("none"), "/": "view", "/invoices": "view", "/edoc-inbox": "view", "/dis-ticaret": "view", "/contacts": "view", "/banking": "view", "/expenses": "view", "/loans": "view", "/cheques": "view", "/reports": "edit", "/accountant": "edit", "/personnel": "view", "/mesai": "view", "/support": "view", "/trash": "view"}},
 ]
+
+# Sistem rollerinde stok kartı yalnızca depo / yönetici. Personel ve üretim giremez.
+FORCE_SYSTEM_PERMISSIONS = {
+    "production": {"/stock": "none"},
+    "personel": {"/stock": "none", "/personnel": "none"},
+}
 
 # API path prefix -> module key (longest prefix wins)
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
@@ -89,6 +96,14 @@ def _clean(d: dict) -> dict:
         d["id"] = str(d.pop("_id"))
     d.pop("password_hash", None)
     return d
+
+
+def apply_forced_system_permissions(code: Optional[str], perms: Dict[str, str]) -> Dict[str, str]:
+    """Personel / üretim sistem rollerinde stok kartını kapalı tut."""
+    out = dict(perms)
+    for path, level in FORCE_SYSTEM_PERMISSIONS.get(code or "", {}).items():
+        out[path] = level
+    return out
 
 
 def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
@@ -138,6 +153,8 @@ async def ensure_roles(company_id: str):
                 for m in missing:
                     if m in rdef["permissions"]:
                         filled[m] = rdef["permissions"][m]
+        if cur.get("is_system"):
+            filled = apply_forced_system_permissions(rdef.get("code"), filled)
         if filled != raw:
             upd["permissions"] = filled
         if upd:
@@ -151,6 +168,8 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
     r = await _db.roles.find_one({"company_id": cid, "code": code}) or await _db.roles.find_one({"company_id": cid, "code": "admin"})
     if r:
         r["permissions"] = backfill_permissions(r.get("permissions"))
+        if r.get("is_system"):
+            r["permissions"] = apply_forced_system_permissions(r.get("code"), r["permissions"])
         if r.get("code") == "admin":
             r["permissions"] = _all("edit")
     return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}

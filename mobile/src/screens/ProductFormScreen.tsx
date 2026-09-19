@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { del, fileUrl, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Product } from "../types";
 import { productImage } from "../utils/productDisplay";
@@ -111,7 +111,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   };
 
   const load = useCallback(async () => {
-    if (!productId) return;
+    if (!productId || !canEdit) return;
     setLoading(true);
     try {
       const p = await get<Product>(client, `/products/${productId}`);
@@ -123,7 +123,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
     } finally {
       setLoading(false);
     }
-  }, [client, productId]);
+  }, [canEdit, client, productId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -163,6 +163,18 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
       }
     });
   };
+
+  if (!canEdit) {
+    return (
+      <Screen>
+        <Empty
+          icon="lock-closed-outline"
+          title="Stok kartı kapalı"
+          hint="Personel ve üretim bu forma giremez. Kartı yalnızca depo veya yönetici açabilir."
+        />
+      </Screen>
+    );
+  }
 
   return (
     <Screen onRefresh={isNew ? undefined : load} refreshing={loading}>

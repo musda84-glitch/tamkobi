@@ -31,6 +31,7 @@ ROLE_LABELS = {
     "sales": "Satış",
     "warehouse": "Depo",
     "production": "Üretim",
+    "personel": "Personel",
     "advisor": "Mali Müşavir",
 }
 

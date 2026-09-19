@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from rbac import MODULES, DEFAULT_ROLES, API_MODULE_MAP, module_for_path, backfill_permissions  # noqa: E402
+from rbac import MODULES, DEFAULT_ROLES, API_MODULE_MAP, module_for_path, apply_forced_system_permissions, backfill_permissions  # noqa: E402
 from saas import PANEL_MODULE_FROM, CATEGORIES, DESCRIPTIONS, CORE_MODULES, DEFAULT_MODULE_PRICES  # noqa: E402
 
 
@@ -42,6 +42,20 @@ def test_default_roles_cover_support_and_finance():
     assert by_code["advisor"]["permissions"].get("/support") == "view"
     assert by_code["advisor"]["name"] == "Mali Müşavir"
     assert by_code["accountant"]["name"] == "Muhasebe"
+
+
+def test_personel_and_production_cannot_open_stock_cards():
+    by_code = {r["code"]: r for r in DEFAULT_ROLES}
+    assert by_code["production"]["permissions"].get("/stock", "none") == "none"
+    assert by_code["personel"]["name"] == "Personel"
+    assert by_code["personel"]["permissions"].get("/stock", "none") == "none"
+    assert by_code["personel"]["permissions"].get("/mesai") == "edit"
+    assert by_code["personel"]["permissions"].get("/atolye") == "edit"
+    assert by_code["personel"]["permissions"].get("/personnel", "none") == "none"
+    assert by_code["warehouse"]["permissions"].get("/stock") == "edit"
+    assert apply_forced_system_permissions("production", {"/stock": "view"})["/stock"] == "none"
+    assert apply_forced_system_permissions("personel", {"/stock": "edit", "/personnel": "view"})["/stock"] == "none"
+    assert apply_forced_system_permissions("warehouse", {"/stock": "edit"})["/stock"] == "edit"
 
 
 def test_auth_license_key_keeps_first_class_modules():

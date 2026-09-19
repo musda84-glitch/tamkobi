@@ -61,6 +61,11 @@ export function showFinanceSubstituteTabs(user: SessionUser): boolean {
   return !hasSelfPersonnelRecord(user);
 }
 
+/** Stok kartı formu: yalnız /stock düzenleme (depo / yönetici). Personel ve üretim giremez. */
+export function canOpenStockCard(user: SessionUser): boolean {
+  return can(user, "/stock", "edit");
+}
+
 /** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
   if (link.path === "/" || link.path === "/settings") return true;

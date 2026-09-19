@@ -107,7 +107,7 @@ export function StockScreen() {
             rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
             rightTestID={`stock-qty-${idOf(p)}`}
             badge={<Badge label={qty} tone={qtyTone} />}
-            onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
+            onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name: p.name }) : undefined}
           />
         );
       })}
