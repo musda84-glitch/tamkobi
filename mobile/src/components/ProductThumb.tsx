@@ -1,14 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
-import React, { createElement, useState } from "react";
-import { Platform, View } from "react-native";
+import React, { useState } from "react";
+import { Image, Platform, View } from "react-native";
 import { displayFileUrl } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
 
 export function ProductThumb({
   uri,
-  size = 46,
+  size = 56,
   testID,
 }: {
   uri: string;
@@ -41,23 +40,12 @@ export function ProductThumb({
   }
   return (
     <View testID={testID} style={box} accessibilityLabel="Ürün görseli">
-      {Platform.OS === "web"
-        ? createElement("img", {
-          src,
-          alt: "",
-          loading: "eager",
-          onError: () => setFailed(true),
-          style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-        })
-        : (
-          <Image
-            source={{ uri: src }}
-            style={{ width: "100%", height: "100%" }}
-            contentFit="cover"
-            transition={120}
-            onError={() => setFailed(true)}
-          />
-        )}
+      <Image
+        source={{ uri: src }}
+        style={{ width: size, height: size }}
+        resizeMode="cover"
+        onError={() => setFailed(true)}
+      />
     </View>
   );
 }

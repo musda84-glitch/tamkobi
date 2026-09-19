@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
+import { ProductThumb } from "./ProductThumb";
 
 export function Screen({ children, onRefresh, refreshing, padded = true }: {
   children: React.ReactNode;
@@ -128,6 +129,7 @@ export function ListRow({
   rightSubColor,
   rightTestID,
   leading,
+  image,
   badge,
   onPress,
   testID,
@@ -140,13 +142,16 @@ export function ListRow({
   rightSubColor?: string;
   rightTestID?: string;
   leading?: React.ReactNode;
+  image?: string;
   badge?: React.ReactNode;
   onPress?: () => void;
   testID?: string;
 }) {
   return (
     <Pressable testID={testID} onPress={onPress} style={styles.listRow} disabled={!onPress}>
-      {leading}
+      {leading || image != null ? (
+        <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
+      ) : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.listTitle} numberOfLines={1}>{title}</Text>
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
@@ -233,6 +238,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     paddingVertical: 10,
+    minHeight: 76,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
