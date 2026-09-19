@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import * as Linking from "expo-linking";
-import { post } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "./chips";
 import { ActionTiles, type ActionTile } from "./ActionTiles";
@@ -11,10 +11,19 @@ import type { Contact } from "../types";
 import { normalizeApiBase } from "../api/url";
 import { idOf } from "../utils/money";
 import {
+  approvalChannelNeedsFallback,
   approvalChannels,
   approvalPayload,
+  approvalPublicOrigin,
+  approvalSendFeedback,
   approvalStatusTr,
+  channelResultLabel,
+  contactEmail,
+  contactPhone,
   defaultApprovalFlags,
+  emailComposerHref,
+  mergeApprovalFlags,
+  smsComposerHref,
   validateApprovalSend,
 } from "../utils/quoteApproval";
 import { downloadQuotePdf, printQuoteForm, shareApprovalLink } from "../utils/quoteShare";
@@ -43,13 +52,42 @@ export function QuoteActions({
   const { client, activeCompany } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const [panel, setPanel] = useState(true);
-  const [phone, setPhone] = useState(contact?.phone || "");
-  const [email, setEmail] = useState(contact?.email || "");
-  const [flags, setFlags] = useState(() => defaultApprovalFlags(contact?.phone, contact?.email));
+  const [phone, setPhone] = useState(contactPhone(contact));
+  const [email, setEmail] = useState(contactEmail(contact));
+  const [flags, setFlags] = useState(() => defaultApprovalFlags(contactPhone(contact), contactEmail(contact)));
   const [result, setResult] = useState<SendResult | null>(null);
 
+  const applyContact = (row?: Contact | null) => {
+    const nextPhone = contactPhone(row);
+    const nextEmail = contactEmail(row);
+    if (nextPhone) setPhone((cur) => cur.trim() || nextPhone);
+    if (nextEmail) setEmail((cur) => cur.trim() || nextEmail);
+    if (nextPhone || nextEmail) setFlags((f) => mergeApprovalFlags(f, nextPhone, nextEmail));
+  };
+
+  useEffect(() => {
+    applyContact(contact);
+  }, [contact?.phone, contact?.email, contact?.contact_person_phone]);
+
+  useEffect(() => {
+    const cid = quote.contact_id;
+    if (!cid || contact) return;
+    let cancelled = false;
+    get<{ contact?: Contact }>(client, `/contacts/${cid}/overview`)
+      .then((ov) => {
+        if (!cancelled) applyContact(ov?.contact);
+      })
+      .catch(() => null);
+    return () => { cancelled = true; };
+  }, [client, contact, quote.contact_id]);
+
   const link = result?.link || quote.approval?.link || "";
+  const channelResults = result?.results || quote.approval?.results;
   const statusLabel = approvalStatusTr(quote.approval?.status);
+
+  const fillFromContact = () => {
+    applyContact(contact);
+  };
 
   const tiles: ActionTile[] = useMemo(() => [
     {
@@ -98,13 +136,11 @@ export function QuoteActions({
       busy: busy === "send",
       testID: "quote-approval",
       onPress: () => {
-        setPhone((p) => p || contact?.phone || "");
-        setEmail((e) => e || contact?.email || "");
-        setFlags((f) => (f.sms || f.email || f.whatsapp ? f : defaultApprovalFlags(contact?.phone, contact?.email)));
+        fillFromContact();
         setPanel((open) => !open);
       },
     },
-  ], [activeCompany, busy, client, contact?.email, contact?.phone, onError, onMessage, quote]);
+  ], [activeCompany, busy, client, contact?.email, contact?.phone, contact?.contact_person_phone, onError, onMessage, quote]);
 
   const send = async () => {
     const channels = approvalChannels(flags);
@@ -114,9 +150,31 @@ export function QuoteActions({
     if (!qid) { onError?.("Teklif kaydı yok."); return; }
     setBusy("send");
     try {
-      const r = await post<SendResult>(client, `/quotes/${qid}/send-approval`, approvalPayload(channels, phone, email, normalizeApiBase(client.baseUrl)));
+      const origin = approvalPublicOrigin(normalizeApiBase(client.baseUrl), quote.approval?.link);
+      const r = await post<SendResult>(client, `/quotes/${qid}/send-approval`, approvalPayload(channels, phone, email, origin));
       setResult(r);
-      onMessage?.(r.message || "Onay linki gönderildi.");
+      const body = `Teklif onayı: ${r.link || ""}`;
+      const subject = `${quote.quote_number || "Teklif"} onayınızı bekliyor`;
+      const opened = { sms: false, email: false };
+      if (r.link && approvalChannelNeedsFallback(r.results, channels, "sms")) {
+        try {
+          await Linking.openURL(smsComposerHref(phone, body));
+          opened.sms = true;
+        } catch {
+          opened.sms = false;
+        }
+      }
+      if (r.link && approvalChannelNeedsFallback(r.results, channels, "email")) {
+        try {
+          await Linking.openURL(emailComposerHref(email, subject, body));
+          opened.email = true;
+        } catch {
+          opened.email = false;
+        }
+      }
+      const fb = approvalSendFeedback(r.results, channels, opened);
+      if (fb.ok) onMessage?.(fb.message);
+      else onError?.(fb.message);
       await onReloaded?.();
     } catch (err) {
       onError?.(apiErrorMessage(err, "Onay linki gönderilemedi."));
@@ -126,9 +184,7 @@ export function QuoteActions({
   };
 
   const openPanel = () => {
-    setPhone((p) => p || contact?.phone || "");
-    setEmail((e) => e || contact?.email || "");
-    setFlags((f) => (f.sms || f.email || f.whatsapp ? f : defaultApprovalFlags(contact?.phone, contact?.email)));
+    fillFromContact();
     setPanel(true);
   };
 
@@ -177,9 +233,9 @@ export function QuoteActions({
                   <Text style={{ fontWeight: "800", color: colors.accent }}>Aç</Text>
                 </Pressable>
               </Row>
-              {result?.results ? Object.entries(result.results).map(([k, v]) => (
+              {channelResults ? Object.entries(channelResults).map(([k, v]) => (
                 <View key={k}>
-                  <Muted>{k.toUpperCase()} · {v.status === "sent" ? "Gönderildi" : v.status === "simulated" ? "Simüle" : "Hata"}{v.detail ? ` · ${v.detail}` : ""}</Muted>
+                  <Muted testID={`quote-approval-result-${k}`}>{k.toUpperCase()} · {channelResultLabel(v.status)}{v.detail ? ` · ${v.detail}` : ""}</Muted>
                   {v.wa_link ? (
                     <Pressable onPress={() => Linking.openURL(v.wa_link!).catch(() => null)}>
                       <Text style={{ color: colors.primary, fontWeight: "700" }}>WhatsApp’ta aç</Text>
