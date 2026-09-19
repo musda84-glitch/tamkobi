@@ -1,22 +1,55 @@
+const GATEWAY: Record<number, string> = {
+  500: "Sunucu hatası. Biraz sonra tekrar deneyin.",
+  502: "Sunucu geçici olarak yanıt vermiyor. Biraz sonra tekrar deneyin.",
+  503: "Sunucu bakımda veya aşırı yüklü. Biraz sonra tekrar deneyin.",
+  504: "Sunucu zaman aşımına uğradı. Biraz sonra tekrar deneyin.",
+};
+
+export function looksLikeHtml(value: string): boolean {
+  const t = String(value || "").trim();
+  return t.startsWith("<") || /<\/?(?:html|head|body|title|center|hr)\b/i.test(t.slice(0, 400));
+}
+
+function statusFromText(text: string): number | undefined {
+  const m = /\b(50[234]|500)\b/.exec(text);
+  return m ? Number(m[1]) : undefined;
+}
+
+export function publicErrorMessage(raw: string | null | undefined, fallback = "İşlem başarısız.", status?: number): string {
+  const text = String(raw || "").trim();
+  const code = status && GATEWAY[status] ? status : text ? statusFromText(text) : undefined;
+  if (code && GATEWAY[code]) return GATEWAY[code];
+  if (!text) return fallback;
+  if (looksLikeHtml(text)) return GATEWAY[502];
+  if (text.length > 220) return `${text.slice(0, 200).trim()}…`;
+  return text;
+}
+
 export function apiErrorMessage(err: unknown, fallback = "İşlem başarısız."): string {
   if (!err || typeof err !== "object") return fallback;
-  const anyErr = err as { message?: string; detail?: unknown; response?: { data?: { detail?: unknown } } };
+  const anyErr = err as {
+    message?: string;
+    detail?: unknown;
+    status?: number;
+    response?: { status?: number; data?: { detail?: unknown } };
+  };
+  const status = typeof anyErr.status === "number" ? anyErr.status : anyErr.response?.status;
   const detail = anyErr.response?.data?.detail ?? anyErr.detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
+  if (typeof detail === "string" && detail.trim()) return publicErrorMessage(detail, fallback, status);
   if (Array.isArray(detail)) {
     const joined = detail
       .map((item) => (typeof item === "string" ? item : item?.msg || item?.detail || ""))
       .filter(Boolean)
       .join(" ");
-    if (joined) return joined;
+    if (joined) return publicErrorMessage(joined, fallback, status);
   }
   const message = typeof anyErr.message === "string" ? anyErr.message : "";
   // fetch ağ/CORS hatasını ayırt edemez; "Failed to fetch" kullanıcıya şifre hatası gibi görünüyordu.
   if (message === "Failed to fetch" || message === "Network request failed" || message === "Load failed") {
     return "Sunucuya ulaşılamadı. İnternet bağlantınızı ve giriş ekranındaki sunucu adresini kontrol edin.";
   }
-  if (message) return message;
-  return fallback;
+  if (message) return publicErrorMessage(message, fallback, status);
+  return status && GATEWAY[status] ? GATEWAY[status] : fallback;
 }
 
 export class ApiHttpError extends Error {

@@ -50,7 +50,7 @@ export async function request<T>(
     }
   }
   if (!res.ok) {
-    const message = apiErrorMessage({ response: { data } }, `HTTP ${res.status}`);
+    const message = apiErrorMessage({ status: res.status, response: { data, status: res.status } }, `HTTP ${res.status}`);
     throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, message);
   }
   return data as T;
@@ -78,7 +78,7 @@ export async function upload<T>(client: ApiClient, path: string, form: FormData,
     }
   }
   if (!res.ok) {
-    throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, apiErrorMessage({ response: { data } }, `HTTP ${res.status}`));
+    throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, apiErrorMessage({ status: res.status, response: { data, status: res.status } }, `HTTP ${res.status}`));
   }
   return data as T;
 }

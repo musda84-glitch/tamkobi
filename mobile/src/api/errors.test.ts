@@ -22,4 +22,11 @@ describe("apiErrorMessage", () => {
       expect(apiErrorMessage({ message }, "Giriş yapılamadı.")).toMatch(/Sunucuya ulaşılamadı/);
     }
   });
+
+  it("does not dump nginx HTML from a 502", () => {
+    const html = "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>";
+    expect(apiErrorMessage({ status: 502, response: { data: { detail: html } } }, "Özet yüklenemedi.")).toMatch(/yanıt vermiyor/);
+    expect(apiErrorMessage({ message: html }, "Özet yüklenemedi.")).not.toMatch(/<!DOCTYPE|<html|<head/);
+    expect(apiErrorMessage({ status: 503, detail: "Service Unavailable" })).toMatch(/bakımda|yüklü/);
+  });
 });

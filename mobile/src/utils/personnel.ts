@@ -407,6 +407,17 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
   return groups;
 }
 
+export const EMPLOYEE_CARD_ACTIONS = [
+  { key: "advance", title: "Avans" },
+  { key: "salary", title: "Maaş öde" },
+  { key: "task", title: "Görev ata" },
+  { key: "overtime", title: "+ Mesai" },
+] as const;
+
+export function employeeCardActionTitles(): string[] {
+  return EMPLOYEE_CARD_ACTIONS.map((a) => a.title);
+}
+
 export function payrollBreakdown(p: Payroll): string {
   const bits: string[] = [];
   if ((p.overtime_pay || 0) > 0) bits.push(`+${p.overtime_pay} ₺ mesai${p.overtime_hours ? ` (${p.overtime_hours} sa)` : ""}`);
