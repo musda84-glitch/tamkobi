@@ -26,21 +26,6 @@ export type WorkOrder = {
   finished_at?: string;
 };
 
-export type ShopFloorPerfRow = {
-  name?: string;
-  done?: number;
-  produced?: number;
-  scrap_rate?: number;
-  avg_min?: number | null;
-  over_target?: number;
-};
-
-export type ShopFloorPerf = {
-  total_done?: number;
-  operators?: ShopFloorPerfRow[];
-  stations?: ShopFloorPerfRow[];
-};
-
 /** Web ShopFloorPage STATUS etiketleri. */
 export const WO_STATUS_TR: Record<string, string> = {
   waiting: "Bekliyor",

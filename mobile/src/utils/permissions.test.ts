@@ -1,4 +1,4 @@
-import { can, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -36,7 +36,7 @@ describe("permissions", () => {
 
   it("hides Personel & Bordro when the role has no personnel permission", () => {
     const warehouse = { role: "warehouse", permissions: { "/mesai": "view", "/personnel": "none" } };
-    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit" } };
+    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit", "/stock": "none" } };
     const advisor = { role: "advisor", permissions: { "/personnel": "view", "/mesai": "view" } };
     const mesaiOnly = { modules: { "/personnel": false, "/mesai": true } };
     expect(isMoreLinkVisible({ path: "/personnel" }, warehouse, null)).toBe(false);
@@ -47,6 +47,20 @@ describe("permissions", () => {
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, mesaiOnly)).toBe(false);
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, { modules: { "/personnel": true } })).toBe(true);
     expect(isMoreLinkVisible({ path: "/settings" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
+  });
+
+  it("keeps the stock card for warehouse/admin and blocks personel and production", () => {
+    const warehouse = { role: "warehouse", permissions: { "/stock": "edit" } };
+    const production = { role: "production", permissions: { "/atolye": "edit", "/stock": "none" } };
+    const personel = { role: "personel", permissions: { "/mesai": "edit", "/atolye": "edit", "/stock": "none" } };
+    const sales = { role: "sales", permissions: { "/stock": "view" } };
+    expect(canOpenStockCard(warehouse)).toBe(true);
+    expect(canOpenStockCard({ role: "admin" })).toBe(true);
+    expect(canOpenStockCard(production)).toBe(false);
+    expect(canOpenStockCard(personel)).toBe(false);
+    expect(canOpenStockCard(sales)).toBe(false);
+    expect(visibleModules(production, null).map((m) => m.key)).not.toContain("stock");
+    expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("stock");
   });
 
   it("shows Üretim Atölye for the production role and hides it when licensed off", () => {

@@ -49,8 +49,9 @@ describe("visibleQuickTiles", () => {
   });
 
   it("hides Personel & Bordro unless the role grants /personnel", () => {
-    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit" } };
+    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit", "/stock": "none" } };
     expect(visibleQuickTiles(production, { modules: { "/mesai": true } }).map((t) => t.id)).not.toContain("personnel");
+    expect(visibleQuickTiles(production, { modules: { "/mesai": true } }).map((t) => t.id)).not.toContain("stock");
     const advisor = { role: "advisor", permissions: { "/personnel": "view" } };
     expect(visibleQuickTiles(advisor, null).map((t) => t.id)).toContain("personnel");
   });
@@ -71,8 +72,13 @@ describe("visibleQuickTiles", () => {
       path: "/atolye",
       href: "/atolye",
     });
-    const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit" } };
+    const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit", "/stock": "none" } };
     expect(visibleQuickTiles(production, null).map((t) => t.id)).toContain("atolye");
+    expect(visibleQuickTiles(production, null).map((t) => t.id)).not.toContain("stock");
+    expect(visibleQuickTiles(production, null).map((t) => t.id)).not.toContain("barcode");
+    const personel = { role: "personel", permissions: { "/mesai": "edit", "/atolye": "edit", "/stock": "none" } };
+    expect(visibleQuickTiles(personel, null).map((t) => t.id)).toContain("atolye");
+    expect(visibleQuickTiles(personel, null).map((t) => t.id)).not.toContain("stock");
     const accountant = { role: "accountant", permissions: { "/atolye": "none" } };
     expect(visibleQuickTiles(accountant, null).map((t) => t.id)).not.toContain("atolye");
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/atolye": false } }).map((t) => t.id)).not.toContain("atolye");
