@@ -3,7 +3,6 @@ import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
@@ -13,9 +12,7 @@ import { colors } from "../theme";
 import {
   LEAVE_TYPES,
   SALARY_CALC_ROWS,
-  employeePayload,
   employeeSelectGroups,
-  emptyEmployeeDraft,
   leaveDays,
   leaveStatusTr,
   leaveTypeTr,
@@ -31,7 +28,6 @@ import {
   projectSelectGroups,
   taskSelectGroups,
   validateAdvance,
-  validateEmployee,
   validateIsoDate,
   validateLeave,
   validateOvertime,
@@ -41,7 +37,6 @@ import {
   type Employee,
   type EmployeeBalance,
   type EmployeeCard,
-  type EmployeeDraft,
   type LeaveRequest,
   type Payroll,
   type ProjectWithTasks,
@@ -66,8 +61,6 @@ export function PersonnelScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [draft, setDraft] = useState<EmployeeDraft>(emptyEmployeeDraft(todayIso()));
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -118,43 +111,6 @@ export function PersonnelScreen() {
   }, [client, companyId, month]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
-
-  const openAdd = () => {
-    setDraft(emptyEmployeeDraft(todayIso()));
-    setFormOpen(true);
-  };
-
-  const saveEmployee = async () => {
-    const invalid = validateEmployee(draft);
-    if (invalid) { setError(invalid); return; }
-    setBusy(true);
-    try {
-      await post(client, "/personnel/employees", employeePayload(draft, companyId));
-      setFormOpen(false);
-      setMessage("Personel kaydedildi.");
-      await load();
-    } catch (err) {
-      setError(apiErrorMessage(err, "Personel kaydedilemedi."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const generatePayroll = async () => {
-    setBusy(true);
-    try {
-      const r = await post<{ message?: string }>(client, "/personnel/generate-payroll", {
-        company_id: companyId,
-        period: new Date().toISOString().slice(0, 7),
-      });
-      setMessage(r?.message || "Bordro hesaplandı.");
-      await load();
-    } catch (err) {
-      setError(apiErrorMessage(err, "Bordro hesaplanamadı."));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const openSalaryPay = async (emp: Employee) => {
     let item = openPayroll(idOf(emp), payrolls);
@@ -353,15 +309,8 @@ export function PersonnelScreen() {
 
       {tab === "payroll" ? (
         <>
-          <ActionTiles
-            items={[
-              canEdit && { key: "add", label: "Yeni çalışan", icon: "person-add" as const, tone: "emerald" as const, testID: "add-employee-btn", onPress: openAdd },
-              canEdit && { key: "gen", label: "Bordro hesapla", icon: "calculator" as const, tone: "indigo" as const, testID: "generate-payroll-btn", busy, onPress: generatePayroll },
-              { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "personnel-refresh", onPress: load },
-            ].filter(Boolean) as never}
-          />
           {!employees.length ? (
-            <Empty icon="people-outline" title="Çalışan yok" hint={canEdit ? "Yeni çalışan ekleyin." : undefined} />
+            <Empty icon="people-outline" title="Çalışan yok" />
           ) : employees.map((emp) => {
             const eid = idOf(emp);
             const unpaid = unpaidPayrollTotal(eid, payrolls);
@@ -537,22 +486,6 @@ export function PersonnelScreen() {
           ) : null}
         </Card>
       ) : null}
-
-      <B2BSheet
-        visible={formOpen}
-        title="Yeni personel ekle"
-        onClose={() => setFormOpen(false)}
-        testID="employee-form-modal"
-      >
-        <Field label="Ad soyad" testID="employee-name-input" value={draft.full_name} onChangeText={(v) => setDraft({ ...draft, full_name: v })} placeholder="Örn: Mehmet Özkan" />
-        <Field label="TC kimlik no" testID="employee-tc-input" value={draft.tc_kimlik} onChangeText={(v) => setDraft({ ...draft, tc_kimlik: v })} placeholder="11 haneli" keyboardType="number-pad" />
-        <Field label="Net maaş (₺)" testID="employee-salary-input" value={draft.salary} onChangeText={(v) => setDraft({ ...draft, salary: v })} keyboardType="numeric" />
-        <Field label="Departman" testID="employee-department-input" value={draft.department} onChangeText={(v) => setDraft({ ...draft, department: v })} />
-        <Field label="Pozisyon / görev" testID="employee-position-input" value={draft.position} onChangeText={(v) => setDraft({ ...draft, position: v })} />
-        <Field label="Telefon" testID="employee-phone-input" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })} placeholder="05…" keyboardType="phone-pad" />
-        <Field label="E-posta" testID="employee-email-input" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} placeholder="ornek@tamkobi.com" autoCapitalize="none" />
-        <PrimaryButton title="Personeli kaydet" testID="save-employee-btn" loading={busy} onPress={saveEmployee} />
-      </B2BSheet>
 
       <B2BSheet
         visible={!!advanceEmp}
