@@ -89,7 +89,8 @@ export function tileBadges(
 ): Record<string, string> {
   const unread = unreadByTile(notes);
   const badges: Record<string, string> = {};
-  for (const tile of Object.keys(TILE_NOTIFICATION_TYPES)) {
+  const keys = new Set([...Object.keys(TILE_NOTIFICATION_TYPES), ...Object.keys(live || {})]);
+  for (const tile of keys) {
     const label = tileBadgeLabel(unread[tile], live?.[tile]);
     if (label) badges[tile] = label;
   }
@@ -138,6 +139,8 @@ const REF_ROUTES: Record<string, string> = {
   project: "/projects",
   order: "/orders",
   order_pick: "/sevk",
+  work_order: "/atolye",
+  production: "/atolye",
   invoice: "/invoices",
   contact: "/contacts",
   cheque: "/cheques",

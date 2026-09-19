@@ -31,7 +31,7 @@ describe("permissions", () => {
 
   it("includes finance and sales modules", () => {
     const keys = visibleModules({ role: "admin" }, null).map((m) => m.key);
-    expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects", "personnel"]));
+    expect(keys).toEqual(expect.arrayContaining(["banking", "expenses", "quotes", "surveys", "projects", "personnel", "atolye"]));
   });
 
   it("hides Personel & Bordro when the role has no personnel permission", () => {
@@ -47,6 +47,15 @@ describe("permissions", () => {
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, mesaiOnly)).toBe(false);
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, { modules: { "/personnel": true } })).toBe(true);
     expect(isMoreLinkVisible({ path: "/settings" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
+  });
+
+  it("shows Üretim Atölye for the production role and hides it when licensed off", () => {
+    const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit" } };
+    const accountant = { role: "accountant", permissions: { "/atolye": "none" } };
+    expect(isMoreLinkVisible({ path: "/atolye" }, production, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/atolye" }, accountant, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/atolye" }, { role: "admin" }, { modules: { "/atolye": false } })).toBe(false);
+    expect(visibleModules(production, null).map((m) => m.key)).toContain("atolye");
   });
 
   it("swaps Mesaim/Benim Sayfam for Kasa/Cariler when there is no employee record", () => {
