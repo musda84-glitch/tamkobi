@@ -7,13 +7,14 @@ import { fileUrl, get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "../utils/productDisplay";
+import { filterProducts, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
 
 function ProductThumb({ uri }: { uri: string }) {
   const { client } = useAuth();
@@ -47,7 +48,9 @@ export function StockScreen() {
   const canEdit = can("/stock", "edit");
   const params = useLocalSearchParams<{ scan?: string | string[] }>();
   const [rows, setRows] = useState<Product[]>([]);
+  const [cats, setCats] = useState<ProductCategory[]>([]);
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState("all");
   const [scan, setScan] = useState(false);
   const [hit, setHit] = useState<Product | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,8 +64,12 @@ export function StockScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const data = await get<Product[]>(client, "/products", { company_id: companyId });
+      const [data, catRows] = await Promise.all([
+        get<Product[]>(client, "/products", { company_id: companyId }),
+        get<ProductCategory[]>(client, "/products/categories", { company_id: companyId }).catch(() => []),
+      ]);
       setRows(data || []);
+      setCats(catRows || []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Stok yüklenemedi."));
@@ -86,14 +93,12 @@ export function StockScreen() {
     }
   };
 
+  const catGroups = useMemo(() => productCategoryGroups(cats, rows), [cats, rows]);
+
   const filtered = useMemo(() => {
     if (hit) return [hit];
-    const s = q.trim().toLowerCase();
-    const list = s
-      ? rows.filter((p) => [p.name, p.sku, p.barcode, p.category].some((v) => String(v || "").toLowerCase().includes(s)))
-      : rows;
-    return list.slice(0, 100);
-  }, [hit, q, rows]);
+    return filterProducts(rows, q, cat, 100);
+  }, [cat, hit, q, rows]);
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -105,10 +110,17 @@ export function StockScreen() {
         ]}
         columns={3}
       />
+      <GroupedSelect
+        label="Kategori"
+        testID="stock-category"
+        value={cat}
+        onChange={(v) => { setCat(v || "all"); setHit(null); }}
+        groups={catGroups}
+      />
       <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
       <ErrorBanner message={error} />
       {!filtered.length ? (
-        <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Yeni stok kartı ekleyin veya aramayı değiştirin." : "Aramayı değiştirin veya barkod okutun."} />
+        <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Kategori veya aramayı değiştirin, ya da yeni stok kartı ekleyin." : "Kategori veya aramayı değiştirin, ya da barkod okutun."} />
       ) : filtered.map((p) => {
         const badge = stockBadge(p);
         const qty = stockQtyLabel(p);
