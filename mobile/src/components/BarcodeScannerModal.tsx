@@ -1,8 +1,26 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import React, { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors, radius } from "../theme";
+import { normalizeScanText } from "../utils/b2bCatalog";
+import { WebBarcodeCamera } from "./WebBarcodeCamera";
 import { PrimaryButton } from "./kit";
+
+const NATIVE_TYPES = [
+  "ean13",
+  "ean8",
+  "upc_a",
+  "upc_e",
+  "code128",
+  "code39",
+  "code93",
+  "codabar",
+  "itf14",
+  "qr",
+  "pdf417",
+  "datamatrix",
+  "aztec",
+] as const;
 
 export function BarcodeScannerModal({
   visible,
@@ -17,8 +35,14 @@ export function BarcodeScannerModal({
   const [manual, setManual] = useState("");
   const [locked, setLocked] = useState(false);
 
+  useEffect(() => {
+    if (visible && Platform.OS !== "web" && permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [visible, permission, requestPermission]);
+
   const emit = (code: string) => {
-    const value = code.trim();
+    const value = normalizeScanText(code);
     if (!value || locked) return;
     setLocked(true);
     onScan(value);
@@ -29,12 +53,14 @@ export function BarcodeScannerModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.wrap}>
+      <View style={styles.wrap} testID="barcode-scanner-modal">
         <Text style={styles.title}>Barkod okut</Text>
-        {permission?.granted ? (
+        {Platform.OS === "web" ? (
+          visible ? <WebBarcodeCamera active={visible} onScan={emit} /> : null
+        ) : permission?.granted ? (
           <CameraView
             style={styles.camera}
-            barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "code128", "qr", "upc_a", "upc_e"] }}
+            barcodeScannerSettings={{ barcodeTypes: [...NATIVE_TYPES] }}
             onBarcodeScanned={({ data }) => emit(data)}
           />
         ) : (
@@ -50,10 +76,13 @@ export function BarcodeScannerModal({
           placeholder="Barkod / SKU"
           style={styles.input}
           autoCapitalize="none"
+          autoFocus={Platform.OS === "web"}
           onSubmitEditing={() => emit(manual)}
         />
-        <PrimaryButton title="Ekle" onPress={() => emit(manual)} testID="barcode-submit" />
-        <Pressable onPress={onClose} style={styles.cancel}><Text style={styles.cancelText}>Kapat</Text></Pressable>
+        <PrimaryButton title="Ara" onPress={() => emit(manual)} testID="barcode-submit" />
+        <Pressable onPress={onClose} style={styles.cancel} testID="barcode-close">
+          <Text style={styles.cancelText}>Kapat</Text>
+        </Pressable>
       </View>
     </Modal>
   );

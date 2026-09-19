@@ -1,4 +1,4 @@
-import { canAddProduct, catalogCategories, filterCatalog, hasListDiscount, parseDraftQty } from "./b2bCatalog";
+import { canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "./b2bCatalog";
 
 const p = (over: Record<string, unknown> = {}) => ({
   id: "1",
@@ -18,6 +18,22 @@ const p = (over: Record<string, unknown> = {}) => ({
 describe("catalogCategories", () => {
   it("prefixes Tümü and drops blanks", () => {
     expect(catalogCategories([p(), p({ category: "Masa" }), p({ category: "  " })])).toEqual(["all", "Raf", "Masa"]);
+  });
+});
+
+describe("categorySelectGroups", () => {
+  it("groups Tümü separately from named categories", () => {
+    const groups = categorySelectGroups([p(), p({ category: "Masa" })]);
+    expect(groups[0]).toEqual({ label: "Filtre", options: [{ value: "all", label: "Tümü" }] });
+    expect(groups[1].label).toBe("Kategoriler");
+    expect(groups[1].options.map((o) => o.value)).toEqual(["Raf", "Masa"]);
+  });
+});
+
+describe("normalizeScanText", () => {
+  it("strips GS1 prefixes", () => {
+    expect(normalizeScanText(" ]C18690001234567 ")).toBe("8690001234567");
+    expect(normalizeScanText("")).toBe("");
   });
 });
 
