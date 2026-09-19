@@ -1,11 +1,11 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
-import { Chip, confirmAction } from "../components/chips";
+import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
@@ -13,7 +13,6 @@ import { colors } from "../theme";
 import {
   LEAVE_TYPES,
   SALARY_CALC_ROWS,
-  draftFromEmployee,
   employeePayload,
   employeeSelectGroups,
   emptyEmployeeDraft,
@@ -60,7 +59,6 @@ export function PersonnelScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Employee | null>(null);
   const [draft, setDraft] = useState<EmployeeDraft>(emptyEmployeeDraft(todayIso()));
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
@@ -105,13 +103,7 @@ export function PersonnelScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openAdd = () => {
-    setEditing(null);
     setDraft(emptyEmployeeDraft(todayIso()));
-    setFormOpen(true);
-  };
-  const openEdit = (emp: Employee) => {
-    setEditing(emp);
-    setDraft(draftFromEmployee(emp, todayIso()));
     setFormOpen(true);
   };
 
@@ -120,28 +112,15 @@ export function PersonnelScreen() {
     if (invalid) { setError(invalid); return; }
     setBusy(true);
     try {
-      if (editing) await put(client, `/personnel/employees/${idOf(editing)}`, employeePayload(draft));
-      else await post(client, "/personnel/employees", employeePayload(draft, companyId));
+      await post(client, "/personnel/employees", employeePayload(draft, companyId));
       setFormOpen(false);
-      setMessage(editing ? "Personel güncellendi." : "Personel kaydedildi.");
+      setMessage("Personel kaydedildi.");
       await load();
     } catch (err) {
-      setError(apiErrorMessage(err, editing ? "Personel güncellenemedi." : "Personel kaydedilemedi."));
+      setError(apiErrorMessage(err, "Personel kaydedilemedi."));
     } finally {
       setBusy(false);
     }
-  };
-
-  const removeEmployee = (emp: Employee) => {
-    confirmAction("Personeli sil", `${emp.full_name} personel kaydı silinsin mi? (Çöp kutusuna taşınır)`, async () => {
-      try {
-        await del(client, `/personnel/employees/${idOf(emp)}`);
-        setMessage("Personel çöp kutusuna taşındı.");
-        await load();
-      } catch (err) {
-        setError(apiErrorMessage(err, "Personel silinemedi."));
-      }
-    });
   };
 
   const generatePayroll = async () => {
@@ -341,8 +320,6 @@ export function PersonnelScreen() {
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     <PayChip title="Avans" color="#B45309" bg={colors.amber50} testID={`emp-card-advance-btn-${eid}`} onPress={() => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); }} />
                     <PayChip title="Maaş öde" color={colors.primaryHover} bg={colors.emerald50} testID={`emp-card-salary-btn-${eid}`} onPress={() => openSalaryPay(emp)} />
-                    <PayChip title="Düzenle" color={colors.muted} bg={colors.slate50} testID={`employee-edit-${emp.tc_kimlik || eid}`} onPress={() => openEdit(emp)} />
-                    <PayChip title="Sil" color={colors.danger} bg={colors.rose50} testID={`employee-delete-${emp.tc_kimlik || eid}`} onPress={() => removeEmployee(emp)} />
                   </View>
                 ) : null}
               </Card>
@@ -483,7 +460,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={formOpen}
-        title={editing ? "Personeli düzenle" : "Yeni personel ekle"}
+        title="Yeni personel ekle"
         onClose={() => setFormOpen(false)}
         testID="employee-form-modal"
       >
@@ -494,7 +471,7 @@ export function PersonnelScreen() {
         <Field label="Pozisyon / görev" testID="employee-position-input" value={draft.position} onChangeText={(v) => setDraft({ ...draft, position: v })} />
         <Field label="Telefon" testID="employee-phone-input" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })} placeholder="05…" keyboardType="phone-pad" />
         <Field label="E-posta" testID="employee-email-input" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} placeholder="ornek@tamkobi.com" autoCapitalize="none" />
-        <PrimaryButton title={editing ? "Güncelle" : "Personeli kaydet"} testID="save-employee-btn" loading={busy} onPress={saveEmployee} />
+        <PrimaryButton title="Personeli kaydet" testID="save-employee-btn" loading={busy} onPress={saveEmployee} />
       </B2BSheet>
 
       <B2BSheet
