@@ -143,7 +143,7 @@ export default function MyPersonnelPage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-personnel-title">
-            <UserRound className="w-7 h-7 text-emerald-600 shrink-0" /> Personelim
+            <UserRound className="w-7 h-7 text-emerald-600 shrink-0" /> Benim Sayfam
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
             {emp

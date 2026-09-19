@@ -6,6 +6,7 @@ import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWar
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
+import { AssignOvertimeModal } from "./AssignOvertimeModal";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -15,7 +16,15 @@ export const AttendancePanel = ({ companyId }) => {
   const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
   useEffect(() => { load(); }, [load]);
   const act = async (employee_id, body) => { try { const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id, ...body }); if (r.data.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
-  const openOt = (s) => setOtAssign({ employee_id: s.employee_id, employee_name: s.employee_name, hours: s.today?.assigned_overtime_hours || "", date: new Date().toISOString().slice(0, 10), note: "" });
+  const openOt = (s) => setOtAssign({
+    employee_id: s.employee_id,
+    employee_name: s.employee_name,
+    hours: s.today?.assigned_overtime_hours || "",
+    start: s.today?.assigned_overtime_start || "",
+    end: s.today?.assigned_overtime_end || "",
+    date: new Date().toISOString().slice(0, 10),
+    note: "",
+  });
   const saveOt = async () => {
     if (!otAssign) return;
     try {
@@ -23,6 +32,8 @@ export const AttendancePanel = ({ companyId }) => {
         employee_id: otAssign.employee_id,
         date: otAssign.date,
         hours: Number(otAssign.hours) || 0,
+        start_time: otAssign.start || undefined,
+        end_time: otAssign.end || undefined,
         note: otAssign.note || "",
       });
       toast.success(r.data.message || "Fazla mesai atandı.");
@@ -82,21 +93,13 @@ export const AttendancePanel = ({ companyId }) => {
         </div>))}{data.records.length === 0 && <div className="p-6 text-center text-slate-400">Bu ay kayıt yok.</div>}</div></div>
       
       {otAssign && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="att-ot-modal" onClick={() => setOtAssign(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h4 className="text-sm font-bold text-slate-900">Fazla Mesai Ata — {otAssign.employee_name}</h4>
-            <p className="text-[11px] text-slate-500">Atanan süre, beklenen çıkışı (mesai bitişi + fazla mesai) uzatır. Personel çıkışı her konumdan yapabilir; kayıt bu saate göre işlenir.</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Tarih</label><input type="date" value={otAssign.date} onChange={(e) => setOtAssign({ ...otAssign, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="att-ot-date" /></div>
-              <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Saat</label><input type="number" min="0" step="0.5" value={otAssign.hours} onChange={(e) => setOtAssign({ ...otAssign, hours: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="örn. 2" data-testid="att-ot-hours" /></div>
-            </div>
-            <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Not (opsiyonel)</label><input value={otAssign.note} onChange={(e) => setOtAssign({ ...otAssign, note: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="att-ot-note" /></div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setOtAssign(null)} className="px-3 py-1.5 rounded-lg border font-semibold" data-testid="att-ot-cancel">Vazgeç</button>
-              <button onClick={saveOt} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700" data-testid="att-ot-save">Kaydet</button>
-            </div>
-          </div>
-        </div>
+        <AssignOvertimeModal
+          value={otAssign}
+          onChange={setOtAssign}
+          onClose={() => setOtAssign(null)}
+          onSave={saveOt}
+          testIdPrefix="att-ot"
+        />
       )}
       {schedEmp && <EmployeeScheduleModal employee={schedEmp} companySchedule={data.schedule} onClose={() => setSchedEmp(null)} onSaved={load} />}
     </div>

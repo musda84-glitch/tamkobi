@@ -8,6 +8,7 @@ import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
 import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
+import { AssignOvertimeModal } from "../components/AssignOvertimeModal";
 import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
 import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
@@ -239,6 +240,8 @@ export default function PersonnelPage() {
     employee_id: empIdOf(emp),
     employee_name: emp.full_name,
     hours: "",
+    start: "",
+    end: "",
     date: new Date().toISOString().slice(0, 10),
     note: "",
   });
@@ -250,6 +253,8 @@ export default function PersonnelPage() {
         employee_id: otAssign.employee_id,
         date: otAssign.date,
         hours: Number(otAssign.hours) || 0,
+        start_time: otAssign.start || undefined,
+        end_time: otAssign.end || undefined,
         note: otAssign.note || "",
       });
       toast.success(r.data.message || "Fazla mesai atandı.");
@@ -430,9 +435,17 @@ export default function PersonnelPage() {
               onViewDispute={() => setTab("attendance")}
             />
 
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-              <span className="text-slate-400">Net Maaş:</span>
-              <span className="text-sm font-bold text-slate-900">{emp.salary?.toLocaleString('tr-TR')} ₺</span>
+            <div className="pt-2 border-t border-slate-100 space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">Net Maaş:</span>
+                <span className="text-sm font-bold text-slate-900">{emp.salary?.toLocaleString('tr-TR')} ₺</span>
+              </div>
+              <div className="flex items-center justify-between text-xs" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
+                <span className="text-slate-400">Kalan Alacak:</span>
+                <span className={`text-sm font-bold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                  {Number(emp.balance?.remaining || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
+                </span>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
               <button
@@ -712,33 +725,13 @@ export default function PersonnelPage() {
         />
       )}
       {otAssign && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="emp-ot-modal" onClick={() => setOtAssign(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-slate-900">Fazla Mesai Ata — {otAssign.employee_name}</h4>
-              <button type="button" onClick={() => setOtAssign(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
-            </div>
-            <p className="text-[11px] text-slate-500">Atanan süre, beklenen çıkışı uzatır. Personel çıkışı bu saate göre işlenir.</p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Tarih</label>
-                <input type="date" value={otAssign.date} onChange={(e) => setOtAssign({ ...otAssign, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="emp-ot-date" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Saat</label>
-                <input type="number" min="0" step="0.5" value={otAssign.hours} onChange={(e) => setOtAssign({ ...otAssign, hours: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="örn. 2" data-testid="emp-ot-hours" />
-              </div>
-            </div>
-            <div className="text-xs">
-              <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Not (opsiyonel)</label>
-              <input value={otAssign.note} onChange={(e) => setOtAssign({ ...otAssign, note: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="emp-ot-note" />
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => setOtAssign(null)} className="px-3 py-1.5 rounded-lg border text-xs font-semibold" data-testid="emp-ot-cancel">Vazgeç</button>
-              <button type="button" onClick={saveOvertime} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700" data-testid="emp-ot-save">Kaydet</button>
-            </div>
-          </div>
-        </div>
+        <AssignOvertimeModal
+          value={otAssign}
+          onChange={setOtAssign}
+          onClose={() => setOtAssign(null)}
+          onSave={saveOvertime}
+          testIdPrefix="emp-ot"
+        />
       )}
     </div>
   );

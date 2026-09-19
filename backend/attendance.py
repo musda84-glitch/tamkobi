@@ -88,6 +88,22 @@ def _add_minutes(hm: str, minutes: int) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def hours_from_time_range(start, end) -> Optional[float]:
+    """HH:MM–HH:MM aralığını saate çevirir; geceye sarkan aralık desteklenir."""
+    start = (start or "").strip()
+    end = (end or "").strip()
+    if not start or not end:
+        return None
+    try:
+        sm, em = _hm(start[:5]), _hm(end[:5])
+    except Exception:
+        return None
+    mins = em - sm
+    if mins < 0:
+        mins += 24 * 60
+    return round(mins / 60.0, 2)
+
+
 def assigned_overtime_hours(rec: Optional[dict]) -> float:
     """Yönetici tarafından personele atanan fazla mesai (saat)."""
     if not isinstance(rec, dict):
@@ -255,7 +271,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     elif "employee_confirmed" not in existing:
         rec["employee_confirmed"] = False
     # Preserve assignment metadata
-    for k in ("assigned_overtime_by", "assigned_overtime_at", "assigned_overtime_note"):
+    for k in ("assigned_overtime_by", "assigned_overtime_at", "assigned_overtime_note", "assigned_overtime_start", "assigned_overtime_end"):
         if k in patch:
             rec[k] = patch[k]
         elif existing.get(k) is not None:
@@ -544,10 +560,16 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=404, detail="Personel bulunamadı.")
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
-    try:
-        hours = _as_float(req.get("hours"), 0.0)
-    except Exception:
-        hours = 0.0
+    start_t = (req.get("start_time") or req.get("start") or "").strip()
+    end_t = (req.get("end_time") or req.get("end") or "").strip()
+    ranged = hours_from_time_range(start_t, end_t)
+    if ranged is not None:
+        hours = ranged
+    else:
+        try:
+            hours = _as_float(req.get("hours"), 0.0)
+        except Exception:
+            hours = 0.0
     if hours < 0:
         raise HTTPException(status_code=400, detail="Fazla mesai saati negatif olamaz.")
     hours = round(hours, 2)
@@ -564,6 +586,10 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
         "assigned_overtime_at": _now(),
         "assigned_overtime_note": note,
     }
+    if start_t:
+        patch["assigned_overtime_start"] = start_t[:5]
+    if end_t:
+        patch["assigned_overtime_end"] = end_t[:5]
     if req.get("note") is not None and note:
         # keep attendance note separate unless empty
         patch["note"] = note if not existing.get("note") else existing.get("note")
