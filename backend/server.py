@@ -959,7 +959,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 @api_router.post("/files/upload")
 async def upload_generic_file(file: UploadFile = File(...), entity: str = Query("misc"), entity_id: str = Query(""), company_id: str = Query("comp_nexus_main_01")):
-    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact"}.get(entity, entity)
+    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF, HEIC veya PDF yükleyebilirsiniz.")
@@ -990,12 +990,14 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
     }
     await db.files.insert_one(file_doc)
     url = f"/api/files/{result['path']}"
-    if entity in ("quote", "project", "survey", "company", "contact") and entity_id:
-        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts}[entity]
+    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo") and entity_id:
+        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees}[entity]
         # Match by id or _id — clients may send either after clean_doc
         q = {"$or": [{"_id": entity_id}, {"id": entity_id}]}
         if entity in ("company", "contact"):
             await coll.update_one(q, {"$set": {"logo_url": url}})
+        elif entity == "employee_photo":
+            await coll.update_one(q, {"$set": {"photo_url": url}})
         else:
             upd = await coll.update_one(q, {"$push": {"images": url}})
             if upd.matched_count == 0:
