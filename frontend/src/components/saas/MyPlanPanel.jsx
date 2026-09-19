@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Check, Lock, Users, Sparkles, Clock, CreditCard, Building2, Plus, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../../context/AuthContext";
 import { fmtTL, fmtDate, PlanChip, StatusBadge, groupByCategory } from "./saasUi";
+import { sortCompanyTree } from "../../utils/companyTree";
 
 export const MyPlanPanel = ({ companyId }) => {
   const { refreshLicense, reloadSession, switchCompany } = useAuth();
@@ -47,12 +48,15 @@ export const MyPlanPanel = ({ companyId }) => {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Building2 className="w-4 h-4 text-slate-400" /> Lisansınızdaki şirketler ({(d.companies || []).length}{d.company_limit ? `/${d.company_limit}` : ""})</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">Her şirket kendi cari, fatura ve stokunu tutar; diğer müşteri hesaplarını göremez. Paketiniz kaç yasal şirket açabileceğinizi belirler.</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Alt şirketler bağlı oldukları ana şirketin altında durur. Her şirket kendi cari, fatura ve stokunu tutar; diğer müşteri hesaplarını göremez.</p>
           </div>
         </div>
-        <ul className="divide-y">{(d.companies || []).map((c) => (
-          <li key={c.id} className="py-2 flex items-center justify-between gap-2" data-testid={`license-co-${c.id}`}>
-            <div><b className="text-slate-800">{c.name}</b><div className="text-[10px] text-slate-400">{c.tax_number || "VKN yok"} · {c.city || "—"}</div></div>
+        <ul className="divide-y">{sortCompanyTree((d.companies || []).map((c) => ({ ...c, is_primary: !!c.primary }))).map((c) => (
+          <li key={c.id} className="py-2 flex items-center justify-between gap-2" data-testid={`license-co-${c.id}`} style={{ paddingLeft: (c.tree_depth || 0) * 14 }}>
+            <div>
+              <b className="text-slate-800">{c.tree_depth > 0 ? "└ " : ""}{c.name}</b>
+              <div className="text-[10px] text-slate-400">{c.tax_number || "VKN yok"} · {c.city || "—"}{c.parent_company_name ? ` · bağlı: ${c.parent_company_name}` : c.primary ? " · ana şirket" : ""}</div>
+            </div>
             {c.id !== companyId && <button type="button" onClick={() => switchCompany(c.id)} className="text-[11px] font-semibold text-emerald-700 hover:underline">Bu şirkete geç</button>}
             {c.id === companyId && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Aktif</span>}
           </li>

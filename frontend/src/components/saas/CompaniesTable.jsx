@@ -1,10 +1,11 @@
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plus, Search, Settings2, Users, FileText, Loader2, X, LogIn, ShieldOff } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, inputCls } from "./saasUi";
+import { sortCompanyTree } from "../../utils/companyTree";
 
 export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
   const [q, setQ] = useState("");
@@ -14,10 +15,14 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
     if (!window.confirm(`${r.name} şirketine yönetici olarak girilecek (destek modu, 2 saat). Panel oturumunuz geçici olarak bu şirkete geçer; ERP'deki "Destek modunu bitir" ile geri dönersiniz. Devam?`)) return;
     try { const res = await axios.post(`${API_URL}/system/companies/${r.id}/impersonate`, {}); toast.success(res.data.message); window.location.href = "/"; } catch (e) { toast.error(e.response?.data?.detail || "Giriş yapılamadı."); }
   };
-  const list = rows.filter((r) => (!status || r.license.status === status) && (!q || `${r.name} ${r.admin?.email || ""} ${r.tax_number || ""}`.toLowerCase().includes(q.toLowerCase())));
+  const list = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const filtered = rows.filter((r) => (!status || r.license.status === status) && (!needle || `${r.name} ${r.admin?.email || ""} ${r.tax_number || ""} ${r.parent_company_name || ""}`.toLowerCase().includes(needle)));
+    return sortCompanyTree(filtered);
+  }, [rows, q, status]);
   return (
     <div className="space-y-3 text-xs" data-testid="saas-companies">
-      <p className="text-slate-500">Müşteri hesapları birbirinin verisini görmez. Aynı lisans altında paket limiti kadar yasal şirket açılabilir; her şirketin carisi ve faturası ayrıdır.</p>
+      <p className="text-slate-500">Müşteri hesapları birbirinin verisini görmez. Alt şirketler bağlı oldukları ana şirketin altında listelenir; her şirketin carisi ve faturası ayrıdır.</p>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Şirket, yönetici e-postası, VKN ara…" className={`${inputCls} pl-8`} data-testid="companies-search" /></div>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2" data-testid="companies-status-filter"><option value="">Tüm durumlar</option><option value="active">Aktif</option><option value="trial">Deneme</option><option value="suspended">Askıda</option><option value="expired">Süresi doldu</option><option value="cancelled">İptal</option></select>
@@ -29,8 +34,18 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
           <tbody className="divide-y divide-slate-100">
             {list.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Şirket bulunamadı.</td></tr>}
             {list.map((r) => (
-              <tr key={r.id} className="hover:bg-amber-50/40" data-testid={`company-row-${r.id}`}>
-                <td className="px-3 py-2.5"><b className="text-slate-900">{r.name}</b><div className="text-[10px] text-slate-400">{r.tax_number || "VKN yok"} · {r.city || "-"} · {fmtDate(r.created_at)}{(r.license_companies || []).length > 1 ? ` · lisans: ${(r.license_companies || []).length} şirket` : ""}</div></td>
+              <tr key={r.id} className={`hover:bg-amber-50/40 ${r.tree_depth ? "bg-slate-50/60" : ""}`} data-testid={`company-row-${r.id}`} data-parent={r.parent_company_id || ""} data-depth={r.tree_depth || 0}>
+                <td className="px-3 py-2.5" style={{ paddingLeft: 12 + (r.tree_depth || 0) * 18 }}>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {r.tree_depth > 0 && <span className="text-slate-300 font-mono shrink-0" aria-hidden>└</span>}
+                    <b className="text-slate-900 truncate">{r.name}</b>
+                    {r.is_primary && (r.license_companies || []).length > 1 && <span className="text-[9px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0">ANA</span>}
+                  </div>
+                  <div className="text-[10px] text-slate-400" data-testid={`company-meta-${r.id}`}>
+                    {r.tax_number || "VKN yok"} · {r.city || "-"} · {fmtDate(r.created_at)}
+                    {r.parent_company_name ? ` · bağlı: ${r.parent_company_name}` : (r.license_companies || []).length > 1 ? ` · lisans: ${(r.license_companies || []).length} şirket` : ""}
+                  </div>
+                </td>
                 <td className="px-3 py-2.5 text-slate-600">{r.admin ? <>{r.admin.name}<div className="text-[10px] text-slate-400">{r.admin.email}</div></> : "—"}</td>
                 <td className="px-3 py-2.5"><PlanChip name={r.license.plan_name} color={r.license.plan_color} testId={`company-plan-${r.id}`} /></td>
                 <td className="px-3 py-2.5"><StatusBadge status={r.license.status} testId={`company-status-${r.id}`} /></td>

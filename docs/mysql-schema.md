@@ -163,7 +163,7 @@ flowchart LR
 | `cargo_shipments` | `order_id` | `orders` |
 | `trash` | `doc` | silinen belgenin kopyası |
 | `company_licenses` | `plan_id` | `saas_plans` |
-| `companies` | `license_id` | `company_licenses` |
+| `companies` | `license_id`, `parent_company_id` | `company_licenses`, `companies` |
 
 Keşif → teklif → proje: `surveys.quote_id` / `quotes.survey_id` / `quotes.project_id` / `projects`.
 
@@ -354,7 +354,7 @@ column + `idx_docs_coll_company`.
 | collection | rows | KB | sample fields |
 |---|---:|---:|---|
 | `users` | 34 | 12.8 | `_id`, `active_company_id`, `company_ids`, `created_at`, `email`, `is_active`, `name`, `password_hash`, `preferences`, `role` |
-| `companies` | 40 | 12.9 | `_id`, `address`, `city`, `created_at`, `currency`, `email`, `license_id`, `name`, `phone`, `tax_number`, `tax_office` |
+| `companies` | 40 | 12.9 | `_id`, `address`, `city`, `created_at`, `currency`, `email`, `license_id`, `name`, `parent_company_id`, `phone`, `tax_number`, `tax_office` |
 | `company_licenses` | 150 | 49.7 | `_id`, `created_at`, `expires_at`, `module_overrides`, `notes`, `plan_id`, `started_at`, `status`, `trial_ends_at`, `user_limit` |
 | `saas_plans` | 4 | 2.5 | `_id`, `code`, `color`, `company_limit`, `created_at`, `is_public`, `modules`, `name`, `price_monthly`, `price_yearly`, `sort`, `tagline` |
 | `roles` | 242 | 168.7 | `_id`, `code`, `company_id`, `created_at`, `is_system`, `name`, `permissions` |

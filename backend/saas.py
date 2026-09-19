@@ -246,6 +246,53 @@ async def license_id_of(company_id: str) -> str:
     return (c or {}).get("license_id") or company_id
 
 
+def resolved_parent_id(company: Optional[dict]) -> Optional[str]:
+    """Explicit parent, else the license holder when this row is a sibling."""
+    if not company:
+        return None
+    cid = company.get("_id") or company.get("id")
+    explicit = str(company.get("parent_company_id") or "").strip()
+    if explicit and explicit != cid:
+        return explicit
+    lid = company.get("license_id") or cid
+    if lid and lid != cid:
+        return lid
+    return None
+
+
+def would_create_cycle(child_id: str, new_parent_id: str, lookup: Dict[str, dict]) -> bool:
+    """True if new_parent_id is the child or sits under the child in lookup."""
+    if not child_id or not new_parent_id or child_id == new_parent_id:
+        return True
+    seen = set()
+    cur = new_parent_id
+    while cur:
+        if cur == child_id:
+            return True
+        if cur in seen:
+            return True
+        seen.add(cur)
+        nxt = resolved_parent_id(lookup.get(cur) or {})
+        if not nxt or nxt == cur:
+            break
+        cur = nxt
+    return False
+
+
+def _license_company_brief(s: dict, lid: str, name_by_id: Optional[Dict[str, str]] = None) -> dict:
+    pid = resolved_parent_id({**s, "license_id": s.get("license_id") or lid})
+    names = name_by_id or {}
+    return {
+        "id": s["_id"],
+        "name": s.get("name"),
+        "tax_number": s.get("tax_number"),
+        "city": s.get("city"),
+        "primary": s["_id"] == lid,
+        "parent_company_id": pid,
+        "parent_company_name": names.get(pid) if pid else None,
+    }
+
+
 async def companies_on_license(license_id: str) -> list:
     rows = await _db.companies.find({"$or": [{"license_id": license_id}, {"_id": license_id}]}).to_list(200)
     seen, out = set(), []
@@ -312,10 +359,15 @@ async def seed():
                 changed = True
         if changed:
             await _db.company_licenses.update_one({"_id": lic["_id"]}, {"$set": {"module_overrides": ov}})
-    async for c in _db.companies.find({}, {"_id": 1, "license_id": 1}):
+    async for c in _db.companies.find({}, {"_id": 1, "license_id": 1, "parent_company_id": 1}):
+        updates: Dict[str, Any] = {}
         if not c.get("license_id"):
-            await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"license_id": c["_id"]}})
+            updates["license_id"] = c["_id"]
         lid = c.get("license_id") or c["_id"]
+        if not c.get("parent_company_id") and lid != c["_id"]:
+            updates["parent_company_id"] = lid
+        if updates:
+            await _db.companies.update_one({"_id": c["_id"]}, {"$set": updates})
         if lid != c["_id"]:
             continue
         await _db.company_licenses.update_one({"_id": c["_id"]}, {"$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "started_at": _now(), "expires_at": None, "trial_ends_at": None, "module_overrides": {}, "user_limit": None, "company_limit": None, "notes": "Mevcut müşteri (otomatik)", "created_at": _now()}}, upsert=True)
@@ -526,7 +578,7 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
         "_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "",
         "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "",
         "email": req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
-        "license_id": lid, "created_at": _now(),
+        "license_id": lid, "parent_company_id": parent_company_id, "created_at": _now(),
     })
     await rbac.ensure_roles(cid)
     admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
@@ -621,10 +673,17 @@ async def _company_row(c: dict) -> Dict[str, Any]:
     lic = await effective(c["_id"])
     admin = await _db.users.find_one({**tenant_user_query(c["_id"]), "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1}) or await _db.users.find_one({"company_ids": c["_id"], "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
     lid = lic.get("license_id") or c["_id"]
-    siblings = [{"id": s["_id"], "name": s.get("name"), "tax_number": s.get("tax_number"), "city": s.get("city"), "primary": s["_id"] == lid} for s in await companies_on_license(lid)]
+    sibling_docs = await companies_on_license(lid)
+    name_by_id = {s["_id"]: s.get("name") for s in sibling_docs}
+    siblings = [_license_company_brief(s, lid, name_by_id) for s in sibling_docs]
+    parent_id = resolved_parent_id({**c, "license_id": lid})
+    parent_name = name_by_id.get(parent_id) if parent_id else None
+    if parent_id and not parent_name:
+        p = await _db.companies.find_one({"_id": parent_id}, {"name": 1})
+        parent_name = (p or {}).get("name")
     ei = await _db.einvoice_settings.find_one({"company_id": c["_id"]}) or {}
     einvoice = {"provider": ei.get("provider") or "", "status": ei.get("status") or "simulated", "mode": ei.get("mode") or "test", "username": ei.get("username") or "", "has_password": bool(ei.get("password_enc"))}
-    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": c.get("allow_platform_access", True) is not False, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
+    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "parent_company_id": parent_id, "parent_company_name": parent_name, "is_primary": c["_id"] == lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": c.get("allow_platform_access", True) is not False, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
 
 
 def _restore_active_status(lic: Optional[dict]) -> str:
@@ -836,6 +895,40 @@ async def list_quotas(_: dict = Depends(require_super_admin)):
 async def system_add_licensed_company(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
     doc = await add_licensed_company(company_id, req)
     return await _company_row(doc)
+
+
+@router.put("/system/companies/{company_id}/parent")
+async def set_company_parent(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    """Attach an existing company under another (same license, or merge a standalone onto the parent's license)."""
+    c = await _db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    parent_id = (req.get("parent_company_id") or "").strip()
+    if not parent_id:
+        raise HTTPException(status_code=400, detail="Bağlı olunacak şirket seçin.")
+    if parent_id == company_id:
+        raise HTTPException(status_code=400, detail="Şirket kendisine bağlanamaz.")
+    parent = await _db.companies.find_one({"_id": parent_id})
+    if not parent:
+        raise HTTPException(status_code=404, detail="Üst şirket bulunamadı.")
+    lookup = {d["_id"]: d for d in await _db.companies.find({}).to_list(2000)}
+    if would_create_cycle(company_id, parent_id, lookup):
+        raise HTTPException(status_code=400, detail="Döngü oluşur: alt şirket üst şirket olamaz.")
+    child_lid = await license_id_of(company_id)
+    parent_lid = await license_id_of(parent_id)
+    updates: Dict[str, Any] = {"parent_company_id": parent_id, "updated_at": _now()}
+    if child_lid != parent_lid:
+        child_sibs = await companies_on_license(child_lid)
+        if len(child_sibs) > 1:
+            raise HTTPException(status_code=400, detail="Bu şirketin kendi lisansında başka şirketler var; önce onları taşıyın.")
+        await check_company_limit(parent_id)
+        updates["license_id"] = parent_lid
+    await _db.companies.update_one({"_id": company_id}, {"$set": updates})
+    if child_lid != parent_lid and child_lid == company_id:
+        await _db.company_licenses.delete_one({"_id": company_id})
+        invalidate(child_lid)
+    invalidate(parent_lid)
+    return await _company_row(await _db.companies.find_one({"_id": company_id}))
 
 
 @router.post("/system/companies")
@@ -1141,7 +1234,10 @@ async def my_license(request: Request, company_id: str = "comp_nexus_main_01"):
     lic = await effective(company_id)
     plans = [{**_clean(p), "modules": p["modules"]} for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     pending = await _db.upgrade_requests.find_one({"company_id": company_id, "status": "pending"})
-    sibs = [{"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city")} for c in await companies_on_license(lic.get("license_id") or company_id)]
+    sib_docs = await companies_on_license(lic.get("license_id") or company_id)
+    names = {c["_id"]: c.get("name") for c in sib_docs}
+    lid = lic.get("license_id") or company_id
+    sibs = [_license_company_brief(c, lid, names) for c in sib_docs]
     used = await quota_usage(company_id)
     return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "companies": sibs, "pending_request": _clean(pending) if pending else None, **used}
 
@@ -1150,7 +1246,10 @@ async def my_license(request: Request, company_id: str = "comp_nexus_main_01"):
 async def license_companies(request: Request, company_id: str = "comp_nexus_main_01"):
     _require_company_access(await _request_user(request), company_id)
     lic = await effective(company_id)
-    return {"license_id": lic.get("license_id"), "company_limit": lic.get("company_limit") or 0, "company_count": lic.get("company_count") or 0, "companies": [{"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city")} for c in await companies_on_license(lic.get("license_id") or company_id)]}
+    lid = lic.get("license_id") or company_id
+    sib_docs = await companies_on_license(lid)
+    names = {c["_id"]: c.get("name") for c in sib_docs}
+    return {"license_id": lid, "company_limit": lic.get("company_limit") or 0, "company_count": lic.get("company_count") or 0, "companies": [_license_company_brief(c, lid, names) for c in sib_docs]}
 
 
 @router.post("/license/companies")
@@ -1168,7 +1267,7 @@ async def create_license_company(req: Dict[str, Any], request: Request):
     doc = await add_licensed_company(parent, req, attach_user=user)
     if user and (user.get("_id") or user.get("id")):
         await _db.users.update_one({"_id": user.get("_id") or user.get("id")}, {"$set": {"active_company_id": doc["_id"]}})
-    return {"id": doc["_id"], "name": doc.get("name"), "license_id": doc.get("license_id"), "license": await effective(doc["_id"])}
+    return {"id": doc["_id"], "name": doc.get("name"), "license_id": doc.get("license_id"), "parent_company_id": doc.get("parent_company_id"), "license": await effective(doc["_id"])}
 
 
 @router.post("/license/upgrade-request")

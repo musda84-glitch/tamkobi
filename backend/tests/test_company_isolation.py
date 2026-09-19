@@ -108,6 +108,7 @@ class TestCompanyIsolation:
         extra_id = added.json()["id"]
         assert extra_id != a_id
         assert added.json().get("license_id") == a_id
+        assert added.json().get("parent_company_id") == a_id
 
         me2 = sa.get(f"{API}/auth/me", timeout=20)
         assert me2.status_code == 200, me2.text
@@ -127,6 +128,28 @@ class TestCompanyIsolation:
         final_ids = _ids(still_all.json())
         assert a_id in final_ids and b_id in final_ids and extra_id in final_ids
         row_a = next(r for r in still_all.json() if r["id"] == a_id)
+        row_extra = next(r for r in still_all.json() if r["id"] == extra_id)
         sib_ids = {c["id"] for c in row_a.get("license_companies") or []}
         assert a_id in sib_ids and extra_id in sib_ids
         assert b_id not in sib_ids
+        assert row_a.get("is_primary") is True
+        assert not row_a.get("parent_company_id")
+        assert row_extra.get("parent_company_id") == a_id
+        assert row_extra.get("parent_company_name") == a["name"]
+        assert row_extra.get("is_primary") is False
+        extra_brief = next(c for c in row_a["license_companies"] if c["id"] == extra_id)
+        assert extra_brief.get("parent_company_id") == a_id
+        assert extra_brief.get("parent_company_name") == a["name"]
+
+        cycle = admin.put(f"{API}/system/companies/{a_id}/parent", json={"parent_company_id": extra_id}, timeout=20)
+        assert cycle.status_code == 400, cycle.text
+
+        r = admin.put(f"{API}/system/companies/{a_id}/license", json={"company_limit": 3}, timeout=20)
+        assert r.status_code == 200, r.text
+        gamma, _, _ = _create_customer(admin, "plan_starter", "gamma")
+        g_id = gamma["id"]
+        attached = admin.put(f"{API}/system/companies/{g_id}/parent", json={"parent_company_id": a_id}, timeout=20)
+        assert attached.status_code == 200, attached.text
+        assert attached.json().get("parent_company_id") == a_id
+        assert attached.json().get("license_id") == a_id
+        assert attached.json().get("parent_company_name") == a["name"]
