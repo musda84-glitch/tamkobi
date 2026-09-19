@@ -26,7 +26,7 @@ export type CargoPrintKind = "official" | "thermal";
 
 type PrintTemplatesMap = Partial<Record<"invoice" | "order" | "quote" | "dispatch", PrintTemplate>>;
 
-async function enrichPrintCompany(client: ApiClient | null | undefined, company?: PrintCompany | null): Promise<PrintCompany | null> {
+export async function enrichPrintCompany(client: ApiClient | null | undefined, company?: PrintCompany | null): Promise<PrintCompany | null> {
   if (!company) return null;
   const cid = idOf(company);
   if (!client || !cid) return company;
@@ -38,19 +38,31 @@ async function enrichPrintCompany(client: ApiClient | null | undefined, company?
   }
 }
 
-async function loadOrderTemplate(client: ApiClient | null | undefined, company?: PrintCompany | null): Promise<PrintTemplate> {
+export async function loadPrintTemplate(
+  client: ApiClient | null | undefined,
+  company?: PrintCompany | null,
+  docType: keyof PrintTemplatesMap = "order",
+): Promise<PrintTemplate> {
   const cid = idOf(company || {});
   if (!client || !cid) return mergePrintTemplate();
   try {
     const all = await get<PrintTemplatesMap>(client, `/companies/${cid}/print-templates`);
-    return mergePrintTemplate(all.order);
+    return mergePrintTemplate(all[docType]);
   } catch {
     return mergePrintTemplate();
   }
 }
 
-async function loadPrintProducts(client: ApiClient | null | undefined, order: Order, company?: PrintCompany | null): Promise<Record<string, PrintProduct>> {
-  const ids = [...new Set((order.items || []).map((it) => String((it as { product_id?: string }).product_id || "")).filter(Boolean))];
+async function loadOrderTemplate(client: ApiClient | null | undefined, company?: PrintCompany | null): Promise<PrintTemplate> {
+  return loadPrintTemplate(client, company, "order");
+}
+
+export async function loadPrintProducts(
+  client: ApiClient | null | undefined,
+  doc: { items?: Array<{ product_id?: string } | Record<string, unknown>> },
+  company?: PrintCompany | null,
+): Promise<Record<string, PrintProduct>> {
+  const ids = [...new Set((doc.items || []).map((it) => String((it as { product_id?: string }).product_id || "")).filter(Boolean))];
   const cid = idOf(company || {});
   if (!client || !ids.length || !cid) return {};
   try {

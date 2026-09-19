@@ -39,6 +39,19 @@ describe("orderPrint", () => {
     expect(orderFormText(order, { name: "Matek" })).toMatch(/Toplam/);
   });
 
+  it("prints quote extras like web PrintDocument", () => {
+    const html = orderFormHtml(
+      { ...order, title: "Fiyat Teklifi", valid_until: "2026-10-19", terms: "Peşin" } as typeof order,
+      { name: "Matek" },
+      { docType: "quote" },
+    );
+    expect(html).toContain("FİYAT TEKLİFİ");
+    expect(html).toContain("Geçerlilik");
+    expect(html).toContain("Konu");
+    expect(html).toContain("Şartlar");
+    expect(html).toContain("data-print=\"quote\"");
+  });
+
   it("honors company print-template layout and hidden prices", () => {
     const html = orderFormHtml(order, { name: "Matek" }, {
       template: mergePrintTemplate({ layout: "modern", hide_all_prices: true, title_override: "SEVK LİSTESİ", show_signature: false }),

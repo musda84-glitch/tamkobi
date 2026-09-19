@@ -3,7 +3,8 @@ import io
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 import jwt
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -15,19 +16,58 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-import saas
-import saas_billing
-from auth_utils import get_jwt_secret, JWT_ALGORITHM
 
 router = APIRouter(prefix="/api")
 _db = None
-FONT_DIR = "/usr/share/fonts/truetype/liberation/"
-try:
-    pdfmetrics.registerFont(TTFont("Lib", FONT_DIR + "LiberationSans-Regular.ttf"))
-    pdfmetrics.registerFont(TTFont("LibB", FONT_DIR + "LiberationSans-Bold.ttf"))
-    PDF_FONT, PDF_FONT_B = "Lib", "LibB"
-except Exception:
-    PDF_FONT, PDF_FONT_B = "Helvetica", "Helvetica-Bold"
+
+# Helvetica/WinAnsi has no Ğ/İ/Ş/ı — Turkish glyphs need a bundled TTF.
+_FONT_PAIRS = (
+    (Path(__file__).resolve().parent / "fonts" / "LiberationSans-Regular.ttf",
+     Path(__file__).resolve().parent / "fonts" / "LiberationSans-Bold.ttf"),
+    (Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+     Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")),
+    (Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+     Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf")),
+    (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+)
+
+
+def _register_pdf_fonts() -> Tuple[str, str]:
+    for regular, bold in _FONT_PAIRS:
+        if not (regular.is_file() and bold.is_file()):
+            continue
+        try:
+            pdfmetrics.registerFont(TTFont("TkPdf", str(regular)))
+            pdfmetrics.registerFont(TTFont("TkPdfB", str(bold)))
+            return "TkPdf", "TkPdfB"
+        except Exception:
+            continue
+    return "Helvetica", "Helvetica-Bold"
+
+
+PDF_FONT, PDF_FONT_B = _register_pdf_fonts()
+
+_DEFAULT_PRINT_TPL = {
+    "show_logo": True,
+    "primary_color": "#059669",
+    "header_note": "",
+    "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.",
+    "show_bank_info": True,
+    "show_tax_info": True,
+    "show_signature": True,
+    "title_override": "",
+    "layout": "classic",
+    "hide_line_prices": False,
+    "hide_vat": False,
+    "hide_all_prices": False,
+    "show_item_notes": True,
+}
+
+
+def _quote_template(company: Dict[str, Any], override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    raw = ((company or {}).get("print_templates") or {}).get("quote") or {}
+    return {**_DEFAULT_PRINT_TPL, **raw, **(override or {})}
 
 
 def init(db):
@@ -123,87 +163,237 @@ def _quote_pdf_filename(q: Dict[str, Any]) -> str:
     return f"{name}.pdf"
 
 
-def build_quote_pdf(q: Dict[str, Any], company: Dict[str, Any]) -> bytes:
+def _hex(value: str, fallback: str = "#059669") -> colors.Color:
+    raw = str(value or fallback).strip()
+    if not re.match(r"^#[0-9A-Fa-f]{6}$", raw):
+        raw = fallback
+    return colors.HexColor(raw)
+
+
+def _fnum(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_quote_pdf(q: Dict[str, Any], company: Dict[str, Any], template: Optional[Dict[str, Any]] = None) -> bytes:
+    """PrintDocument (quote) classic/modern/minimal/bold — Türkçe TTF."""
+    tpl = _quote_template(company, template)
+    layout = str(tpl.get("layout") or "classic")
+    is_modern = layout == "modern"
+    is_minimal = layout == "minimal"
+    is_bold = layout == "bold"
+    color = colors.HexColor("#0f172a") if is_minimal else _hex(tpl.get("primary_color"))
+    hide_all = bool(tpl.get("hide_all_prices"))
+    hide_line = hide_all or bool(tpl.get("hide_line_prices"))
+    hide_vat = hide_all or bool(tpl.get("hide_vat"))
+    title = str(tpl.get("title_override") or "FİYAT TEKLİFİ")
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
-    c.setFillColor(colors.HexColor("#0f172a"))
-    c.rect(0, h - 36 * mm, w, 36 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont(PDF_FONT_B, 18)
-    c.drawString(18 * mm, h - 16 * mm, "FİYAT TEKLİFİ")
-    c.setFont(PDF_FONT, 9)
-    c.drawString(18 * mm, h - 23 * mm, f"{q.get('quote_number') or ''}    {q.get('issue_date') or ''}")
-    if q.get("valid_until"):
-        c.drawString(18 * mm, h - 28 * mm, f"Geçerlilik: {q.get('valid_until')}")
-    c.setFillColor(colors.HexColor("#34d399"))
-    c.setFont(PDF_FONT_B, 10)
-    c.drawRightString(w - 18 * mm, h - 16 * mm, company.get("name") or "")
-    c.setFillColor(colors.white)
-    c.setFont(PDF_FONT, 8)
-    for i, line in enumerate([
-        (company.get("address") or "")[:80],
-        f"{company.get('city') or ''}  {company.get('phone') or ''}  {company.get('email') or ''}",
-    ]):
-        c.drawRightString(w - 18 * mm, h - (23 + i * 4) * mm, str(line))
-    y = h - 48 * mm
-    c.setFillColor(colors.HexColor("#0f172a"))
-    c.setFont(PDF_FONT_B, 9)
-    c.drawString(18 * mm, y, "MÜŞTERİ")
-    c.setFont(PDF_FONT, 9)
-    c.drawString(18 * mm, y - 6 * mm, str(q.get("contact_name") or "—"))
-    if q.get("title"):
-        c.setFillColor(colors.HexColor("#64748b"))
-        c.drawString(18 * mm, y - 12 * mm, str(q.get("title"))[:90])
-    y -= 24 * mm
-    c.setFillColor(colors.HexColor("#f1f5f9"))
-    c.rect(18 * mm, y - 2 * mm, w - 36 * mm, 8 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.HexColor("#334155"))
-    c.setFont(PDF_FONT_B, 8)
-    c.drawString(20 * mm, y, "Kalem")
-    c.drawString(118 * mm, y, "Miktar")
-    c.drawString(138 * mm, y, "Birim")
-    c.drawString(160 * mm, y, "KDV")
-    c.drawRightString(w - 20 * mm, y, "Tutar")
-    y -= 8 * mm
-    c.setFont(PDF_FONT, 9)
-    c.setFillColor(colors.black)
-    for it in list(q.get("items") or []):
-        if y < 40 * mm:
-            c.showPage()
-            y = h - 20 * mm
-            c.setFont(PDF_FONT, 9)
-        qty = float(it.get("quantity") or 0)
-        price = float(it.get("unit_price") or 0)
-        vat = float(it.get("vat_rate") or 0)
-        line_total = float(it.get("total") or qty * price * (1 + vat / 100))
-        c.drawString(20 * mm, y, str(it.get("name") or "Kalem")[:70])
-        c.drawString(118 * mm, y, f"{qty:g} {it.get('unit') or ''}")
-        c.drawString(138 * mm, y, _tl(price))
-        c.drawString(160 * mm, y, f"%{int(vat) if vat == int(vat) else vat}")
-        c.drawRightString(w - 20 * mm, y, _tl(line_total))
-        y -= 7 * mm
-    y -= 4 * mm
-    c.setStrokeColor(colors.HexColor("#e2e8f0"))
-    c.line(120 * mm, y + 3 * mm, w - 18 * mm, y + 3 * mm)
-    for label, val, bold in [
-        ("Ara Toplam", float(q.get("subtotal") or 0), False),
-        ("KDV", float(q.get("vat_total") or 0), False),
-        ("Genel Toplam", float(q.get("grand_total") or 0), True),
-    ]:
-        c.setFont(PDF_FONT_B if bold else PDF_FONT, 10 if bold else 9)
-        c.drawString(120 * mm, y, label)
-        c.drawRightString(w - 20 * mm, y, _tl(val))
+    left = 16 * mm
+    right = w - 16 * mm
+    muted = colors.HexColor("#64748b")
+    ink = colors.HexColor("#0f172a")
+
+    if is_bold:
+        c.setFillColor(color)
+        c.rect(0, 0, 4 * mm, h, fill=1, stroke=0)
+        left = 18 * mm
+
+    y = h - 14 * mm
+    if is_modern:
+        c.setFillColor(color)
+        c.rect(0, h - 38 * mm, w, 38 * mm, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+        c.setFont(PDF_FONT_B, 12)
+        c.drawString(left, h - 16 * mm, str(company.get("name") or ""))
+        c.setFont(PDF_FONT, 8)
+        c.drawString(left, h - 22 * mm, f"{company.get('address') or ''} {company.get('city') or ''}")
+        if tpl.get("show_tax_info") and (company.get("tax_office") or company.get("tax_number")):
+            c.drawString(left, h - 27 * mm, f"VD: {company.get('tax_office') or ''}  •  VKN: {company.get('tax_number') or ''}")
+        c.drawString(left, h - 32 * mm, "  •  ".join(x for x in [company.get("phone"), company.get("email")] if x))
+        c.setFont(PDF_FONT_B, 16)
+        c.drawRightString(right, h - 16 * mm, title)
+        c.setFont(PDF_FONT, 9)
+        c.drawRightString(right, h - 22 * mm, str(q.get("quote_number") or ""))
+        c.drawRightString(right, h - 27 * mm, f"Tarih: {q.get('issue_date') or ''}")
+        if q.get("valid_until"):
+            c.drawRightString(right, h - 32 * mm, f"Geçerlilik: {q.get('valid_until')}")
+        y = h - 48 * mm
+    else:
+        c.setFillColor(color)
+        c.setFont(PDF_FONT_B, 12)
+        c.drawString(left, y, str(company.get("name") or ""))
+        c.setFillColor(ink if is_bold else color)
+        c.setFont(PDF_FONT_B, 16 if is_bold else 15)
+        c.drawRightString(right, y, title)
+        y -= 5 * mm
+        c.setFillColor(muted)
+        c.setFont(PDF_FONT, 8)
+        c.drawString(left, y, f"{company.get('address') or ''} {company.get('city') or ''}")
+        c.setFillColor(ink)
+        c.setFont(PDF_FONT, 9)
+        c.drawRightString(right, y, str(q.get("quote_number") or ""))
+        y -= 4.5 * mm
+        if tpl.get("show_tax_info") and (company.get("tax_office") or company.get("tax_number")):
+            c.setFillColor(muted)
+            c.setFont(PDF_FONT, 8)
+            c.drawString(left, y, f"VD: {company.get('tax_office') or ''}  •  VKN: {company.get('tax_number') or ''}")
+        c.setFillColor(muted)
+        c.setFont(PDF_FONT, 8)
+        c.drawRightString(right, y, f"Tarih: {q.get('issue_date') or ''}")
+        y -= 4.5 * mm
+        contact_line = "  •  ".join(x for x in [company.get("phone"), company.get("email")] if x)
+        if contact_line:
+            c.drawString(left, y, contact_line)
+        if q.get("valid_until"):
+            c.drawRightString(right, y, f"Geçerlilik: {q.get('valid_until')}")
         y -= 6 * mm
+        c.setStrokeColor(ink if is_minimal else color)
+        c.setLineWidth(1.6 if is_minimal else 2.4)
+        c.line(left, y, right, y)
+        y -= 8 * mm
+
+    if tpl.get("header_note"):
+        c.setFillColor(muted)
+        c.setFont(PDF_FONT, 8)
+        c.drawString(left, y, str(tpl.get("header_note"))[:110])
+        y -= 6 * mm
+
+    c.setFillColor(colors.HexColor("#94a3b8"))
+    c.setFont(PDF_FONT_B, 7)
+    c.drawString(left, y, "SAYIN")
+    if q.get("title"):
+        c.drawRightString(right, y, "KONU")
+    y -= 5 * mm
+    c.setFillColor(ink)
+    c.setFont(PDF_FONT_B, 11)
+    c.drawString(left, y, str(q.get("contact_name") or "—"))
+    if q.get("title"):
+        c.setFont(PDF_FONT, 10)
+        c.drawRightString(right, y, str(q.get("title"))[:60])
+    y -= 10 * mm
+
+    heads = [("Açıklama", left, False)]
+    col_x = [left + 78 * mm, left + 102 * mm, left + 126 * mm, left + 140 * mm, left + 160 * mm, right]
+    if not hide_line:
+        heads += [("Miktar", col_x[0], True)]
+        if not hide_vat:
+            heads += [("Birim", col_x[1], True), ("KDV'li", col_x[2], True), ("KDV", col_x[3], True)]
+        heads += [("Hariç", col_x[4], True)]
+        if not hide_vat:
+            heads += [("Dahil", col_x[5], True)]
+    else:
+        heads += [("Miktar", right, True)]
+
+    th_h = 8 * mm
+    if is_minimal:
+        c.setStrokeColor(ink)
+        c.setLineWidth(1)
+        c.line(left, y - 2 * mm, right, y - 2 * mm)
+        c.setFillColor(ink)
+    else:
+        c.setFillColor(ink if is_bold else color)
+        c.rect(left, y - 3 * mm, right - left, th_h, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+    c.setFont(PDF_FONT_B, 7)
+    for label, x, right_align in heads:
+        (c.drawRightString if right_align else c.drawString)(x, y, label)
+    y -= 10 * mm
+
     c.setFont(PDF_FONT, 8)
-    c.setFillColor(colors.HexColor("#64748b"))
-    notes = (q.get("notes") or "")[:160]
-    if notes:
-        c.drawString(18 * mm, 28 * mm, f"Not: {notes}")
-    terms = (q.get("terms") or "")[:160]
-    if terms:
-        c.drawString(18 * mm, 23 * mm, f"Şartlar: {terms}")
-    c.drawString(18 * mm, 16 * mm, "Bu belge fiyat teklifidir; fatura yerine geçmez.")
+    for i, it in enumerate(list(q.get("items") or [])):
+        if y < 42 * mm:
+            c.showPage()
+            y = h - 18 * mm
+            c.setFont(PDF_FONT, 8)
+        qty = _fnum(it.get("quantity"))
+        vat = _fnum(it.get("vat_rate"), 20)
+        price = _fnum(it.get("unit_price"))
+        price_incl = _fnum(it.get("unit_price_incl"), price * (1 + vat / 100.0))
+        total = _fnum(it.get("total"), qty * price)
+        total_incl = _fnum(it.get("total_incl"), total * (1 + vat / 100.0))
+        if is_bold and i % 2:
+            c.setFillColor(colors.HexColor("#f8fafc"))
+            c.rect(left, y - 2 * mm, right - left, 7 * mm, fill=1, stroke=0)
+        c.setFillColor(ink)
+        c.setFont(PDF_FONT_B, 8)
+        c.drawString(left, y, str(it.get("name") or it.get("product_name") or "Kalem")[:48])
+        c.setFont(PDF_FONT, 8)
+        qty_label = f"{qty:g} {it.get('unit') or ''}".strip()
+        if hide_line:
+            c.drawRightString(right, y, qty_label)
+        else:
+            c.drawRightString(col_x[0], y, qty_label)
+            if not hide_vat:
+                c.drawRightString(col_x[1], y, _tl(price))
+                c.drawRightString(col_x[2], y, _tl(price_incl))
+                c.drawRightString(col_x[3], y, f"%{int(vat) if vat == int(vat) else vat}")
+            c.drawRightString(col_x[4], y, _tl(total))
+            if not hide_vat:
+                c.drawRightString(col_x[5], y, _tl(total_incl))
+        note = (it.get("note") or it.get("notes") or it.get("description") or "") if tpl.get("show_item_notes") is not False else ""
+        y -= 5 * mm
+        if note:
+            c.setFillColor(muted)
+            c.setFont(PDF_FONT, 7)
+            c.drawString(left, y, str(note)[:90])
+            y -= 4 * mm
+        c.setStrokeColor(colors.HexColor("#f1f5f9"))
+        c.setLineWidth(0.4)
+        c.line(left, y + 1 * mm, right, y + 1 * mm)
+        y -= 2 * mm
+
+    if not hide_all:
+        y -= 4 * mm
+        c.setStrokeColor(color)
+        c.setLineWidth(1.4)
+        c.line(w - 80 * mm, y + 6 * mm, right, y + 6 * mm)
+        rows = []
+        if not hide_vat:
+            rows.append(("Ara Toplam (KDV Hariç)", _fnum(q.get("subtotal")), False))
+            rows.append(("KDV", _fnum(q.get("vat_total")), False))
+        rows.append(("GENEL TOPLAM (KDV Dahil)" if not hide_vat else "TOPLAM", _fnum(q.get("grand_total")), True))
+        for label, val, bold in rows:
+            c.setFillColor(ink)
+            c.setFont(PDF_FONT_B if bold else PDF_FONT, 10 if bold else 8)
+            c.drawString(w - 80 * mm, y, label)
+            if bold:
+                c.setFillColor(color)
+            c.drawRightString(right, y, _tl(val))
+            y -= 6 * mm
+
+    y -= 4 * mm
+    c.setFillColor(muted)
+    c.setFont(PDF_FONT, 8)
+    if q.get("notes"):
+        c.drawString(left, y, str(q.get("notes"))[:140])
+        y -= 5 * mm
+    if q.get("terms"):
+        c.setFont(PDF_FONT_B, 8)
+        c.drawString(left, y, "Şartlar:")
+        c.setFont(PDF_FONT, 8)
+        c.drawString(left + 16 * mm, y, str(q.get("terms"))[:120])
+        y -= 5 * mm
+    if tpl.get("show_bank_info") and company.get("iban"):
+        c.setFillColor(colors.HexColor("#475569"))
+        c.drawString(left, y, f"Banka: {company.get('bank_name') or ''}  •  IBAN: {company.get('iban')}")
+        y -= 8 * mm
+
+    c.setFillColor(colors.HexColor("#94a3b8"))
+    c.setFont(PDF_FONT, 8)
+    c.drawString(left, 16 * mm, str(tpl.get("footer_note") or ""))
+    if tpl.get("show_signature"):
+        c.setStrokeColor(colors.HexColor("#cbd5e1"))
+        c.setLineWidth(0.8)
+        c.line(right - 40 * mm, 22 * mm, right, 22 * mm)
+        c.setFillColor(muted)
+        c.drawCentredString(right - 20 * mm, 17 * mm, "Kaşe / İmza")
+
     c.showPage()
     c.save()
     return buf.getvalue()
@@ -225,10 +415,12 @@ async def quote_pdf(quote_id: str, download: bool = Query(False)):
 
 # ---------------- Yenileme linki ----------------
 def make_renew_token(company_id: str, plan_id: Optional[str], days: int = 30) -> str:
+    from auth_utils import JWT_ALGORITHM, get_jwt_secret
     return jwt.encode({"cid": company_id, "pid": plan_id, "type": "renew", "exp": datetime.now(timezone.utc) + timedelta(days=days)}, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def _decode(token: str) -> Dict[str, Any]:
+    from auth_utils import JWT_ALGORITHM, get_jwt_secret
     try:
         p = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -246,6 +438,7 @@ async def renew_info(token: str):
     company = await _db.companies.find_one({"_id": p["cid"]})
     if not company:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    import saas
     lic = await saas.effective(p["cid"])
     plan = await _db.saas_plans.find_one({"_id": p.get("pid") or lic.get("plan_id")}) or await _db.saas_plans.find_one({"_id": "plan_standard"})
     plans = [saas._clean(x) for x in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
@@ -265,4 +458,5 @@ async def renew_checkout(token: str, req: Dict[str, Any], request: Request):
     if req.get("provider") == "paytr":
         import saas_extras
         return await saas_extras.paytr_session(body, request)
+    import saas_billing
     return await saas_billing.create_checkout(body, request)

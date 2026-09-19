@@ -62,7 +62,7 @@ export function QuoteActions({
       onPress: async () => {
         setBusy("print");
         try {
-          await printQuoteForm(quote, activeCompany);
+          await printQuoteForm(quote, activeCompany, client);
           onMessage?.("Teklif yazdırmaya gönderildi.");
         } catch (err) {
           onError?.(apiErrorMessage(err, "Yazdırılamadı."));
@@ -81,7 +81,7 @@ export function QuoteActions({
       onPress: async () => {
         setBusy("pdf");
         try {
-          const kind = await downloadQuotePdf(client, quote);
+          const kind = await downloadQuotePdf(client, quote, activeCompany);
           onMessage?.(kind === "file" ? "PDF indirildi." : "PDF için yazdır penceresinden kaydedin.");
         } catch (err) {
           onError?.(apiErrorMessage(err, "PDF indirilemedi."));
