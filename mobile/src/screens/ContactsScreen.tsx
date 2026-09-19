@@ -6,8 +6,8 @@ import { Chip } from "../components/chips";
 import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import type { Contact } from "../types";
-import { contactDisplayBalance } from "../utils/contactDisplay";
+import type { Contact, Invoice } from "../types";
+import { contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
 import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -15,6 +15,8 @@ export function ContactsScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/contacts", "edit");
   const [rows, setRows] = useState<Contact[]>([]);
+  const [openById, setOpenById] = useState<Record<string, number>>({});
+  const [flags, setFlags] = useState<Record<string, ContactBalanceFlag>>({});
   const [q, setQ] = useState("");
   const [typeF, setTypeF] = useState<ContactTypeFilter>("all");
   const [error, setError] = useState<string | null>(null);
@@ -23,8 +25,14 @@ export function ContactsScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const data = await get<Contact[]>(client, "/contacts", { company_id: companyId });
+      const [data, invoiceRows, flagRows] = await Promise.all([
+        get<Contact[]>(client, "/contacts", { company_id: companyId }),
+        get<Invoice[]>(client, "/invoices", { company_id: companyId }).catch(() => []),
+        get<Record<string, ContactBalanceFlag>>(client, "/contacts/flags", { company_id: companyId }).catch(() => ({})),
+      ]);
       setRows(data || []);
+      setOpenById(invoiceOpenByContact(invoiceRows || []));
+      setFlags(flagRows || {});
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Cariler yüklenemedi."));
@@ -50,16 +58,19 @@ export function ContactsScreen() {
       </Row>
       <ErrorBanner message={error} />
       {!filtered.length ? <Empty icon="people-outline" title="Cari bulunamadı" hint={canEdit ? "Yeni cari kartı ekleyin." : undefined} /> : filtered.map((c) => {
-        const bal = contactDisplayBalance(c);
+        const id = idOf(c);
+        const bal = contactDisplayBalance(c, { open_amount: openById[id] }, flags[id]);
         return (
           <ListRow
-            key={idOf(c)}
-            testID={`contact-row-${idOf(c)}`}
+            key={id}
+            testID={`contact-row-${id}`}
             title={c.name}
             subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
             right={fmtMoney(bal)}
-            rightSub={bal > 0 ? "Alacak" : bal < 0 ? "Borç" : undefined}
-            onPress={() => go("ContactDetail", { id: idOf(c), name: c.name })}
+            rightColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.text}
+            rightSub={bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Cari bakiye"}
+            rightSubColor={bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.muted}
+            onPress={() => go("ContactDetail", { id, name: c.name })}
           />
         );
       })}

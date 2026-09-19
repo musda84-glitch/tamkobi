@@ -1,4 +1,4 @@
-import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "./contactDisplay";
+import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
 import { fmtMoney } from "./money";
 
 describe("contactDisplay", () => {
@@ -78,13 +78,25 @@ describe("contactDisplay", () => {
     expect(balanceHint(-10).tone).toBe("red");
   });
 
-  it("prefers stored cari balance and falls back to open amount", () => {
+  it("prefers stored cari balance and falls back to open or overdue amount", () => {
     expect(contactDisplayBalance({ balance: 4460 }, { open_amount: 100 })).toBe(4460);
     expect(contactDisplayBalance({ balance: 0 })).toBe(0);
+    expect(contactDisplayBalance({ balance: 0 }, { open_amount: 1800 })).toBe(1800);
     expect(contactDisplayBalance({ balance: -250.5 })).toBe(-250.5);
     expect(contactDisplayBalance({}, { open_amount: 1800 })).toBe(1800);
+    expect(contactDisplayBalance({ open_amount: 320 })).toBe(320);
+    expect(contactDisplayBalance({ balance: 0 }, null, { overdue_amount: 90 })).toBe(90);
     expect(contactDisplayBalance(undefined, { open_amount: 50 })).toBe(50);
     expect(contactDisplayBalance(null, null)).toBe(0);
+  });
+
+  it("sums remaining sales invoices per contact", () => {
+    expect(invoiceOpenByContact([
+      { contact_id: "c1", invoice_type: "sales", status: "approved", grand_total: 1000, paid_amount: 200 },
+      { contact_id: "c1", invoice_type: "sales", status: "draft", grand_total: 500, paid_amount: 0 },
+      { contact_id: "c2", invoice_type: "purchase", status: "approved", grand_total: 800, paid_amount: 0 },
+      { contact_id: "c3", invoice_type: "sales", status: "cancelled", grand_total: 100, paid_amount: 0 },
+    ])).toEqual({ c1: 800 });
   });
 
   it("keeps non-zero summary figures", () => {
