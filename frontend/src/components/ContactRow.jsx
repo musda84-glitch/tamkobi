@@ -2,6 +2,7 @@
 import React from "react";
 import { Building, Phone, Mail, MapPin, Navigation, MessageSquare, ChevronRight, Pencil } from "lucide-react";
 import { mapsLink } from "./ContactLocationModal";
+import { resolveImageUrl } from "../utils/imageUrl";
 
 const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
@@ -11,7 +12,7 @@ export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStateme
   return (
     <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3" data-testid={`contact-card-${tid}`}>
       <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
-        <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-black text-sm ${contact.type === "customer" ? "bg-blue-50 text-blue-700" : contact.type === "supplier" ? "bg-amber-50 text-amber-700" : "bg-violet-50 text-violet-700"}`}>{contact.name?.slice(0, 2).toUpperCase()}</div>
+        <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-black text-sm overflow-hidden ${contact.type === "customer" ? "bg-blue-50 text-blue-700" : contact.type === "supplier" ? "bg-amber-50 text-amber-700" : "bg-violet-50 text-violet-700"}`}>{contact.logo_url ? <img src={resolveImageUrl(contact.logo_url)} alt="" className="w-full h-full object-contain bg-white" /> : (contact.name?.slice(0, 2).toUpperCase())}</div>
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <h3 className="text-sm font-bold text-slate-900 cursor-pointer hover:text-emerald-700 hover:underline truncate" onClick={onOpen} data-testid={`contact-name-${tid}`}>{contact.name}</h3>

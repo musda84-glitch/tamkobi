@@ -24,6 +24,7 @@ import { documentLineTotals, fmtMoney, hydrateLine } from "../utils/documentLine
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
+import { resolveImageUrl } from "../utils/imageUrl";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -190,7 +191,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
       <div className="bg-white w-full max-w-6xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
         <div className="px-6 py-4 border-b flex items-start justify-between gap-3">
-          <div>
+          <div className="flex items-start gap-3 min-w-0">
+            {c.logo_url ? <div className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden shrink-0" data-testid="detail-contact-logo"><img src={resolveImageUrl(c.logo_url)} alt="" className="w-full h-full object-contain" /></div> : null}
+            <div className="min-w-0">
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${c.type === "customer" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{c.type === "customer" ? "Müşteri" : c.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi"}</span>
             <h2 className="text-lg font-bold text-slate-900 mt-1">{c.name}</h2>
             <div className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1 mt-1">
@@ -198,6 +201,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {c.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {c.phone}</span>}
               {c.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {c.email}</span>}
               {mapsLink(c) && <a href={mapsLink(c)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold flex items-center gap-1 hover:underline"><Navigation className="w-3 h-3" /> Konum</a>}
+            </div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
