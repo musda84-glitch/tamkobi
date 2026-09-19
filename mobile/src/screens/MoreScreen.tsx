@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { useAuth } from "../auth/AuthContext";
-import { Card, H1, Muted, Screen } from "../components/kit";
+import { Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { isMoreLinkVisible } from "../utils/permissions";
@@ -29,10 +29,22 @@ export function MoreScreen() {
   const { user, license, activeCompany, logout } = useAuth();
   const links = LINKS.filter((l) => isMoreLinkVisible(l, user, license));
   return (
-    <Screen>
-      <H1>Daha fazla</H1>
-      <Muted>{user?.email} · {activeCompany?.name}</Muted>
-      <Card style={{ paddingVertical: 4, paddingHorizontal: 0, gap: 0 }}>
+    <Screen padded={false}>
+      <Text
+        style={{ fontSize: 11, color: colors.muted, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 }}
+        numberOfLines={1}
+      >
+        {[user?.email, activeCompany?.name].filter(Boolean).join(" · ")}
+      </Text>
+      <View
+        testID="more-menu-list"
+        style={{
+          backgroundColor: colors.surface,
+          borderTopWidth: 1,
+          borderBottomWidth: 1,
+          borderColor: colors.border,
+        }}
+      >
         {links.map((l, i) => (
           <Pressable
             key={l.screen}
@@ -41,23 +53,20 @@ export function MoreScreen() {
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 10,
-              minHeight: 44,
-              paddingHorizontal: 12,
+              minHeight: 40,
+              paddingHorizontal: 16,
               borderTopWidth: i ? 1 : 0,
-              borderTopColor: colors.border,
+              borderTopColor: colors.slate100,
             }}
           >
-            <Ionicons name={l.icon} size={18} color={colors.primary} />
-            <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 14 }}>{l.title}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            <Ionicons name={l.icon} size={16} color={colors.primary} style={{ width: 22 }} />
+            <Text style={{ flex: 1, fontWeight: "600", color: colors.text, fontSize: 14 }}>{l.title}</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.muted} />
           </Pressable>
         ))}
-      </Card>
-      <Pressable onPress={() => logout()} testID="logout-btn" style={{ marginTop: 12 }}>
-        <View style={{ minHeight: 44, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ fontWeight: "800", color: colors.danger }}>Çıkış yap</Text>
-        </View>
+      </View>
+      <Pressable onPress={() => logout()} testID="logout-btn" style={{ minHeight: 40, alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ fontWeight: "700", color: colors.danger, fontSize: 13 }}>Çıkış yap</Text>
       </Pressable>
     </Screen>
   );
