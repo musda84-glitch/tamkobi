@@ -1,6 +1,7 @@
 /** Frontend bundle identity vs the running API. */
 
 export const MESSAGE_MAX = 160;
+export const DEFAULT_VERSION = "2.0.0";
 
 export function cleanMessage(raw) {
   if (!raw) return null;
@@ -10,12 +11,24 @@ export function cleanMessage(raw) {
   return text;
 }
 
+export function appVersion(raw) {
+  const fromArg = (raw || "").trim();
+  if (fromArg) return fromArg;
+  return (process.env.REACT_APP_VERSION || "").trim() || DEFAULT_VERSION;
+}
+
+export function versionLabel(raw) {
+  const v = appVersion(raw);
+  return v.startsWith("v") ? v : `v${v}`;
+}
+
 export function frontendStamp() {
   const sha = (process.env.REACT_APP_GIT_SHA || "").trim();
   const branch = (process.env.REACT_APP_GIT_BRANCH || "").trim();
   const builtAt = (process.env.REACT_APP_BUILD_TIME || "").trim();
   const message = cleanMessage(process.env.REACT_APP_GIT_MESSAGE || "");
   return {
+    version: appVersion(),
     git_sha: sha || null,
     git_sha_short: sha ? sha.slice(0, 7) : null,
     git_branch: branch || null,
@@ -50,20 +63,22 @@ export function compareStamps(ui, api) {
 
 export function stampLabel(ui, api) {
   const cmp = compareStamps(ui, api);
+  const ver = versionLabel((api && api.version) || (ui && ui.version));
   const uiShort = shortSha(ui && ui.git_sha);
   const apiShort = shortSha(api && api.git_sha);
-  if (cmp.reason === "mismatch") return `arayüz ${uiShort} ≠ api ${apiShort}`;
-  if (cmp.reason === "missing") return "derleme bilgisi yok";
+  if (cmp.reason === "mismatch") return `${ver} · arayüz ${uiShort} ≠ api ${apiShort}`;
+  if (cmp.reason === "missing") return ver;
   if (cmp.reason === "partial") {
-    if (uiShort) return `arayüz ${uiShort}`;
-    return `api ${apiShort}`;
+    if (uiShort) return `${ver} · arayüz ${uiShort}`;
+    return `${ver} · api ${apiShort}`;
   }
-  const branch = (ui && ui.git_branch) || (api && api.git_branch) || "";
-  return branch ? `${uiShort} · ${branch}` : uiShort;
+  return uiShort ? `${ver} · ${uiShort}` : ver;
 }
 
 export function stampTitle(ui, api) {
+  const ver = versionLabel((api && api.version) || (ui && ui.version));
   const lines = [
+    `sürüm: ${ver}`,
     `arayüz: ${(ui && ui.git_sha) || "—"} (${(ui && ui.source) || "unknown"})`,
     `api: ${(api && api.git_sha) || "—"} (${(api && api.source) || "unknown"})`,
   ];
@@ -89,18 +104,19 @@ export function formatBuiltAt(iso) {
 }
 
 /**
- * Copy for the sidebar "Son güncelleme" card.
+ * Copy for the sidebar version card.
  * Prefers the live API stamp so a just-merged deploy shows up before the
  * cached JS bundle is refreshed.
  */
 export function updateCard(ui, api) {
   const cmp = compareStamps(ui, api);
+  const version = versionLabel((api && api.version) || (ui && ui.version));
   const sha = shortSha((api && api.git_sha) || (ui && ui.git_sha));
   const branch = ((api && api.git_branch) || (ui && ui.git_branch) || "").trim() || null;
   const message = cleanMessage((api && api.git_message) || (ui && ui.git_message) || "");
   const builtAt = formatBuiltAt((api && api.built_at) || (ui && ui.built_at));
   let statusKind = "muted";
-  let statusText = "Derleme bilgisi yok";
+  let statusText = null;
   if (cmp.reason === "match") {
     statusKind = "ok";
     statusText = "Sunucu bu sürümü çalıştırıyor";
@@ -111,5 +127,5 @@ export function updateCard(ui, api) {
     statusKind = "warn";
     statusText = ui && ui.git_sha ? "API sürüm bildirmedi" : "Arayüz sürüm bildirmedi";
   }
-  return { sha, branch, message, builtAt, statusKind, statusText, reason: cmp.reason };
+  return { version, sha, branch, message, builtAt, statusKind, statusText, reason: cmp.reason };
 }

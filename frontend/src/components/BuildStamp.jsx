@@ -68,7 +68,7 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
   const stamp = api || {};
   const cmp = compareStamps(ui, stamp);
   const colors = TONE[tone] || TONE.dark;
-  const warn = cmp.reason === "mismatch" || cmp.reason === "missing" || cmp.reason === "partial";
+  const warn = cmp.reason === "mismatch" || cmp.reason === "partial";
   if (layout === "sidebar") {
     const card = updateCard(ui, stamp);
     return (
@@ -79,27 +79,26 @@ export function BuildStamp({ tone = "dark", layout = "compact" }) {
         data-layout="sidebar"
       >
         <div className={`text-[9px] font-bold uppercase tracking-[0.14em] ${colors.label}`}>
-          Son güncelleme
+          Sürüm
         </div>
         {api === null ? (
           <div className={`text-[11px] font-mono ${colors.ok}`}>…</div>
         ) : (
           <>
-            <div className={`font-mono text-[11px] leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-sha">
-              {card.sha || "—"}
-              {card.branch ? ` · ${card.branch}` : ""}
+            <div className={`text-[13px] font-bold leading-tight ${warn ? colors.warn : colors.sha}`} data-testid="build-stamp-version">
+              {card.version}
             </div>
-            <div className={`text-[11px] leading-snug line-clamp-2 ${colors.msg}`} data-testid="build-stamp-message">
-              {card.message || "commit konusu yok"}
-            </div>
-            {card.builtAt ? (
-              <div className={`text-[10px] ${colors.meta}`} data-testid="build-stamp-built">
-                {card.builtAt}
+            {card.sha ? (
+              <div className={`font-mono text-[10px] leading-tight ${colors.meta}`} data-testid="build-stamp-sha">
+                {card.sha}
+                {card.builtAt ? ` · ${card.builtAt}` : card.branch ? ` · ${card.branch}` : ""}
               </div>
             ) : null}
-            <div className={`text-[10px] leading-snug ${warn ? colors.warn : colors.ok}`} data-testid="build-stamp-status">
-              {card.statusText}
-            </div>
+            {card.statusText ? (
+              <div className={`text-[10px] leading-snug ${warn ? colors.warn : colors.ok}`} data-testid="build-stamp-status">
+                {card.statusText}
+              </div>
+            ) : null}
             {cmp.reason === "mismatch" ? (
               <button
                 type="button"
