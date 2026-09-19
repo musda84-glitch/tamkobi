@@ -1,4 +1,4 @@
-import { productImage, stockBadge } from "./productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -17,6 +17,14 @@ describe("productDisplay", () => {
   it("hides the badge when stock is not tracked", () => {
     expect(stockBadge({ stock_quantity: 5, track_stock: false })).toBeNull();
     expect(stockBadge({ stock_quantity: 5, type: "service" })).toBeNull();
-    expect(stockBadge({})).toBeNull();
+  });
+
+  it("always surfaces quantity and barcode on list rows", () => {
+    expect(stockQtyLabel({})).toBe("0 Adet");
+    expect(stockQtyLabel({ stock_quantity: 12, unit: "Koli" })).toBe("12 Koli");
+    expect(stockQtyLabel({ type: "service" })).toBe("Takip yok");
+    expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
+    expect(stockBarcodeLabel({})).toBe("Barkod yok");
+    expect(stockBadge({})?.label).toBe("0 Adet");
   });
 });

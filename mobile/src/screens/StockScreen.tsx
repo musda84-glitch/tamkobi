@@ -13,7 +13,7 @@ import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { productImage, stockBadge } from "../utils/productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel } from "../utils/productDisplay";
 
 function ProductThumb({ uri }: { uri: string }) {
   const { client } = useAuth();
@@ -119,13 +119,13 @@ export function StockScreen() {
             title={p.name}
             subtitle={[
               p.sku || "SKU yok",
-              p.barcode ? `barkod ${p.barcode}` : "barkodsuz",
               productTypeTr(p.type),
+              fmtMoney(p.sale_price),
               p.is_active === false ? "Pasif" : "",
             ].filter(Boolean).join(" · ")}
-            right={fmtMoney(p.sale_price)}
-            rightSub={badge ? `stok ${badge.label}` : undefined}
-            rightSubColor={badge?.tone === "danger" ? colors.danger : badge?.tone === "warning" ? colors.warning : undefined}
+            right={stockQtyLabel(p)}
+            rightSub={stockBarcodeLabel(p)}
+            rightSubColor={badge?.tone === "danger" ? colors.danger : badge?.tone === "warning" ? colors.warning : colors.text}
             onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
           />
         );

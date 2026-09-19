@@ -8,16 +8,27 @@ export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "i
 
 export type StockBadge = { label: string; tone: "danger" | "warning" | "muted" };
 
+export function stockQtyLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
+  if (p.track_stock === false || p.type === "service") return "Takip yok";
+  const qty = Number(p.stock_quantity);
+  const n = Number.isFinite(qty) ? qty : 0;
+  return `${n.toLocaleString("tr-TR")} ${p.unit || "Adet"}`;
+}
+
+export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
+  const code = String(p.barcode || "").trim();
+  return code || "Barkod yok";
+}
+
 /** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. */
 export function stockBadge(p: Pick<Product, "stock_quantity" | "unit" | "min_stock_alert" | "track_stock" | "type">): StockBadge | null {
   if (p.track_stock === false || p.type === "service") return null;
-  if (p.stock_quantity == null) return null;
   const qty = Number(p.stock_quantity);
-  if (!Number.isFinite(qty)) return null;
+  const n = Number.isFinite(qty) ? qty : 0;
   const unit = p.unit || "Adet";
   const min = Number(p.min_stock_alert) || 0;
-  const label = `${qty.toLocaleString("tr-TR")} ${unit}`;
-  if (qty < 0) return { label, tone: "danger" };
-  if (min > 0 && qty <= min) return { label, tone: "warning" };
+  const label = `${n.toLocaleString("tr-TR")} ${unit}`;
+  if (n < 0) return { label, tone: "danger" };
+  if (min > 0 && n <= min) return { label, tone: "warning" };
   return { label, tone: "muted" };
 }
