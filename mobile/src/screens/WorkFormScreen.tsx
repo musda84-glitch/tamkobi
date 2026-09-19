@@ -10,6 +10,7 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
+import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
 import { coordText } from "../utils/geo";
@@ -371,6 +372,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       <Field label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       <PrimaryButton title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
+      {!isNew && kind === "quote" && quote ? (
+        <QuoteActions
+          quote={{ ...quote, title, contact_name: contactName, valid_until: validUntil, notes, items, grand_total: totals.grandTotal }}
+          contact={contacts.find((c) => idOf(c) === contactId) || null}
+          onReloaded={loadDoc}
+          onMessage={setMessage}
+          onError={setError}
+        />
+      ) : null}
 
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
         <PrimaryButton title="Teklife dönüştür" onPress={() => confirmAction("Teklif", "Keşif teklife dönüştürülsün mü?", convert)} color={colors.indigo} testID="survey-to-quote" />

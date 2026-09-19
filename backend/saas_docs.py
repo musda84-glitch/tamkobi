@@ -118,6 +118,111 @@ async def invoice_pdf(invoice_id: str, download: bool = Query(False)):
     return Response(build_invoice_pdf(inv, seller, buyer), media_type="application/pdf", headers={"Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"'})
 
 
+def _quote_pdf_filename(q: Dict[str, Any]) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(q.get("quote_number") or "teklif")).strip("._") or "teklif"
+    return f"{name}.pdf"
+
+
+def build_quote_pdf(q: Dict[str, Any], company: Dict[str, Any]) -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.rect(0, h - 36 * mm, w, 36 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont(PDF_FONT_B, 18)
+    c.drawString(18 * mm, h - 16 * mm, "FİYAT TEKLİFİ")
+    c.setFont(PDF_FONT, 9)
+    c.drawString(18 * mm, h - 23 * mm, f"{q.get('quote_number') or ''}    {q.get('issue_date') or ''}")
+    if q.get("valid_until"):
+        c.drawString(18 * mm, h - 28 * mm, f"Geçerlilik: {q.get('valid_until')}")
+    c.setFillColor(colors.HexColor("#34d399"))
+    c.setFont(PDF_FONT_B, 10)
+    c.drawRightString(w - 18 * mm, h - 16 * mm, company.get("name") or "")
+    c.setFillColor(colors.white)
+    c.setFont(PDF_FONT, 8)
+    for i, line in enumerate([
+        (company.get("address") or "")[:80],
+        f"{company.get('city') or ''}  {company.get('phone') or ''}  {company.get('email') or ''}",
+    ]):
+        c.drawRightString(w - 18 * mm, h - (23 + i * 4) * mm, str(line))
+    y = h - 48 * mm
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont(PDF_FONT_B, 9)
+    c.drawString(18 * mm, y, "MÜŞTERİ")
+    c.setFont(PDF_FONT, 9)
+    c.drawString(18 * mm, y - 6 * mm, str(q.get("contact_name") or "—"))
+    if q.get("title"):
+        c.setFillColor(colors.HexColor("#64748b"))
+        c.drawString(18 * mm, y - 12 * mm, str(q.get("title"))[:90])
+    y -= 24 * mm
+    c.setFillColor(colors.HexColor("#f1f5f9"))
+    c.rect(18 * mm, y - 2 * mm, w - 36 * mm, 8 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#334155"))
+    c.setFont(PDF_FONT_B, 8)
+    c.drawString(20 * mm, y, "Kalem")
+    c.drawString(118 * mm, y, "Miktar")
+    c.drawString(138 * mm, y, "Birim")
+    c.drawString(160 * mm, y, "KDV")
+    c.drawRightString(w - 20 * mm, y, "Tutar")
+    y -= 8 * mm
+    c.setFont(PDF_FONT, 9)
+    c.setFillColor(colors.black)
+    for it in list(q.get("items") or []):
+        if y < 40 * mm:
+            c.showPage()
+            y = h - 20 * mm
+            c.setFont(PDF_FONT, 9)
+        qty = float(it.get("quantity") or 0)
+        price = float(it.get("unit_price") or 0)
+        vat = float(it.get("vat_rate") or 0)
+        line_total = float(it.get("total") or qty * price * (1 + vat / 100))
+        c.drawString(20 * mm, y, str(it.get("name") or "Kalem")[:70])
+        c.drawString(118 * mm, y, f"{qty:g} {it.get('unit') or ''}")
+        c.drawString(138 * mm, y, _tl(price))
+        c.drawString(160 * mm, y, f"%{int(vat) if vat == int(vat) else vat}")
+        c.drawRightString(w - 20 * mm, y, _tl(line_total))
+        y -= 7 * mm
+    y -= 4 * mm
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.line(120 * mm, y + 3 * mm, w - 18 * mm, y + 3 * mm)
+    for label, val, bold in [
+        ("Ara Toplam", float(q.get("subtotal") or 0), False),
+        ("KDV", float(q.get("vat_total") or 0), False),
+        ("Genel Toplam", float(q.get("grand_total") or 0), True),
+    ]:
+        c.setFont(PDF_FONT_B if bold else PDF_FONT, 10 if bold else 9)
+        c.drawString(120 * mm, y, label)
+        c.drawRightString(w - 20 * mm, y, _tl(val))
+        y -= 6 * mm
+    c.setFont(PDF_FONT, 8)
+    c.setFillColor(colors.HexColor("#64748b"))
+    notes = (q.get("notes") or "")[:160]
+    if notes:
+        c.drawString(18 * mm, 28 * mm, f"Not: {notes}")
+    terms = (q.get("terms") or "")[:160]
+    if terms:
+        c.drawString(18 * mm, 23 * mm, f"Şartlar: {terms}")
+    c.drawString(18 * mm, 16 * mm, "Bu belge fiyat teklifidir; fatura yerine geçmez.")
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@router.get("/quotes/{quote_id}/pdf")
+async def quote_pdf(quote_id: str, download: bool = Query(False)):
+    q = await _db.quotes.find_one({"_id": quote_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    company = await _db.companies.find_one({"_id": q["company_id"]}) or {}
+    disp = "attachment" if download else "inline"
+    return Response(
+        build_quote_pdf(q, company),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'{disp}; filename="{_quote_pdf_filename(q)}"'},
+    )
+
+
 # ---------------- Yenileme linki ----------------
 def make_renew_token(company_id: str, plan_id: Optional[str], days: int = 30) -> str:
     return jwt.encode({"cid": company_id, "pid": plan_id, "type": "renew", "exp": datetime.now(timezone.utc) + timedelta(days=days)}, get_jwt_secret(), algorithm=JWT_ALGORITHM)
