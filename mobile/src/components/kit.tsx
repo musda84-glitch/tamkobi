@@ -125,6 +125,7 @@ export function ListRow({
   rightSub,
   rightSubColor,
   leading,
+  badge,
   onPress,
   testID,
 }: {
@@ -134,6 +135,7 @@ export function ListRow({
   rightSub?: string;
   rightSubColor?: string;
   leading?: React.ReactNode;
+  badge?: React.ReactNode;
   onPress?: () => void;
   testID?: string;
 }) {
@@ -144,10 +146,11 @@ export function ListRow({
         <Text style={styles.listTitle} numberOfLines={1}>{title}</Text>
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
+      {badge}
       {right || rightSub ? (
-        <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
-          {right ? <Text style={styles.listRight}>{right}</Text> : null}
-          {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]}>{rightSub}</Text> : null}
+        <View style={{ alignItems: "flex-end", marginLeft: 8, maxWidth: 140 }}>
+          {right ? <Text style={styles.listRight} numberOfLines={1}>{right}</Text> : null}
+          {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{rightSub}</Text> : null}
         </View>
       ) : null}
       {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}

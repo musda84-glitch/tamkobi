@@ -20,6 +20,21 @@ export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
   return code || "Barkod yok";
 }
 
+export function stockRowSubtitle(
+  p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active">,
+  typeLabel: string,
+  priceLabel: string,
+): string {
+  const barcode = String(p.barcode || "").trim();
+  return [
+    p.sku || "SKU yok",
+    barcode ? `Barkod ${barcode}` : "Barkod yok",
+    typeLabel,
+    priceLabel,
+    p.is_active === false ? "Pasif" : "",
+  ].filter(Boolean).join(" · ");
+}
+
 /** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. */
 export function stockBadge(p: Pick<Product, "stock_quantity" | "unit" | "min_stock_alert" | "track_stock" | "type">): StockBadge | null {
   if (p.track_stock === false || p.type === "service") return null;

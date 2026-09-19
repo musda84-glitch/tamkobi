@@ -7,13 +7,13 @@ import { fileUrl, get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
-import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { Badge, Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel } from "../utils/productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRowSubtitle } from "../utils/productDisplay";
 
 function ProductThumb({ uri }: { uri: string }) {
   const { client } = useAuth();
@@ -111,21 +111,17 @@ export function StockScreen() {
         <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Yeni stok kartı ekleyin veya aramayı değiştirin." : "Aramayı değiştirin veya barkod okutun."} />
       ) : filtered.map((p) => {
         const badge = stockBadge(p);
+        const qty = stockQtyLabel(p);
+        const qtyTone = badge?.tone === "danger" ? "red" : badge?.tone === "warning" ? "amber" : "green";
         return (
           <ListRow
             key={idOf(p)}
             testID={`stock-row-${idOf(p)}`}
             leading={<ProductThumb uri={productImage(p)} />}
             title={p.name}
-            subtitle={[
-              p.sku || "SKU yok",
-              productTypeTr(p.type),
-              fmtMoney(p.sale_price),
-              p.is_active === false ? "Pasif" : "",
-            ].filter(Boolean).join(" · ")}
-            right={stockQtyLabel(p)}
-            rightSub={stockBarcodeLabel(p)}
-            rightSubColor={badge?.tone === "danger" ? colors.danger : badge?.tone === "warning" ? colors.warning : colors.text}
+            subtitle={stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}
+            right={stockBarcodeLabel(p)}
+            badge={<Badge label={qty} tone={qtyTone} />}
             onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
           />
         );
