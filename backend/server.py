@@ -1164,7 +1164,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
     base = (req.get("base_url") or "").rstrip("/")
     link = f"{base}/teklif/{token}"
     total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
+    message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
     if link not in message:
         message = f"{message}\n{link}"
     results: Dict[str, Any] = {}
