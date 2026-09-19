@@ -42,6 +42,15 @@ def unit_excl_from_incl(incl: float, vat_rate: float) -> float:
     return incl / factor
 
 
+def quote_line_price_mode(item: Mapping[str, Any], requested: str = "excl") -> str:
+    """KDV dahil stok fiyatı satırda brüt duruyorsa (unit_price_incl yok) incl say."""
+    includes = bool(item.get("price_includes_vat"))
+    has_incl = item.get("unit_price_incl") not in (None, "")
+    if includes and not has_incl:
+        return "incl"
+    return (requested or "excl").lower()
+
+
 def enrich_line(
     item: MutableMapping[str, Any],
     price_mode: str = "excl",
@@ -102,7 +111,8 @@ def enrich_items(
 ) -> List[MutableMapping[str, Any]]:
     out = []
     for it in items:
-        out.append(enrich_line(it, price_mode=price_mode, default_vat=default_vat))
+        mode = quote_line_price_mode(it, price_mode)
+        out.append(enrich_line(it, price_mode=mode, default_vat=default_vat))
     return out
 
 

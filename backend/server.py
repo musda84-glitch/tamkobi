@@ -1146,6 +1146,10 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
     q = await db.quotes.find_one({"_id": quote_id})
     if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    items = q.get("items") or []
+    await _fill_stock_codes(q["company_id"], items)
+    subtotal, vat_total, grand_total = _calc_items(items)
+    q["items"], q["subtotal"], q["vat_total"], q["grand_total"] = items, subtotal, vat_total, grand_total
     channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
     if not channels:
         raise HTTPException(status_code=400, detail="En az bir kanal seçin (SMS / E-posta / WhatsApp).")
@@ -1197,7 +1201,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
                 results["whatsapp"] = {"status": "failed", "detail": e.detail}
     now = datetime.now(timezone.utc).isoformat()
     approval.update({"token": token, "link": link, "status": approval.get("status") if approval.get("status") in ("accepted", "rejected") else "pending", "sent_at": now, "channels": channels, "results": results, "sent_count": approval.get("sent_count", 0) + 1})
-    upd = {"approval": approval}
+    upd = {"approval": approval, "items": items, "subtotal": subtotal, "vat_total": vat_total, "grand_total": grand_total}
     if q.get("status") == "draft":
         upd["status"] = "sent"
     await db.quotes.update_one({"_id": quote_id}, {"$set": upd})
@@ -1219,7 +1223,20 @@ async def public_quote(token: str):
     if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
     company = await db.companies.find_one({"_id": q["company_id"]}) or {}
-    await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"approval.view_count": 1}})
+    items = q.get("items") or []
+    await _fill_stock_codes(q["company_id"], items)
+    subtotal, vat_total, grand_total = _calc_items(items)
+    q["items"], q["subtotal"], q["vat_total"], q["grand_total"] = items, subtotal, vat_total, grand_total
+    await db.quotes.update_one(
+        {"_id": q["_id"]},
+        {"$set": {
+            "approval.last_viewed_at": datetime.now(timezone.utc).isoformat(),
+            "items": items,
+            "subtotal": subtotal,
+            "vat_total": vat_total,
+            "grand_total": grand_total,
+        }, "$inc": {"approval.view_count": 1}},
+    )
     return _public_quote_view(q, company)
 
 @api_router.post("/public/quotes/{token}/respond")
@@ -4372,6 +4389,8 @@ async def _fill_stock_codes(company_id: str, items: list):
             _line_set(it, "sku", src.get("sku") or p.get("sku") or "")
         if not barcode:
             _line_set(it, "barcode", src.get("barcode") or p.get("barcode") or "")
+        if _line_get(it, "price_includes_vat", None) is None and p.get("price_includes_vat"):
+            _line_set(it, "price_includes_vat", True)
     return items
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------

@@ -7,11 +7,30 @@ import {
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
+  workItemFromProduct,
+  workItemLineGross,
   workItemTotals,
+  hydrateWorkItem,
   itemStripe,
 } from "./workDocs";
 
 describe("workDocs", () => {
+  it("does not add VAT again when stock price already includes it", () => {
+    const t = workItemTotals([
+      { name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true },
+    ]);
+    expect(t.subtotal).toBe(100);
+    expect(t.vat).toBe(20);
+    expect(t.grandTotal).toBe(120);
+    expect(workItemLineGross({ name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true })).toBe(120);
+    const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true });
+    expect(fromCard.price_includes_vat).toBe(true);
+    expect(workItemTotals([fromCard]).grandTotal).toBe(120);
+    const saved = hydrateWorkItem({ name: "Koltuk", quantity: 1, unit_price: 100, unit_price_incl: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true });
+    expect(saved.price_includes_vat).toBe(false);
+    expect(workItemTotals([saved]).grandTotal).toBe(120);
+  });
+
   it("totals quote lines with VAT", () => {
     const t = workItemTotals([
       { name: "Kapı", quantity: 2, unit_price: 100, vat_rate: 20, unit: "Adet" },

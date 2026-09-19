@@ -35,6 +35,7 @@ import {
   QUOTE_STATUSES,
   SURVEY_STATUSES,
   emptyItem,
+  hydrateWorkItem,
   namedItems,
   newButtonLabel,
   projectPayload,
@@ -43,6 +44,7 @@ import {
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
+  workItemFromProduct,
   workItemTotals,
   itemStripe,
   type ProjectDoc,
@@ -180,7 +182,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     latitude: location.lat,
     longitude: location.lng,
   };
-  const totals = workItemTotals(items);
+  const pricedItems = items.map((it) => hydrateWorkItem(it, products.find((p) => idOf(p) === it.product_id)));
+  const totals = workItemTotals(pricedItems);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
   const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
   const statuses = kind === "quote" ? QUOTE_STATUSES : kind === "project" ? PROJECT_STATUSES : SURVEY_STATUSES;
@@ -203,10 +206,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     try {
       if (kind === "quote") {
         if (isNew) {
-          const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, items));
+          const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, pricedItems));
           router.replace({ pathname: "/quotes/[id]", params: { id: idOf(created) } });
         } else {
-          await put(client, `/quotes/${docId}`, quoteUpdateBody(form, items));
+          await put(client, `/quotes/${docId}`, quoteUpdateBody(form, pricedItems));
           if (status !== (quote?.status || "draft")) await put(client, `/quotes/${docId}`, { status });
           setMessage("Teklif güncellendi.");
           await loadDoc();
@@ -395,7 +398,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               onPress={() => {
                 setItems((rows) => {
                   const emptyIdx = rows.findIndex((it) => !it.name);
-                  const line = { ...emptyItem(), product_id: idOf(p), name: p.name, unit_price: Number(p.sale_price) || 0, vat_rate: Number(p.vat_rate) || 20, unit: p.unit || "Adet" };
+                  const line = workItemFromProduct(p);
                   if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
                   return [...rows, line];
                 });
