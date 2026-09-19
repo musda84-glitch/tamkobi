@@ -4,6 +4,7 @@ export type SessionUser = {
   role?: string;
   permissions?: Record<string, PermissionLevel>;
   features?: Record<string, boolean>;
+  employee_id?: string | null;
 } | null;
 
 export type License = {
@@ -19,6 +20,11 @@ export function permPath(path: string): string {
 
 function permissionLevel(user: SessionUser, path: string): PermissionLevel | undefined {
   return user?.permissions?.[permPath(path)];
+}
+
+/** Kullanıcıya bağlı çalışan kartı var mı (Mesaim / Benim Sayfam). */
+export function hasSelfPersonnelRecord(user: SessionUser): boolean {
+  return Boolean(user?.employee_id);
 }
 
 /** Personel & Bordro İK ekranı: anahtar yoksa veya none ise kapalı (Mesaim/Personelim yetmez). */
@@ -46,10 +52,21 @@ export function moduleOn(license: License, path: string): boolean {
   return license.modules[key] !== false;
 }
 
+/** Personel kaydı yoksa tab çubuğunda Kasa & Banka / Cariler; varsa Mesaim / Benim Sayfam. */
+export function showSelfPersonnelTabs(user: SessionUser, license: License): boolean {
+  return hasSelfPersonnelRecord(user) && can(user, "/mesai") && moduleOn(license, "/mesai");
+}
+
+export function showFinanceSubstituteTabs(user: SessionUser): boolean {
+  return !hasSelfPersonnelRecord(user);
+}
+
 /** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
   if (link.path === "/" || link.path === "/settings") return true;
   if (link.path === "/personnel") return hasPersonnelAccess(user) && moduleOn(license, link.path);
+  if (link.path === "/personelim" && !hasSelfPersonnelRecord(user)) return false;
+  if ((link.path === "/banking" || link.path === "/contacts") && showFinanceSubstituteTabs(user)) return false;
   return can(user, link.path) && moduleOn(license, link.path);
 }
 

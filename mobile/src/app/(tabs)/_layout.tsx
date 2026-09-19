@@ -2,6 +2,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
+import { showFinanceSubstituteTabs, showSelfPersonnelTabs } from "@/utils/permissions";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { Text } from "react-native";
@@ -11,8 +12,10 @@ function tabIconColor(color: unknown): string {
 }
 
 export default function TabsLayout() {
-  const { can, moduleOn, user, activeCompany } = useAuth();
+  const { can, moduleOn, user, activeCompany, license } = useAuth();
   const show = (path: string) => can(path) && moduleOn(path);
+  const selfTabs = showSelfPersonnelTabs(user, license);
+  const financeTabs = showFinanceSubstituteTabs(user);
   return (
     <Tabs
       screenOptions={{
@@ -54,7 +57,7 @@ export default function TabsLayout() {
         name="mesai"
         options={{
           title: "Mesaim",
-          href: show("/mesai") ? undefined : null,
+          href: selfTabs ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="time" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -65,8 +68,27 @@ export default function TabsLayout() {
           tabBarLabel: ({ color }) => (
             <Text style={{ color, fontSize: 9, fontWeight: "700", textAlign: "center" }}>Benim Sayfam</Text>
           ),
-          href: show("/personelim") ? undefined : null,
+          href: selfTabs && show("/personelim") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="kasa"
+        options={{
+          title: "Kasa & Banka",
+          tabBarLabel: ({ color }) => (
+            <Text style={{ color, fontSize: 9, fontWeight: "700", textAlign: "center" }}>Kasa & Banka</Text>
+          ),
+          href: financeTabs && show("/banking") ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="wallet" color={tabIconColor(color)} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="cariler"
+        options={{
+          title: "Cariler",
+          href: financeTabs && show("/contacts") ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="people" color={tabIconColor(color)} size={size} />,
         }}
       />
       <Tabs.Screen

@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { go } from "../nav";
 import { colors, radius } from "../theme";
 import { idOf } from "../utils/money";
+import { hasSelfPersonnelRecord } from "../utils/permissions";
 import { confirmAction } from "./chips";
 
 type MenuItem = {
@@ -47,7 +48,7 @@ export function AccountMenu() {
   const close = () => setOpen(false);
 
   const items: MenuItem[] = [
-    ...(can("/personelim") && moduleOn("/personelim")
+    ...(hasSelfPersonnelRecord(user) && can("/personelim") && moduleOn("/personelim")
       ? [{ key: "personelim", label: "Benim Sayfam", icon: "person-circle" as const, onPress: () => go("Personelim") }]
       : []),
     { key: "notifications", label: "Bildirimler", icon: "notifications", onPress: () => go("Notifications") },

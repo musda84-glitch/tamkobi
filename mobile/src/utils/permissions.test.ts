@@ -1,4 +1,4 @@
-import { can, isMoreLinkVisible, moduleOn, visibleModules } from "./permissions";
+import { can, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -47,5 +47,23 @@ describe("permissions", () => {
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, mesaiOnly)).toBe(false);
     expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, { modules: { "/personnel": true } })).toBe(true);
     expect(isMoreLinkVisible({ path: "/settings" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
+  });
+
+  it("swaps Mesaim/Benim Sayfam for Kasa/Cariler when there is no employee record", () => {
+    const owner = { role: "admin" };
+    const staff = { role: "sales", employee_id: "emp_1", permissions: { "/mesai": "view", "/contacts": "edit", "/banking": "view" } };
+    expect(hasSelfPersonnelRecord(owner)).toBe(false);
+    expect(showFinanceSubstituteTabs(owner)).toBe(true);
+    expect(showSelfPersonnelTabs(owner, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/personelim" }, owner, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/banking" }, owner, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/contacts" }, owner, null)).toBe(false);
+
+    expect(hasSelfPersonnelRecord(staff)).toBe(true);
+    expect(showSelfPersonnelTabs(staff, null)).toBe(true);
+    expect(showFinanceSubstituteTabs(staff)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/personelim" }, staff, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/banking" }, staff, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/contacts" }, staff, null)).toBe(true);
   });
 });

@@ -311,6 +311,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", path="/")
 
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
+    emp = await attendance.employee_for_user(user)
 
     applog.log_auth(
         "login_success", f"{email} signed in",
@@ -331,6 +332,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
+            "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
         },
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
@@ -1764,6 +1766,7 @@ async def get_me(request: Request):
     user_id = str(user.get("_id", user.get("id")))
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
     role_doc = await rbac.role_for(user)
+    emp = await attendance.employee_for_user(user)
     return {
         "user": {
             "id": user_id,
@@ -1775,6 +1778,7 @@ async def get_me(request: Request):
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
+            "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
         },
         "authenticated": True,
         "impersonation": saas_extras.impersonation_info(request),

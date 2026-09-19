@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useAuth } from "../auth/AuthContext";
 import { Card, H1, Muted, Screen } from "../components/kit";
 import { go } from "../nav";
@@ -27,22 +27,37 @@ const LINKS = [
 
 export function MoreScreen() {
   const { user, license, activeCompany, logout } = useAuth();
+  const links = LINKS.filter((l) => isMoreLinkVisible(l, user, license));
   return (
     <Screen>
       <H1>Daha fazla</H1>
       <Muted>{user?.email} · {activeCompany?.name}</Muted>
-      {LINKS.filter((l) => isMoreLinkVisible(l, user, license)).map((l) => (
-        <Pressable key={l.screen} onPress={() => go(l.screen)} testID={`more-link-${l.screen}`} style={{ marginTop: 8 }}>
-          <Card>
-            <Ionicons name={l.icon} size={20} color={colors.primary} />
-            <Text style={{ fontWeight: "800", color: colors.text, marginTop: 4 }}>{l.title}</Text>
-          </Card>
-        </Pressable>
-      ))}
-      <Pressable onPress={() => logout()} testID="logout-btn" style={{ marginTop: 16 }}>
-        <Card>
+      <Card style={{ paddingVertical: 4, paddingHorizontal: 0, gap: 0 }}>
+        {links.map((l, i) => (
+          <Pressable
+            key={l.screen}
+            onPress={() => go(l.screen)}
+            testID={`more-link-${l.screen}`}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              minHeight: 44,
+              paddingHorizontal: 12,
+              borderTopWidth: i ? 1 : 0,
+              borderTopColor: colors.border,
+            }}
+          >
+            <Ionicons name={l.icon} size={18} color={colors.primary} />
+            <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 14 }}>{l.title}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+          </Pressable>
+        ))}
+      </Card>
+      <Pressable onPress={() => logout()} testID="logout-btn" style={{ marginTop: 12 }}>
+        <View style={{ minHeight: 44, alignItems: "center", justifyContent: "center" }}>
           <Text style={{ fontWeight: "800", color: colors.danger }}>Çıkış yap</Text>
-        </Card>
+        </View>
       </Pressable>
     </Screen>
   );
