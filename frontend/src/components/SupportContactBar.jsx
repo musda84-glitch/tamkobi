@@ -29,11 +29,9 @@ export const SupportContactBar = ({ companyId }) => {
       <GlobalSearch companyId={companyId} className="min-w-[12rem] sm:min-w-[16rem]" />
       {showSupport && (
         <div className="ml-auto flex flex-wrap items-center gap-2 shrink-0" data-testid="support-contact-actions">
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5" data-testid="support-contact-label">
             <Headset className="w-3.5 h-3.5 text-amber-600" />
             <b>Destek</b>
-            {hasContact && s.email ? ` · ${s.email}` : ""}
-            {hasContact && s.phone ? ` · ${s.phone}` : ""}
           </span>
           {tickets ? (
             <Link to="/support" className="px-3 py-1 bg-amber-400 text-slate-900 rounded-lg font-bold" data-testid="support-contact-link">Talep oluştur</Link>
