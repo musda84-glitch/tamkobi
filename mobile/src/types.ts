@@ -219,6 +219,9 @@ export type Notification = {
   link?: string | null;
   ref_type?: string | null;
   ref_id?: string | null;
+  roles?: string[] | null;
+  user_id?: string | null;
+  employee_id?: string | null;
 };
 
 export type SessionKind = "erp" | "b2b";

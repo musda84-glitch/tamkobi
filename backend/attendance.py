@@ -571,6 +571,17 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
     msg = f"{emp['full_name']} için {date} tarihine {hours} sa fazla mesai atandı (beklenen çıkış {rec.get('expected_end')})."
     if hours == 0:
         msg = f"{emp['full_name']} için {date} fazla mesai ataması kaldırıldı."
+    else:
+        import notify as _notify
+        await _db.notifications.insert_one(_notify.notification_doc(
+            emp["company_id"], "overtime_assigned",
+            f"+ Mesai yazıldı: {emp.get('full_name')}",
+            msg,
+            link="/mesai",
+            user_id=emp.get("user_id"),
+            employee_id=emp.get("_id"),
+            roles=[],
+        ))
     return {"status": "success", "record": rec, "message": msg}
 
 
@@ -624,13 +635,15 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
         if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}"}):
             return {"status": "duplicate"}
         await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
-    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "type": ntype, "title": title, "message": message, "link": link, "is_read": False, "created_at": _now()})
+    import notify as _notify
+    roles = _notify.roles_for_type(ntype)
+    await _db.notifications.insert_one(_notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
     mail = {"status": "skipped"}
     if _mail_account_fn and _smtp_send_fn:
         try:
             a = await _mail_account_fn(company_id)
-            admins = await _db.users.find({"role": "admin", "email": {"$exists": True, "$ne": ""}}).to_list(20)
-            to = sorted({u["email"] for u in admins if u.get("email")}) or [a["email"]]
+            holders = await _notify.users_with_roles(_db, company_id, roles or ("admin",))
+            to = sorted({u["email"] for u in holders if u.get("email")}) or [a["email"]]
             await _smtp_send_fn(a, to, f"[TamKobi] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
             mail = {"status": "sent", "to": to}
         except HTTPException as e:

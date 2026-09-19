@@ -10,7 +10,7 @@ import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
-import { latestNotifications, notificationRoute, unreadCount } from "../utils/notifications";
+import { latestNotifications, notificationRoute, unreadCount, visibleNotifications } from "../utils/notifications";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
@@ -48,7 +48,7 @@ export function HomeScreen() {
         get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
       ]);
       setOverview(ov);
-      setNotes(list || []);
+      setNotes(visibleNotifications(list || [], user));
       setStats(st);
       setError(null);
     } catch (err) {
@@ -56,7 +56,7 @@ export function HomeScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId]);
+  }, [client, companyId, user]);
 
   useEffect(() => { load(); }, [load]);
 

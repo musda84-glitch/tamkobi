@@ -1244,11 +1244,17 @@ async def public_quote_respond(token: str, req: Dict[str, Any], request: Request
     return {"status": "success", "message": "Teşekkürler, teklifi onayladınız. Firmamız en kısa sürede sizinle iletişime geçecek." if decision == "accepted" else "Geri bildiriminiz için teşekkürler. Teklif reddedildi olarak kaydedildi.", "quote": _public_quote_view({**q, "approval": ap, "status": decision}, company)}
 
 @api_router.get("/notifications")
-async def list_notifications(company_id: Optional[str] = "comp_nexus_main_01", unread_only: bool = False):
+async def list_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01", unread_only: bool = False):
     query: Dict[str, Any] = {"company_id": company_id}
     if unread_only:
         query["is_read"] = False
-    return clean_docs(await db.notifications.find(query).sort("created_at", -1).to_list(50))
+    rows = await db.notifications.find(query).sort("created_at", -1).to_list(80)
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    import notify as _notify
+    return clean_docs(_notify.filter_notifications(rows, user))
 
 @api_router.post("/notifications/{notif_id}/read")
 async def read_notification(notif_id: str):
@@ -1414,11 +1420,16 @@ async def create_project(req: Dict[str, Any]):
 
 @api_router.put("/projects/{project_id}")
 async def update_project(project_id: str, req: Dict[str, Any]):
+    prev = await db.projects.find_one({"_id": project_id})
+    if not prev:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "tasks", "latitude", "longitude", "location_url"}}
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
     p = await db.projects.find_one({"_id": project_id})
     if not p:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    if "tasks" in allowed:
+        await _notify_new_task_assignees(p, prev.get("tasks") or [])
     return clean_doc(p)
 
 @api_router.post("/projects/{project_id}/invoice")
@@ -2883,10 +2894,43 @@ async def _b2b_owned_order(token: str, order_id: str) -> tuple:
     return c, o
 
 async def _notify_company(company_id: str, typ: str, title: str, message: str, ref_id: str):
-    await db.notifications.insert_one({
-        "_id": str(uuid.uuid4()), "company_id": company_id, "type": typ, "title": title, "message": message,
-        "ref_type": "order", "ref_id": ref_id, "is_read": False, "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    import notify as _notify
+    await db.notifications.insert_one(_notify.notification_doc(
+        company_id, typ, title, message, ref_type="order", ref_id=ref_id,
+    ))
+
+
+async def _notify_new_task_assignees(project: Dict[str, Any], previous_tasks: List[Any]):
+    import notify as _notify
+    old_by_id = {}
+    for t in previous_tasks or []:
+        if isinstance(t, dict) and t.get("id"):
+            old_by_id[str(t["id"])] = str(t.get("assignee_id") or "")
+    seen = set()
+    for t in project.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        emp_id = str(t.get("assignee_id") or "")
+        if not emp_id or emp_id in seen:
+            continue
+        prev_assignee = old_by_id.get(str(t.get("id") or ""), "")
+        if prev_assignee == emp_id:
+            continue
+        seen.add(emp_id)
+        emp = await db.employees.find_one({"_id": emp_id}) or {}
+        title = (t.get("title") or t.get("name") or "Görev").strip()
+        await db.notifications.insert_one(_notify.notification_doc(
+            project.get("company_id"), "task_assigned",
+            f"Göreve atandı: {title}",
+            f"{emp.get('full_name') or t.get('assignee_name') or 'Personel'} · {project.get('name') or 'Proje'}"
+            + (f" · {project.get('project_number')}" if project.get("project_number") else ""),
+            link="/personelim",
+            user_id=emp.get("user_id"),
+            employee_id=emp_id,
+            roles=[],
+            ref_type="project",
+            ref_id=project.get("_id") or project.get("id"),
+        ))
 
 @api_router.get("/public/b2b/{token}")
 async def b2b_portal(token: str):
@@ -9532,6 +9576,22 @@ async def delete_file_record(file_id: str):
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     return {"status": "success"}
 
+async def _notify_role_assigned(company_id: str, emp: Dict[str, Any], role: str, user_id: Optional[str]):
+    import notify as _notify
+    name = (emp or {}).get("full_name") or (emp or {}).get("name") or "Personel"
+    label = _notify.role_label(role)
+    await db.notifications.insert_one(_notify.notification_doc(
+        company_id, "role_assigned",
+        f"Rol atandı: {label}",
+        f"{name} kullanıcısına {label} rolü verildi.",
+        link="/personnel",
+        user_id=user_id or (emp or {}).get("user_id"),
+        employee_id=(emp or {}).get("_id") or (emp or {}).get("id"),
+        ref_type="employee",
+        ref_id=(emp or {}).get("_id") or (emp or {}).get("id"),
+    ))
+
+
 @api_router.post("/personnel/employees/{emp_id}/create-user")
 async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Request):
     emp = await db.employees.find_one({"_id": emp_id})
@@ -9555,6 +9615,7 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
         await db.users.insert_one({"_id": user_id, "email": email, "password_hash": hash_password(req["password"]), "name": emp["full_name"], "role": role, "company_ids": [emp["company_id"]], "active_company_id": emp["company_id"],
                                    "is_active": True, "employee_id": emp_id, "phone": emp.get("phone"), "preferences": {}, "user_number": await user_numbers.next_user_number(db), "created_at": datetime.now(timezone.utc).isoformat()})
         await db.employees.update_one({"_id": emp_id}, {"$set": {"user_id": user_id, "email": email}})
+        await _notify_role_assigned(emp["company_id"], emp, role, user_id)
         return {"status": "success", "mode": "password", "user_id": user_id, "message": f"{emp['full_name']} için sistem kullanıcısı oluşturuldu ({email})."}
     inv = await rbac.invite_user({"company_id": emp["company_id"], "email": email, "name": emp["full_name"], "role": role, "employee_id": emp_id, "base_url": req.get("base_url"), "invited_by": req.get("invited_by")}, request)
     await db.employees.update_one({"_id": emp_id}, {"$set": {"email": email}})

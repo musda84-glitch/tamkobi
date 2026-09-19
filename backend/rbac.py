@@ -244,6 +244,24 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         return response
 
 
+async def _notify_role_assigned(company_id: Optional[str], emp: Dict[str, Any], role: str, user_id: Optional[str]):
+    if not company_id:
+        return
+    import notify as _notify
+    name = emp.get("full_name") or emp.get("name") or "Personel"
+    label = _notify.role_label(role)
+    await _db.notifications.insert_one(_notify.notification_doc(
+        company_id, "role_assigned",
+        f"Rol atandı: {label}",
+        f"{name} kullanıcısına {label} rolü verildi.",
+        link="/personnel",
+        user_id=user_id or emp.get("user_id"),
+        employee_id=emp.get("_id") or emp.get("id") or emp.get("employee_id"),
+        ref_type="employee",
+        ref_id=emp.get("_id") or emp.get("id") or emp.get("employee_id"),
+    ))
+
+
 # ---------------- Roles ----------------
 @router.get("/roles")
 async def list_roles(company_id: str = "comp_nexus_main_01"):
@@ -350,6 +368,12 @@ async def update_user(user_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
         upd["password_hash"] = hash_password(req["password"])
     await _db.users.update_one({"_id": user_id}, {"$set": {**upd, "updated_at": _now()}})
+    if "role" in upd and upd["role"] != u.get("role"):
+        await _notify_role_assigned(u.get("active_company_id") or (u.get("company_ids") or [None])[0], {
+            "full_name": upd.get("name") or u.get("name"),
+            "_id": u.get("employee_id"),
+            "user_id": user_id,
+        }, upd["role"], user_id)
     return _clean(await _db.users.find_one({"_id": user_id}))
 
 
@@ -383,6 +407,7 @@ async def create_company_user(req: Dict[str, Any]):
     await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})
     if req.get("employee_id"):
         await _db.employees.update_one({"_id": req["employee_id"]}, {"$set": {"user_id": user_id, "email": email}})
+    await _notify_role_assigned(company_id, {"full_name": name, "_id": req.get("employee_id"), "user_id": user_id}, role, user_id)
     names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
     out = _clean(dict(doc))
     return {**out, "role_name": names.get(role, role), "is_active": True, "message": f"{name} eklendi. {email} ile giriş yapabilir."}
@@ -435,6 +460,7 @@ async def invite_user(req: Dict[str, Any], request: Request):
     except Exception as e:
         mail = {"status": "failed", "detail": f"SMTP hatası: {str(e)[:120]}"}
     await _db.user_invites.update_one({"_id": token}, {"$set": {"mail": mail}})
+    await _notify_role_assigned(company_id, {"full_name": doc.get("name") or email, "_id": req.get("employee_id")}, role, None)
     return {**_clean(doc), "mail": mail}
 
 
