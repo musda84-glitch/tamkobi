@@ -1,4 +1,4 @@
-import { monthGrid, parseYmd, shiftMonth, toYmd, weekdayLabels } from "./calendar";
+import { monthGrid, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "./calendar";
 
 describe("calendar", () => {
   it("parses and formats YYYY-MM-DD", () => {
@@ -6,6 +6,9 @@ describe("calendar", () => {
     expect(parseYmd("2026-09-16")?.getDate()).toBe(16);
     expect(parseYmd("2026-13-01")).toBeNull();
     expect(parseYmd("16.09.2026")).toBeNull();
+    expect(normalizeYmd("2026-09-19T18:00:00.000Z")).toBe("2026-09-19");
+    expect(normalizeYmd("18:00")).toBe("");
+    expect(normalizeYmd("2026-09-19")).toBe("2026-09-19");
   });
 
   it("builds a Monday-first September 2026 grid", () => {
