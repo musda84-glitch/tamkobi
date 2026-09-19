@@ -27,7 +27,15 @@ def _bal(card):
     return card.get("balance") or {}
 
 
-def test_card_remaining_includes_allowances(api, emp):
+def test_list_employees_includes_remaining_balance(api, emp):
+    card = api.get(f"{API}/personnel/employees/{emp['id']}/card", timeout=30)
+    assert card.status_code == 200, card.text
+    listed = api.get(f"{API}/personnel/employees", params={"company_id": CID}, timeout=30)
+    assert listed.status_code == 200, listed.text
+    row = next(x for x in listed.json() if x.get("id") == emp["id"])
+    assert "balance" in row
+    assert "remaining" in row["balance"]
+    assert round(float(row["balance"]["remaining"]), 2) == round(float((card.json().get("balance") or {}).get("remaining") or 0), 2)
     eid = emp["id"]
     prev_meal = float(emp.get("meal_allowance") or 0)
     prev_yol = float(emp.get("transport_allowance") or 0)

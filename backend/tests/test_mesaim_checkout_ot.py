@@ -4,7 +4,7 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
-from attendance import compute_day, DEFAULT_SCHEDULE, _add_minutes
+from attendance import compute_day, DEFAULT_SCHEDULE, _add_minutes, hours_from_time_range
 
 fe = dotenv_values("/app/frontend/.env")
 BASE = (os.environ.get("REACT_APP_BACKEND_URL") or fe.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
@@ -42,6 +42,13 @@ def test_compute_assigned_ot_partial():
 
 def test_add_minutes_wrap():
     assert _add_minutes("23:30", 60) == "00:30"
+
+
+def test_hours_from_time_range():
+    assert hours_from_time_range("18:00", "20:00") == 2.0
+    assert hours_from_time_range("18:00", "19:30") == 1.5
+    assert hours_from_time_range("22:00", "00:30") == 2.5
+    assert hours_from_time_range("", "20:00") is None
 
 
 # ---------- API ----------
@@ -105,6 +112,25 @@ def test_assign_overtime_and_recompute(client, emp):
     })
     assert r3.status_code == 200, r3.text
     assert r3.json()["record"]["assigned_overtime_hours"] == 0
+
+
+def test_assign_overtime_from_time_range(client, emp):
+    date = "2026-09-12"
+    eid = emp.get("id") or emp.get("_id")
+    r = client.post(f"{API}/personnel/attendance", json={
+        "employee_id": eid, "date": date, "check_in": "09:00", "check_out": "18:00", "status": "present",
+    })
+    assert r.status_code == 200, r.text
+
+    r2 = client.put(f"{API}/personnel/attendance/assign-overtime", json={
+        "employee_id": eid, "date": date, "start_time": "18:00", "end_time": "20:30", "note": "saat aralığı",
+    })
+    assert r2.status_code == 200, r2.text
+    rec = r2.json()["record"]
+    assert rec["assigned_overtime_hours"] == 2.5
+    assert rec["assigned_overtime_start"] == "18:00"
+    assert rec["assigned_overtime_end"] == "20:30"
+    assert rec["expected_end"] == "20:30"
 
 
 def test_checkout_without_geo_allowed(client, company_loc):

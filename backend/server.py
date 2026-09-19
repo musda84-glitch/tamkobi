@@ -9536,7 +9536,28 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
 @api_router.get("/personnel/employees")
 async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     employees = await db.employees.find({"company_id": company_id}).to_list(100)
-    return clean_docs(employees)
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    ids = [e["_id"] for e in employees]
+    if not ids:
+        return []
+    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}}).to_list(4000)
+    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}}).to_list(4000)
+    expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
+    pmap, bmap, emap = {}, {}, {}
+    for p in payrolls:
+        pmap.setdefault(p.get("employee_id"), []).append(p)
+    for b in bonuses:
+        bmap.setdefault(b.get("employee_id"), []).append(b)
+    for x in expenses:
+        emap.setdefault(x.get("employee_id"), []).append(x)
+    out = []
+    for e in employees:
+        eid = e["_id"]
+        bal = await _employee_receivable(e, pmap.get(eid) or [], bmap.get(eid) or [], month, expenses=emap.get(eid) or [])
+        doc = clean_doc(e)
+        doc["balance"] = bal
+        out.append(doc)
+    return out
 
 @api_router.post("/personnel/employees")
 async def create_employee(emp: Employee):
@@ -9567,9 +9588,10 @@ def _allowance_due(amount, category: str, expenses: list, month: str) -> float:
     return round(max(0.0, amt - recorded), 2)
 
 
-async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: str) -> dict:
+async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: str, expenses: Optional[list] = None) -> dict:
     emp_id = emp.get("_id") or emp.get("id")
-    expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
+    if expenses is None:
+        expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
     unpaid_payroll = round(sum(_emp_num(p.get("final_payable"), _emp_num(p.get("net_salary"))) for p in payrolls if p.get("status") != "paid"), 2)
     unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
     meal = round(_emp_num(emp.get("meal_allowance")), 2)

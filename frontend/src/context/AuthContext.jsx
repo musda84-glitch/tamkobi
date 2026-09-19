@@ -50,7 +50,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
     { label: "Personel & Bordro", path: "/personnel" },
-    { label: "Personelim", path: "/personelim", badge: "Self" },
+    { label: "Benim Sayfam", path: "/personelim", badge: "Self" },
     { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
     { label: "İletişim: Mail & SMS", path: "/communication", badge: "SMS" },
     { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
