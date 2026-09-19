@@ -18,6 +18,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const [providers, setProviders] = useState([]);
   const [eiProvider, setEiProvider] = useState("");
   const [parentPick, setParentPick] = useState("");
+  const [parentQ, setParentQ] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); setParentPick(r.data.parent_company_id || ""); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
@@ -38,7 +39,10 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const siblings = d.license_companies || [];
   const siblingTree = sortCompanyTree(siblings.map((c) => ({ ...c, created_at: c.created_at || "", is_primary: !!c.primary })));
   const blocked = descendantIds(companies.length ? companies : siblings, companyId);
-  const parentChoices = (companies.length ? companies : siblings).filter((c) => c.id !== companyId && !blocked.has(c.id));
+  const parentPool = (companies.length ? companies : siblings).filter((c) => c.id !== companyId && !blocked.has(c.id));
+  const parentNeedle = parentQ.trim().toLowerCase();
+  const sameLicense = (c) => (c.license_id || c.id) === (d.license_id || companyId);
+  const parentChoices = parentPool.filter((c) => (parentNeedle ? `${c.name} ${c.tax_number || ""}`.toLowerCase().includes(parentNeedle) : sameLicense(c))).slice(0, 80);
   const saveParent = async () => {
     if (!parentPick) { toast.error("Bağlı olunacak şirketi seçin."); return; }
     setBusy("parent");
@@ -205,12 +209,14 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
                 <p className="text-[11px] text-slate-500">{d.parent_company_name ? `Şu an bağlı: ${d.parent_company_name}.` : "Henüz üst şirket seçilmedi."} Mevcut bir şirketi alt şirket olarak bağlamak için seçin.</p>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                <select value={parentPick} onChange={(e) => setParentPick(e.target.value)} className={inputCls + " sm:col-span-2"} data-testid="drawer-parent-select">
-                  <option value="">Üst şirket seçin…</option>
+                <input className={inputCls} placeholder="Üst şirket ara…" value={parentQ} onChange={(e) => setParentQ(e.target.value)} data-testid="drawer-parent-search" />
+                <select value={parentPick} onChange={(e) => setParentPick(e.target.value)} className={inputCls} data-testid="drawer-parent-select">
+                  <option value="">{parentNeedle ? (parentChoices.length ? "Eşleşenlerden seçin…" : "Eşleşme yok") : "Üst şirket seçin…"}</option>
                   {parentChoices.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
                 <button type="button" disabled={!!busy || !parentPick || parentPick === (d.parent_company_id || "")} onClick={saveParent} className="px-3 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-40" data-testid="drawer-parent-save">{busy === "parent" ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : "Bağla"}</button>
               </div>
+              <p className="text-[10px] text-slate-400">Aynı lisanstakiler listelenir. Başka bir müşteri şirketine bağlamak için adını arayın.</p>
             </div>
             {canAddSibling ? (
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
