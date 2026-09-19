@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning, DoorOpen } from "lucide-react";
+import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
@@ -48,6 +48,13 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
+  const decideIntraday = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
 
   if (!data) return null;
   return (
@@ -87,6 +94,18 @@ export const AttendancePanel = ({ companyId }) => {
               <span className="text-slate-500 max-w-[180px] truncate" title={r.early_leave_request.reason}>{r.early_leave_request.reason}</span>
               <button type="button" onClick={() => decideEarly(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-early-approve-${r.id}`}>Onayla</button>
               <button type="button" onClick={() => decideEarly(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-early-reject-${r.id}`}>Reddet</button>
+            </span>
+          )}
+          {(r.intraday_leave_minutes > 0 || r.intraday_leave_approved || r.intraday_leave_request?.status === "approved") && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">{r.intraday_leave_minutes || 0} dk gün içi izin{r.intraday_leave_request?.out_time ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>
+          )}
+          {r.intraday_leave_request?.status === "pending" && (
+            <span className="inline-flex items-center gap-1.5 text-[10px]" data-testid={`att-intraday-pending-${r.id}`}>
+              <ArrowLeftRight className="w-3 h-3 text-sky-600" />
+              <span className="font-semibold text-sky-700">Gün içi izin{r.intraday_leave_request.out_time ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>
+              <span className="text-slate-500 max-w-[180px] truncate" title={r.intraday_leave_request.reason}>{r.intraday_leave_request.reason}</span>
+              <button type="button" onClick={() => decideIntraday(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-intraday-approve-${r.id}`}>Onayla</button>
+              <button type="button" onClick={() => decideIntraday(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-intraday-reject-${r.id}`}>Reddet</button>
             </span>
           )}
           <span className="ml-auto flex items-center gap-2 text-[10px]">{r.source === "self" && <span className="text-slate-400">telefon/self</span>}{r.dispute_note ? <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3 h-3" /> İtiraz: {r.dispute_note}</span> : r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Personel onayladı</span> : <span className="text-amber-600 font-semibold">Onay bekliyor</span>}</span>

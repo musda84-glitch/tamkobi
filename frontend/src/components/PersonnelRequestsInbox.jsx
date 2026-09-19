@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, Wallet, X } from "lucide-react";
+import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 export const KIND_META = {
   leave: { label: "İzin", Icon: CalendarDays, chip: "bg-indigo-50 text-indigo-700 border-indigo-100" },
   early_leave: { label: "Erken çıkış", Icon: Clock, chip: "bg-amber-50 text-amber-800 border-amber-100" },
+  intraday_leave: { label: "Gün içi izin", Icon: ArrowLeftRight, chip: "bg-sky-50 text-sky-800 border-sky-100" },
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
 };
@@ -21,6 +22,7 @@ export function EmployeeRequestChips({
   busyId,
   onDecideLeave,
   onDecideEarly,
+  onDecideIntraday,
   onDecideAdvance,
   onViewDispute,
   maxVisible = 3,
@@ -65,6 +67,16 @@ export function EmployeeRequestChips({
                     <Check className="w-2.5 h-2.5" /> Onayla
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-early-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "intraday_leave" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-intraday-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-intraday-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Reddet
                   </button>
                 </>
@@ -163,6 +175,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
+  const decideIntraday = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="personnel-requests-inbox">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50/80">
@@ -199,7 +225,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, avans, erken çıkış veya puantaj itirazı yok.
+          Şu an onay bekleyen izin, avans, erken çıkış, gün içi izin veya puantaj itirazı yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
@@ -236,6 +262,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                         <Check className="w-3 h-3" /> Onayla
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-early-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "intraday_leave" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-intraday-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-intraday-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
                       </button>
                     </>

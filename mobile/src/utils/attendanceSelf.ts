@@ -21,3 +21,26 @@ export function earlyLeavePayload(reason: string, plannedTime?: string) {
     ...(hm ? { planned_time: `${hm[1].padStart(2, "0")}:${hm[2]}` } : {}),
   };
 }
+
+export function validateIntradayLeave(reason: string, outTime?: string, returnTime?: string): string | null {
+  if ((reason || "").trim().length < 3) return "Gün içi izin nedeni en az 3 karakter olmalı.";
+  const out = (outTime || "").trim();
+  const ret = (returnTime || "").trim();
+  const hm = /^\d{1,2}:\d{2}(?::\d{2})?$/;
+  if (!hm.test(out)) return "Çıkış saati HH:MM formatında olmalı.";
+  if (!hm.test(ret)) return "Dönüş (giriş) saati HH:MM formatında olmalı.";
+  const toMin = (t: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(t);
+    return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+  };
+  if (toMin(ret) <= toMin(out)) return "Dönüş saati çıkış saatinden sonra olmalı.";
+  return null;
+}
+
+export function intradayLeavePayload(reason: string, outTime: string, returnTime: string) {
+  const norm = (t: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec((t || "").trim());
+    return m ? `${m[1].padStart(2, "0")}:${m[2]}` : t;
+  };
+  return { reason: reason.trim(), out_time: norm(outTime), return_time: norm(returnTime) };
+}

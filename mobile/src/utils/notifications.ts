@@ -11,6 +11,9 @@ const TYPE_ROLES: Record<string, string[]> = {
   leave_request: ["admin", "manager", "accountant"],
   advance_request: ["admin", "manager", "accountant"],
   early_leave_request: ["admin", "manager", "accountant"],
+  early_leave_decision: [],
+  intraday_leave_request: ["admin", "manager", "accountant"],
+  intraday_leave_decision: [],
   role_assigned: ["admin", "manager"],
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
@@ -22,7 +25,7 @@ const TYPE_ROLES: Record<string, string[]> = {
 export const TILE_NOTIFICATION_TYPES: Record<string, string[]> = {
   orders: ["b2b_order"],
   sevk: ["order_pick_missing", "order_pick_production"],
-  personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "early_leave_request", "early_leave_decision"],
+  personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "early_leave_request", "early_leave_decision", "intraday_leave_request", "intraday_leave_decision"],
   banking: ["cash_approval", "bank_sync"],
 };
 

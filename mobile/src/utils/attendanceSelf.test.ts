@@ -1,4 +1,4 @@
-import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave } from "./attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -12,6 +12,20 @@ describe("early leave request", () => {
     });
     expect(earlyLeavePayload("doktor", "9:05:00")).toEqual({ reason: "doktor", planned_time: "09:05" });
     expect(earlyLeavePayload("doktor", "")).toEqual({ reason: "doktor" });
+  });
+});
+
+describe("intraday leave request", () => {
+  it("requires reason and out/return times with return after out", () => {
+    expect(validateIntradayLeave("ab", "14:00", "16:00")).toMatch(/neden/);
+    expect(validateIntradayLeave("doktor randevusu", "14", "16:00")).toMatch(/Çıkış saati/);
+    expect(validateIntradayLeave("doktor randevusu", "16:00", "14:00")).toMatch(/sonra/);
+    expect(validateIntradayLeave("doktor randevusu", "14:00", "16:30")).toBeNull();
+    expect(intradayLeavePayload(" doktor ", "9:05", "11:00")).toEqual({
+      reason: "doktor",
+      out_time: "09:05",
+      return_time: "11:00",
+    });
   });
 });
 
