@@ -90,14 +90,19 @@ describe("finance drafts", () => {
     const partners = [{ id: "p1", name: "Ali", balance: 3000 }, { id: "p2", name: "Pasif", is_active: false }];
 
     const collect = paymentTargetGroups(accounts, partners, { collectableOnly: true });
-    expect(collect.map((g) => g.label)).toEqual(["Banka", "Kasa", "Ortaklar"]);
+    expect(collect.map((g) => g.label)).toEqual(["Banka", "Kasa", "Ortaklar Hesabı"]);
     expect(collect.at(-1)?.options).toEqual([{ value: "partner:p1", label: expect.stringContaining("Ali") }]);
+    expect(collect.at(-1)?.options[0].label).toContain("Ortak");
+
+    const first = paymentTargetGroups(accounts, partners, { partnersFirst: true });
+    expect(first[0].label).toBe("Ortaklar Hesabı");
+    expect(first[0].options[0]).toEqual({ value: "partner:p1", label: expect.stringContaining("Ali") });
 
     const spend = paymentTargetGroups(accounts, partners);
     expect(spend.map((g) => g.label)).toContain("Kredi Kartı");
 
     const noPartners = paymentTargetGroups(accounts, partners, { includePartners: false });
-    expect(noPartners.map((g) => g.label)).not.toContain("Ortaklar");
+    expect(noPartners.map((g) => g.label)).not.toContain("Ortaklar Hesabı");
   });
 
   it("splits expense categories into default and company groups", () => {

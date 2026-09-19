@@ -218,10 +218,20 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
 export type PaymentTargetGroup = { label: string; options: { value: string; label: string }[] };
 
 /** Web PaymentTargetSelect karşılığı: tür bazlı gruplar + opsiyonel ortaklar. */
+function partnerTargetGroup(partners: Partner[]): PaymentTargetGroup {
+  return {
+    label: "Ortaklar Hesabı",
+    options: partners.map((p) => ({
+      value: `partner:${idOf(p)}`,
+      label: `${p.name || "Ortak"} (Ortak · %${p.share_percent ?? 0} · ${fmtMoney(p.balance)})`,
+    })),
+  };
+}
+
 export function paymentTargetGroups(
   accounts: BankAccount[],
   partners: Partner[] = [],
-  opts: { collectableOnly?: boolean; includePartners?: boolean } = {}
+  opts: { collectableOnly?: boolean; includePartners?: boolean; partnersFirst?: boolean } = {}
 ): PaymentTargetGroup[] {
   const pool = opts.collectableOnly ? collectableAccounts(accounts || []) : accounts || [];
   const groups: PaymentTargetGroup[] = groupedAccounts(pool).map((g) => ({
@@ -233,13 +243,9 @@ export function paymentTargetGroups(
   }));
   const active = (partners || []).filter((p) => p.is_active !== false);
   if (opts.includePartners !== false && active.length) {
-    groups.push({
-      label: "Ortaklar",
-      options: active.map((p) => ({
-        value: `partner:${idOf(p)}`,
-        label: `${p.name || "Ortak"} · ${fmtMoney(p.balance)}`,
-      })),
-    });
+    const ortaklar = partnerTargetGroup(active);
+    if (opts.partnersFirst) groups.unshift(ortaklar);
+    else groups.push(ortaklar);
   }
   return groups;
 }

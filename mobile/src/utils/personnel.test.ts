@@ -17,6 +17,7 @@ import {
   overtimePayload,
   projectSelectGroups,
   taskSelectGroups,
+  advancePayload,
   advanceRequestPayload,
   validateAdvance,
   validateEmployee,
@@ -74,6 +75,13 @@ describe("payroll helpers", () => {
       amount: 2500,
       note: "maaş",
       period: "2026-09",
+    });
+    expect(advancePayload("e1", "2500", "2026-09", "partner:p1", "maaş")).toMatchObject({
+      employee_id: "e1",
+      type: "advance",
+      amount: 2500,
+      partner_id: "p1",
+      account_id: null,
     });
   });
 });
