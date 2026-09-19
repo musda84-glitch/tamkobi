@@ -1,5 +1,5 @@
 """Unit tests for shared order/invoice line totals (no live API)."""
-from line_totals import enrich_items, enrich_line, invoice_document_totals, order_document_totals, quote_line_price_mode, unit_excl_from_incl, unit_incl_from_excl
+from line_totals import drop_stale_inclusive_markup, enrich_items, enrich_line, invoice_document_totals, order_document_totals, quote_line_price_mode, unit_excl_from_incl, unit_incl_from_excl
 
 
 def test_unit_price_roundtrip():
@@ -121,6 +121,15 @@ def test_order_items_missing_vat_defaults_20_not_overwrite_zero():
     assert vat == 45.0  # 40 + 5
     assert grand == 295.0
     assert disc == 0.0
+
+
+def test_drop_stale_inclusive_markup_clears_false_unit_price_incl():
+    row = {"name": "Raf", "quantity": 2, "unit_price": 260, "unit_price_incl": 286, "vat_rate": 10, "price_includes_vat": True}
+    drop_stale_inclusive_markup(row, {"sale_price": 260, "price_includes_vat": True})
+    assert row.get("unit_price_incl") in (None, "")
+    rows = enrich_items([row], default_vat=10)
+    assert rows[0]["total_incl"] == 520.0
+    assert abs(rows[0]["total"] + rows[0]["vat_amount"] - 520) < 0.02
 
 
 def test_enrich_items_treats_price_includes_vat_as_gross():

@@ -42,6 +42,27 @@ def unit_excl_from_incl(incl: float, vat_rate: float) -> float:
     return incl / factor
 
 
+def drop_stale_inclusive_markup(item: MutableMapping[str, Any], product: Mapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    """KDV dahil rafta duran birim fiyatın üzerine yanlış unit_price_incl yazıldıysa sil.
+
+    Stok sale_price=260 (KDV dahil) satıra unit_price=260 + unit_price_incl=286 olarak
+    işlenmişse enrich tekrar KDV ekler. Raf fiyatı hâlâ unit_price'daysa brüt say.
+    """
+    prod = product or {}
+    includes = bool(item.get("price_includes_vat") or prod.get("price_includes_vat"))
+    if not includes:
+        return item
+    item["price_includes_vat"] = True
+    sale = _f(prod.get("sale_price"))
+    price = _f(item.get("unit_price"))
+    incl = item.get("unit_price_incl")
+    if incl in (None, ""):
+        return item
+    if sale and abs(price - sale) < 0.05:
+        item["unit_price_incl"] = None
+    return item
+
+
 def quote_line_price_mode(item: Mapping[str, Any], requested: str = "excl") -> str:
     """KDV dahil stok fiyatı satırda brüt duruyorsa (unit_price_incl yok) incl say."""
     includes = bool(item.get("price_includes_vat"))
@@ -111,6 +132,7 @@ def enrich_items(
 ) -> List[MutableMapping[str, Any]]:
     out = []
     for it in items:
+        drop_stale_inclusive_markup(it)
         mode = quote_line_price_mode(it, price_mode)
         out.append(enrich_line(it, price_mode=mode, default_vat=default_vat))
     return out
