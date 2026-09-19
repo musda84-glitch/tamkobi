@@ -85,7 +85,7 @@ export function OrderActions({
   const printForm = async () => {
     setBusy("print");
     try {
-      await printOrderForm(await ensure(), activeCompany);
+      await printOrderForm(await ensure(), activeCompany, client);
       onMessage?.("Sipariş formu yazdırmaya gönderildi.");
     } catch (err) {
       onError?.(apiErrorMessage(err, "Yazdırılamadı."));
