@@ -1,16 +1,30 @@
+import { File as CacheFile, Paths } from "expo-file-system";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 import { Platform, Share } from "react-native";
 import type { ApiClient } from "../api/client";
-import { ApiHttpError, apiErrorMessage } from "../api/errors";
-import { API_BASE_HEADER, requestTarget } from "../api/url";
+import { normalizeApiBase } from "../api/url";
 import { openPrintHtml, type PrintCompany } from "./orderPrint";
-import { quoteFormHtml, quoteFormText, quotePdfFilename } from "./quotePrint";
+import { enrichPrintCompany, loadPrintProducts, loadPrintTemplate } from "./orderShare";
+import {
+  quoteFormHtml,
+  quoteFormText,
+  quotePdfFilename,
+  quotePrintDocument,
+} from "./quotePrint";
 import type { QuoteDoc } from "./workDocs";
 
-export async function printQuoteForm(quote: QuoteDoc, company?: PrintCompany | null): Promise<boolean> {
+async function quotePrintParts(quote: QuoteDoc, company?: PrintCompany | null, client?: ApiClient | null) {
+  const printCompany = await enrichPrintCompany(client, company);
+  const template = await loadPrintTemplate(client, printCompany, "quote");
+  const products = await loadPrintProducts(client, quote, printCompany);
+  const body = quoteFormHtml(quote, printCompany, {
+    template,
+    products,
+    mediaBase: client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined,
+  });
   const title = `Teklif ${quote.quote_number || ""}`.trim();
-  if (Platform.OS === "web" && openPrintHtml(title, quoteFormHtml(quote, company))) return true;
-  await Share.share({ message: quoteFormText(quote, company), title }).catch(() => null);
-  return true;
+  return { printCompany, body, title, html: quotePrintDocument(title, body) };
 }
 
 function triggerBlobDownload(blob: Blob, filename: string): boolean {
@@ -27,30 +41,85 @@ function triggerBlobDownload(blob: Blob, filename: string): boolean {
   return true;
 }
 
-export async function downloadQuotePdf(client: ApiClient, quote: QuoteDoc): Promise<"file" | "print"> {
-  const filename = quotePdfFilename(quote);
-  const id = quote.id || quote._id;
-  if (!id) throw new Error("Teklif kaydı yok.");
-  const { url, proxiedBase } = requestTarget(client.baseUrl, `/quotes/${id}/pdf?download=1`);
-  const headers: Record<string, string> = { Accept: "application/pdf" };
-  if (client.token) headers.Authorization = `Bearer ${client.token}`;
-  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
-  let res: Response;
+async function sharePdfFile(bytes: Uint8Array, filename: string): Promise<boolean> {
+  if (Platform.OS === "web") {
+    const copy = Uint8Array.from(bytes);
+    return triggerBlobDownload(new Blob([copy.buffer], { type: "application/pdf" }), filename);
+  }
+  const file = new CacheFile(Paths.cache, filename);
+  file.create({ overwrite: true });
+  await file.write(bytes);
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(file.uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf", dialogTitle: filename });
+    return true;
+  }
+  await file.preview();
+  return true;
+}
+
+async function printHtmlNative(html: string): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  await Print.printAsync({ html });
+  return true;
+}
+
+async function htmlToPdfFile(html: string, filename: string): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  const printed = await Print.printToFileAsync({ html });
+  if (printed.uri && await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(printed.uri, { mimeType: "application/pdf", dialogTitle: filename });
+    return true;
+  }
+  if (printed.uri) {
+    await Share.share({ url: printed.uri, title: filename }).catch(() => null);
+    return true;
+  }
+  return false;
+}
+
+export async function printQuoteForm(
+  quote: QuoteDoc,
+  company?: PrintCompany | null,
+  client?: ApiClient | null,
+): Promise<boolean> {
+  const { printCompany, body, title, html } = await quotePrintParts(quote, company, client);
+  if (Platform.OS === "web" && openPrintHtml(title, body, { page: "a4" })) return true;
   try {
-    res = await fetch(url, { headers });
-  } catch (err) {
-    throw new ApiHttpError(0, null, apiErrorMessage(err, "PDF indirilemedi."));
+    if (await printHtmlNative(html)) return true;
+  } catch {
+    /* try share sheet */
   }
-  const type = res.headers.get("content-type") || "";
-  if (!res.ok || !type.includes("pdf")) {
-    if (Platform.OS === "web" && openPrintHtml(filename, quoteFormHtml(quote))) return "print";
-    await Share.share({ message: quoteFormText(quote), title: filename }).catch(() => null);
-    return "print";
+  const shared = await Share.share({ message: quoteFormText(quote, printCompany), title }).catch(() => null);
+  if (shared) return true;
+  throw new Error("Yazdırılamadı.");
+}
+
+export async function downloadQuotePdf(
+  client: ApiClient,
+  quote: QuoteDoc,
+  company?: PrintCompany | null,
+): Promise<"file" | "print"> {
+  const filename = quotePdfFilename(quote);
+  const { body, html } = await quotePrintParts(quote, company, client);
+  try {
+    if (await htmlToPdfFile(html, filename)) return "file";
+  } catch {
+    /* web / print fallback */
   }
-  const blob = await res.blob();
-  if (Platform.OS === "web" && triggerBlobDownload(blob, filename)) return "file";
-  await Share.share({ message: quoteFormText(quote), title: filename }).catch(() => null);
-  return "print";
+  if (Platform.OS === "web") {
+    try {
+      const printed = await Print.printToFileAsync({ html });
+      if (printed.uri) {
+        const res = await fetch(printed.uri);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (await sharePdfFile(bytes, filename)) return "file";
+      }
+    } catch {
+      /* print window */
+    }
+    if (openPrintHtml(filename, body, { page: "a4" })) return "print";
+  }
+  throw new Error("PDF indirilemedi.");
 }
 
 export async function shareApprovalLink(link: string, title?: string): Promise<boolean> {

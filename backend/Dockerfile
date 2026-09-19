@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc fonts-liberation \
+    && apt-get install -y --no-install-recommends gcc fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/log/tamkobi \
     && chmod 777 /var/log/tamkobi
