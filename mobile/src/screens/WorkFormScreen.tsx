@@ -6,7 +6,9 @@ import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
@@ -18,6 +20,16 @@ import { coordText } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
+import {
+  emptyProjectExpenseDraft,
+  expenseCalc,
+  expenseCategoryGroups,
+  expensePayload,
+  validateExpenseDraft,
+  type Expense,
+  type ExpenseCategory,
+  type ExpenseDraft,
+} from "../utils/finance";
 import {
   PROJECT_STATUSES,
   QUOTE_STATUSES,
@@ -48,6 +60,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
+  const canExp = can("/expenses", "edit");
   const isNew = !docId;
   const [title, setTitle] = useState("");
   const [name, setName] = useState("");
@@ -74,6 +87,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [projectExpenses, setProjectExpenses] = useState<Expense[]>([]);
+  const [expOpen, setExpOpen] = useState(false);
+  const [expDraft, setExpDraft] = useState<ExpenseDraft>(emptyProjectExpenseDraft(todayIso()));
+  const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
+  const [expBusy, setExpBusy] = useState(false);
 
   const loadRefs = useCallback(async () => {
     try {
@@ -118,6 +136,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
         setPhotos(p.images || []);
         setStatus(p.status || "planning");
+        const expList = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] }));
+        setProjectExpenses(expList.expenses || []);
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
         const s = (rows || []).find((x) => idOf(x) === docId) || null;
@@ -215,6 +235,32 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     }
   };
 
+  const openProjectExpense = () => {
+    setExpDraft(emptyProjectExpenseDraft(todayIso()));
+    setExpOpen(true);
+    get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId })
+      .then((cats) => setExpCats(Array.isArray(cats) ? cats : []))
+      .catch(() => undefined);
+  };
+
+  const saveProjectExpense = async () => {
+    if (!docId || kind !== "project") return;
+    const invalid = validateExpenseDraft(expDraft);
+    if (invalid) { setError(invalid); return; }
+    setExpBusy(true);
+    try {
+      await post(client, "/expenses", expensePayload(expDraft, companyId, docId));
+      setExpOpen(false);
+      setMessage("Masraf projeye kaydedildi.");
+      setError(null);
+      await loadDoc();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Masraf kaydedilemedi."));
+    } finally {
+      setExpBusy(false);
+    }
+  };
+
   const convert = async () => {
     if (!docId || !canEdit) return;
     setBusy(true);
@@ -279,6 +325,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       <Muted>{kind === "quote" ? "Cari ve kalemlerle fiyat teklifi." : kind === "project" ? "İş / saha projesi, bütçe ve cari." : "Keşif, ölçü ve teklife dönüştürme."}</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
+      {!isNew && kind === "project" && (canExp || canEdit) ? (
+        <PrimaryButton title="Masraf ekle" color={colors.danger} testID="project-expense-btn" onPress={openProjectExpense} />
+      ) : null}
 
       {kind === "quote" ? <Field label="Başlık" testID="q-title" value={title} onChangeText={setTitle} editable={canEdit} /> : null}
       {kind === "project" ? <Field label="Proje adı" testID="p-name" value={name} onChangeText={setName} editable={canEdit} /> : null}
@@ -390,6 +439,18 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "project" && project ? (
         <Card>
           <Muted>Teklif {fmtMoney(project.quoted_total)} · Fatura {fmtMoney(project.invoiced_total)} · Masraf {fmtMoney(project.expense_total)}</Muted>
+          {projectExpenses.map((e) => (
+            <ListRow
+              key={idOf(e)}
+              testID={`project-expense-${idOf(e)}`}
+              title={e.description || e.expense_number || "Masraf"}
+              subtitle={`${e.expense_number || ""} · ${e.category || ""} · ${statusTr(e.payment_status)} · ${fmtMoney(e.total ?? e.amount)}`}
+              onPress={() => router.push({ pathname: "/expenses/[id]", params: { id: idOf(e) } })}
+            />
+          ))}
+          {!isNew && (canExp || canEdit) ? (
+            <PrimaryButton title="Masraf ekle" color={colors.danger} testID="project-expense-card-btn" onPress={openProjectExpense} />
+          ) : null}
         </Card>
       ) : null}
       {!isNew && kind === "quote" && quote ? (
@@ -407,6 +468,48 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <Text style={{ color: colors.danger, fontWeight: "800" }}>Sil</Text>
         </Pressable>
       ) : null}
+
+      <B2BSheet
+        visible={expOpen}
+        title="Masraf ekle"
+        subtitle={project ? `${project.name || name} · ${project.project_number || ""}` : undefined}
+        onClose={() => setExpOpen(false)}
+        testID="project-expense-modal"
+      >
+        <Field label="Tarih" testID="proj-exp-date" value={expDraft.date} onChangeText={(v) => setExpDraft((d) => ({ ...d, date: v }))} placeholder="YYYY-MM-DD" />
+        <GroupedSelect
+          label="Kategori"
+          testID="proj-exp-category"
+          value={expDraft.category}
+          onChange={(v) => setExpDraft((d) => ({ ...d, category: v }))}
+          groups={expenseCategoryGroups(expCats, [expDraft.category])}
+        />
+        <Field label="Açıklama" testID="proj-exp-description" value={expDraft.description} onChangeText={(v) => setExpDraft((d) => ({ ...d, description: v }))} placeholder="Örn: Şantiye malzemesi" />
+        <Field label="Tutar (₺)" testID="proj-exp-amount" value={expDraft.amount} onChangeText={(v) => setExpDraft((d) => ({ ...d, amount: v }))} keyboardType="decimal-pad" />
+        <Muted>KDV %</Muted>
+        <Row>
+          {[0, 1, 10, 20].map((v) => (
+            <Chip key={v} label={`%${v}`} active={n(expDraft.vat_rate) === v} onPress={() => setExpDraft((d) => ({ ...d, vat_rate: String(v) }))} />
+          ))}
+        </Row>
+        <Chip
+          label="Tutar KDV dahil"
+          active={expDraft.vat_included}
+          onPress={() => setExpDraft((d) => ({ ...d, vat_included: !d.vat_included }))}
+          testID="proj-exp-vat-included"
+        />
+        <Card>
+          <Row style={{ justifyContent: "space-between" }}><Muted>Toplam</Muted><Text style={{ fontWeight: "800", color: colors.danger }}>{fmtMoney(expenseCalc(expDraft).total)}</Text></Row>
+        </Card>
+        <Field label="Not" testID="proj-exp-notes" value={expDraft.notes} onChangeText={(v) => setExpDraft((d) => ({ ...d, notes: v }))} />
+        <PrimaryButton
+          title={expBusy ? "Kaydediliyor…" : "Masrafı kaydet"}
+          color={colors.danger}
+          loading={expBusy}
+          onPress={saveProjectExpense}
+          testID="proj-exp-save"
+        />
+      </B2BSheet>
     </Screen>
   );
 }
