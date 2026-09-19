@@ -12,6 +12,9 @@ describe("labels", () => {
   it("maps known statuses", () => {
     expect(statusTr("pending")).toBe("Beklemede");
     expect(statusTr("shipped")).toBe("Kargolandı");
+    expect(statusTr("present")).toBe("Geldi");
+    expect(statusTr("absent")).toBe("Gelmedi");
+    expect(statusTr("leave")).toBe("İzinli");
     expect(statusTr("")).toBe("—");
     expect(statusTr("custom_x")).toBe("custom_x");
   });

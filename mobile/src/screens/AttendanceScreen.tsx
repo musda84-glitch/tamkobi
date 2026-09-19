@@ -7,6 +7,7 @@ import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { earlyLeavePayload, validateEarlyLeave } from "../utils/attendanceSelf";
+import { statusTr } from "../utils/labels";
 
 type AttendancePayload = {
   employee?: { full_name: string } | null;
@@ -154,7 +155,7 @@ export function AttendanceScreen() {
         </View>
       </Card>
       {(data?.records || []).slice(0, 14).map((r) => (
-        <ListRow key={r.id || r.date} title={r.date} subtitle={`${r.check_in || "--:--"} → ${r.check_out || "--:--"}`} right={r.hours ? `${r.hours} sa` : r.status} />
+        <ListRow key={r.id || r.date} title={r.date} subtitle={`${r.check_in || "--:--"} → ${r.check_out || "--:--"}`} right={r.hours ? `${r.hours} sa` : statusTr(r.status)} />
       ))}
     </Screen>
   );
