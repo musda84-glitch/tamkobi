@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Order, Product } from "../types";
@@ -178,7 +179,7 @@ export function FieldSalesScreen() {
         </Row>
         <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
         {prodHits.map((p) => (
-          <ListRow key={idOf(p)} title={p.name} subtitle={`${p.sku || ""} · stok ${p.stock_quantity ?? "—"}`} right={fmtMoney(p.sale_price)} onPress={() => addProduct(p)} />
+          <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
         ))}
       </Card>
       <Card>
