@@ -1,4 +1,4 @@
-import { balanceHint, contactInfoRows, contactSummaryRows, contactTypeLabel } from "./contactDisplay";
+import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "./contactDisplay";
 import { fmtMoney } from "./money";
 
 describe("contactDisplay", () => {
@@ -76,6 +76,15 @@ describe("contactDisplay", () => {
     expect(contactTypeLabel("both")).toBe("Müşteri & Tedarikçi");
     expect(balanceHint(4460).label).toMatch(/Alacak/);
     expect(balanceHint(-10).tone).toBe("red");
+  });
+
+  it("prefers stored cari balance and falls back to open amount", () => {
+    expect(contactDisplayBalance({ balance: 4460 }, { open_amount: 100 })).toBe(4460);
+    expect(contactDisplayBalance({ balance: 0 })).toBe(0);
+    expect(contactDisplayBalance({ balance: -250.5 })).toBe(-250.5);
+    expect(contactDisplayBalance({}, { open_amount: 1800 })).toBe(1800);
+    expect(contactDisplayBalance(undefined, { open_amount: 50 })).toBe(50);
+    expect(contactDisplayBalance(null, null)).toBe(0);
   });
 
   it("keeps non-zero summary figures", () => {

@@ -7,6 +7,7 @@ import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
+import { contactDisplayBalance } from "../utils/contactDisplay";
 import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -22,7 +23,7 @@ export function ContactsScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const data = await get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true });
+      const data = await get<Contact[]>(client, "/contacts", { company_id: companyId });
       setRows(data || []);
       setError(null);
     } catch (err) {
@@ -48,16 +49,20 @@ export function ContactsScreen() {
         ))}
       </Row>
       <ErrorBanner message={error} />
-      {!filtered.length ? <Empty icon="people-outline" title="Cari bulunamadı" hint={canEdit ? "Yeni cari kartı ekleyin." : undefined} /> : filtered.map((c) => (
-        <ListRow
-          key={idOf(c)}
-          testID={`contact-row-${idOf(c)}`}
-          title={c.name}
-          subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
-          right={fmtMoney(c.balance)}
-          onPress={() => go("ContactDetail", { id: idOf(c), name: c.name })}
-        />
-      ))}
+      {!filtered.length ? <Empty icon="people-outline" title="Cari bulunamadı" hint={canEdit ? "Yeni cari kartı ekleyin." : undefined} /> : filtered.map((c) => {
+        const bal = contactDisplayBalance(c);
+        return (
+          <ListRow
+            key={idOf(c)}
+            testID={`contact-row-${idOf(c)}`}
+            title={c.name}
+            subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
+            right={fmtMoney(bal)}
+            rightSub={bal > 0 ? "Alacak" : bal < 0 ? "Borç" : undefined}
+            onPress={() => go("ContactDetail", { id: idOf(c), name: c.name })}
+          />
+        );
+      })}
     </Screen>
   );
 }

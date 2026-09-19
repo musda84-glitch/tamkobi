@@ -160,6 +160,19 @@ export function balanceHint(balance: unknown): { label: string; tone: "green" | 
   return { label: "Hesap denk", tone: "slate" };
 }
 
+/** Liste / kart bakiyesi. Stored alan yoksa fatura kalan alacağını kullan. */
+export function contactDisplayBalance(
+  contact?: { balance?: unknown } | null,
+  summary?: { open_amount?: unknown } | null,
+): number {
+  if (contact != null && contact.balance != null && contact.balance !== "") {
+    const stored = Number(contact.balance);
+    if (Number.isFinite(stored)) return stored;
+  }
+  const open = Number(summary?.open_amount);
+  return Number.isFinite(open) ? open : 0;
+}
+
 export function contactSummaryRows(summary: Record<string, unknown> | null | undefined): InfoRow[] {
   if (!summary) return [];
   const n = (k: string) => Number(summary[k]) || 0;

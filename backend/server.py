@@ -2103,7 +2103,7 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1} if lite else None
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     return clean_docs(contacts)
 

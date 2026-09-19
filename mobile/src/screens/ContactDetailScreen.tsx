@@ -15,7 +15,7 @@ import { colors } from "../theme";
 import { invoiceTypeTr, riskStatusTr, statusTr } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
-import { balanceHint, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
+import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
 import { mapsLink } from "../utils/geo";
 import {
@@ -136,7 +136,8 @@ export function ContactDetailScreen() {
 
   const c = data?.contact || data || {};
   const summary = data?.summary || {};
-  const hint = balanceHint(c.balance);
+  const bal = contactDisplayBalance(c, summary);
+  const hint = balanceHint(bal);
   const infoRows = useMemo(() => contactInfoRows(c), [c]);
   const summaryRows = useMemo(() => contactSummaryRows(summary), [summary]);
   const invoices = data?.invoices || [];
@@ -147,7 +148,6 @@ export function ContactDetailScreen() {
   const surveys = data?.surveys || [];
   const comms = data?.communications || [];
   const cheques = data?.cheques || [];
-  const bal = Number(c.balance) || 0;
   const invoiced = Number(summary.total_invoiced) || 0;
   const paid = Number(summary.total_paid) || 0;
   const openAmt = Number(summary.open_amount) || 0;
@@ -379,7 +379,7 @@ export function ContactDetailScreen() {
     setMsgPhone(c.phone || "");
     setMsgEmail(c.email || "");
     setMsgSubject(`${c.name || name} — cari hesap`);
-    setMsgBody(balanceMessage({ name: c.name || name, balance: c.balance }));
+    setMsgBody(balanceMessage({ name: c.name || name, balance: bal }));
     setMsgChannel(c.phone ? "sms" : c.email ? "email" : "whatsapp");
     setMsgOpen(true);
   };
@@ -584,7 +584,7 @@ export function ContactDetailScreen() {
             <Chip label="E-posta" active={msgChannel === "email"} testID="qm-tab-email" color={colors.primary} onPress={() => setMsgChannel("email")} />
             <Chip label="WhatsApp" active={msgChannel === "whatsapp"} testID="qm-tab-whatsapp" color="#128C7E" onPress={() => setMsgChannel("whatsapp")} />
           </Row>
-          <PrimaryButton title="Bakiye mesajı" onPress={() => setMsgBody(balanceMessage({ name: c.name || name, balance: c.balance }))} testID="qm-balance-tpl" />
+          <PrimaryButton title="Bakiye mesajı" onPress={() => setMsgBody(balanceMessage({ name: c.name || name, balance: bal }))} testID="qm-balance-tpl" />
           {msgChannel === "email" ? (
             <>
               <Field label="E-posta" testID="qm-email-input" value={msgEmail} onChangeText={setMsgEmail} autoCapitalize="none" />
@@ -842,7 +842,7 @@ export function ContactDetailScreen() {
 
       <Card testID="contact-card">
         <Text style={{ color: colors.muted, fontWeight: "700" }}>Bakiye</Text>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(c.balance)}</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: bal > 0 ? colors.primaryHover : bal < 0 ? colors.danger : colors.text }} testID="contact-card-balance">{fmtMoney(bal)}</Text>
         <Row style={{ flexWrap: "wrap" }}>
           <Badge label={contactTypeLabel(c.type)} tone="indigo" />
           <Badge label={hint.label} tone={hint.tone} />
