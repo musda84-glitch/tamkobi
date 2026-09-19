@@ -13,7 +13,7 @@ import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRowSubtitle } from "../utils/productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "../utils/productDisplay";
 
 function ProductThumb({ uri }: { uri: string }) {
   const { client } = useAuth();
@@ -61,7 +61,7 @@ export function StockScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const data = await get<Product[]>(client, "/products", { company_id: companyId, lite: true });
+      const data = await get<Product[]>(client, "/products", { company_id: companyId });
       setRows(data || []);
       setError(null);
     } catch (err) {
@@ -119,9 +119,10 @@ export function StockScreen() {
             testID={`stock-row-${idOf(p)}`}
             leading={<ProductThumb uri={productImage(p)} />}
             title={p.name}
-            subtitle={stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}
-            right={qty}
+            subtitle={`${qty} · ${stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}`}
+            right={stockRightLabel(p)}
             rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
+            rightTestID={`stock-qty-${idOf(p)}`}
             rightSub={stockBarcodeLabel(p)}
             badge={<Badge label={qty} tone={qtyTone} />}
             onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}

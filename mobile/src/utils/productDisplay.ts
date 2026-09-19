@@ -15,6 +15,13 @@ export function stockQtyLabel(p: Pick<Product, "stock_quantity" | "unit" | "trac
   return `${n.toLocaleString("tr-TR")} ${p.unit || "Adet"}`;
 }
 
+/** Liste sağ sütunu: eksi adet de yazılır. */
+export function stockRightLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
+  const qty = stockQtyLabel(p);
+  if (qty === "Takip yok") return qty;
+  return `Stok ${qty}`;
+}
+
 export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
   const code = String(p.barcode || "").trim();
   return code || "Barkod yok";

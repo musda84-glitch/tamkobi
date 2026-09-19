@@ -1,4 +1,4 @@
-import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRowSubtitle } from "./productDisplay";
+import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -22,6 +22,8 @@ describe("productDisplay", () => {
   it("always surfaces quantity and barcode on list rows", () => {
     expect(stockQtyLabel({})).toBe("0 Adet");
     expect(stockQtyLabel({ stock_quantity: 12, unit: "Koli" })).toBe("12 Koli");
+    expect(stockQtyLabel({ stock_quantity: -467 })).toBe("-467 Adet");
+    expect(stockRightLabel({ stock_quantity: -467 })).toBe("Stok -467 Adet");
     expect(stockQtyLabel({ type: "service" })).toBe("Takip yok");
     expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
     expect(stockBarcodeLabel({})).toBe("Barkod yok");
