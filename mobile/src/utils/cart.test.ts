@@ -1,4 +1,4 @@
-import { addOrBump, cartTotals, lineFromProduct } from "./cart";
+import { addOrBump, cartTotals, lineFromProduct, removeCartLine } from "./cart";
 
 describe("cart", () => {
   it("adds VAT on net sale price", () => {
@@ -21,5 +21,12 @@ describe("cart", () => {
     expect(cart).toHaveLength(1);
     expect(cart[0].quantity).toBe(3);
     expect(cartTotals(cart).totalIncl).toBe(30);
+  });
+
+  it("removes a cart line by index", () => {
+    const a = lineFromProduct({ id: "p1", name: "Masa", sale_price: 10, vat_rate: 0 }, 1);
+    const b = lineFromProduct({ id: "p2", name: "Sandalye", sale_price: 20, vat_rate: 0 }, 1);
+    expect(removeCartLine([a, b], 0)).toEqual([b]);
+    expect(removeCartLine([a], 0)).toEqual([]);
   });
 });

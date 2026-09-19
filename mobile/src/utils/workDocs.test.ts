@@ -1,6 +1,7 @@
 import {
   emptyItem,
   namedItems,
+  removeWorkItem,
   newButtonLabel,
   projectPayload,
   quotePayload,
@@ -40,6 +41,13 @@ describe("workDocs", () => {
     expect(t.vat).toBe(40);
     expect(t.grandTotal).toBe(240);
     expect(namedItems([{ ...emptyItem(), name: "X" }, emptyItem()])).toHaveLength(1);
+  });
+
+  it("removes a quote or survey line and keeps one empty row", () => {
+    const a = { ...emptyItem(), name: "Kapı" };
+    const b = { ...emptyItem(), name: "Kasa" };
+    expect(removeWorkItem([a, b], 0)).toEqual([b]);
+    expect(removeWorkItem([a], 0)).toEqual([emptyItem()]);
   });
 
   it("requires at least one named quote line and a project name", () => {

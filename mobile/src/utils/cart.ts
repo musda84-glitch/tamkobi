@@ -67,6 +67,10 @@ export function addOrBump(cart: CartLine[], line: CartLine, qty = 1): CartLine[]
   return next;
 }
 
+export function removeCartLine(cart: CartLine[], index: number): CartLine[] {
+  return cart.filter((_, i) => i !== index);
+}
+
 export function cartTotals(cart: CartLine[]): { count: number; totalIncl: number } {
   return {
     count: cart.reduce((s, it) => s + num(it.quantity), 0),
