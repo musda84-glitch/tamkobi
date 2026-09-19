@@ -5,6 +5,7 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import type { Order } from "../types";
+import { approveOrderBody, approveOrderConfirm, canApproveOrder } from "../utils/orderApprove";
 import { idOf } from "../utils/money";
 import { printCargoLabel, printOrderForm } from "../utils/orderShare";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
@@ -62,16 +63,19 @@ export function OrderActions({
   compact = false,
   onMessage,
   onError,
+  onChanged,
 }: {
   order: Order;
   size?: "xs" | "sm";
   compact?: boolean;
   onMessage?: (text: string) => void;
   onError?: (text: string) => void;
+  onChanged?: () => void;
 }) {
   const { client, activeCompany, can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const canProduce = can("/production", "edit") || can("/sevk", "edit") || can("/orders", "edit");
+  const canApprove = can("/orders", "edit");
 
   const ensure = async () => {
     if (order.items?.length) return order;
@@ -106,6 +110,21 @@ export function OrderActions({
     }
   };
 
+  const approve = () => {
+    confirmAction("Siparişi onayla", approveOrderConfirm(order), async () => {
+      setBusy("approve");
+      try {
+        const r = await post<{ message?: string }>(client, `/orders/${idOf(order)}/approve`, approveOrderBody(order));
+        onMessage?.(r.message || "Sipariş onaylandı; pazaryeri entegrasyonuna iletildi.");
+        onChanged?.();
+      } catch (err) {
+        onError?.(apiErrorMessage(err, "Sipariş onaylanamadı."));
+      } finally {
+        setBusy(null);
+      }
+    });
+  };
+
   const toProduction = () => {
     confirmAction(
       "Üretim emri",
@@ -125,6 +144,9 @@ export function OrderActions({
   };
 
   const defs: ActionDef[] = [
+    ...(canApprove && canApproveOrder(order)
+      ? [{ key: "approve", label: "Onayla", icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${idOf(order)}`, onPress: approve }]
+      : []),
     { key: "print", label: "Yazdır", icon: "print", tone: "slate", busyKey: "print", testID: `order-print-${idOf(order)}`, onPress: printForm },
     { key: "label", label: "Kargo etiketi", icon: "pricetag", tone: "teal", busyKey: "label", testID: `order-label-${idOf(order)}`, onPress: printLabel },
     ...(canProduce

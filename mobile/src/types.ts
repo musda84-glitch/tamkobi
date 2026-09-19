@@ -174,6 +174,8 @@ export type Order = {
   cargo_shipment_id?: string;
   label_printed_at?: string;
   marketplace_status?: string;
+  shipment_package_id?: string | number;
+  external_id?: string | number;
   source?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
