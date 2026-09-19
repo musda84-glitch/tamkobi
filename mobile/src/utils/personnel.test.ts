@@ -10,6 +10,7 @@ import {
   payrollBreakdown,
   payrollStatusTr,
   remainingDue,
+  employeeCompRows,
   remainingLeaveDays,
   unpaidPayrollTotal,
   employeeCardActionTitles,
@@ -69,6 +70,13 @@ describe("payroll helpers", () => {
     expect(unpaidPayrollTotal("e2", pays)).toBe(8000);
     expect(remainingDue({ remaining: 15400 }, 12000)).toBe(15400);
     expect(remainingDue(null, 12000)).toBe(12000);
+    expect(employeeCompRows({ salary: 30000, meal_allowance: 1750, transport_allowance: 850 }).map((r) => [r.label, r.value])).toEqual([
+      ["Yemek", 1750],
+      ["Yol", 850],
+      ["Maaş", 30000],
+      ["Toplam", 32600],
+    ]);
+    expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200 }).find((r) => r.key === "yol")?.value).toBe(200);
     expect(validateAdvance("")).toBe("Avans tutarı girin.");
     expect(validateAdvance("2500")).toBeNull();
     expect(advanceRequestPayload(" 2500 ", " maaş ", "2026-09")).toEqual({
