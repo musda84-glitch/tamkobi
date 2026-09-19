@@ -7,10 +7,12 @@ import { toast } from "sonner";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
+import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
 import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
 import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
-import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
+import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
+import { empIdOf } from "../utils/personnelIds";
 
 import {
   UserCheck,
@@ -26,6 +28,11 @@ import {
   Trash2,
   CalendarDays,
   Gift,
+  Wallet,
+  Banknote,
+  ClipboardList,
+  Timer,
+  Bell,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -48,6 +55,13 @@ export default function PersonnelPage() {
 
   const [payPayrollItem, setPayPayrollItem] = useState(null);
   const [selectedBankId, setSelectedBankId] = useState("");
+  const [pendingReqs, setPendingReqs] = useState([]);
+  const [busyReqId, setBusyReqId] = useState(null);
+  const [busySalaryId, setBusySalaryId] = useState(null);
+  const [otAssign, setOtAssign] = useState(null);
+  const [taskEmp, setTaskEmp] = useState(null);
+
+  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
 
   const emptyEmployee = {
     full_name: "",
@@ -89,9 +103,9 @@ export default function PersonnelPage() {
     try {
       setLoading(true);
       const [empRes, payRes, bankRes] = await Promise.all([
-        axios.get(`${API_URL}/personnel/employees?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/personnel/payrolls?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+        axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`),
+        axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`),
+        axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
       ]);
       setEmployees(empRes.data);
       setPayrolls(payRes.data);
@@ -102,10 +116,22 @@ export default function PersonnelPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
   const refreshPersonnelSilent = useCallback(() => loadPersonnelData(), [loadPersonnelData]);
-  useDataRefresh(refreshPersonnelSilent, { companyId: activeCompany?.id || activeCompany?._id, scopes: ["cash", "expenses", "contacts"] });
+  useDataRefresh(refreshPersonnelSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
+
+  const loadPendingReqs = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const r = await axios.get(`${API_URL}/personnel/pending-requests`, { params: { company_id: companyId } });
+      setPendingReqs(r.data?.items || []);
+    } catch {
+      /* inbox zaten yükler */
+    }
+  }, [companyId]);
+  useEffect(() => { loadPendingReqs(); }, [loadPendingReqs]);
+  useDataRefresh(loadPendingReqs, { companyId, scopes: ["personnel", "attendance"] });
 
   const handleSaveEmployee = async (e) => {
     e.preventDefault();
@@ -113,7 +139,6 @@ export default function PersonnelPage() {
       toast.error("Lütfen ad soyad ve TC kimlik no girin.");
       return;
     }
-    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     const body = { ...newEmployee, salary: Number(newEmployee.salary) };
     try {
       if (editingEmp) {
@@ -165,13 +190,122 @@ export default function PersonnelPage() {
         ...splitPaymentTarget(selectedBankId)
       });
       toast.success(res.data.message);
-      await notifyDataChanged({ companyId: activeCompany?.id || activeCompany?._id, scopes: ["cash", "expenses", "contacts"] });
+      await notifyDataChanged({ companyId, scopes: ["cash", "expenses", "contacts"] });
       setPayPayrollItem(null);
       loadPersonnelData();
     } catch (err) {
       toast.error("Maaş ödemesi gerçekleştirilemedi.");
     }
   };
+
+  const payrollStubFor = (emp) => {
+    const eid = empIdOf(emp);
+    const list = payrolls.filter((p) => empIdOf(p) === eid || String(p.employee_id || "") === eid);
+    return list.find((p) => p.status !== "paid") || list[0] || {
+      employee_id: eid,
+      employee_name: emp.full_name,
+      period: new Date().toISOString().slice(0, 7),
+    };
+  };
+
+  const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
+
+  const openSalaryFor = async (emp) => {
+    const eid = empIdOf(emp);
+    let item = payrolls.find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
+    if (!item) {
+      setBusySalaryId(eid);
+      try {
+        const period = new Date().toISOString().slice(0, 7);
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
+        const payRes = await axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`);
+        setPayrolls(payRes.data);
+        item = (payRes.data || []).find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
+        if (!item) {
+          toast.success("Bu dönemin maaşı zaten ödenmiş.");
+          return;
+        }
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Bordro hazırlanamadı.");
+        return;
+      } finally {
+        setBusySalaryId(null);
+      }
+    }
+    setPayPayrollItem(item);
+  };
+
+  const openOvertimeFor = (emp) => setOtAssign({
+    employee_id: empIdOf(emp),
+    employee_name: emp.full_name,
+    hours: "",
+    date: new Date().toISOString().slice(0, 10),
+    note: "",
+  });
+
+  const saveOvertime = async () => {
+    if (!otAssign) return;
+    try {
+      const r = await axios.put(`${API_URL}/personnel/attendance/assign-overtime`, {
+        employee_id: otAssign.employee_id,
+        date: otAssign.date,
+        hours: Number(otAssign.hours) || 0,
+        note: otAssign.note || "",
+      });
+      toast.success(r.data.message || "Fazla mesai atandı.");
+      setOtAssign(null);
+      await notifyDataChanged({ companyId, scopes: ["personnel", "attendance"] });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Atama kaydedilemedi.");
+    }
+  };
+
+  const afterRequestDecision = async () => {
+    await loadPendingReqs();
+    await notifyDataChanged({ companyId, scopes: ["personnel", "attendance"] });
+    loadPersonnelData();
+  };
+
+  const decideLeave = async (id, status) => {
+    setBusyReqId(id);
+    try {
+      await axios.post(`${API_URL}/personnel/leaves/${id}/decide`, { status });
+      toast.success(status === "approved" ? "İzin onaylandı." : "İzin reddedildi.");
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
+  const decideEarly = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
+  const decideAdvance = async (id, status) => {
+    setBusyReqId(id);
+    try {
+      await axios.post(`${API_URL}/personnel/bonuses/${id}/decide`, { status });
+      toast.success(status === "approved" ? "Avans talebi onaylandı." : "Avans talebi reddedildi.");
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
+  const requestsFor = (emp) => pendingReqs.filter((it) => empIdOf(it) === empIdOf(emp));
 
   const totalMonthlyPayroll = employees.reduce((sum, e) => sum + (e.salary || 0), 0);
 
@@ -208,8 +342,8 @@ export default function PersonnelPage() {
       <GeoAttendanceCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onChanged={loadPersonnelData} />
 
       <PersonnelRequestsInbox
-        companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
-        onChanged={loadPersonnelData}
+        companyId={companyId}
+        onChanged={() => { loadPersonnelData(); loadPendingReqs(); }}
       />
 
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
@@ -225,9 +359,12 @@ export default function PersonnelPage() {
       {tab === "payroll" && (<>
       {/* Employees Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {employees.map((emp) => (
+        {employees.map((emp) => {
+            const empKey = empIdOf(emp);
+            const empReqs = requestsFor(emp);
+            return (
           <div
-            key={emp.id || emp._id}
+            key={empKey}
             className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3 flex flex-col justify-between"
             data-testid={`employee-card-${emp.tc_kimlik}`}
           >
@@ -239,6 +376,14 @@ export default function PersonnelPage() {
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  {empReqs.length > 0 && (
+                    <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
+                      <Bell className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
+                        {empReqs.length}
+                      </span>
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => openEditEmployee(emp)}
@@ -275,13 +420,59 @@ export default function PersonnelPage() {
               </div>
             </div>
 
+            <EmployeeRequestChips
+              items={empReqs}
+              testId={`employee-card-requests-${emp.tc_kimlik || empKey}`}
+              busyId={busyReqId}
+              onDecideLeave={decideLeave}
+              onDecideEarly={decideEarly}
+              onDecideAdvance={decideAdvance}
+              onViewDispute={() => setTab("attendance")}
+            />
+
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
               <span className="text-slate-400">Net Maaş:</span>
               <span className="text-sm font-bold text-slate-900">{emp.salary?.toLocaleString('tr-TR')} ₺</span>
             </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => openAdvanceFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200"
+                data-testid={`employee-advance-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Wallet className="w-3.5 h-3.5" /> Avans
+              </button>
+              <button
+                type="button"
+                onClick={() => openSalaryFor(emp)}
+                disabled={busySalaryId === empKey}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 disabled:opacity-50"
+                data-testid={`employee-salary-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Banknote className="w-3.5 h-3.5" /> Maaş
+              </button>
+              <button
+                type="button"
+                onClick={() => setTaskEmp(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" /> Görev
+              </button>
+              <button
+                type="button"
+                onClick={() => openOvertimeFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Timer className="w-3.5 h-3.5" /> F. Mesai
+              </button>
+            </div>
             <button onClick={() => setCardEmp(emp)} className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold" data-testid={`employee-card-btn-${emp.tc_kimlik}`}>Personel Kartı</button>
           </div>
-        ))}
+            );
+          })}
       </div>
 
       {/* Payrolls Table */}
@@ -510,8 +701,45 @@ export default function PersonnelPage() {
           </div>
         </div>
       )}
-      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
-      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} allowances={(() => { const emp = employees.find((x) => (x.id || x._id) === quickPay.p.employee_id); return { meal: emp?.meal_allowance, transport: emp?.transport_allowance }; })()} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
+      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
+      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={companyId} accounts={bankAccounts} allowances={(() => { const emp = employees.find((x) => empIdOf(x) === String(quickPay.p.employee_id || "")); return { meal: emp?.meal_allowance, transport: emp?.transport_allowance }; })()} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
+      {taskEmp && (
+        <EmployeeAssignTaskModal
+          employee={taskEmp}
+          companyId={companyId}
+          onClose={() => setTaskEmp(null)}
+          onSaved={() => notifyDataChanged({ companyId, scopes: ["personnel"] })}
+        />
+      )}
+      {otAssign && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="emp-ot-modal" onClick={() => setOtAssign(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-slate-900">Fazla Mesai Ata — {otAssign.employee_name}</h4>
+              <button type="button" onClick={() => setOtAssign(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-[11px] text-slate-500">Atanan süre, beklenen çıkışı uzatır. Personel çıkışı bu saate göre işlenir.</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Tarih</label>
+                <input type="date" value={otAssign.date} onChange={(e) => setOtAssign({ ...otAssign, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="emp-ot-date" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Saat</label>
+                <input type="number" min="0" step="0.5" value={otAssign.hours} onChange={(e) => setOtAssign({ ...otAssign, hours: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="örn. 2" data-testid="emp-ot-hours" />
+              </div>
+            </div>
+            <div className="text-xs">
+              <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Not (opsiyonel)</label>
+              <input value={otAssign.note} onChange={(e) => setOtAssign({ ...otAssign, note: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="emp-ot-note" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setOtAssign(null)} className="px-3 py-1.5 rounded-lg border text-xs font-semibold" data-testid="emp-ot-cancel">Vazgeç</button>
+              <button type="button" onClick={saveOvertime} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700" data-testid="emp-ot-save">Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

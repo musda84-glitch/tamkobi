@@ -6,12 +6,96 @@ import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, Refres
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
-const KIND_META = {
+export const KIND_META = {
   leave: { label: "İzin", Icon: CalendarDays, chip: "bg-indigo-50 text-indigo-700 border-indigo-100" },
   early_leave: { label: "Erken çıkış", Icon: Clock, chip: "bg-amber-50 text-amber-800 border-amber-100" },
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
 };
+
+const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
+
+export function EmployeeRequestChips({
+  items,
+  testId,
+  busyId,
+  onDecideLeave,
+  onDecideEarly,
+  onDecideAdvance,
+  onViewDispute,
+  maxVisible = 3,
+}) {
+  if (!items?.length) return null;
+  const shown = items.slice(0, maxVisible);
+  const extra = items.length - shown.length;
+  return (
+    <div className="space-y-1.5 pt-2 border-t border-amber-100" data-testid={testId}>
+      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-800 uppercase tracking-wide">
+        <Bell className="w-3 h-3" /> Talepler ({items.length})
+      </div>
+      {shown.map((it) => {
+        const meta = KIND_META[it.kind] || KIND_META.leave;
+        const Icon = meta.Icon;
+        const busy = busyId === it.id;
+        return (
+          <div key={`${it.kind}-${it.id}`} className="rounded-lg border border-slate-100 bg-amber-50/50 px-2 py-1.5 space-y-1" data-testid={`emp-card-request-${it.kind}-${it.id}`}>
+            <div className="flex items-start gap-1.5 min-w-0">
+              <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded border text-[9px] font-bold shrink-0 ${meta.chip}`}>
+                <Icon className="w-2.5 h-2.5" /> {meta.label}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold text-slate-800 leading-tight">{it.title}</div>
+                <div className="text-[10px] text-slate-500 truncate" title={it.detail}>{it.detail}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 justify-end">
+              {it.kind === "leave" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideLeave?.(it.id, "approved")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-leave-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideLeave?.(it.id, "rejected")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-leave-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "early_leave" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-early-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-early-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "advance" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideAdvance?.(it.id, "approved")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-advance-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideAdvance?.(it.id, "rejected")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-advance-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "dispute" && (
+                <button type="button" onClick={() => onViewDispute?.(it)} className="px-1.5 py-0.5 rounded-md border border-slate-200 text-[9px] font-bold text-slate-700 hover:bg-white" data-testid={`card-view-dispute-${it.id}`}>
+                  Puantajda aç
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {extra > 0 && (
+        <div className="text-[10px] text-amber-800 font-semibold" data-testid={`${testId}-more`}>
+          +{extra} talep daha — üstteki Personel Talepleri kutusundan bakın
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
 export function PersonnelRequestsInbox({ companyId, onChanged }) {

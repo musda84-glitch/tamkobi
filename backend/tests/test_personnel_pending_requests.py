@@ -31,6 +31,7 @@ class TestPersonnelPendingRequests:
         for it in data["items"][:20]:
             assert it.get("kind") in ("leave", "early_leave", "dispute", "advance")
             assert it.get("id")
+            assert "employee_id" in it
             assert "employee_name" in it
             assert "title" in it
             assert "link" in it
