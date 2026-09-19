@@ -75,6 +75,9 @@ export function ContactDetailScreen() {
   const canEditContact = can("/contacts", "edit");
   const canInvoice = can("/invoices", "edit");
   const canBank = can("/banking", "edit");
+  const canQuote = can("/quotes", "edit");
+  const canSurvey = can("/surveys", "edit");
+  const canOrder = can("/orders", "edit") || can("/saha", "edit");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -459,6 +462,9 @@ export function ContactDetailScreen() {
   const actionTiles: ActionTile[] = [
     canEditContact && { key: "edit", label: "Düzenle", icon: "create" as const, tone: "slate" as const, testID: "detail-edit-contact-btn", onPress: () => go("ContactEdit", { id }) },
     { key: "statement", label: "Ekstre", icon: "document-text" as const, tone: "indigo" as const, testID: "detail-statement-btn", onPress: () => go("ContactStatement", { id, name: c.name || name }) },
+    canQuote && { key: "quote", label: "Teklif", icon: "create" as const, tone: "amber" as const, testID: "detail-quote-btn", onPress: () => go("QuoteNew", docParams) },
+    canOrder && { key: "order", label: "Sipariş", icon: "cart" as const, tone: "orange" as const, testID: "detail-order-btn", onPress: () => (can("/saha") ? go("Field", { contact_id: id, contact_name: c.name || name }) : go("Orders")) },
+    canSurvey && { key: "survey", label: "Keşif", icon: "construct" as const, tone: "teal" as const, testID: "detail-survey-btn", onPress: () => go("SurveyNew", docParams) },
     canInvoice && { key: "sell", label: "Satış yap", icon: "arrow-up-circle" as const, tone: "emerald" as const, testID: "detail-sell-btn", onPress: () => go("InvoiceNew", { type: "sales", ...docParams }) },
     canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
     canBank && { key: "collect", label: "Tahsilat", icon: "wallet" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
@@ -502,7 +508,7 @@ export function ContactDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
-      <ActionTiles items={actionTiles} />
+      <ActionTiles items={actionTiles} size="xs" />
 
       {termsOpen ? (
         <Card testID="contact-terms-form">
