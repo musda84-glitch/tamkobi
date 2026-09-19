@@ -13,7 +13,7 @@ import { colors, radius } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { productImage, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "../utils/productDisplay";
+import { productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "../utils/productDisplay";
 
 function ProductThumb({ uri }: { uri: string }) {
   const { client } = useAuth();
@@ -123,7 +123,6 @@ export function StockScreen() {
             right={stockRightLabel(p)}
             rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
             rightTestID={`stock-qty-${idOf(p)}`}
-            rightSub={stockBarcodeLabel(p)}
             badge={<Badge label={qty} tone={qtyTone} />}
             onPress={() => go("StockDetail", { id: idOf(p), name: p.name })}
           />

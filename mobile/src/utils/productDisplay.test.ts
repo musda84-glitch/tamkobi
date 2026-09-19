@@ -14,9 +14,11 @@ describe("productDisplay", () => {
     expect(stockBadge({ stock_quantity: 40, unit: "Adet", min_stock_alert: 5 })?.tone).toBe("muted");
   });
 
-  it("hides the badge when stock is not tracked", () => {
-    expect(stockBadge({ stock_quantity: 5, track_stock: false })).toBeNull();
-    expect(stockBadge({ stock_quantity: 5, type: "service" })).toBeNull();
+  it("still shows quantity when stock is not tracked", () => {
+    expect(stockBadge({ stock_quantity: 5, track_stock: false })?.label).toBe("5 Adet");
+    expect(stockBadge({ stock_quantity: 5, type: "service" })?.label).toBe("5 Adet");
+    expect(stockRightLabel({ stock_quantity: 18, track_stock: false })).toBe("Stok 18 Adet");
+    expect(stockQtyLabel({ type: "service", stock_quantity: 3 })).toBe("3 Adet");
   });
 
   it("always surfaces quantity and barcode on list rows", () => {
@@ -24,7 +26,6 @@ describe("productDisplay", () => {
     expect(stockQtyLabel({ stock_quantity: 12, unit: "Koli" })).toBe("12 Koli");
     expect(stockQtyLabel({ stock_quantity: -467 })).toBe("-467 Adet");
     expect(stockRightLabel({ stock_quantity: -467 })).toBe("Stok -467 Adet");
-    expect(stockQtyLabel({ type: "service" })).toBe("Takip yok");
     expect(stockBarcodeLabel({ barcode: "8690001" })).toBe("8690001");
     expect(stockBarcodeLabel({})).toBe("Barkod yok");
     expect(stockBadge({})?.label).toBe("0 Adet");

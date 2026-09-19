@@ -51,7 +51,7 @@ export function OrdersScreen() {
             right={fmtMoney(o.grand_total || o.total_amount)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}
           />
-          <OrderActions order={o} onMessage={setMessage} onError={setError} />
+          <OrderActions order={o} compact onMessage={setMessage} onError={setError} />
         </View>
       ))}
     </Screen>

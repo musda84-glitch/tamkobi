@@ -9,17 +9,14 @@ export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "i
 export type StockBadge = { label: string; tone: "danger" | "warning" | "muted" };
 
 export function stockQtyLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
-  if (p.track_stock === false || p.type === "service") return "Takip yok";
   const qty = Number(p.stock_quantity);
   const n = Number.isFinite(qty) ? qty : 0;
   return `${n.toLocaleString("tr-TR")} ${p.unit || "Adet"}`;
 }
 
-/** Liste sağ sütunu: eksi adet de yazılır. */
+/** Liste sağ sütunu: takip kapalı olsa da adet yazılır, eksi adet de yazılır. */
 export function stockRightLabel(p: Pick<Product, "stock_quantity" | "unit" | "track_stock" | "type">): string {
-  const qty = stockQtyLabel(p);
-  if (qty === "Takip yok") return qty;
-  return `Stok ${qty}`;
+  return `Stok ${stockQtyLabel(p)}`;
 }
 
 export function stockBarcodeLabel(p: Pick<Product, "barcode">): string {
@@ -42,9 +39,8 @@ export function stockRowSubtitle(
   ].filter(Boolean).join(" · ");
 }
 
-/** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. */
+/** Negatif stok hatalı sayım demek; min_stock_alert altı sipariş uyarısı. Takip kapalı olsa da adet yazılır. */
 export function stockBadge(p: Pick<Product, "stock_quantity" | "unit" | "min_stock_alert" | "track_stock" | "type">): StockBadge | null {
-  if (p.track_stock === false || p.type === "service") return null;
   const qty = Number(p.stock_quantity);
   const n = Number.isFinite(qty) ? qty : 0;
   const unit = p.unit || "Adet";

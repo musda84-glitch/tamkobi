@@ -8,7 +8,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact, Invoice } from "../types";
 import { contactBalanceLabel, contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
-import { CONTACT_TYPE_FILTERS, filterContacts, type ContactTypeFilter } from "../utils/contactFilters";
+import { CONTACT_BALANCE_FILTERS, CONTACT_TYPE_FILTERS, filterContacts, type ContactBalanceFilter, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
 export function ContactsScreen() {
@@ -19,6 +19,7 @@ export function ContactsScreen() {
   const [flags, setFlags] = useState<Record<string, ContactBalanceFlag>>({});
   const [q, setQ] = useState("");
   const [typeF, setTypeF] = useState<ContactTypeFilter>("all");
+  const [balF, setBalF] = useState<ContactBalanceFilter>("all");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -43,7 +44,10 @@ export function ContactsScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const filtered = useMemo(() => filterContacts(rows, typeF, q), [q, rows, typeF]);
+  const filtered = useMemo(
+    () => filterContacts(rows, typeF, q, 80, balF, (c) => contactDisplayBalance(c, { open_amount: openById[idOf(c)] }, flags[idOf(c)])),
+    [balF, flags, openById, q, rows, typeF],
+  );
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -54,6 +58,16 @@ export function ContactsScreen() {
       <Row style={{ flexWrap: "wrap" }}>
         {CONTACT_TYPE_FILTERS.map((t) => (
           <Chip key={t.key} label={t.label} active={typeF === t.key} testID={`contacts-type-${t.key}`} onPress={() => setTypeF(t.key)} />
+        ))}
+        {CONTACT_BALANCE_FILTERS.map((t) => (
+          <Chip
+            key={t.key}
+            label={t.label}
+            active={balF === t.key}
+            testID={`contacts-balance-${t.key}`}
+            color={t.key === "payable" ? colors.danger : colors.primaryHover}
+            onPress={() => setBalF((cur) => (cur === t.key ? "all" : t.key))}
+          />
         ))}
       </Row>
       <ErrorBanner message={error} />

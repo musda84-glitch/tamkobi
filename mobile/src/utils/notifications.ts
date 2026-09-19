@@ -20,7 +20,8 @@ const TYPE_ROLES: Record<string, string[]> = {
 
 /** Ana ekran kutucuklarına düşen okunmamış bildirim türleri. */
 export const TILE_NOTIFICATION_TYPES: Record<string, string[]> = {
-  orders: ["b2b_order", "order_pick_missing", "order_pick_production"],
+  orders: ["b2b_order"],
+  sevk: ["order_pick_missing", "order_pick_production"],
   personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "early_leave_request", "early_leave_decision"],
   banking: ["cash_approval", "bank_sync"],
 };
@@ -65,7 +66,7 @@ export function matchesTileType(type: string | undefined, prefixes: string[]): b
 
 /** Kutucuk başına okunmamış bildirim sayısı. */
 export function unreadByTile(rows: Notification[] | null | undefined): Record<string, number> {
-  const out: Record<string, number> = { orders: 0, personnel: 0, banking: 0 };
+  const out: Record<string, number> = Object.fromEntries(Object.keys(TILE_NOTIFICATION_TYPES).map((k) => [k, 0]));
   for (const n of rows || []) {
     if (n.is_read) continue;
     for (const [tile, types] of Object.entries(TILE_NOTIFICATION_TYPES)) {
@@ -136,6 +137,7 @@ const REF_ROUTES: Record<string, string> = {
   survey: "/surveys",
   project: "/projects",
   order: "/orders",
+  order_pick: "/sevk",
   invoice: "/invoices",
   contact: "/contacts",
   cheque: "/cheques",

@@ -1,4 +1,4 @@
-import { CONTACT_TYPE_FILTERS, filterContacts, matchesContactSearch, matchesContactType } from "./contactFilters";
+import { CONTACT_BALANCE_FILTERS, CONTACT_TYPE_FILTERS, filterContacts, matchesContactBalance, matchesContactSearch, matchesContactType } from "./contactFilters";
 
 const rows = [
   { name: "Acme", type: "customer", city: "İstanbul", phone: "5330000000" },
@@ -8,8 +8,18 @@ const rows = [
 ];
 
 describe("contactFilters", () => {
-  it("offers only the three type chips", () => {
+  it("offers type chips plus receivable/payable chips", () => {
     expect(CONTACT_TYPE_FILTERS.map((f) => f.key)).toEqual(["all", "customer", "supplier"]);
+    expect(CONTACT_BALANCE_FILTERS.map((f) => f.label)).toEqual(["Alacaklı Olanlar", "Borçlu Olanlar"]);
+  });
+
+  it("filters by display balance", () => {
+    expect(matchesContactBalance(120, "receivable")).toBe(true);
+    expect(matchesContactBalance(-50, "receivable")).toBe(false);
+    expect(matchesContactBalance(-50, "payable")).toBe(true);
+    expect(matchesContactBalance(0, "payable")).toBe(false);
+    expect(matchesContactBalance(-1, "all")).toBe(true);
+    expect(filterContacts(rows, "all", "", 80, "receivable", (c) => (c.name === "Acme" ? 80 : -10)).map((c) => c.name)).toEqual(["Acme"]);
   });
 
   it("shows 'both' contacts under customer and supplier", () => {

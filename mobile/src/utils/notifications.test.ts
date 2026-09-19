@@ -44,13 +44,15 @@ describe("tileBadges", () => {
       { type: "leave_request", is_read: false },
       { type: "bank_sync", is_read: true },
       { type: "cash_approval", is_read: false },
-    ])).toEqual({ orders: 2, personnel: 1, banking: 1 });
+      { type: "order_pick_missing", is_read: false },
+      { type: "order_pick_production", is_read: false },
+    ])).toEqual({ orders: 2, sevk: 2, personnel: 1, banking: 1 });
     expect(tileBadgeLabel(0, 3)).toBe("3");
     expect(tileBadgeLabel(120)).toBe("99+");
     expect(tileBadges(
-      [{ type: "b2b_order", is_read: false }],
-      { orders: 5, personnel: 2, banking: 0 },
-    )).toEqual({ orders: "5", personnel: "2" });
+      [{ type: "b2b_order", is_read: false }, { type: "order_pick_missing", is_read: false }],
+      { orders: 5, personnel: 2, banking: 0, sevk: 8 },
+    )).toEqual({ orders: "5", sevk: "8", personnel: "2" });
   });
 });
 
@@ -93,6 +95,7 @@ describe("notificationRoute", () => {
   it("maps ref_type when there is no mobile route for the link", () => {
     expect(notificationRoute({ link: "/support", ref_type: "quote" })).toBe("/quotes");
     expect(notificationRoute({ ref_type: "order" })).toBe("/orders");
+    expect(notificationRoute({ ref_type: "order_pick" })).toBe("/sevk");
     expect(notificationRoute({ ref_type: "cash_approval" })).toBe("/banking");
     expect(notificationRoute({ type: "announcement" })).toBeNull();
   });
