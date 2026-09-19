@@ -17,9 +17,25 @@ export function permPath(path: string): string {
   return LICENSE_KEY[path] || path;
 }
 
+function permissionLevel(user: SessionUser, path: string): PermissionLevel | undefined {
+  return user?.permissions?.[permPath(path)];
+}
+
+/** Personel & Bordro İK ekranı: anahtar yoksa veya none ise kapalı (Mesaim/Personelim yetmez). */
+export function hasPersonnelAccess(user: SessionUser): boolean {
+  if (user?.role === "admin") return true;
+  const value = permissionLevel(user, "/personnel");
+  return value === "view" || value === "edit";
+}
+
 export function can(user: SessionUser, path: string, level: "view" | "edit" = "view"): boolean {
-  if (!user?.permissions || user.role === "admin") return true;
-  const value = user.permissions[permPath(path)];
+  if (user?.role === "admin") return true;
+  if (path === "/personnel") {
+    if (level === "edit") return permissionLevel(user, path) === "edit";
+    return hasPersonnelAccess(user);
+  }
+  if (!user?.permissions) return true;
+  const value = permissionLevel(user, path);
   if (level === "view") return value !== "none";
   return value === "edit";
 }
@@ -27,15 +43,13 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" = "v
 export function moduleOn(license: License, path: string): boolean {
   if (!license?.modules) return true;
   const key = LICENSE_KEY[path] || path;
-  if (license.modules[key] !== false) return true;
-  // Personel & Bordro web'de ayrı lisans; mobilde Personelim/Mesaim açıksa İK menüsünde dursun.
-  if (path === "/personnel") return license.modules["/mesai"] !== false;
-  return false;
+  return license.modules[key] !== false;
 }
 
 /** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
   if (link.path === "/" || link.path === "/settings") return true;
+  if (link.path === "/personnel") return hasPersonnelAccess(user) && moduleOn(license, link.path);
   return can(user, link.path) && moduleOn(license, link.path);
 }
 

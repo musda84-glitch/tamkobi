@@ -48,6 +48,13 @@ describe("visibleQuickTiles", () => {
     expect(resolveMobilePath("/cheques")).toBe("/cheques");
   });
 
+  it("hides Personel & Bordro unless the role grants /personnel", () => {
+    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit" } };
+    expect(visibleQuickTiles(production, { modules: { "/mesai": true } }).map((t) => t.id)).not.toContain("personnel");
+    const advisor = { role: "advisor", permissions: { "/personnel": "view" } };
+    expect(visibleQuickTiles(advisor, null).map((t) => t.id)).toContain("personnel");
+  });
+
   it("gates the warehouse shipping tile on the /sevk module", () => {
     const warehouse = { role: "warehouse", permissions: { "/sevk": "edit" } };
     expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).toContain("sevk");

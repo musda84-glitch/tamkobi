@@ -36,9 +36,16 @@ describe("permissions", () => {
 
   it("hides Personel & Bordro when the role has no personnel permission", () => {
     const warehouse = { role: "warehouse", permissions: { "/mesai": "view", "/personnel": "none" } };
+    const production = { role: "production", permissions: { "/mesai": "view", "/production": "edit" } };
+    const advisor = { role: "advisor", permissions: { "/personnel": "view", "/mesai": "view" } };
     const mesaiOnly = { modules: { "/personnel": false, "/mesai": true } };
-    expect(isMoreLinkVisible({ path: "/personnel" }, warehouse, mesaiOnly)).toBe(false);
-    expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, mesaiOnly)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/personnel" }, warehouse, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/personnel" }, production, { modules: { "/mesai": true } })).toBe(false);
+    expect(can(production, "/personnel")).toBe(false);
+    expect(visibleModules(production, null).map((m) => m.key)).not.toContain("personnel");
+    expect(isMoreLinkVisible({ path: "/personnel" }, advisor, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, mesaiOnly)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/personnel" }, { role: "admin" }, { modules: { "/personnel": true } })).toBe(true);
     expect(isMoreLinkVisible({ path: "/settings" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
   });
 });
