@@ -1,3 +1,4 @@
+import { splitPaymentTarget } from "./finance";
 import { idOf } from "./money";
 
 export type Employee = {
@@ -31,6 +32,22 @@ export type Payroll = {
   bonus?: number;
   status?: string;
   paid_date?: string;
+};
+
+export type EmployeeBalance = {
+  remaining?: number;
+  unpaid_payroll?: number;
+  unpaid_expenses?: number;
+  bonus_pending?: number;
+  advances?: number;
+  meal_due?: number;
+  transport_due?: number;
+};
+
+export type EmployeeCard = {
+  employee?: Employee;
+  payrolls?: Payroll[];
+  balance?: EmployeeBalance;
 };
 
 export type EmployeeDraft = {
@@ -219,6 +236,39 @@ export function employeeSelectGroups(employees: Employee[]) {
       label: `${e.full_name || "Personel"}${remainingLeaveDays(e) || remainingLeaveDays(e) === 0 ? ` · kalan ${remainingLeaveDays(e)} g` : ""}`,
     })),
   }];
+}
+
+export function unpaidPayrollTotal(employeeId: string, payrolls: Payroll[]): number {
+  return (payrolls || [])
+    .filter((p) => p.employee_id === employeeId && p.status !== "paid")
+    .reduce((s, p) => s + (Number(p.final_payable ?? p.net_salary) || 0), 0);
+}
+
+export function openPayroll(employeeId: string, payrolls: Payroll[]): Payroll | undefined {
+  return (payrolls || []).find((p) => p.employee_id === employeeId && p.status !== "paid");
+}
+
+export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 0): number {
+  if (balance && balance.remaining != null && Number.isFinite(Number(balance.remaining))) {
+    return Number(balance.remaining) || 0;
+  }
+  return unpaidFallback;
+}
+
+export function validateAdvance(amount: string): string | null {
+  if (!(num(amount) > 0)) return "Avans tutarı girin.";
+  return null;
+}
+
+export function advancePayload(employeeId: string, amount: string, period: string, accountId: string, note: string) {
+  return {
+    employee_id: employeeId,
+    type: "advance" as const,
+    amount: num(amount),
+    period,
+    note: note.trim(),
+    ...splitPaymentTarget(accountId),
+  };
 }
 
 export function payrollBreakdown(p: Payroll): string {

@@ -8,7 +8,10 @@ import {
   monthlyPayrollLoad,
   payrollBreakdown,
   payrollStatusTr,
+  remainingDue,
   remainingLeaveDays,
+  unpaidPayrollTotal,
+  validateAdvance,
   validateEmployee,
   validateLeave,
 } from "./personnel";
@@ -42,6 +45,20 @@ describe("payroll helpers", () => {
     expect(payrollStatusTr("paid", "2026-09-15")).toBe("Ödendi (2026-09-15)");
     expect(payrollBreakdown({ overtime_pay: 1200, overtime_hours: 8, second_salary: 5000 })).toContain("mesai");
     expect(payrollBreakdown({ overtime_pay: 0, second_salary: 0 })).toBe("");
+  });
+
+  it("sums unpaid payroll and prefers card remaining", () => {
+    const pays = [
+      { employee_id: "e1", status: "pending", final_payable: 12000 },
+      { employee_id: "e1", status: "paid", final_payable: 30000 },
+      { employee_id: "e2", status: "pending", net_salary: 8000 },
+    ];
+    expect(unpaidPayrollTotal("e1", pays)).toBe(12000);
+    expect(unpaidPayrollTotal("e2", pays)).toBe(8000);
+    expect(remainingDue({ remaining: 15400 }, 12000)).toBe(15400);
+    expect(remainingDue(null, 12000)).toBe(12000);
+    expect(validateAdvance("")).toBe("Avans tutarı girin.");
+    expect(validateAdvance("2500")).toBeNull();
   });
 });
 
