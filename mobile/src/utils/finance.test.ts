@@ -3,6 +3,7 @@ import {
   accountUpdatePayload,
   draftFromAccount,
   emptyAccountDraft,
+  emptyProjectExpenseDraft,
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
@@ -75,10 +76,20 @@ describe("finance drafts", () => {
     expect(body.amount).toBe(100);
     expect(body.account_id).toBe("acc1");
     expect(body.partner_id).toBeNull();
+    expect(body.project_id).toBeNull();
     d.account_id = "partner:p9";
     const partnerBody = expensePayload(d, "comp");
     expect(partnerBody.account_id).toBeNull();
     expect(partnerBody.partner_id).toBe("p9");
+    const proj = emptyProjectExpenseDraft("2026-09-19");
+    proj.description = "Şantiye";
+    proj.amount = "250";
+    expect(proj.vat_included).toBe(true);
+    expect(expensePayload(proj, "comp", "prj1")).toMatchObject({
+      project_id: "prj1",
+      description: "Şantiye",
+      vat_included: true,
+    });
   });
 
   it("groups payment targets like web PaymentTargetSelect", () => {

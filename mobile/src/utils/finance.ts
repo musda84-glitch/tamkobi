@@ -346,6 +346,7 @@ export type Expense = {
   contact_name?: string;
   employee_id?: string;
   employee_name?: string;
+  project_id?: string;
   document_no?: string;
   notes?: string;
   is_recurring?: boolean;
@@ -416,7 +417,7 @@ export function validateExpenseDraft(d: ExpenseDraft): string | null {
   return null;
 }
 
-export function expensePayload(d: ExpenseDraft, companyId: string) {
+export function expensePayload(d: ExpenseDraft, companyId: string, projectId?: string | null) {
   const target = splitPaymentTarget(d.account_id);
   return {
     company_id: companyId,
@@ -429,11 +430,17 @@ export function expensePayload(d: ExpenseDraft, companyId: string) {
     account_id: target.account_id,
     partner_id: target.partner_id,
     contact_id: d.contact_id || null,
+    project_id: projectId || null,
     document_no: d.document_no,
     notes: d.notes,
     is_recurring: d.is_recurring,
     currency: d.currency || "TRY",
   };
+}
+
+/** Web ProjectExpenseModal: KDV dahil, ödenmemiş, projeye bağlı. */
+export function emptyProjectExpenseDraft(today: string): ExpenseDraft {
+  return { ...emptyExpenseDraft(today), vat_included: true };
 }
 
 export function validateVirman(sourceId: string, targetId: string, amount: string): string | null {
