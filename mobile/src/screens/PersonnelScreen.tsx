@@ -96,8 +96,8 @@ export function PersonnelScreen() {
       ]);
       setEmployees(emps || []);
       setPayrolls(pays || []);
-      setAccounts(accs || []);
-      setPartners(pars || []);
+      setAccounts(Array.isArray(accs) ? accs : []);
+      setPartners(Array.isArray(pars) ? pars : []);
       setLeaves(lvs || []);
       setAttendance(att);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
@@ -142,8 +142,16 @@ export function PersonnelScreen() {
       }
     }
     setPayItem(item);
-    const firstPartner = partners.find((p) => p.is_active !== false);
-    setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : firstPartner ? `partner:${idOf(firstPartner)}` : ""));
+    const [freshAccs, freshPars] = await Promise.all([
+      get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => accounts),
+      get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => partners),
+    ]);
+    const accList = Array.isArray(freshAccs) ? freshAccs : accounts;
+    const parList = Array.isArray(freshPars) ? freshPars : partners;
+    setAccounts(accList);
+    setPartners(parList);
+    const firstPartner = parList.find((p) => p.is_active !== false);
+    setPayAccount((cur) => cur || (accList[0] ? idOf(accList[0]) : firstPartner ? `partner:${idOf(firstPartner)}` : ""));
   };
 
   const saveAdvance = async () => {
@@ -293,7 +301,7 @@ export function PersonnelScreen() {
 
   const loadAmount = monthlyPayrollLoad(employees);
   const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
-  const payGroups = paymentTargetGroups(accounts, partners);
+  const payGroups = paymentTargetGroups(accounts, partners, { partnersFirst: true });
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -354,7 +362,14 @@ export function PersonnelScreen() {
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
                     {EMPLOYEE_CARD_ACTIONS.map((action) => {
                       const press = {
-                        advance: () => { setAdvanceEmp(emp); setAdvanceAmount(""); setAdvanceNote(""); },
+                        advance: () => {
+                          setAdvanceEmp(emp);
+                          setAdvanceAmount("");
+                          setAdvanceNote("");
+                          get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+                            .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+                            .catch(() => undefined);
+                        },
                         salary: () => openSalaryPay(emp),
                         task: () => openTaskAssign(emp),
                         overtime: () => openOvertime(emp),
