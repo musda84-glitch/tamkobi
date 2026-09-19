@@ -116,6 +116,12 @@ export function namedItems(items: WorkItem[]): WorkItem[] {
   return items.filter((i) => (i.name || "").trim());
 }
 
+/** Drops a quote / survey line; keeps one empty row so the editor stays usable. */
+export function removeWorkItem(items: WorkItem[], index: number): WorkItem[] {
+  const next = items.filter((_, i) => i !== index);
+  return next.length ? next : [emptyItem()];
+}
+
 /** Stok kartı KDV dahilse birim fiyat brüttür; net+KDV ayrıca eklenmez. */
 export function workItemFromProduct(prod: {
   id?: string;

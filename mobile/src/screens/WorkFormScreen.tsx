@@ -38,6 +38,7 @@ import {
   hydrateWorkItem,
   namedItems,
   newButtonLabel,
+  removeWorkItem,
   projectPayload,
   quotePayload,
   quoteUpdateBody,
@@ -190,6 +191,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
     setItems((rows) => rows.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
+  };
+
+  const removeItem = (i: number) => {
+    if (!canEdit) return;
+    setItems((rows) => removeWorkItem(rows, i));
   };
 
   const save = async () => {
@@ -430,6 +436,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               <View style={{ width: 86, flexShrink: 0 }}>
                 <Field compact label="Birim fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
               </View>
+              {canEdit ? (
+                <Pressable
+                  onPress={() => removeItem(i)}
+                  testID={`q-item-del-${i}`}
+                  accessibilityLabel="Kalemi sil"
+                  style={{ width: 36, height: 40, marginTop: 18, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                </Pressable>
+              ) : null}
             </View>
           ))}
           <PrimaryButton title="Kalem ekle" color={colors.indigo} testID="q-add-item-btn" onPress={() => setItems((rows) => [...rows, emptyItem()])} />

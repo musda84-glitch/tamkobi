@@ -1,15 +1,16 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ChannelLogo } from "../components/ChannelLogo";
-import { Card, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Order, Product } from "../types";
-import { addOrBump, cartTotals, lineFromProduct, type CartLine } from "../utils/cart";
+import { addOrBump, cartTotals, lineFromProduct, removeCartLine, type CartLine } from "../utils/cart";
 import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
@@ -186,13 +187,21 @@ export function FieldSalesScreen() {
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Sepet ({totals.count})</Text>
         {!cart.length ? <Empty icon="cart-outline" title="Sepet boş" /> : cart.map((it, i) => (
-          <ListRow
-            key={`${it.product_id}-${i}`}
-            title={`${it.quantity}× ${it.product_name}`}
-            subtitle={it.sku}
-            right={fmtMoney(it.total_incl)}
-            onPress={() => setCart((prev) => prev.filter((_, idx) => idx !== i))}
-          />
+          <Row key={`${it.product_id}-${i}`} style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontWeight: "700", color: colors.text }} numberOfLines={2}>{`${it.quantity}× ${it.product_name}`}</Text>
+              {it.sku ? <Muted>{it.sku}</Muted> : null}
+            </View>
+            <Text style={{ fontWeight: "800", color: colors.text, marginHorizontal: 8 }}>{fmtMoney(it.total_incl)}</Text>
+            <Pressable
+              onPress={() => setCart((prev) => removeCartLine(prev, i))}
+              testID={`saha-cart-del-${i}`}
+              accessibilityLabel="Kalemi sil"
+              style={{ width: 40, height: 40, alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </Pressable>
+          </Row>
         ))}
         <Field label="Not" value={notes} onChangeText={setNotes} />
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
