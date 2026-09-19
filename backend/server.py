@@ -1172,7 +1172,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
         else:
             try:
                 r = await _send_sms_to(q["company_id"], [{"phone": phone, "contact_id": q.get("contact_id"), "contact_name": q.get("contact_name")}], message, "quote_approval", quote_id)
-                results["sms"] = {"status": "sent" if not r.get("simulated") else "simulated", "detail": r.get("message")}
+                results["sms"] = comm_service.sms_channel_result(r)
             except HTTPException as e:
                 results["sms"] = {"status": "failed", "detail": e.detail}
     if "email" in channels:
@@ -1205,8 +1205,8 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
     if q.get("status") == "draft":
         upd["status"] = "sent"
     await db.quotes.update_one({"_id": quote_id}, {"$set": upd})
-    any_ok = any(v.get("status") in ("sent", "simulated") for v in results.values())
-    return {"status": "success" if any_ok else "failed", "link": link, "results": results, "message": "Onay linki gönderildi." if any_ok else "Hiçbir kanaldan gönderilemedi."}
+    summary = comm_service.approval_dispatch_summary(results)
+    return {"status": summary["status"], "link": link, "results": results, "message": summary["message"]}
 
 def _public_quote_view(q: Dict[str, Any], company: Dict[str, Any]) -> Dict[str, Any]:
     ap = q.get("approval") or {}
@@ -1590,7 +1590,7 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
         else:
             try:
                 r = await _send_sms_to(company_id, [{"phone": phone, "contact_id": contact_id, "contact_name": contact_name}], message, context, ref_id)
-                results["sms"] = {"status": "sent" if not r.get("simulated") else "simulated", "detail": r.get("message")}
+                results["sms"] = comm_service.sms_channel_result(r)
             except HTTPException as e:
                 results["sms"] = {"status": "failed", "detail": e.detail}
     if "email" in channels:

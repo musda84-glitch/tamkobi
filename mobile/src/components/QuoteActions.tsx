@@ -13,8 +13,11 @@ import { idOf } from "../utils/money";
 import {
   approvalChannels,
   approvalPayload,
+  approvalSendFeedback,
+  approvalSmsFallback,
   approvalStatusTr,
   defaultApprovalFlags,
+  smsComposerHref,
   validateApprovalSend,
 } from "../utils/quoteApproval";
 import { downloadQuotePdf, printQuoteForm, shareApprovalLink } from "../utils/quoteShare";
@@ -116,7 +119,18 @@ export function QuoteActions({
     try {
       const r = await post<SendResult>(client, `/quotes/${qid}/send-approval`, approvalPayload(channels, phone, email, normalizeApiBase(client.baseUrl)));
       setResult(r);
-      onMessage?.(r.message || "Onay linki gönderildi.");
+      let fallbackOpened = false;
+      if (r.link && approvalSmsFallback(r.results, channels)) {
+        try {
+          await Linking.openURL(smsComposerHref(phone, `Teklif onayı: ${r.link}`));
+          fallbackOpened = true;
+        } catch {
+          fallbackOpened = false;
+        }
+      }
+      const fb = approvalSendFeedback(r.results, channels, fallbackOpened);
+      if (fb.ok) onMessage?.(fb.message);
+      else onError?.(fb.message);
       await onReloaded?.();
     } catch (err) {
       onError?.(apiErrorMessage(err, "Onay linki gönderilemedi."));
