@@ -39,6 +39,7 @@ class TestProjectsPagePerfEndpoints:
             assert "quote_count" in p
             assert "quoted_total" in p
             assert "invoiced_total" in p
+            assert "expense_total" in p
 
     def test_contacts_lite_and_products_lite(self, api):
         c = api.get(f"{BASE}/contacts", params={"company_id": COMPANY, "lite": 1}, timeout=60)

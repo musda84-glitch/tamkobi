@@ -146,11 +146,13 @@ describe("workDocs", () => {
       quote_count: 1,
       quoted_total: 52.8,
       invoiced_total: 0,
+      expense_total: 18.5,
     });
     expect(bits.codes).toBe("PRJ-2026-0011 · TKF-2026-0004");
     expect(bits.contact).toBe("Mustafa BAL · Kadıköy");
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
+    expect(bits.expense).toBe(18.5);
   });
 
   it("labels create buttons like web", () => {

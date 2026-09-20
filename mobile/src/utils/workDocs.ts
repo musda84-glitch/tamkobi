@@ -347,7 +347,7 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
   };
 }
 
-/** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura. */
+/** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura-masraf. */
 export function projectCardBits(p: ProjectDoc) {
   return {
     codes: [p.project_number, p.quote_number].filter(Boolean).join(" · "),

@@ -1406,13 +1406,17 @@ def _group_by_project(rows):
 
 @api_router.get("/projects")
 async def list_projects(company_id: Optional[str] = "comp_nexus_main_01", light: bool = False):
-    """light=1: kart listesi için — masraf/fatura tarama yok, sadece teklif özetleri."""
+    """light=1: kart listesi — teklif özetleri + masraf toplamı; alış faturası taranmaz."""
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
     pids = [p["_id"] for p in projects]
     quote_proj = {"grand_total": 1, "invoice_id": 1, "project_id": 1} if light else None
     quotes = await db.quotes.find({"project_id": {"$in": pids}}, quote_proj).to_list(2000) if pids else []
     qmap = _group_by_project(quotes)
     if light:
+        expenses_rows = await db.expenses.find(
+            {"project_id": {"$in": pids}}, {"project_id": 1, "total": 1},
+        ).to_list(2000) if pids else []
+        emap = _group_by_project(expenses_rows)
         out = []
         for p in projects:
             pid = p["_id"]
@@ -1420,9 +1424,9 @@ async def list_projects(company_id: Optional[str] = "comp_nexus_main_01", light:
             p["quote_count"] = len(qs)
             p["quoted_total"] = round(sum(float(q.get("grand_total") or 0) for q in qs), 2)
             p["invoiced_total"] = round(sum(float(q.get("grand_total") or 0) for q in qs if q.get("invoice_id")), 2)
-            p["expense_total"] = 0
+            p["expense_total"] = round(sum(float(e.get("total") or 0) for e in (emap.get(pid) or [])), 2)
             p["purchase_invoice_total"] = 0
-            p["cost_total"] = 0
+            p["cost_total"] = p["expense_total"]
             p["can_invoice"] = p.get("status") == "completed" and not p.get("invoice_id") and (
                 any(not q.get("invoice_id") for q in qs) or (not qs and float(p.get("budget") or 0) > 0)
             )
