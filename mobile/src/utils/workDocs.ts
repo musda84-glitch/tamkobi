@@ -453,9 +453,10 @@ export function trackingShareMessage(
   return `Sayın ${who}, ${label} projenizin güncel durumunu bu linkten takip edebilirsiniz: ${link}`;
 }
 
-/** Liste: cari + geçerlilik üstte; durum ayrı renkli rozet. */
+/** Liste: cari üstte; geçerlilik varsa eklenir, boşsa tire yok. */
 export function quoteListTitle(quote: Pick<QuoteDoc, "contact_name" | "valid_until">): string {
-  return [quote.contact_name || "—", fmtDate(quote.valid_until)].join(" · ");
+  const date = quote.valid_until ? fmtDate(quote.valid_until) : "";
+  return [quote.contact_name || "—", date].filter(Boolean).join(" · ");
 }
 
 export type QuoteStatusTone = "slate" | "green" | "red" | "amber";

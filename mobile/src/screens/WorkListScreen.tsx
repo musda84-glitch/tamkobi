@@ -205,7 +205,9 @@ function QuoteListHeading({ quote }: { quote: Pick<QuoteDoc, "contact_name" | "s
       <View testID="quote-status-badge">
         <Badge label={statusTr(quote.status)} tone={quoteStatusTone(quote.status)} />
       </View>
-      <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }}>{fmtDate(quote.valid_until)}</Text>
+      {quote.valid_until ? (
+        <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }}>{fmtDate(quote.valid_until)}</Text>
+      ) : null}
     </View>
   );
 }
