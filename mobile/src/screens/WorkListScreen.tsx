@@ -22,6 +22,7 @@ import {
   validateApprovalSend,
 } from "../utils/quoteApproval";
 import {
+  PROJECT_QUOTE_ACTION,
   PROJECT_STATUSES,
   applyTaskAssignee,
   assigneeSelectGroups,
@@ -345,7 +346,7 @@ function ProjectCard({
               ) : null}
               {canQuote ? (
                 <ActionBtn
-                  title="Teklif Oluştur"
+                  title={PROJECT_QUOTE_ACTION}
                   testID={`project-quote-${id}`}
                   onPress={() => go("QuoteNew", {
                     contact_id: project.contact_id || "",

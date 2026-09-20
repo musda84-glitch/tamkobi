@@ -6,6 +6,7 @@ import {
   emptyProjectTask,
   namedItems,
   removeWorkItem,
+  PROJECT_QUOTE_ACTION,
   newButtonLabel,
   projectCardBits,
   projectPayload,
@@ -154,6 +155,7 @@ describe("workDocs", () => {
     expect(newButtonLabel("quote")).toBe("Yeni Teklif");
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
+    expect(PROJECT_QUOTE_ACTION).toBe("Teklifi Tamamla");
   });
 
   it("prefers the line photo then the stock card image", () => {
