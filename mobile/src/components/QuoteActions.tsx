@@ -183,20 +183,8 @@ export function QuoteActions({
     }
   };
 
-  const openPanel = () => {
-    fillFromContact();
-    setPanel(true);
-  };
-
   return (
     <View style={{ gap: 10 }}>
-      <PrimaryButton
-        title={busy === "send" ? "Gönderiliyor…" : "Onay iste"}
-        onPress={() => { openPanel(); if (panel) send(); }}
-        disabled={!!busy}
-        color={colors.primary}
-        testID="quote-ask-approval"
-      />
       <ActionTiles items={tiles} columns={3} size="sm" />
       {quote.approval ? (
         <Muted testID="quote-approval-status">
