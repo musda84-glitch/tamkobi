@@ -39,12 +39,16 @@ type SendResult = {
 export function QuoteActions({
   quote,
   contact,
+  onSave,
+  saveBusy,
   onReloaded,
   onMessage,
   onError,
 }: {
   quote: QuoteDoc;
   contact?: Contact | null;
+  onSave?: () => void;
+  saveBusy?: boolean;
   onReloaded?: () => Promise<void> | void;
   onMessage?: (text: string) => void;
   onError?: (text: string) => void;
@@ -185,6 +189,15 @@ export function QuoteActions({
 
   return (
     <View style={{ gap: 10 }}>
+      {onSave ? (
+        <PrimaryButton
+          title={saveBusy ? "Kaydediliyor…" : "Kaydet"}
+          onPress={onSave}
+          loading={saveBusy}
+          color={colors.primary}
+          testID="quote-save"
+        />
+      ) : null}
       <ActionTiles items={tiles} columns={3} size="sm" />
       {quote.approval ? (
         <Muted testID="quote-approval-status">

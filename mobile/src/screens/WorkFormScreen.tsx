@@ -625,6 +625,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <QuoteActions
           quote={{ ...quote, title, contact_name: contactName, valid_until: validUntil, notes, items, grand_total: totals.grandTotal }}
           contact={contacts.find((c) => idOf(c) === contactId) || null}
+          onSave={canEdit ? save : undefined}
+          saveBusy={busy}
           onReloaded={loadDoc}
           onMessage={setMessage}
           onError={setError}
