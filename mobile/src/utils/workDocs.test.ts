@@ -3,6 +3,7 @@ import {
   namedItems,
   removeWorkItem,
   newButtonLabel,
+  projectCardBits,
   projectPayload,
   quotePayload,
   surveyPayload,
@@ -105,6 +106,25 @@ describe("workDocs", () => {
     }, []);
     expect(s.latitude).toBe(39.9255);
     expect(s.longitude).toBe(32.8662);
+  });
+
+  it("builds project list cards like the web grid", () => {
+    const bits = projectCardBits({
+      project_number: "PRJ-2026-0011",
+      quote_number: "TKF-2026-0004",
+      name: "Fiyat Teklifi",
+      contact_name: "Mustafa BAL",
+      address: "Kadıköy",
+      status: "planning",
+      budget: 0,
+      quote_count: 1,
+      quoted_total: 52.8,
+      invoiced_total: 0,
+    });
+    expect(bits.codes).toBe("PRJ-2026-0011 · TKF-2026-0004");
+    expect(bits.contact).toBe("Mustafa BAL · Kadıköy");
+    expect(bits.quoteCount).toBe(1);
+    expect(bits.quoted).toBe(52.8);
   });
 
   it("labels create buttons like web", () => {

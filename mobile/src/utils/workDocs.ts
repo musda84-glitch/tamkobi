@@ -65,6 +65,8 @@ export type ProjectDoc = {
   quoted_total?: number;
   invoiced_total?: number;
   expense_total?: number;
+  quote_count?: number;
+  quote_number?: string;
   can_invoice?: boolean;
   invoice_id?: string;
   location_url?: string;
@@ -290,6 +292,20 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
       unit: i.unit || "Adet",
       unit_price: Number(i.unit_price) || 0,
     })),
+  };
+}
+
+/** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura. */
+export function projectCardBits(p: ProjectDoc) {
+  return {
+    codes: [p.project_number, p.quote_number].filter(Boolean).join(" · "),
+    name: p.name || p.project_number || "Proje",
+    contact: [p.contact_name || "—", p.address].filter(Boolean).join(" · "),
+    quoteCount: Number(p.quote_count) || 0,
+    budget: Number(p.budget) || 0,
+    quoted: Number(p.quoted_total) || 0,
+    invoiced: Number(p.invoiced_total) || 0,
+    expense: Number(p.expense_total) || 0,
   };
 }
 
