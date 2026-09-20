@@ -10,6 +10,8 @@ import {
   groupedAccounts,
   paymentTargetGroups,
   splitPaymentTarget,
+  validateContactPayment,
+  contactPaymentRequest,
   totalLiquidity,
   validateAccountDraft,
   validateExpenseDraft,
@@ -109,6 +111,11 @@ describe("finance drafts", () => {
     expect(first[0].label).toBe("Ortaklar Hesabı");
     expect(first[0].options[0]).toEqual({ value: "partner:p1", label: expect.stringContaining("Ali") });
 
+    const payIn = paymentTargetGroups(accounts, partners, { collectableOnly: true, partnersFirst: true });
+    expect(payIn[0].label).toBe("Ortaklar Hesabı");
+    expect(payIn[0].options.map((o) => o.value)).toEqual(["partner:p1"]);
+    expect(payIn.map((g) => g.label)).not.toContain("Kredi Kartı");
+
     const spend = paymentTargetGroups(accounts, partners);
     expect(spend.map((g) => g.label)).toContain("Kredi Kartı");
 
@@ -152,5 +159,35 @@ describe("finance drafts", () => {
     expect(validatePartner("", "10")).toBe("Ortak adı gerekli.");
     expect(validatePartner("Ali", "60", 50)).toBe("Toplam ortaklık payı %100'ü aşamaz.");
     expect(validatePartner("Ali", "40", 50)).toBeNull();
+  });
+
+  it("builds a cari tahsilat / ödeme request", () => {
+    expect(validateContactPayment("", "a1")).toBe("Geçerli bir tutar girin.");
+    expect(validateContactPayment("10", "")).toBe("Kasa / banka / ortak seçin.");
+    expect(validateContactPayment("12,5", "a1")).toBeNull();
+    const partner = contactPaymentRequest({
+      companyId: "c1",
+      contactId: "ct1",
+      contactName: "Mustafa BAL",
+      type: "inflow",
+      amount: 50,
+      accountId: "partner:p1",
+      description: "Cari tahsilat",
+      accounts: [],
+    });
+    expect(partner.path).toBe("/contacts/ct1/record-payment");
+    expect(partner.body).toMatchObject({ partner_id: "p1", type: "inflow", amount: 50 });
+    const bank = contactPaymentRequest({
+      companyId: "c1",
+      contactId: "ct1",
+      contactName: "Mustafa BAL",
+      type: "outflow",
+      amount: 20,
+      accountId: "a1",
+      description: "Cari ödeme",
+      accounts: [{ id: "a1", account_name: "Kasa" }],
+    });
+    expect(bank.path).toBe("/banking/transactions");
+    expect(bank.body).toMatchObject({ category: "Cari Ödeme", contact_id: "ct1", account_name: "Kasa", source: "manual" });
   });
 });

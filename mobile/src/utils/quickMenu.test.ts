@@ -24,6 +24,7 @@ describe("visibleQuickTiles", () => {
     const tiles = visibleQuickTiles(user, { modules: { "/cheques": false, "/stock": true } });
     const ids = tiles.map((t) => t.id);
     expect(ids).not.toContain("banking");
+    expect(ids).not.toContain("pay");
     expect(ids).not.toContain("cheques");
     expect(ids).toContain("stock");
     expect(ids).toContain("barcode");
@@ -36,6 +37,23 @@ describe("visibleQuickTiles", () => {
       expect(ids).not.toContain(id);
     }
     expect(ids).toContain("banking");
+    expect(ids).toContain("pay");
+  });
+
+  it("places Tahsilat & Ödeme after Banka & Kasa and requires banking edit", () => {
+    const ids = QUICK_TILES.map((t) => t.id);
+    expect(ids.indexOf("pay")).toBe(ids.indexOf("banking") + 1);
+    expect(QUICK_TILES.find((t) => t.id === "pay")).toMatchObject({
+      label: "Tahsilat & Ödeme",
+      href: "/pay",
+      path: "/banking",
+      needsEdit: true,
+    });
+    const viewer = { role: "accountant", permissions: { "/banking": "view" } };
+    expect(visibleQuickTiles(viewer, null).map((t) => t.id)).toContain("banking");
+    expect(visibleQuickTiles(viewer, null).map((t) => t.id)).not.toContain("pay");
+    const cashier = { role: "accountant", permissions: { "/banking": "edit" } };
+    expect(visibleQuickTiles(cashier, null).map((t) => t.id)).toContain("pay");
   });
 
   it("leaves installments to the cheques screen and the more menu", () => {
@@ -68,6 +86,7 @@ describe("visibleQuickTiles", () => {
     const labels = Object.fromEntries(QUICK_TILES.map((t) => [t.id, t.label]));
     expect(labels).toMatchObject({
       banking: "Banka & Kasa",
+      pay: "Tahsilat & Ödeme",
       cheques: "Çek",
       sevk: "Sevkiyat",
       atolye: "Atölye Ekranı",
