@@ -30,7 +30,7 @@ export function PayScreen() {
       const [cts, accs, pars] = await Promise.all([
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }),
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
-        get<Partner[]>(client, "/partners", { company_id: companyId }).catch(() => []),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setContacts(cts || []);
       setAccounts(accs || []);
@@ -52,12 +52,12 @@ export function PayScreen() {
   }, [contacts, q]);
 
   const groups = useMemo(
-    () => paymentTargetGroups(accounts, partners, { collectableOnly: form.type === "inflow" }),
+    () => paymentTargetGroups(accounts, partners, { collectableOnly: form.type === "inflow", partnersFirst: true }),
     [accounts, partners, form.type],
   );
 
   const pick = (c: Contact) => {
-    const first = paymentTargetGroups(accounts, partners, { collectableOnly: true })[0]?.options[0]?.value || "";
+    const first = paymentTargetGroups(accounts, partners, { collectableOnly: true, partnersFirst: true })[0]?.options[0]?.value || "";
     setPicked(c);
     setQ("");
     setForm({
