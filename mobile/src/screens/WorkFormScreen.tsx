@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -61,6 +61,32 @@ import {
 
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
 
+function quoteDraftSig(
+  title: string,
+  contactId: string,
+  contactName: string,
+  validUntil: string,
+  notes: string,
+  status: string,
+  items: WorkItem[],
+) {
+  return JSON.stringify({
+    title,
+    contactId,
+    contactName,
+    validUntil,
+    notes,
+    status,
+    items: items.map((it) => ({
+      product_id: it.product_id || "",
+      name: it.name || "",
+      quantity: Number(it.quantity) || 0,
+      unit_price: Number(it.unit_price) || 0,
+      vat_rate: Number(it.vat_rate) || 0,
+    })),
+  });
+}
+
 export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string }) {
   const { contact_id: preContactId, contact_name: preContactName } = useLocalSearchParams<{
     contact_id?: string;
@@ -100,6 +126,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [expDraft, setExpDraft] = useState<ExpenseDraft>(emptyProjectExpenseDraft(todayIso()));
   const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
   const [expBusy, setExpBusy] = useState(false);
+  const quoteBaseline = useRef("");
 
   const loadRefs = useCallback(async () => {
     try {
@@ -127,7 +154,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setNotes(q.notes || "");
         setStatus(q.status || "draft");
         const its = (q.items || []).filter((i) => i?.name);
-        setItems(its.length ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 })) : [emptyItem()]);
+        const nextItems = its.length
+          ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 }))
+          : [emptyItem()];
+        setItems(nextItems);
+        quoteBaseline.current = quoteDraftSig(
+          q.title || "",
+          q.contact_id || "",
+          q.contact_name || "",
+          String(q.valid_until || "").slice(0, 10),
+          q.notes || "",
+          q.status || "draft",
+          nextItems,
+        );
       } else if (kind === "project") {
         const rows = await get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 });
         const p = (rows || []).find((x) => idOf(x) === docId) || null;
@@ -202,6 +241,37 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     setItems((rows) => removeWorkItem(rows, i));
   };
 
+  const persistArgs = useRef({ form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes });
+  persistArgs.current = { form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes };
+
+  const persistExistingQuote = useCallback(async (quiet = false) => {
+    if (!docId || !canEdit) return false;
+    const a = persistArgs.current;
+    const invalid = validateQuoteItems(a.items);
+    if (invalid) {
+      setError(invalid);
+      return false;
+    }
+    await put(client, `/quotes/${docId}`, quoteUpdateBody(a.form, a.pricedItems));
+    if (a.status !== (a.quote?.status || "draft")) await put(client, `/quotes/${docId}`, { status: a.status });
+    quoteBaseline.current = quoteDraftSig(a.title, a.contactId, a.contactName, a.validUntil, a.notes, a.status, a.items);
+    if (!quiet) {
+      setMessage("Teklif güncellendi.");
+      await loadDoc();
+    }
+    return true;
+  }, [canEdit, client, docId, loadDoc]);
+
+  useEffect(() => {
+    if (kind !== "quote" || isNew || !canEdit || !docId || !quote) return;
+    const sig = quoteDraftSig(title, contactId, contactName, validUntil, notes, status, items);
+    if (!quoteBaseline.current || sig === quoteBaseline.current) return;
+    const t = setTimeout(() => {
+      void persistExistingQuote(true).catch((err) => setError(apiErrorMessage(err, "Kaydedilemedi.")));
+    }, 700);
+    return () => clearTimeout(t);
+  }, [kind, isNew, canEdit, docId, quote, title, contactId, contactName, validUntil, notes, status, items, persistExistingQuote]);
+
   const save = async () => {
     if (!canEdit) { setError("Düzenleme yetkiniz yok."); return; }
     if (kind === "quote") {
@@ -218,11 +288,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         if (isNew) {
           const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, pricedItems));
           router.replace({ pathname: "/quotes/[id]", params: { id: idOf(created) } });
-        } else {
-          await put(client, `/quotes/${docId}`, quoteUpdateBody(form, pricedItems));
-          if (status !== (quote?.status || "draft")) await put(client, `/quotes/${docId}`, { status });
-          setMessage("Teklif güncellendi.");
-          await loadDoc();
+        } else if (!(await persistExistingQuote(false))) {
+          return;
         }
       } else if (kind === "project") {
         if (isNew) {
@@ -285,6 +352,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         const qid = idOf(r.quote);
         if (qid) router.replace({ pathname: "/quotes/[id]", params: { id: qid } });
       } else if (kind === "quote") {
+        if (!(await persistExistingQuote(true))) return;
         const r = await post<{ project?: ProjectDoc; message?: string }>(client, `/quotes/${docId}/convert-to-project`);
         setMessage(r.message || "Proje oluşturuldu.");
         const pid = idOf(r.project);
@@ -305,6 +373,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     if (!docId || kind !== "quote") return;
     setBusy(true);
     try {
+      if (!(await persistExistingQuote(true))) return;
       const r = await post<{ message?: string }>(client, `/quotes/${docId}/convert-to-invoice`);
       setMessage(r.message || "Taslak fatura oluşturuldu.");
       await loadDoc();
@@ -399,7 +468,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "project" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
-          <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
+          <Field dense label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
           {prodHits.map((p) => (
             <ProductPickRow
               key={idOf(p)}
@@ -429,23 +498,36 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 gap: 6,
               }}
             >
-              <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                <View style={{ width: 52, alignItems: "center", gap: 4 }}>
-                  <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
-                  {canEdit && i === items.length - 1 ? (
-                    <Pressable
-                      onPress={() => setItems((rows) => [...rows, emptyItem()])}
-                      testID="q-add-item-btn"
-                      accessibilityLabel="Kalem ekle"
-                      style={{ width: 28, height: 28, marginTop: 6, alignItems: "center", justifyContent: "center" }}
-                    >
-                      <Ionicons name="add-circle-outline" size={20} color={colors.indigo} />
-                    </Pressable>
-                  ) : null}
-                </View>
-                <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                  <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
-                  <Row style={{ alignItems: "flex-end", gap: 6 }}>
+              <View style={{ gap: 4 }}>
+                <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                  <View style={{ width: 52 }}>
+                    <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
+                  </View>
+                </Row>
+                <Row style={{ alignItems: "center", gap: 8 }}>
+                  <View style={{ width: 52, alignItems: "center", justifyContent: "center" }}>
+                    {canEdit && i === items.length - 1 ? (
+                      <Pressable
+                        onPress={() => setItems((rows) => [...rows, emptyItem()])}
+                        testID="q-add-item-btn"
+                        accessibilityLabel="Kalem ekle"
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
+                          backgroundColor: colors.indigo50,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Ionicons name="add-circle" size={26} color={colors.indigo} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  <Row style={{ flex: 1, minWidth: 0, alignItems: "flex-end", gap: 6 }}>
                     <View style={{ width: 52, flexShrink: 0 }}>
                       <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
                     </View>
@@ -466,8 +548,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       </Pressable>
                     ) : null}
                   </Row>
-                </View>
-              </Row>
+                </Row>
+              </View>
             </View>
             );
           })}
@@ -480,8 +562,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         </Card>
       ) : null}
 
-      <Field label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
-      <PrimaryButton title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
+      <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
+      {isNew || kind !== "quote" ? (
+        <PrimaryButton title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
+      ) : null}
 
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
         <PrimaryButton title="Teklife dönüştür" onPress={() => confirmAction("Teklif", "Keşif teklife dönüştürülsün mü?", convert)} color={colors.indigo} testID="survey-to-quote" />
