@@ -42,6 +42,7 @@ import {
   withholdingValue,
   type InvoiceDraft,
 } from "../utils/invoiceDraft";
+import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { contactTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -110,6 +111,9 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [payAccount, setPayAccount] = useState("");
   const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
   const [projQ, setProjQ] = useState("");
@@ -136,14 +140,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   const loadLookups = useCallback(async () => {
     try {
-      const [c, p, pr] = await Promise.all([
+      const [c, p, pr, acc, pars] = await Promise.all([
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }),
         get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         get<Project[]>(client, "/projects", { company_id: companyId }).catch(() => []),
+        get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setContacts(c || []);
       setProducts((p || []).filter((x) => x.is_active !== false));
       setProjects(pr || []);
+      setAccounts(acc || []);
+      setPartners((pars || []).filter((x) => x.is_active !== false));
     } catch (err) {
       setError(apiErrorMessage(err, "Cari / stok listesi yüklenemedi."));
     }
@@ -220,6 +228,13 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const totals = invoiceTotals(draft);
   const defaultVat = draft.trade_kind === "export" || draft.e_type === "e_export" ? 0 : 20;
   const withholdingGroups = useMemo(() => withholdingSelectGroups(), []);
+  const canCollectCash = draft.invoice_type === "sales" || draft.invoice_type === "purchase" || draft.invoice_type === "return";
+  const payGroups = useMemo(
+    () => paymentTargetGroups(accounts, partners, { collectableOnly: draft.invoice_type === "sales" }),
+    [accounts, partners, draft.invoice_type],
+  );
+  const cashAccountLabel =
+    draft.invoice_type === "purchase" ? "Peşin alış hesabı" : draft.invoice_type === "return" ? "İade hesabı" : "Peşin satış hesabı";
 
   const pickContact = (c: Contact) => {
     const due = c.payment_term_days ? plusDaysIso(draft.issue_date, Number(c.payment_term_days)) : draft.due_date;
@@ -341,9 +356,15 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   const issue = () => {
     const isDispatch = draft.invoice_type === "dispatch";
+    const cash = canCollectCash && payAccount && totals.grandTotal > 0;
+    const cashHint = cash
+      ? draft.invoice_type === "purchase"
+        ? " Peşin tutar seçilen hesaptan düşülecek."
+        : " Peşin tutar seçilen hesaba aktarılacak."
+      : "";
     confirmAction(
       isDispatch ? "İrsaliye kes" : "Fatura kes",
-      isDispatch ? "İrsaliye kaydedilip GİB'e kesilsin mi?" : "Fatura onaylanıp GİB'e kesilsin mi?",
+      (isDispatch ? "İrsaliye kaydedilip GİB'e kesilsin mi?" : "Fatura onaylanıp GİB'e kesilsin mi?") + cashHint,
       async () => {
         setBusy(true);
         setMessage(null);
@@ -354,8 +375,25 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           if (!id) throw new Error("Fatura kaydı oluşmadı.");
           const eType = isDispatch ? "e_dispatch" : draft.e_type;
           await post(client, `/invoices/${id}/send-to-gib`, { e_type: eType });
+          let issuedMsg = isDispatch ? "İrsaliye kesildi." : "Fatura kesildi.";
+          if (cash) {
+            try {
+              const target = splitPaymentTarget(payAccount);
+              await post(client, `/invoices/${id}/record-payment`, {
+                amount: totals.grandTotal,
+                account_id: target.account_id || undefined,
+                partner_id: target.partner_id || undefined,
+              });
+              issuedMsg = isDispatch ? issuedMsg : "Fatura kesildi, peşin ödeme hesaba aktarıldı.";
+            } catch (payErr) {
+              setError(apiErrorMessage(payErr, "Fatura kesildi ancak peşin ödeme aktarılamadı."));
+              setMessage(issuedMsg);
+              router.replace({ pathname: "/invoices/[id]", params: { id } });
+              return;
+            }
+          }
           setError(null);
-          setMessage(isDispatch ? "İrsaliye kesildi." : "Fatura kesildi.");
+          setMessage(issuedMsg);
           router.replace({ pathname: "/invoices/[id]", params: { id } });
         } catch (err) {
           setError(apiErrorMessage(err, "Fatura kesilemedi."));
@@ -664,6 +702,33 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       </Card>
 
       <Field label="Not" testID="inv-notes" value={draft.notes} onChangeText={(v) => set("notes", v)} />
+      {canCollectCash ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 12,
+            backgroundColor: "#fff",
+            paddingHorizontal: 10,
+            paddingTop: 6,
+            paddingBottom: 2,
+          }}
+        >
+          {payGroups.some((g) => g.options.length) ? (
+            <GroupedSelect
+              dense
+              label={cashAccountLabel}
+              testID="inv-cash-account-select"
+              value={payAccount}
+              onChange={setPayAccount}
+              emptyLabel="Vadeli — hesap seçilmedi"
+              groups={payGroups}
+            />
+          ) : (
+            <Muted>Hesap yok — peşin aktarım için kasa / banka ekleyin. Boş bırakılırsa vadeli kalır.</Muted>
+          )}
+        </View>
+      ) : null}
       <PrimaryButton
         title={busy ? "Kesiliyor…" : draft.invoice_type === "dispatch" ? "İrsaliye Kes" : "Fatura Kes"}
         onPress={issue}
