@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -23,9 +23,10 @@ import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
+import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, slugStageKey } from "../utils/projectStages";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -300,6 +301,87 @@ const UnitsCategories = ({ companyId }) => {
   </div>);
 };
 
+const ProjectStagesSettings = ({ companyId }) => {
+  const [stages, setStages] = useState(DEFAULT_PROJECT_STAGES.map((s) => ({ ...s })));
+  const [busy, setBusy] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const load = useCallback(() => {
+    axios.get(`${API_URL}/companies/${companyId}/project-stages`)
+      .then((r) => setStages(normalizeProjectStages(r.data?.stages)))
+      .catch(() => setStages(DEFAULT_PROJECT_STAGES.map((s) => ({ ...s }))));
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  const update = (idx, patch) => setStages((list) => list.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  const setFinal = (idx) => setStages((list) => list.map((s, i) => ({ ...s, is_final: i === idx })));
+  const remove = (idx) => setStages((list) => {
+    if (list.length <= 2) { toast.error("En az iki aşama kalmalı."); return list; }
+    const next = list.filter((_, i) => i !== idx);
+    if (!next.some((s) => s.is_final)) next[next.length - 1] = { ...next[next.length - 1], is_final: true };
+    return next;
+  });
+  const move = (idx, dir) => setStages((list) => {
+    const j = idx + dir;
+    if (j < 0 || j >= list.length) return list;
+    const next = [...list];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    return next;
+  });
+  const add = (e) => {
+    e.preventDefault();
+    const label = newLabel.trim();
+    if (!label) return;
+    if (stages.length >= 20) return toast.error("En fazla 20 aşama.");
+    const used = new Set(stages.map((s) => s.key));
+    setStages([...stages, { key: slugStageKey(label, used), label, tone: "slate", is_final: false }]);
+    setNewLabel("");
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/project-stages`, { stages });
+      setStages(normalizeProjectStages(r.data.stages));
+      toast.success(r.data.message || "Kaydedildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = () => setStages(DEFAULT_PROJECT_STAGES.map((s) => ({ ...s })));
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-2xl" data-testid="project-stages-settings">
+      <div>
+        <div className="text-sm font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-4 h-4 text-emerald-600" /> Proje aşamaları</div>
+        <p className="text-slate-500 mt-1">Proje kartındaki durum seçici ve <b>Projeyi Tamamla</b> butonu bu listeyi kullanır. Yıldızlı satır tamamlanma aşamasıdır.</p>
+      </div>
+      <div className="space-y-2">
+        {stages.map((s, i) => (
+          <div key={s.key} className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2" data-testid={`project-stage-row-${s.key}`}>
+            <span className="text-slate-300"><GripVertical className="w-4 h-4" /></span>
+            <input value={s.label} onChange={(e) => update(i, { label: e.target.value })} className="flex-1 min-w-[120px] bg-white border rounded-lg px-2 py-1.5 font-semibold" data-testid={`project-stage-label-${s.key}`} />
+            <select value={s.tone} onChange={(e) => update(i, { tone: e.target.value })} className="bg-white border rounded-lg px-2 py-1.5" data-testid={`project-stage-tone-${s.key}`}>
+              {PROJECT_STAGE_TONES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${stageToneClass(s.tone)}`}>{s.label || "—"}</span>
+            <button type="button" onClick={() => setFinal(i)} className={`p-1.5 rounded-lg border ${s.is_final ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-400"}`} title="Tamamlanma aşaması" data-testid={`project-stage-final-${s.key}`}><Star className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => move(i, -1)} className="px-1.5 py-1 border rounded-lg text-slate-500" disabled={i === 0}>↑</button>
+            <button type="button" onClick={() => move(i, 1)} className="px-1.5 py-1 border rounded-lg text-slate-500" disabled={i === stages.length - 1}>↓</button>
+            <button type="button" onClick={() => remove(i)} className="p-1.5 text-slate-400 hover:text-rose-600" data-testid={`project-stage-del-${s.key}`}><Trash2 className="w-3.5 h-3.5" /></button>
+          </div>
+        ))}
+      </div>
+      <form onSubmit={add} className="flex gap-2">
+        <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Yeni aşama adı…" className="flex-1 bg-slate-50 border rounded-lg p-2" data-testid="project-stage-new-input" />
+        <button type="submit" className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="project-stage-add"><Plus className="w-3.5 h-3.5" /> Ekle</button>
+      </form>
+      <div className="flex flex-wrap gap-2 pt-1 border-t">
+        <button type="button" onClick={reset} className="px-3 py-2 border rounded-xl font-semibold text-slate-600" data-testid="project-stage-reset">Varsayılana dön</button>
+        <button type="button" onClick={save} disabled={busy} className="ml-auto px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="project-stage-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
+      </div>
+    </div>
+  );
+};
+
 export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
@@ -404,6 +486,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
           {tab === "extension" && <BrowserExtensionPanel />}
           {tab === "units" && <UnitsCategories companyId={companyId} />}
+          {tab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}

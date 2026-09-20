@@ -377,6 +377,30 @@ async def update_company(company_id: str, req: Dict[str, Any]):
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
+@api_router.get("/companies/{company_id}/project-stages")
+async def get_project_stages(company_id: str):
+    import project_stages as ps
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    stages = ps.normalize_project_stages(c.get("project_stages"))
+    return {"stages": stages, "final_key": ps.final_stage_key(stages)}
+
+@api_router.put("/companies/{company_id}/project-stages")
+async def put_project_stages(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    import project_stages as ps
+    _require_company_member(user, company_id)
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    stages = ps.normalize_project_stages(req.get("stages"))
+    if len(stages) < 2:
+        raise HTTPException(status_code=400, detail="En az iki aşama gerekli.")
+    if len(stages) > 20:
+        raise HTTPException(status_code=400, detail="En fazla 20 aşama tanımlanabilir.")
+    await db.companies.update_one({"_id": company_id}, {"$set": {"project_stages": stages}})
+    return {"status": "success", "message": "Proje aşamaları kaydedildi.", "stages": stages, "final_key": ps.final_stage_key(stages)}
+
 def _require_company_member(user: dict, company_id: str):
     if company_id not in (user.get("company_ids") or []):
         raise HTTPException(status_code=403, detail="Yalnızca bu şirketin kullanıcıları gizlilik ayarını yönetebilir.")
