@@ -8,6 +8,8 @@ import {
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
+  shouldAttachQuoteDraftInvoice,
+  quoteSaveMessage,
   workItemFromProduct,
   workItemImage,
   workItemLineGross,
@@ -71,6 +73,17 @@ describe("workDocs", () => {
     const b = { ...emptyItem(), name: "Kasa" };
     expect(removeWorkItem([a, b], 0)).toEqual([b]);
     expect(removeWorkItem([a], 0)).toEqual([emptyItem()]);
+  });
+
+  it("attaches a draft invoice on save only when cari exists and quote is not invoiced", () => {
+    expect(shouldAttachQuoteDraftInvoice(null, "c1")).toBe(true);
+    expect(shouldAttachQuoteDraftInvoice({ invoice_id: "" }, "c1")).toBe(true);
+    expect(shouldAttachQuoteDraftInvoice({ invoice_id: "inv1" }, "c1")).toBe(false);
+    expect(shouldAttachQuoteDraftInvoice(null, "")).toBe(false);
+    expect(quoteSaveMessage({ createdInvoiceNumber: "NX202600000004", hasContact: true, alreadyInvoiced: false }))
+      .toBe("Teklif kaydedildi. Taslak fatura NX202600000004 cariye işlendi.");
+    expect(quoteSaveMessage({ hasContact: false, alreadyInvoiced: false })).toBe("Teklif kaydedildi. Taslak fatura için cari seçin.");
+    expect(quoteSaveMessage({ hasContact: true, alreadyInvoiced: true })).toBe("Teklif güncellendi.");
   });
 
   it("requires at least one named quote line and a project name", () => {
