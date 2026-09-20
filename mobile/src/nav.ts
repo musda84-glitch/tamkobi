@@ -92,7 +92,12 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "QuoteNew":
       return router.push({
         pathname: "/quotes/new",
-        params: { contact_id: String(params?.contact_id || ""), contact_name: String(params?.contact_name || "") },
+        params: {
+          contact_id: String(params?.contact_id || ""),
+          contact_name: String(params?.contact_name || ""),
+          project_id: String(params?.project_id || ""),
+          title: String(params?.title || ""),
+        },
       });
     case "QuoteDetail":
       return router.push({ pathname: "/quotes/[id]", params: { id: String(params?.id || "") } });
@@ -104,7 +109,10 @@ export function go(name: string, params?: Record<string, unknown>) {
         params: { contact_id: String(params?.contact_id || ""), contact_name: String(params?.contact_name || "") },
       });
     case "ProjectDetail":
-      return router.push({ pathname: "/projects/[id]", params: { id: String(params?.id || "") } });
+      return router.push({
+        pathname: "/projects/[id]",
+        params: { id: String(params?.id || ""), open_expense: String(params?.open_expense || "") },
+      });
     case "Surveys":
       return router.push("/surveys");
     case "SurveyNew":

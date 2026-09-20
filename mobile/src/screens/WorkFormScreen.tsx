@@ -91,15 +91,25 @@ function quoteDraftSig(
 }
 
 export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string }) {
-  const { contact_id: preContactId, contact_name: preContactName } = useLocalSearchParams<{
+  const {
+    contact_id: preContactId,
+    contact_name: preContactName,
+    project_id: preProjectId,
+    title: preTitle,
+    open_expense: openExpense,
+  } = useLocalSearchParams<{
     contact_id?: string;
     contact_name?: string;
+    project_id?: string;
+    title?: string;
+    open_expense?: string;
   }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
   const canExp = can("/expenses", "edit");
   const isNew = !docId;
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(isNew ? String(preTitle || "") : "");
+  const [linkedProjectId, setLinkedProjectId] = useState(isNew ? String(preProjectId || "") : "");
   const [name, setName] = useState("");
   const [contactId, setContactId] = useState(isNew ? String(preContactId || "") : "");
   const [contactName, setContactName] = useState(isNew ? String(preContactName || "") : "");
@@ -156,6 +166,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setValidUntil(String(q.valid_until || "").slice(0, 10));
         setNotes(q.notes || "");
         setStatus(q.status || "draft");
+        setLinkedProjectId(q.project_id || "");
         const its = (q.items || []).filter((i) => i?.name);
         const nextItems = its.length
           ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 }))
@@ -217,6 +228,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     contact_id: contactId,
     contact_name: contactName,
     title,
+    project_id: linkedProjectId,
     valid_until: validUntil,
     notes,
     name,
@@ -354,6 +366,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       .then((cats) => setExpCats(Array.isArray(cats) ? cats : []))
       .catch(() => undefined);
   };
+
+  const openedExpense = useRef(false);
+  useEffect(() => {
+    if (kind !== "project" || isNew || !canExp || openedExpense.current) return;
+    if (String(openExpense || "") !== "1") return;
+    openedExpense.current = true;
+    openProjectExpense();
+  }, [kind, isNew, canExp, openExpense]);
 
   const saveProjectExpense = async () => {
     if (!docId || kind !== "project") return;
