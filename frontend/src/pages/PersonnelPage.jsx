@@ -16,7 +16,6 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { employeeReceivableAmount } from "../utils/employeeReceivable";
 
 import {
   UserCheck,
@@ -242,10 +241,9 @@ export default function PersonnelPage() {
       setBusySalaryId(eid);
       try {
         const period = new Date().toISOString().slice(0, 7);
-        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period, employee_id: eid });
+        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
         const payRes = await axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`);
         setPayrolls(payRes.data);
-        loadPersonnelData();
         item = (payRes.data || []).find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
         if (!item) {
           toast.success("Bu dönemin maaşı zaten ödenmiş.");
@@ -405,7 +403,6 @@ export default function PersonnelPage() {
         {employees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
-            const remaining = employeeReceivableAmount(emp, payrolls);
             return (
           <div
             key={empKey}
@@ -487,8 +484,8 @@ export default function PersonnelPage() {
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
                 <span className="text-slate-400">Kalan Alacak:</span>
-                <span className={`text-sm font-bold ${remaining < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                  {remaining.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
+                <span className={`text-sm font-bold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                  {Number(emp.balance?.remaining || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
                 </span>
               </div>
             </div>
