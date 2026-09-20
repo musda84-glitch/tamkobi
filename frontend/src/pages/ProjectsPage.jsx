@@ -13,6 +13,7 @@ import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/Projec
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
+import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
@@ -48,9 +49,7 @@ const ImageStrip = ({ entity, doc, onUpdated }) => {
   return (
     <div className="flex items-center gap-1.5 flex-wrap" data-testid={`${entity}-images-${docId}`}>
       {imgs.map((img) => (
-        <a key={img} href={resolveImageUrl(img)} target="_blank" rel="noreferrer" className="shrink-0">
-          <img src={resolveImageUrl(img)} alt="" className="w-10 h-10 rounded-lg object-cover border" />
-        </a>
+        <HoverImageThumb key={img} src={img} className="w-10 h-10 rounded-lg object-cover border" testId={`${entity}-thumb-${docId}`} />
       ))}
       <label className={`w-10 h-10 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer shrink-0 ${busy ? "opacity-50 border-slate-200" : "border-slate-300 hover:border-emerald-500 text-slate-400"}`} title="Görsel ekle">
         {busy ? <span className="text-[9px]">…</span> : <ImagePlus className="w-4 h-4" />}
