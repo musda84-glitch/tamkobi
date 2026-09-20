@@ -2,6 +2,7 @@ import {
   draftFromProduct,
   emptyProductDraft,
   generateBarcode,
+  generateBarcodeConfirm,
   productPayload,
   validateProductDraft,
 } from "./productDraft";
@@ -53,5 +54,11 @@ describe("productDraft", () => {
   it("generates EAN-like 868 barcodes", () => {
     const code = generateBarcode();
     expect(code).toMatch(/^868\d{10}$/);
+  });
+
+  it("asks before generating a barcode", () => {
+    expect(generateBarcodeConfirm("")).toBe("Yeni bir barkod üretilsin mi?");
+    expect(generateBarcodeConfirm("8681234567890")).toContain("8681234567890");
+    expect(generateBarcodeConfirm("8681234567890")).toContain("değişecek");
   });
 });

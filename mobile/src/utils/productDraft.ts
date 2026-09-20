@@ -117,6 +117,13 @@ export function generateBarcode(): string {
   return `868${n}`;
 }
 
+/** Yanlışlıkla basmayı önlemek için onay metni. */
+export function generateBarcodeConfirm(existing?: string | null): string {
+  const current = String(existing || "").trim();
+  if (current) return `Mevcut barkod (${current}) yeni bir barkodla değişecek. Üretmek istiyor musunuz?`;
+  return "Yeni bir barkod üretilsin mi?";
+}
+
 export function validateProductDraft(draft: ProductDraft): string | null {
   if (!draft.name.trim()) return "Ürün adı gerekli.";
   if (!draft.sku.trim()) return "SKU kodu gerekli.";
