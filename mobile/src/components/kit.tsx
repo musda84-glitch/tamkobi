@@ -157,7 +157,7 @@ export function ListRow({
   onPress,
   testID,
 }: {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
   right?: string;
   rightColor?: string;
@@ -178,7 +178,11 @@ export function ListRow({
         <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
       ) : null}
       <View style={{ flex: 1, minWidth: 80 }}>
-        <Text style={styles.listTitle} numberOfLines={titleLines}>{title}</Text>
+        {typeof title === "string" ? (
+          <Text style={styles.listTitle} numberOfLines={titleLines}>{title}</Text>
+        ) : (
+          title
+        )}
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
       {badge}

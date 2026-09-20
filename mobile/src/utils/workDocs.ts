@@ -1,6 +1,6 @@
 import { normalizeApiBase } from "../api/url";
 import { coordValue } from "./geo";
-import { idOf } from "./money";
+import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
@@ -451,6 +451,27 @@ export function trackingShareMessage(
   const who = project.contact_name || "müşterimiz";
   const label = [project.project_number, project.name].filter(Boolean).join(" — ");
   return `Sayın ${who}, ${label} projenizin güncel durumunu bu linkten takip edebilirsiniz: ${link}`;
+}
+
+/** Liste: cari üstte; geçerlilik varsa eklenir, boşsa tire yok. */
+export function quoteListTitle(quote: Pick<QuoteDoc, "contact_name" | "valid_until">): string {
+  const date = quote.valid_until ? fmtDate(quote.valid_until) : "";
+  return [quote.contact_name || "—", date].filter(Boolean).join(" · ");
+}
+
+export type QuoteStatusTone = "slate" | "green" | "red" | "amber";
+
+/** Gönderildi amber, kabul yeşil, red kırmızı, taslak gri. */
+export function quoteStatusTone(status?: string | null): QuoteStatusTone {
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "sent") return "amber";
+  if (key === "accepted") return "green";
+  if (key === "rejected") return "red";
+  return "slate";
+}
+
+export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title">): string {
+  return quote.quote_number || quote.title || "Teklif";
 }
 
 export function newButtonLabel(kind: WorkKind): string {

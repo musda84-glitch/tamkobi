@@ -15,6 +15,9 @@ import {
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
+  quoteListSubtitle,
+  quoteListTitle,
+  quoteStatusTone,
   quotePayload,
   surveyPayload,
   trackingAbsoluteLink,
@@ -224,5 +227,20 @@ describe("workDocs", () => {
     expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa", contact_name: "Mustafa" }, "https://x/proje/t"))
       .toContain("Mustafa");
     expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa" }, "https://x/proje/t")).toContain("https://x/proje/t");
+  });
+
+  it("puts cari on top of the quote list, number underneath, and omits empty dates", () => {
+    expect(quoteListTitle({ contact_name: "Mustafa BAL" })).toBe("Mustafa BAL");
+    expect(quoteListTitle({ contact_name: "Mustafa BAL", valid_until: "2026-10-01" })).toBe("Mustafa BAL · 1 Eki 2026");
+    expect(quoteListSubtitle({ quote_number: "TKF-2026-0012" })).toBe("TKF-2026-0012");
+    expect(quoteListSubtitle({ title: "Villa teklifi" })).toBe("Villa teklifi");
+  });
+
+  it("colors quote statuses for the list badge", () => {
+    expect(quoteStatusTone("sent")).toBe("amber");
+    expect(quoteStatusTone("accepted")).toBe("green");
+    expect(quoteStatusTone("rejected")).toBe("red");
+    expect(quoteStatusTone("draft")).toBe("slate");
+    expect(quoteStatusTone("")).toBe("slate");
   });
 });
