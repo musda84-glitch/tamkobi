@@ -251,11 +251,11 @@ export default function StockBarcodePage() {
         lines: reorder.lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity) || 1, unit_price: l.unit_price, contact_id: l.contact_id || reorder.fallback, vat_rate: l.vat_rate })),
       });
       toast.success(r.data.message);
-      const first = (r.data.invoices || [])[0];
+      const first = (r.data.orders || r.data.invoices || [])[0];
       setReorder(null);
-      if (first?.id) navigate(`/invoices?type=purchase`);
+      if (first?.id) navigate(`/purchase-orders`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Alış faturası oluşturulamadı.");
+      toast.error(err.response?.data?.detail || "Verilen sipariş oluşturulamadı.");
       setReorder((s) => ({ ...s, busy: false }));
     }
   };
@@ -548,10 +548,10 @@ export default function StockBarcodePage() {
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="stock-reorder-modal">
           <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 shadow-2xl max-h-[90vh] overflow-y-auto text-xs">
             <div className="flex items-center justify-between border-b pb-2">
-              <div className="flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-amber-700" /><h3 className="text-base font-bold text-slate-900">Tedarikçi satın alma</h3></div>
+              <div className="flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-amber-700" /><h3 className="text-base font-bold text-slate-900">Verilen sipariş oluştur</h3></div>
               <button type="button" onClick={() => setReorder(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
             </div>
-            <p className="text-slate-500">Min. stok eksiği kadar taslak alış faturası. Son alış tedarikçisi ve fiyatı doldurulur; yoksa aşağıdan tedarikçi seçin.</p>
+            <p className="text-slate-500">Min. stok eksiği kadar tedarikçiye verilen sipariş. Son alış tedarikçisi ve fiyatı doldurulur; yoksa aşağıdan tedarikçi seçin. Alış faturası sonra ayrı oluşturulur.</p>
             <div className="flex items-center gap-2">
               <label className="font-semibold text-slate-600 whitespace-nowrap">Varsayılan tedarikçi</label>
               <select value={reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, fallback: e.target.value }))} className="flex-1 bg-slate-50 border rounded-lg p-1.5" data-testid="stock-reorder-fallback">
@@ -582,7 +582,7 @@ export default function StockBarcodePage() {
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <button type="button" onClick={() => setReorder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
-              <button type="button" disabled={reorder.busy || !reorder.lines.length} onClick={submitReorder} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="stock-reorder-submit">{reorder.busy ? "Oluşturuluyor…" : "Taslak alış oluştur"}</button>
+              <button type="button" disabled={reorder.busy || !reorder.lines.length} onClick={submitReorder} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="stock-reorder-submit">{reorder.busy ? "Oluşturuluyor…" : "Verilen sipariş oluştur"}</button>
             </div>
           </div>
         </div>

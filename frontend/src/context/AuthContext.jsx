@@ -37,6 +37,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Raporlar", path: "/reports", badge: "Excel" },
     { label: "Banka & Kasa & POS", path: "/banking" },
     { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
+    { label: "Verilen Siparişler", path: "/purchase-orders", badge: "Alış" },
     { label: "Hızlı Satış", path: "/hizli-satis", badge: "POS" },
     { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
     { label: "Teklifler", path: "/quotes" },
@@ -60,7 +61,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" }; // first-class modules keep their own role/license keys
+  const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai", "/purchase-orders": "/stock" }; // first-class modules keep their own role/license keys
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");

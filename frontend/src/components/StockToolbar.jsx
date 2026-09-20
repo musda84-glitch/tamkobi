@@ -62,7 +62,7 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
         {active > 0 && <button onClick={() => { setFilterCategory("all"); setSearch(""); setF(STOCK_FILTER_DEFAULTS); }} className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="stock-filters-clear">Filtreleri temizle ({active})</button>}
         {criticalCount > 0 && onReorderCritical && (
           <button type="button" onClick={onReorderCritical} className="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 font-semibold border border-amber-200 hover:bg-amber-100 flex items-center gap-1" data-testid="stock-reorder-btn">
-            <ShoppingCart className="w-3.5 h-3.5" /> Kritik stokları al ({criticalCount})
+            <ShoppingCart className="w-3.5 h-3.5" /> Kritik stok siparişi ({criticalCount})
           </button>
         )}
         <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{stockValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div></div>

@@ -40,6 +40,7 @@ const PATH_GROUP = {
   "/b2b-yonetim": "satis",
   "/saha": "satis",
   "/stock": "stok",
+  "/purchase-orders": "stok",
   "/warehouses": "stok",
   "/sayim": "stok",
   "/sevk": "stok",

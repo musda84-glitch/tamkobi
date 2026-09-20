@@ -542,6 +542,40 @@ class Order(BaseDocument):
     order_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     cancel_request: Optional[Dict[str, Any]] = None
 
+# Verilen sipariş (tedarikçiye alış siparişi)
+class PurchaseOrderItem(BaseModel):
+    product_id: Optional[str] = ""
+    product_name: str
+    sku: str = ""
+    quantity: float = 1
+    unit: str = "Adet"
+    unit_price: float = 0.0
+    vat_rate: float = 20.0
+    total: float = 0.0
+    vat_amount: float = 0.0
+    total_incl: float = 0.0
+
+class PurchaseOrder(BaseDocument):
+    company_id: str
+    order_number: Optional[str] = None
+    supplier_name: str
+    contact_id: Optional[str] = None
+    items: List[PurchaseOrderItem] = []
+    subtotal: float = 0.0
+    vat_total: float = 0.0
+    grand_total: float = 0.0
+    currency: str = "TRY"
+    # draft → sent → received → invoiced | cancelled
+    order_status: str = "draft"
+    notes: Optional[str] = None
+    source_channel: Optional[str] = None  # stock_reorder, manual
+    is_invoiced: bool = False
+    invoice_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    order_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Optional[str] = None
+
 # Üretim & Reçete (BOM)
 class RecipeItem(BaseModel):
     product_id: str
