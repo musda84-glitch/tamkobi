@@ -269,7 +269,7 @@ async def _notify_role_assigned(company_id: Optional[str], emp: Dict[str, Any], 
     import notify as _notify
     name = emp.get("full_name") or emp.get("name") or "Personel"
     label = _notify.role_label(role)
-    await _db.notifications.insert_one(_notify.notification_doc(
+    await _notify.insert_notification(_db, _notify.notification_doc(
         company_id, "role_assigned",
         f"Rol atandı: {label}",
         f"{name} kullanıcısına {label} rolü verildi.",

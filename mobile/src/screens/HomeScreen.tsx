@@ -10,6 +10,7 @@ import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
+import { pendingEdocCount, type EdocInboxList } from "../utils/edocInbox";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { pendingSevkCount, type PickRow } from "../utils/orderPick";
@@ -51,7 +52,7 @@ export function HomeScreen() {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, list, st, pending, ops, unmatched, picks, wos] = await Promise.all([
+      const [ov, list, st, pending, ops, unmatched, picks, wos, inbox] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         showFinance
@@ -64,6 +65,9 @@ export function HomeScreen() {
         can("/atolye")
           ? get<WorkOrder[]>(client, "/production/work-orders", { company_id: companyId, status: "ready,in_progress,paused" }).catch(() => [])
           : Promise.resolve([] as WorkOrder[]),
+        can("/edoc-inbox")
+          ? get<EdocInboxList>(client, "/edocs/inbox", { company_id: companyId, status: "pending" }).catch(() => null)
+          : Promise.resolve(null),
       ]);
       const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
       const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
@@ -76,6 +80,7 @@ export function HomeScreen() {
         personnel: Number(pending?.count || 0),
         banking: Array.isArray(unmatched) ? unmatched.length : 0,
         atolye: openWorkOrderCount(wos),
+        edoc: pendingEdocCount(inbox?.counts),
       });
       setError(null);
     } catch (err) {

@@ -115,7 +115,8 @@ async def _apply_payment(tx: dict):
         await saas_extras.issue_subscription_invoice(tx)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"subscription invoice: {e}")
-    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": tx["company_id"], "type": "license", "title": f"{tx['plan_name']} paketi aktif", "message": f"Ödemeniz alındı ({tx['amount']:,.0f} {tx['currency'].upper()}). Paketiniz {ends[:10]} tarihine kadar aktif.", "ref_type": "license", "ref_id": tx["_id"], "is_read": False, "created_at": _now()})
+    import notify as _notify
+    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": tx["company_id"], "type": "license", "title": f"{tx['plan_name']} paketi aktif", "message": f"Ödemeniz alındı ({tx['amount']:,.0f} {tx['currency'].upper()}). Paketiniz {ends[:10]} tarihine kadar aktif.", "ref_type": "license", "ref_id": tx["_id"], "is_read": False, "created_at": _now()})
 
 
 async def _mark_paid(session_id: str, payment_status: str, status: str):
@@ -237,7 +238,8 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
         link = f"{base}/yenile/{saas_docs.make_renew_token(company['_id'], lic.get('plan_id'))}"
         body += f" Tek tıkla yenilemek için: {link}"
     res = {"notification": True, "email": [], "whatsapp": [], "renew_link": bool(link)}
-    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})
+    import notify as _notify
+    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:

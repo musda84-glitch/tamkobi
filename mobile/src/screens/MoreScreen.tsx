@@ -12,6 +12,7 @@ const LINKS = [
   { title: "Personel & Bordro", path: "/personnel", screen: "Personnel", icon: "people-circle" as const },
   { title: "Cariler", path: "/contacts", screen: "Contacts", icon: "people" as const },
   { title: "Faturalar", path: "/invoices", screen: "Invoices", icon: "document-text" as const },
+  { title: "Gelen e-Faturalar", path: "/edoc-inbox", screen: "EdocInbox", icon: "file-tray" as const },
   { title: "Siparişler", path: "/orders", screen: "Orders", icon: "cart" as const },
   { title: "Depo Sevkiyat", path: "/sevk", screen: "Sevk", icon: "cube" as const },
   { title: "Üretim Atölye", path: "/atolye", screen: "Atolye", icon: "build" as const },

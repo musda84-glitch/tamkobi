@@ -165,7 +165,8 @@ def _message(user: dict, body: str, attachments: list, *, is_staff: bool, is_int
 
 
 async def _notify(company_id: str, title: str, message: str, ticket_id: str):
-    await _db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
         "type": "support",

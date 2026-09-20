@@ -5,7 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { Badge, Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
 import { ProductThumb } from "../components/ProductThumb";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -102,11 +102,12 @@ export function StockScreen() {
             testID={`stock-row-${idOf(p)}`}
             leading={<ProductThumb uri={productImage(p)} />}
             title={p.name}
+            titleLines={2}
+            compactRight
             subtitle={`${qty} · ${stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}`}
             right={stockRightLabel(p)}
             rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
             rightTestID={`stock-qty-${idOf(p)}`}
-            badge={<Badge label={qty} tone={qtyTone} />}
             onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name: p.name }) : undefined}
           />
         );

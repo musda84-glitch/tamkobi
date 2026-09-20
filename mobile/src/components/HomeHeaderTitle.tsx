@@ -1,17 +1,59 @@
-import React from "react";
-import { Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Image, Text, View } from "react-native";
 import { colors } from "../theme";
-import { greetingLine } from "../utils/greeting";
+import { companyInitials, greetingLine } from "../utils/greeting";
 
-/** Özet başlığının yanında ince yazıyla selamlama ve aktif firma; gövdede yer kaplamasın diye başlıkta durur. */
-export function HomeHeaderTitle({ name, company }: { name?: string | null; company?: string | null }) {
+/** Özet başlığı: firma logosu + selamlama. Logo yoksa firma baş harfleri durur. */
+export function HomeHeaderTitle({
+  name,
+  company,
+  logoUrl,
+}: {
+  name?: string | null;
+  company?: string | null;
+  logoUrl?: string | null;
+}) {
   const greeting = greetingLine(name);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [logoUrl]);
+  const showLogo = !!logoUrl && !broken;
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1 }}>
-      <Text style={{ fontWeight: "800", color: colors.text, fontSize: 17 }}>Özet</Text>
-      <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 8 }} />
-      <View style={{ flexShrink: 1, maxWidth: 190 }}>
-        <Text style={{ color: colors.text, fontSize: 11, fontWeight: "700" }} numberOfLines={1}>
+    <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1, gap: 8, maxWidth: 280 }}>
+      {showLogo ? (
+        <Image
+          testID="home-company-logo"
+          accessibilityLabel={`${company || "Firma"} logosu`}
+          source={{ uri: logoUrl || "" }}
+          onError={() => setBroken(true)}
+          resizeMode="contain"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            backgroundColor: "#fff",
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        />
+      ) : (
+        <View
+          testID="home-company-logo-fallback"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            backgroundColor: colors.emerald50,
+            borderWidth: 1,
+            borderColor: colors.border,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Text style={{ fontWeight: "800", fontSize: 12, color: colors.primary }}>{companyInitials(company)}</Text>
+        </View>
+      )}
+      <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }} numberOfLines={1}>
           {greeting}
         </Text>
         <Text style={{ color: colors.muted, fontSize: 10 }} numberOfLines={1}>

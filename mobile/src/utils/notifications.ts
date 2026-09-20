@@ -145,6 +145,7 @@ const REF_ROUTES: Record<string, string> = {
   work_order: "/atolye",
   production: "/atolye",
   invoice: "/invoices",
+  edoc: "/edoc-inbox",
   contact: "/contacts",
   cheque: "/cheques",
   cash_approval: "/banking",

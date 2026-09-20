@@ -1,11 +1,12 @@
-import React, { useState } from "react";
-import { Pressable, Text } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Platform, Pressable, Text } from "react-native";
 import { post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { passwordChangePayload, validatePasswordChange } from "../utils/account";
 import { idOf } from "../utils/money";
+import { getStoredPushToken, registerDevicePush, type PushStatus } from "../utils/pushRegister";
 
 export function SettingsScreen() {
   const { client, companies, activeCompany, switchCompany, user, logout } = useAuth();
@@ -15,6 +16,12 @@ export function SettingsScreen() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    getStoredPushToken().then((t) => setPushStatus(t ? "ok" : Platform.OS === "web" ? "web" : "idle"));
+  }, []);
 
   const savePassword = async () => {
     const invalid = validatePasswordChange(current, next, confirm);
@@ -48,6 +55,38 @@ export function SettingsScreen() {
         <Field label="Yeni şifre" testID="settings-pw-new" value={next} onChangeText={setNext} secureTextEntry autoCapitalize="none" autoComplete="new-password" />
         <Field label="Yeni şifre (tekrar)" testID="settings-pw-confirm" value={confirm} onChangeText={setConfirm} secureTextEntry autoCapitalize="none" autoComplete="new-password" />
         <PrimaryButton title="Şifreyi değiştir" testID="settings-pw-save" onPress={savePassword} loading={busy} color={colors.primary} />
+      </Card>
+
+      <Card testID="settings-push">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Telefon bildirimleri</Text>
+        <Muted>
+          {pushStatus === "ok"
+            ? "Bu cihazda açık. Sipariş, izin, kasa onayı ve benzeri olaylar bildirim olarak gelir."
+            : pushStatus === "web"
+              ? "Tarayıcıda uzak bildirim yok; Android / iOS uygulamasında açılır."
+              : pushStatus === "denied"
+                ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
+                : "Girişte otomatik açılır. İzin istenmediyse aşağıdan açın."}
+        </Muted>
+        {Platform.OS !== "web" ? (
+          <PrimaryButton
+            title={pushBusy ? "Açılıyor…" : "Bildirimleri aç"}
+            testID="settings-push-enable"
+            onPress={async () => {
+              setPushBusy(true);
+              try {
+                const r = await registerDevicePush(client);
+                setPushStatus(r.status);
+                if (r.status === "ok") setMessage("Telefon bildirimleri açıldı.");
+                else if (r.status === "denied") setError("Bildirim izni verilmedi.");
+              } finally {
+                setPushBusy(false);
+              }
+            }}
+            loading={pushBusy}
+            color={colors.indigo}
+          />
+        ) : null}
       </Card>
 
       <Card>

@@ -1,5 +1,7 @@
 from notify import (
+    expo_push_messages,
     filter_notifications,
+    is_expo_push_token,
     notification_doc,
     notification_visible,
     role_label,
@@ -54,3 +56,17 @@ def test_filter_keeps_matching_rows():
     ]
     out = filter_notifications(rows, {"id": "u-wh", "role": "warehouse"})
     assert [n["title"] for n in out] == ["depo", "görev"]
+
+
+def test_expo_push_token_and_payload():
+    assert is_expo_push_token("ExponentPushToken[abc123]")
+    assert is_expo_push_token("ExpoPushToken[xyz]")
+    assert not is_expo_push_token("fcm:abc")
+    assert not is_expo_push_token("")
+    note = notification_doc("c1", "b2b_order", "Yeni sipariş", "N11 · 2 kalem", link="/orders", ref_type="order", ref_id="o1")
+    msgs = expo_push_messages(["ExponentPushToken[abc123]", "bad", "ExponentPushToken[abc123]"], note)
+    assert len(msgs) == 1
+    assert msgs[0]["to"] == "ExponentPushToken[abc123]"
+    assert msgs[0]["title"] == "Yeni sipariş"
+    assert msgs[0]["data"]["link"] == "/orders"
+    assert msgs[0]["channelId"] == "tamkobi"

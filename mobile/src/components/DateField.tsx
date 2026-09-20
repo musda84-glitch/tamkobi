@@ -11,9 +11,10 @@ type DateFieldProps = {
   onChangeText: (value: string) => void;
   testID?: string;
   min?: string;
+  editable?: boolean;
 };
 
-export function DateField({ label, value, onChangeText, testID, min }: DateFieldProps) {
+export function DateField({ label, value, onChangeText, testID, min, editable = true }: DateFieldProps) {
   const [open, setOpen] = useState(false);
   const ymd = normalizeYmd(value);
   const minYmd = normalizeYmd(min || "");
@@ -35,6 +36,7 @@ export function DateField({ label, value, onChangeText, testID, min }: DateField
   };
 
   const openCal = () => {
+    if (!editable) return;
     const d = parseYmd(ymd) || new Date();
     setCursor({ year: d.getFullYear(), month0: d.getMonth() });
     setOpen(true);
@@ -43,7 +45,12 @@ export function DateField({ label, value, onChangeText, testID, min }: DateField
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
-      <Pressable testID={testID} onPress={openCal} style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
+      <Pressable
+        testID={testID}
+        onPress={openCal}
+        disabled={!editable}
+        style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between", opacity: editable ? 1 : 0.6 }]}
+      >
         <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
         <Ionicons name="calendar-outline" size={18} color={colors.muted} />
       </Pressable>
