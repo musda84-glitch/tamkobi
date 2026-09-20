@@ -61,6 +61,11 @@ export function showFinanceSubstituteTabs(user: SessionUser): boolean {
   return !hasSelfPersonnelRecord(user);
 }
 
+/** Özet ciro / kâr / tahsilat kartı: personel kaydı bağlı girişte gizlenir. */
+export function showHomeFinanceSummary(user: SessionUser): boolean {
+  return !hasSelfPersonnelRecord(user);
+}
+
 /** Stok kartı formu: yalnız /stock düzenleme (depo / yönetici). Personel ve üretim giremez. */
 export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
