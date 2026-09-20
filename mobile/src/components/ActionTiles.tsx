@@ -3,6 +3,7 @@ import React from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { colors } from "../theme";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
+import { TILE_SIZES, type TileSize } from "../utils/tileSizes";
 
 export type ActionTile = {
   key: string;
@@ -16,13 +17,7 @@ export type ActionTile = {
   testID?: string;
 };
 
-type TileSize = "xs" | "sm" | "md";
-
-const SIZES = {
-  xs: { minHeight: 62, badge: 26, radius: 10, icon: 14, font: 10, padding: 6, gap: 4 },
-  sm: { minHeight: 82, badge: 36, radius: 12, icon: 18, font: 11, padding: 10, gap: 8 },
-  md: { minHeight: 104, badge: 46, radius: 16, icon: 22, font: 12, padding: 14, gap: 8 },
-} as const;
+export { TILE_SIZES, type TileSize };
 
 /** Renkli zemin + katı ikon rozeti; ana ekran hızlı menüsü ve kayıt işlemleri aynı dili kullanır. */
 export function ActionTiles({
@@ -35,9 +30,9 @@ export function ActionTiles({
   size?: TileSize;
 }) {
   const width = `${100 / columns}%` as const;
-  const s = SIZES[size];
+  const s = TILE_SIZES[size];
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", marginHorizontal: -4 }}>
       {items.map((item) => {
         const tone = QUICK_TONE_COLORS[item.tone || "slate"];
         return (
@@ -84,9 +79,10 @@ export function ActionTiles({
                 paddingVertical: s.padding,
                 paddingHorizontal: 6,
                 alignItems: "center",
+                justifyContent: "flex-start",
                 gap: s.gap,
-                minHeight: s.minHeight,
-                overflow: "visible",
+                height: s.height,
+                overflow: "hidden",
                 ...Platform.select({
                   web: { boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)" },
                   default: {
@@ -107,6 +103,7 @@ export function ActionTiles({
                   backgroundColor: tone.solid,
                   alignItems: "center",
                   justifyContent: "center",
+                  flexShrink: 0,
                   ...Platform.select({
                     web: { boxShadow: `0 4px 10px ${tone.solid}33` },
                     default: {
@@ -126,6 +123,9 @@ export function ActionTiles({
                   fontWeight: "800",
                   color: colors.text,
                   fontSize: s.font,
+                  lineHeight: s.labelHeight / 2,
+                  height: s.labelHeight,
+                  width: "100%",
                   textAlign: "center",
                   fontFamily: Platform.OS === "web" ? 'system-ui, "Segoe UI", Roboto, Arial, sans-serif' : undefined,
                 }}
