@@ -206,10 +206,12 @@ export default function StockBarcodePage() {
   };
 
   const handleProductUpdated = (updated) => {
-    setDetailProduct(updated);
+    if (!updated || typeof updated !== "object") return;
     const id = productId(updated);
+    if (!id) return;
+    setDetailProduct((prev) => ({ ...(prev || {}), ...updated }));
     setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated } : p)));
-    if (id) patchCached("products", companyId, { [id]: updated });
+    patchCached("products", companyId, { [id]: updated });
   };
 
   const handleDeleteProduct = async (prod) => {

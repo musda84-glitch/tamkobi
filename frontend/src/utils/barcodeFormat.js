@@ -10,3 +10,15 @@ export function isEan13(code) {
 export function barcodeFormatFor(code) {
   return isEan13(code) ? "EAN13" : "CODE128";
 }
+
+/** Yanlışlıkla basmayı önlemek için onay metni. */
+export function generateBarcodeConfirm(existing) {
+  const current = String(existing || "").trim();
+  if (current) return `Mevcut barkod (${current}) yeni bir barkodla değişecek. Üretmek istiyor musunuz?`;
+  return "Yeni bir barkod üretilsin mi?";
+}
+
+export function confirmGenerateBarcode(existing) {
+  if (typeof window === "undefined" || typeof window.confirm !== "function") return true;
+  return window.confirm(generateBarcodeConfirm(existing));
+}

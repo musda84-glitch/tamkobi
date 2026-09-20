@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plus, X, Wand2, Trash2, Save, ImagePlus, Loader2 } from "lucide-react";
@@ -53,31 +53,35 @@ const OptionEditor = ({ option, onChange, onRemove }) => {
 };
 
 const VariantImageCell = ({ product, variant, onUpdated }) => {
-  const ref = useRef(null);
   const [busy, setBusy] = useState(false);
+  const pid = product?.id || product?._id;
   const upload = async (e) => {
     const raw = e.target.files?.[0];
-    if (!raw) return;
-    const file = await compressImageFile(raw);
-    const form = new FormData();
-    form.append("file", file);
+    e.target.value = "";
+    if (!raw || !pid) return;
+    setBusy(true);
     try {
-      setBusy(true);
-      const res = await axios.post(`${API_URL}/products/${product.id}/image?variant_id=${variant.variant_id}`, form, { withCredentials: true });
+      const file = await compressImageFile(raw);
+      const form = new FormData();
+      form.append("file", file);
+      const res = await axios.post(`${API_URL}/products/${pid}/image?variant_id=${variant.variant_id}`, form, { withCredentials: true });
+      if (!res.data?.product) {
+        toast.error("Görsel kaydedildi ama kart yenilenemedi.");
+        return;
+      }
       onUpdated(res.data.product);
       toast.success("Varyant görseli yüklendi.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Görsel yüklenemedi.");
     } finally {
       setBusy(false);
-      e.target.value = "";
     }
   };
   return (
-    <button type="button" onClick={() => ref.current?.click()} className="w-9 h-9 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 hover:border-emerald-500" title="Varyant görseli" data-testid="variant-image-btn">
+    <label className="w-9 h-9 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 hover:border-emerald-500 cursor-pointer" title="Varyant görseli" data-testid="variant-image-btn">
       {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : variant.image_url ? <img src={resolveImageUrl(variant.image_url)} alt="" className="w-full h-full object-cover" /> : <ImagePlus className="w-4 h-4" />}
-      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={upload} />
-    </button>
+      <input type="file" accept="image/*" className="sr-only" onChange={upload} disabled={busy} />
+    </label>
   );
 };
 
