@@ -321,9 +321,9 @@ export default function OrdersB2BPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-          <button onClick={() => setNewOrder(true)} className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="new-order-btn"><Plus className="w-4 h-4" /> Yeni Sipariş</button>
-          <button onClick={() => setAutoShip(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /> Toplu Kargola</button>
-          <button onClick={() => setAiImport(true)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /> AI ile Yükle (PDF/Excel)</button>
+          <button onClick={() => setNewOrder(true)} className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl" title="Yeni Sipariş" aria-label="Yeni Sipariş" data-testid="new-order-btn"><Plus className="w-4 h-4" /></button>
+          <button onClick={() => setAutoShip(true)} className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl" title="Toplu Kargola" aria-label="Toplu Kargola" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /></button>
+          <button onClick={() => setAiImport(true)} className="p-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl" title="AI ile Yükle (PDF/Excel)" aria-label="AI ile Yükle" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /></button>
         {/* Tab Switcher */}
         <div className="flex flex-wrap items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
           <button
@@ -426,19 +426,20 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">
-                      <div className="grid grid-cols-[28px_112px_128px_28px_32px] items-center justify-center gap-1.5" data-testid={`order-actions-${ord.order_number}`}>
-                        {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-3.5 h-3.5" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
+                    <td className="px-4 py-3 pr-8 text-center w-[280px] min-w-[280px]">
+                      <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
+                        {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm"
-                                title="Tek Tıkla E-Faturaya Dönüştür"
+                                type="button"
+                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"
+                                title="Faturala"
+                                aria-label="Faturala"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
-                                <FileText className="w-3.5 h-3.5" />
-                                <span>Faturala ▾</span>
+                                <FileText className="w-4 h-4" />
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-52 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
@@ -457,27 +458,28 @@ export default function OrdersB2BPage() {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         ) : (
-                          <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-1 rounded text-center">
-                            Faturalandı
+                          <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700" title="Faturalandı" aria-label="Faturalandı" data-testid={`invoiced-badge-${ord.order_number}`}>
+                            <CheckCircle2 className="w-4 h-4" />
                           </span>
                         )}
 
                         {!ord.cargo_tracking_number ? (
                           <button
+                            type="button"
                             onClick={() => setShipOrder(ord)}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"
-                            title="Kargo Fişi Oluştur"
+                            className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 rounded-lg"
+                            title="Kargola"
+                            aria-label="Kargola"
                             data-testid={`create-cargo-btn-${ord.order_number}`}
                           >
-                            <Truck className="w-3.5 h-3.5" />
-                            <span>Kargola</span>
+                            <Truck className="w-4 h-4" />
                           </button>
                         ) : (
-                          <button onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).catch(() => {}); }} className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold text-slate-700 hover:text-indigo-700 hover:bg-indigo-50 border border-dashed border-slate-300 rounded-lg px-2 py-1" title="Termal kargo etiketi yazdır (100×150)" data-testid={`print-label-${ord.order_number}`}>
-                            <Printer className="w-3 h-3" /> {ord.cargo_tracking_number}{ord.label_printed_at ? " ✓" : ""}
+                          <button type="button" onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).catch(() => {}); }} className="p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg" title={`Termal etiket: ${ord.cargo_tracking_number}${ord.label_printed_at ? " ✓" : ""}`} aria-label="Kargo etiketi yazdır" data-testid={`print-label-${ord.order_number}`}>
+                            <Printer className="w-4 h-4" />
                           </button>
                         )}
-                        {["pending", "new"].includes(ord.order_status) ? <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
+                        {["pending", "new"].includes(ord.order_status) ? <button type="button" onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
