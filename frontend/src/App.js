@@ -22,6 +22,7 @@ const QuickSalePage = page(() => import("./pages/QuickSalePage"));
 const EcommercePage = page(() => import("./pages/EcommercePage"));
 const CargoPage = page(() => import("./pages/CargoPage"));
 const OrdersB2BPage = page(() => import("./pages/OrdersB2BPage"));
+const PurchaseOrdersPage = page(() => import("./pages/PurchaseOrdersPage"));
 const WarehousePage = page(() => import("./pages/WarehousePage"));
 const ProductionPage = page(() => import("./pages/ProductionPage"));
 const PersonnelPage = page(() => import("./pages/PersonnelPage"));
@@ -97,6 +98,7 @@ export default function App() {
                   <Route path="/ecommerce" element={<EcommercePage />} />
                   <Route path="/cargo" element={<CargoPage />} />
                   <Route path="/orders" element={<OrdersB2BPage />} />
+                  <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
                   <Route path="/saha" element={<FieldSalesPage />} />
                   <Route path="/warehouses" element={<WarehousePage />} />
                   <Route path="/production" element={<ProductionPage />} />

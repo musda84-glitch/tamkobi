@@ -26,10 +26,11 @@ from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
     Warehouse, WarehouseTransfer, StockLot, Invoice, InvoiceItem, BankAccount,
     BankTransaction, IntegrationConfig, CargoConfig, CargoShipment,
-    Order, OrderItem, Recipe, ProductionOrder, Employee, Payroll, ChatMessage,
+    Order, OrderItem, PurchaseOrder, PurchaseOrderItem, Recipe, ProductionOrder, Employee, Payroll, ChatMessage,
     Partner, PartnerTransaction, BankConnection,
     SmsSettings, SmsLog, MailAccount, MailLog
 )
+import purchase_orders as po_mod
 from line_totals import (
     enrich_line,
     enrich_items,
@@ -200,6 +201,8 @@ async def startup_event():
             await db.contacts.create_index("tax_number_or_id")
             await db.invoices.create_index("invoice_number")
             await db.orders.create_index("order_number")
+            await db.purchase_orders.create_index("order_number")
+            await db.purchase_orders.create_index([("company_id", 1), ("order_date", -1)])
             await db.production_orders.create_index([("company_id", 1), ("status", 1), ("created_at", -1)])
             await db.work_orders.create_index([("company_id", 1), ("order_id", 1)])
             await db.work_orders.create_index([("order_id", 1), ("step_no", 1)])
@@ -3587,8 +3590,24 @@ async def reorder_preview(company_id: Optional[str] = "comp_nexus_main_01", prod
     return {"company_id": company_id, "lines": lines, "count": len(lines)}
 
 
+async def _next_purchase_order_number(company_id: str) -> str:
+    year = datetime.now(timezone.utc).strftime("%Y")
+    prefix = f"VSP-{year}-"
+    last = await db.purchase_orders.find(
+        {"company_id": company_id, "order_number": {"$regex": f"^{prefix}"}}
+    ).sort("order_number", -1).limit(1).to_list(1)
+    seed = 0
+    if last:
+        try:
+            seed = int(last[0]["order_number"].rsplit("-", 1)[1])
+        except (IndexError, ValueError, TypeError):
+            seed = 0
+    return f"{prefix}{str(seed + 1).zfill(4)}"
+
+
 @api_router.post("/products/reorder-purchases")
 async def reorder_purchases(req: Dict[str, Any]):
+    """Kritik stok → tedarikçiye verilen sipariş (alış faturası değil)."""
     company_id = req.get("company_id") or "comp_nexus_main_01"
     raw_lines = req.get("lines") or []
     fallback = req.get("contact_id") or ""
@@ -3629,34 +3648,206 @@ async def reorder_purchases(req: Dict[str, Any]):
             price = float(line.get("unit_price") or p.get("purchase_price") or 0)
         except (TypeError, ValueError):
             price = float(p.get("purchase_price") or 0)
-        vat = int(line.get("vat_rate") or p.get("purchase_vat_rate") or p.get("vat_rate") or 20)
+        vat = float(line.get("vat_rate") or p.get("purchase_vat_rate") or p.get("vat_rate") or 20)
         grouped.setdefault(cid, {"contact": contact, "items": []})
-        grouped[cid]["items"].append(InvoiceItem(
-            product_id=pid, name=p.get("name") or "", quantity=qty, unit=p.get("unit") or "Adet",
-            unit_price=price, vat_rate=vat, total=round(qty * price, 2),
+        grouped[cid]["items"].append(po_mod.build_po_item(
+            product_id=pid,
+            product_name=p.get("name") or "",
+            sku=p.get("sku") or "",
+            quantity=qty,
+            unit=p.get("unit") or "Adet",
+            unit_price=price,
+            vat_rate=vat,
         ))
     if missing and not grouped:
         raise HTTPException(status_code=400, detail=f"Tedarikçi seçin: {', '.join(missing[:8])}")
     created = []
     for _cid, bundle in grouped.items():
         c = bundle["contact"]
-        inv = Invoice(
-            company_id=company_id, invoice_type="purchase", e_type="paper", status="draft",
-            contact_id=c["_id"], contact_name=c.get("name") or "",
-            contact_tax_id=str(c.get("tax_number_or_id") or ""),
+        po = po_mod.make_purchase_order(
+            company_id=company_id,
+            order_number=await _next_purchase_order_number(company_id),
+            supplier_name=c.get("name") or "",
+            contact_id=c["_id"],
             items=bundle["items"],
             notes="Kritik stok siparişi (stok kartından)",
             source_channel="stock_reorder",
+            order_status="draft",
         )
-        created.append(await create_invoice(inv))
+        doc = po.to_mongo()
+        await db.purchase_orders.insert_one(doc)
+        created.append(clean_doc(doc))
     return {
         "status": "success",
-        "invoices": [{"id": x.get("id"), "invoice_number": x.get("invoice_number"), "contact_name": x.get("contact_name"), "grand_total": x.get("grand_total")} for x in created],
+        "orders": [{"id": x.get("id"), "order_number": x.get("order_number"), "supplier_name": x.get("supplier_name"), "grand_total": x.get("grand_total")} for x in created],
+        "invoices": [],  # geriye uyumluluk — artık fatura değil verilen sipariş
         "count": len(created),
         "skipped": missing,
-        "message": (f"{len(created)} taslak alış faturası oluşturuldu." if created else "Fatura oluşturulamadı.")
+        "message": (f"{len(created)} verilen sipariş oluşturuldu." if created else "Sipariş oluşturulamadı.")
         + (f" Tedarikçisiz: {', '.join(missing[:8])}" if missing else ""),
     }
+
+
+@api_router.get("/purchase-orders")
+async def list_purchase_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
+    query: Dict[str, Any] = {"company_id": company_id}
+    if status:
+        query["order_status"] = status
+    rows = await db.purchase_orders.find(query).sort("order_date", -1).to_list(1000)
+    return clean_docs(rows)
+
+
+@api_router.get("/purchase-orders/{po_id}")
+async def get_purchase_order(po_id: str):
+    doc = await db.purchase_orders.find_one({"_id": po_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Verilen sipariş bulunamadı.")
+    return clean_doc(doc)
+
+
+@api_router.post("/purchase-orders")
+async def create_purchase_order(req: Dict[str, Any]):
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    contact_id = req.get("contact_id") or ""
+    contact = None
+    if contact_id:
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+        if not contact:
+            raise HTTPException(status_code=400, detail="Tedarikçi bu firmaya ait değil.")
+    supplier_name = (req.get("supplier_name") or (contact or {}).get("name") or "").strip()
+    if not supplier_name:
+        raise HTTPException(status_code=400, detail="Tedarikçi adı gerekli.")
+    items = []
+    for row in req.get("items") or []:
+        name = (row.get("product_name") or row.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            qty = float(row.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        try:
+            price = float(row.get("unit_price") or 0)
+        except (TypeError, ValueError):
+            price = 0
+        items.append(po_mod.build_po_item(
+            product_id=str(row.get("product_id") or ""),
+            product_name=name,
+            sku=str(row.get("sku") or ""),
+            quantity=qty,
+            unit=row.get("unit") or "Adet",
+            unit_price=price,
+            vat_rate=float(row.get("vat_rate") or 20),
+        ))
+    if not items:
+        raise HTTPException(status_code=400, detail="En az bir kalem gerekli.")
+    po = po_mod.make_purchase_order(
+        company_id=company_id,
+        order_number=await _next_purchase_order_number(company_id),
+        supplier_name=supplier_name,
+        contact_id=(contact or {}).get("_id"),
+        items=items,
+        notes=req.get("notes"),
+        source_channel=req.get("source_channel") or "manual",
+        order_status=req.get("order_status") or "draft",
+    )
+    doc = po.to_mongo()
+    await db.purchase_orders.insert_one(doc)
+    return clean_doc(doc)
+
+
+@api_router.put("/purchase-orders/{po_id}/status")
+async def update_purchase_order_status(po_id: str, req: Dict[str, Any]):
+    doc = await db.purchase_orders.find_one({"_id": po_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Verilen sipariş bulunamadı.")
+    status = str(req.get("order_status") or req.get("status") or "").strip()
+    if status not in po_mod.PO_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Geçersiz durum. İzin verilen: {', '.join(po_mod.PO_STATUSES)}")
+    if doc.get("order_status") == "invoiced" and status != "invoiced":
+        raise HTTPException(status_code=400, detail="Faturalanmış siparişin durumu değiştirilemez.")
+    await db.purchase_orders.update_one(
+        {"_id": po_id},
+        {"$set": {"order_status": status, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return clean_doc(await db.purchase_orders.find_one({"_id": po_id}))
+
+
+@api_router.post("/purchase-orders/{po_id}/convert-to-invoice")
+async def convert_purchase_order_to_invoice(po_id: str):
+    doc = await db.purchase_orders.find_one({"_id": po_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Verilen sipariş bulunamadı.")
+    if doc.get("order_status") == "cancelled":
+        raise HTTPException(status_code=400, detail="İptal siparişten fatura oluşturulamaz.")
+    if doc.get("invoice_id"):
+        existing = await db.invoices.find_one({"_id": doc["invoice_id"]})
+        if existing:
+            return {"status": "success", "invoice": clean_doc(existing), "message": "Mevcut alış faturası.", "already": True}
+    if not doc.get("contact_id"):
+        raise HTTPException(status_code=400, detail="Tedarikçi seçili değil.")
+    contact = await db.contacts.find_one({"_id": doc["contact_id"], "company_id": doc.get("company_id")})
+    if not contact:
+        raise HTTPException(status_code=400, detail="Tedarikçi bulunamadı.")
+    inv_rows = po_mod.po_to_invoice_items(doc.get("items") or [])
+    if not inv_rows:
+        raise HTTPException(status_code=400, detail="Siparişte kalem yok.")
+    items = [
+        InvoiceItem(
+            product_id=r.get("product_id") or None,
+            name=r["name"],
+            quantity=r["quantity"],
+            unit=r.get("unit") or "Adet",
+            unit_price=r["unit_price"],
+            vat_rate=int(r.get("vat_rate") or 20),
+            total=r["total"],
+            sku=r.get("sku") or "",
+        )
+        for r in inv_rows
+    ]
+    inv = Invoice(
+        company_id=doc["company_id"],
+        invoice_type="purchase",
+        e_type="paper",
+        status="draft",
+        contact_id=contact["_id"],
+        contact_name=contact.get("name") or doc.get("supplier_name") or "",
+        contact_tax_id=str(contact.get("tax_number_or_id") or ""),
+        items=items,
+        notes=f"Verilen sipariş: {doc.get('order_number')}" + (f" · {doc.get('notes')}" if doc.get("notes") else ""),
+        source_channel=doc.get("source_channel") or "purchase_order",
+    )
+    created = await create_invoice(inv)
+    await db.purchase_orders.update_one(
+        {"_id": po_id},
+        {"$set": {
+            "invoice_id": created.get("id"),
+            "invoice_number": created.get("invoice_number"),
+            "is_invoiced": False,
+            "order_status": "invoiced",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    return {
+        "status": "success",
+        "invoice": created,
+        "message": f"Taslak alış faturası oluşturuldu: {created.get('invoice_number')}",
+    }
+
+
+@api_router.delete("/purchase-orders/{po_id}")
+async def delete_purchase_order(po_id: str):
+    doc = await db.purchase_orders.find_one({"_id": po_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Verilen sipariş bulunamadı.")
+    if doc.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Faturalı sipariş silinemez; faturayı iptal edin.")
+    await trash.soft_delete(
+        "purchase_orders", doc, "purchase_order",
+        f"{doc.get('order_number')} · {doc.get('supplier_name')}",
+        note=f"Verilen sipariş · {float(doc.get('grand_total') or 0):,.2f} ₺",
+    )
+    return {"status": "success", "message": f"{doc.get('order_number')} silindi."}
 
 
 @api_router.post("/products")

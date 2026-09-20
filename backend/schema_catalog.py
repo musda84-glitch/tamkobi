@@ -30,6 +30,7 @@ STARTUP_INDEXES = (
     {"collection": "contacts", "name": "tax_number_or_id", "fields": ("tax_number_or_id",), "unique": False},
     {"collection": "invoices", "name": "invoice_number", "fields": ("invoice_number",), "unique": False},
     {"collection": "orders", "name": "order_number", "fields": ("order_number",), "unique": False},
+    {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
 )
 
@@ -248,6 +249,12 @@ COLLECTIONS = {
         "scope": SCOPE_TENANT,
         "description": "Satış siparişleri (manuel, B2B, pazaryeri).",
         "keys": ("_id", "company_id", "order_number", "channel", "contact_id", "items", "total_amount", "order_status", "invoice_id"),
+        "refs": ("contacts._id", "invoices._id", "products._id via items[]"),
+    },
+    "purchase_orders": {
+        "scope": SCOPE_TENANT,
+        "description": "Verilen siparişler (tedarikçiye alış siparişi); stok yeniden sipariş ve manuel.",
+        "keys": ("_id", "company_id", "order_number", "contact_id", "supplier_name", "items", "grand_total", "order_status", "invoice_id", "source_channel"),
         "refs": ("contacts._id", "invoices._id", "products._id via items[]"),
     },
     "order_pick_sessions": {
