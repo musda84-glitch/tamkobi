@@ -509,36 +509,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {kind !== "project" ? (
         <Card>
-          <Row
-            style={{
-              alignItems: "center",
-              justifyContent: "space-between",
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: 12,
-              backgroundColor: "#fff",
-              minHeight: 30,
-              paddingHorizontal: 6,
-            }}
-          >
-            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
-            {canEdit ? (
-              <Pressable
-                onPress={() => setItems((rows) => [...rows, emptyItem()])}
-                testID="q-add-item-btn"
-                accessibilityLabel="Kalem ekle"
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="add-circle" size={22} color={colors.indigo} />
-              </Pressable>
-            ) : null}
-          </Row>
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
           <Field dense label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
           {prodHits.map((p) => (
             <ProductPickRow
@@ -613,6 +584,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             </View>
             );
           })}
+          {canEdit ? (
+            <PrimaryButton
+              title="Satır ekle"
+              color={colors.indigo}
+              testID="q-add-item-btn"
+              onPress={() => setItems((rows) => [...rows, emptyItem()])}
+            />
+          ) : null}
           {namedItems(items).length ? (
             <Row style={{ justifyContent: "space-between" }}>
               <Text style={{ fontWeight: "800" }}>Toplam (KDV Dahil)</Text>
