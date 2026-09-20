@@ -459,8 +459,8 @@ export function newButtonLabel(kind: WorkKind): string {
   return "Yeni Keşif";
 }
 
-/** Proje kartındaki teklif aksiyonu — web “Teklif Oluştur” yerine tamamla. */
-export const PROJECT_QUOTE_ACTION = "Teklifi Tamamla";
+/** Proje kartındaki teklif aksiyonu. */
+export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
 
 /** Kalem satırlarını birbirinden ayıran zebra tonları. */
 export function itemStripe(index: number): { backgroundColor: string } {

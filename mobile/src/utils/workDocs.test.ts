@@ -157,7 +157,7 @@ describe("workDocs", () => {
     expect(newButtonLabel("quote")).toBe("Yeni Teklif");
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
-    expect(PROJECT_QUOTE_ACTION).toBe("Teklifi Tamamla");
+    expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
   });
 
   it("builds a stage dropdown that can grow with new statuses", () => {
