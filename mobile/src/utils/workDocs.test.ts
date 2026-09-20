@@ -19,6 +19,9 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quoteStatusTone,
+  isSurveyConverted,
+  surveyListSubtitle,
+  surveyStatusTone,
   quotePayload,
   surveyPayload,
   trackingAbsoluteLink,
@@ -246,5 +249,15 @@ describe("workDocs", () => {
     expect(quoteStatusTone("rejected")).toBe("red");
     expect(quoteStatusTone("draft")).toBe("slate");
     expect(quoteStatusTone("")).toBe("slate");
+  });
+
+  it("shows survey status until the survey is converted to a quote", () => {
+    expect(surveyStatusTone("planned")).toBe("slate");
+    expect(surveyStatusTone("done")).toBe("indigo");
+    expect(isSurveyConverted({ status: "planned" })).toBe(false);
+    expect(isSurveyConverted({ status: "done" })).toBe(false);
+    expect(isSurveyConverted({ status: "quoted" })).toBe(true);
+    expect(isSurveyConverted({ status: "done", quote_id: "q1" })).toBe(true);
+    expect(surveyListSubtitle({ contact_name: "Mudenen", address: "", survey_date: "2026-09-18" })).toBe("Mudenen · 18 Eyl 2026");
   });
 });
