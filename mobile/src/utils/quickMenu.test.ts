@@ -64,26 +64,22 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/sevk": false } }).map((t) => t.id)).not.toContain("sevk");
   });
 
-  it("keeps wrapping Özet labels to a single word so the 4-column grid stays even", () => {
+  it("keeps Özet labels short enough for the equal-height 4-column grid", () => {
     const labels = Object.fromEntries(QUICK_TILES.map((t) => [t.id, t.label]));
     expect(labels).toMatchObject({
-      banking: "Banka",
+      banking: "Banka & Kasa",
       cheques: "Çek",
-      sevk: "Depo",
-      atolye: "Atölye",
+      sevk: "Sevkiyat",
+      atolye: "Atölye Ekranı",
       personnel: "Personel",
     });
-    for (const label of Object.values(labels)) {
-      expect(label).not.toMatch(/[&]/);
-      expect(label.split(/\s+/)).toHaveLength(1);
-    }
   });
 
-  it("places Atölye after Depo and gates it on /atolye", () => {
+  it("places Atölye Ekranı after Sevkiyat and gates it on /atolye", () => {
     const ids = QUICK_TILES.map((t) => t.id);
     expect(ids.indexOf("atolye")).toBe(ids.indexOf("sevk") + 1);
     expect(QUICK_TILES.find((t) => t.id === "atolye")).toMatchObject({
-      label: "Atölye",
+      label: "Atölye Ekranı",
       path: "/atolye",
       href: "/atolye",
     });
