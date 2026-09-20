@@ -332,6 +332,10 @@ export default function StockBarcodePage() {
       });
       toast.success("Ürün ve barkodu başarıyla oluşturuldu.");
       setShowAddModal(false);
+      const cid = activeCompany?.id || activeCompany?._id;
+      if (cid) {
+        axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => setUnits(r.data || [])).catch(() => {});
+      }
       loadProducts();
       openDetail(res.data, withVariants ? "variants" : "images");
     } catch (err) {

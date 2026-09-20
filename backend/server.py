@@ -3406,6 +3406,17 @@ async def _remember_category(company_id: str, name: Optional[str]):
     if name and name.strip():
         await db.product_categories.update_one({"company_id": company_id, "name": name.strip()}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name.strip(), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
+async def _remember_unit(company_id: str, name: Optional[str]):
+    """Stok kartında yazılan birimi firma ayarlarındaki birimler listesine ekler."""
+    if not name or not str(name).strip():
+        return
+    n = str(name).strip()
+    await db.units.update_one(
+        {"company_id": company_id, "name": n},
+        {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": n}},
+        upsert=True,
+    )
+
 def _purchase_cost_row(inv: dict, it: dict) -> Optional[Dict[str, Any]]:
     try:
         price = float(it.get("unit_price") or 0)
@@ -3643,15 +3654,20 @@ async def create_product(product: Product):
     doc = product.to_mongo()
     await db.products.insert_one(doc)
     await _remember_category(product.company_id, product.category)
+    await _remember_unit(product.company_id, product.unit)
     return clean_doc(doc)
 
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, updated: Dict[str, Any]):
     updated = {**updated, "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.products.update_one({"_id": product_id}, {"$set": updated})
-    if updated.get("category"):
+    if updated.get("category") or updated.get("unit"):
         cur = await db.products.find_one({"_id": product_id}, {"company_id": 1})
-        await _remember_category((cur or {}).get("company_id", "comp_nexus_main_01"), updated["category"])
+        cid = (cur or {}).get("company_id", "comp_nexus_main_01")
+        if updated.get("category"):
+            await _remember_category(cid, updated["category"])
+        if updated.get("unit"):
+            await _remember_unit(cid, updated["unit"])
     res = await db.products.find_one({"_id": product_id})
     return clean_doc(res)
 
@@ -8701,6 +8717,7 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
     doc["source"] = f"marketplace:{req.get('channel') or ''}"
     await db.products.insert_one(doc)
     await _remember_category(company_id, doc["category"])
+    await _remember_unit(company_id, doc.get("unit"))
     return {"status": "success", "product": clean_doc(doc), "message": f"'{name}' stok kartı oluşturuldu ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."}
 
 @api_router.post("/marketplace/product-match")

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Save, Loader2, RefreshCw, Package } from "lucide-react";
@@ -12,6 +12,8 @@ const F = ({ label, children }) => <div><label className="block font-semibold te
 const pkgNum = (v) => (v === "" || v == null ? "" : v);
 
 export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
+  const companyId = product.company_id || product.companyId;
+  const unitsListId = `product-units-list-${product.id || product._id || "edit"}`;
   const [f, setF] = useState({
     name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit,
     vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price,
@@ -23,9 +25,20 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
   });
+  const [units, setUnits] = useState([]);
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/products/units?company_id=${companyId}`)
+      .then((r) => { if (!cancelled) setUnits(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyId]);
+
   const genBarcode = () => {
     if (!confirmGenerateBarcode(f.barcode)) return;
     set("barcode", "868" + String(Math.floor(Math.random() * 1e10)).padStart(10, "0"));
@@ -34,13 +47,19 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     e.preventDefault(); setBusy(true);
     try {
       const n = (v) => (v === "" || v == null ? null : Number(v));
+      const unit = String(f.unit || "").trim() || "Adet";
       const r = await axios.put(`${API_URL}/products/${product.id}`, {
         ...f,
+        unit,
         vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price),
         min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity),
         desi: n(f.desi), weight: n(f.weight), length: n(f.length), width: n(f.width), height: n(f.height),
         package_count: Math.max(1, Math.min(50, parseInt(f.package_count, 10) || 1)),
       });
+      if (companyId && unit && !units.some((u) => u.name === unit)) {
+        await axios.post(`${API_URL}/products/units`, { company_id: companyId, name: unit }).catch(() => {});
+        setUnits((prev) => (prev.some((u) => u.name === unit) ? prev : [...prev, { name: unit, count: 0 }]));
+      }
       onUpdated(r.data); toast.success("Stok kartı güncellendi."); onSaved?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
@@ -50,6 +69,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   };
   return (
     <form onSubmit={save} className="space-y-3 text-xs" data-testid="product-edit-form">
+      <datalist id={unitsListId}>{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <F label="Ürün Adı"><input value={f.name} onChange={(e) => set("name", e.target.value)} className={`${inputCls} font-semibold`} required data-testid="edit-name-input" /></F>
       <div className="grid grid-cols-2 gap-2">
         <F label="SKU"><input value={f.sku} onChange={(e) => set("sku", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-sku-input" /></F>
@@ -58,7 +78,17 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
       <div className="grid grid-cols-3 gap-2">
         <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
-        <F label="Birim"><input list="product-units-list" value={f.unit} onChange={(e) => set("unit", e.target.value)} className={inputCls} data-testid="edit-unit-input" /></F>
+        <F label="Birim">
+          <input
+            list={unitsListId}
+            value={f.unit}
+            onChange={(e) => set("unit", e.target.value)}
+            className={inputCls}
+            placeholder="Adet, Kg…"
+            data-testid="edit-unit-input"
+          />
+          <p className="text-[10px] text-slate-400 mt-0.5">Firma ayarlarındaki birimler; yeni yazılan kayıt edilir.</p>
+        </F>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <F label="Alış (₺)"><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} /></F>
