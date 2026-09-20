@@ -293,17 +293,35 @@ function ProjectCard({
         ) : null}
       </Pressable>
       {canEdit ? (
-        <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }} testID={`project-status-${id}`}>
-          {PROJECT_STATUSES.map((s) => (
-            <Chip
-              key={s.key}
-              compact
-              label={s.label}
-              active={(project.status || "planning") === s.key}
-              onPress={() => !statusBusy && onStatus(s.key)}
-              testID={`project-status-${id}-${s.key}`}
-            />
-          ))}
+        <Row style={{ alignItems: "flex-start", marginTop: 8 }} testID={`project-status-${id}`}>
+          {PROJECT_STATUSES.map((s) => {
+            const active = (project.status || "planning") === s.key;
+            return (
+              <Pressable
+                key={s.key}
+                testID={`project-status-${id}-${s.key}`}
+                accessibilityLabel={s.label}
+                onPress={() => !statusBusy && onStatus(s.key)}
+                style={{ flex: 1, alignItems: "center", gap: 4, paddingVertical: 2 }}
+              >
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: active ? s.color : colors.slate100,
+                  }}
+                >
+                  <Ionicons name={s.icon} size={20} color={active ? "#fff" : colors.muted} />
+                </View>
+                <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? s.color : colors.muted }}>
+                  {s.short}
+                </Text>
+              </Pressable>
+            );
+          })}
         </Row>
       ) : null}
       {canExp || canEdit || canQuote ? (

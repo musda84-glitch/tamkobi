@@ -7,6 +7,7 @@ import {
   namedItems,
   removeWorkItem,
   PROJECT_QUOTE_ACTION,
+  PROJECT_STATUSES,
   newButtonLabel,
   projectCardBits,
   projectPayload,
@@ -156,6 +157,12 @@ describe("workDocs", () => {
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
     expect(PROJECT_QUOTE_ACTION).toBe("Teklifi Tamamla");
+  });
+
+  it("keeps project stages as a single icon row", () => {
+    expect(PROJECT_STATUSES.map((s) => s.key)).toEqual(["planning", "active", "on_hold", "completed"]);
+    expect(PROJECT_STATUSES.every((s) => s.icon && s.short && s.color)).toBe(true);
+    expect(PROJECT_STATUSES.map((s) => s.short)).toEqual(["Plan", "Devam", "Bekle", "Bitti"]);
   });
 
   it("prefers the line photo then the stock card image", () => {
