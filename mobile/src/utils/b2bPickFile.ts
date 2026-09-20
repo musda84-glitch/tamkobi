@@ -41,9 +41,5 @@ export async function pickB2bListFile(): Promise<PickedB2bFile | null> {
 }
 
 export function appendPickedFile(form: FormData, picked: PickedB2bFile) {
-  if (Platform.OS === "web") {
-    form.append("file", picked.file, picked.name);
-    return;
-  }
-  form.append("file", { uri: picked.uri, name: picked.name, type: picked.type } as unknown as Blob);
+  form.append("file", picked.file, picked.name);
 }

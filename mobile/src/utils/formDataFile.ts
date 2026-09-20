@@ -1,4 +1,4 @@
-/** RN native FormData yalnız {uri,name,type} kabul eder; File/Blob UnsupportedFormDataPart atar. */
+/** Expo SDK 58 winter fetch Blob / {bytes()} kabul eder; {uri,name,type} Unsupported FormDataPart atar. */
 
 export type ImageEntity = "survey" | "project" | "quote" | "product";
 
@@ -9,39 +9,46 @@ export type PickerAssetLike = {
   file?: Blob;
 };
 
-export type NativeFormFile = { uri: string; name: string; type: string };
-export type WebFormFile = { file: Blob; name: string };
-export type PickerFormPart = WebFormFile | NativeFormFile;
-
-export function isWebFormFile(part: PickerFormPart): part is WebFormFile {
-  return "file" in part;
-}
-
-export function pickerFormPart(
-  asset: PickerAssetLike,
-  platform: string,
-  fallbackName = "photo.jpg",
-): PickerFormPart {
+export function pickerFileMeta(asset: PickerAssetLike, fallbackName = "photo.jpg") {
   const name = (asset.fileName || "").trim() || fallbackName;
   const type = (asset.mimeType || "").trim() || "image/jpeg";
-  if (platform === "web" && asset.file) return { file: asset.file, name };
   const uri = (asset.uri || "").trim();
-  if (!uri) throw new Error("Fotoğraf URI bulunamadı.");
-  return { uri, name, type };
+  return { name, type, uri };
 }
 
-export function appendPickerAsset(
-  form: FormData,
-  asset: PickerAssetLike,
-  platform: string,
-  field = "file",
-): void {
-  const part = pickerFormPart(asset, platform);
-  if (isWebFormFile(part)) {
-    form.append(field, part.file, part.name);
-    return;
+/** Expo convertFormDataAsync: string | Blob | {bytes()}. uri parçası hata. */
+export function isExpoFetchFilePart(value: unknown): value is Blob {
+  if (!value || typeof value !== "object") return false;
+  const o = value as { bytes?: unknown; arrayBuffer?: unknown };
+  if (typeof o.bytes === "function") return true;
+  if (typeof Blob !== "undefined" && value instanceof Blob) return true;
+  return typeof o.arrayBuffer === "function";
+}
+
+export function appendUploadBlob(form: FormData, blob: Blob, name: string, field = "file"): void {
+  form.append(field, blob, name);
+}
+
+export async function readLocalImageBlob(uri: string): Promise<Blob> {
+  try {
+    const mod = await import("expo-file-system");
+    if (mod.File) return new mod.File(uri) as unknown as Blob;
+  } catch {
+    /* web / test */
   }
-  form.append(field, part as unknown as Blob);
+  const res = await fetch(uri);
+  if (!res.ok) throw new Error("Fotoğraf okunamadı.");
+  return res.blob();
+}
+
+export async function resolveUploadBlob(
+  asset: PickerAssetLike,
+  readFile: (uri: string) => Promise<Blob> = readLocalImageBlob,
+): Promise<{ blob: Blob; name: string }> {
+  const { name, uri } = pickerFileMeta(asset);
+  if (asset.file && isExpoFetchFilePart(asset.file)) return { blob: asset.file, name };
+  if (!uri) throw new Error("Fotoğraf URI bulunamadı.");
+  return { blob: await readFile(uri), name };
 }
 
 export function imageUploadRequest(entity: ImageEntity, entityId: string, companyId?: string) {

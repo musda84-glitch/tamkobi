@@ -1,63 +1,67 @@
 import {
-  appendPickerAsset,
+  appendUploadBlob,
   imageUploadRequest,
   imageUploaderCopy,
-  isWebFormFile,
-  pickerFormPart,
+  isExpoFetchFilePart,
+  pickerFileMeta,
+  resolveUploadBlob,
   uploadedImageUrl,
 } from "./formDataFile";
 
-describe("pickerFormPart", () => {
-  const file = { size: 4 } as Blob;
-
-  it("uses File on web when asset.file exists", () => {
-    const part = pickerFormPart(
-      { uri: "file:///tmp/cam.jpg", fileName: "cam.jpg", mimeType: "image/jpeg", file },
-      "web",
-    );
-    expect(isWebFormFile(part)).toBe(true);
-    expect(part).toEqual({ file, name: "cam.jpg" });
+describe("isExpoFetchFilePart", () => {
+  it("rejects RN {uri,name,type} that Expo fetch throws on", () => {
+    expect(isExpoFetchFilePart({ uri: "file:///p.jpg", name: "p.jpg", type: "image/jpeg" })).toBe(false);
   });
 
-  it("never sends File/Blob on native even if asset.file is set", () => {
-    const part = pickerFormPart(
-      { uri: "file:///data/user/0/photo.jpg", fileName: "shot.jpg", mimeType: "image/jpeg", file },
-      "android",
-    );
-    expect(isWebFormFile(part)).toBe(false);
-    expect(part).toEqual({
-      uri: "file:///data/user/0/photo.jpg",
-      name: "shot.jpg",
-      type: "image/jpeg",
-    });
+  it("accepts Blob and expo-file-system {bytes()}", () => {
+    expect(isExpoFetchFilePart({ size: 2, arrayBuffer: async () => new ArrayBuffer(2) })).toBe(true);
+    expect(isExpoFetchFilePart({ bytes: async () => new Uint8Array([1, 2]) })).toBe(true);
+  });
+});
+
+describe("resolveUploadBlob", () => {
+  const file = { size: 4, arrayBuffer: async () => new ArrayBuffer(4) } as unknown as Blob;
+
+  it("uses asset.file when Expo fetch can send it", async () => {
+    const got = await resolveUploadBlob({ uri: "file:///x", fileName: "cam.jpg", file });
+    expect(got).toEqual({ blob: file, name: "cam.jpg" });
   });
 
-  it("falls back to jpeg name/type and rejects missing uri on native", () => {
-    expect(pickerFormPart({ uri: "content://media/1" }, "ios")).toEqual({
-      uri: "content://media/1",
+  it("reads uri through the file reader on native assets", async () => {
+    const blob = { size: 8 } as Blob;
+    const readFile = jest.fn(async () => blob);
+    const got = await resolveUploadBlob(
+      { uri: "file:///data/user/0/photo.jpg", fileName: "shot.jpg" },
+      readFile,
+    );
+    expect(readFile).toHaveBeenCalledWith("file:///data/user/0/photo.jpg");
+    expect(got).toEqual({ blob, name: "shot.jpg" });
+  });
+
+  it("rejects missing uri when there is no usable file", async () => {
+    await expect(resolveUploadBlob({})).rejects.toThrow(/URI/);
+  });
+});
+
+describe("appendUploadBlob", () => {
+  it("appends Blob with filename, never a uri part", () => {
+    const blob = { size: 1 } as Blob;
+    const form = { append: jest.fn() } as unknown as FormData;
+    appendUploadBlob(form, blob, "p.jpg");
+    expect(form.append).toHaveBeenCalledWith("file", blob, "p.jpg");
+    expect(form.append).not.toHaveBeenCalledWith("file", expect.objectContaining({ uri: expect.anything() }));
+  });
+});
+
+describe("pickerFileMeta and upload target", () => {
+  it("defaults jpeg name/type", () => {
+    expect(pickerFileMeta({ uri: "content://media/1" })).toEqual({
       name: "photo.jpg",
       type: "image/jpeg",
+      uri: "content://media/1",
     });
-    expect(() => pickerFormPart({ file }, "android")).toThrow(/URI/);
-  });
-});
-
-describe("appendPickerAsset", () => {
-  it("appends native {uri,name,type} on android", () => {
-    const form = { append: jest.fn() } as unknown as FormData;
-    appendPickerAsset(form, { uri: "file:///p.jpg", fileName: "p.jpg", mimeType: "image/jpeg", file: {} as Blob }, "android");
-    expect(form.append).toHaveBeenCalledWith("file", { uri: "file:///p.jpg", name: "p.jpg", type: "image/jpeg" });
   });
 
-  it("appends Blob with filename on web", () => {
-    const file = { size: 2 } as Blob;
-    const form = { append: jest.fn() } as unknown as FormData;
-    appendPickerAsset(form, { uri: "blob:1", fileName: "web.png", mimeType: "image/png", file }, "web");
-    expect(form.append).toHaveBeenCalledWith("file", file, "web.png");
-  });
-});
-
-describe("image upload target and result", () => {
   it("posts products to /products/:id/image", () => {
     expect(imageUploadRequest("product", "prod_1")).toEqual({
       path: "/products/prod_1/image",
