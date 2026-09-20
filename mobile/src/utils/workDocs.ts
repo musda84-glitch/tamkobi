@@ -232,6 +232,27 @@ export function validateQuoteItems(items: WorkItem[]): string | null {
   return null;
 }
 
+/** Kaydet teklifi cariye taslak fatura olarak da işler; ikinci kez çağrılmaz. */
+export function shouldAttachQuoteDraftInvoice(
+  quote?: { invoice_id?: string } | null,
+  contactId?: string,
+): boolean {
+  return !quote?.invoice_id && Boolean(String(contactId || "").trim());
+}
+
+export function quoteSaveMessage(opts: {
+  createdInvoiceNumber?: string;
+  hasContact: boolean;
+  alreadyInvoiced: boolean;
+}): string {
+  if (opts.createdInvoiceNumber) {
+    return `Teklif kaydedildi. Taslak fatura ${opts.createdInvoiceNumber} cariye işlendi.`;
+  }
+  if (opts.alreadyInvoiced) return "Teklif güncellendi.";
+  if (!opts.hasContact) return "Teklif kaydedildi. Taslak fatura için cari seçin.";
+  return "Teklif kaydedildi.";
+}
+
 export function validateProjectName(name: string): string | null {
   if (!name.trim()) return "Proje adı gerekli.";
   return null;

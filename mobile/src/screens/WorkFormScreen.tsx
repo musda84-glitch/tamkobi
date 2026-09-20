@@ -44,7 +44,9 @@ import {
   removeWorkItem,
   projectPayload,
   quotePayload,
+  quoteSaveMessage,
   quoteUpdateBody,
+  shouldAttachQuoteDraftInvoice,
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
@@ -286,11 +288,39 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     setBusy(true);
     try {
       if (kind === "quote") {
+        let qid = docId;
+        let currentQuote = quote;
         if (isNew) {
           const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, pricedItems));
-          router.replace({ pathname: "/quotes/[id]", params: { id: idOf(created) } });
-        } else if (!(await persistExistingQuote(false))) {
+          qid = idOf(created);
+          currentQuote = created;
+        } else if (!(await persistExistingQuote(true))) {
           return;
+        }
+        let invoiceNumber = "";
+        if (qid && shouldAttachQuoteDraftInvoice(currentQuote, contactId)) {
+          try {
+            const r = await post<{ invoice?: { invoice_number?: string }; message?: string }>(
+              client,
+              `/quotes/${qid}/convert-to-invoice`,
+            );
+            invoiceNumber = r.invoice?.invoice_number || "";
+          } catch (err) {
+            setError(apiErrorMessage(err, "Taslak fatura oluşturulamadı."));
+            if (isNew && qid) router.replace({ pathname: "/quotes/[id]", params: { id: qid } });
+            else await loadDoc();
+            return;
+          }
+        }
+        setMessage(quoteSaveMessage({
+          createdInvoiceNumber: invoiceNumber,
+          hasContact: Boolean(contactId),
+          alreadyInvoiced: Boolean(currentQuote?.invoice_id),
+        }));
+        if (isNew && qid) {
+          router.replace({ pathname: "/quotes/[id]", params: { id: qid } });
+        } else {
+          await loadDoc();
         }
       } else if (kind === "project") {
         if (isNew) {
@@ -365,21 +395,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Dönüştürülemedi."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const convertInvoice = async () => {
-    if (!docId || kind !== "quote") return;
-    setBusy(true);
-    try {
-      if (!(await persistExistingQuote(true))) return;
-      const r = await post<{ message?: string }>(client, `/quotes/${docId}/convert-to-invoice`);
-      setMessage(r.message || "Taslak fatura oluşturuldu.");
-      await loadDoc();
-    } catch (err) {
-      setError(apiErrorMessage(err, "Faturaya çevrilemedi."));
     } finally {
       setBusy(false);
     }
@@ -614,9 +629,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       ) : null}
       {!isNew && kind === "quote" && !quote?.project_id && canEdit ? (
         <PrimaryButton title="Projeye dönüştür" onPress={() => confirmAction("Proje", "Teklif projeye dönüştürülsün mü?", convert)} color={colors.indigo} testID="quote-to-project" />
-      ) : null}
-      {!isNew && kind === "quote" && !quote?.invoice_id && canEdit ? (
-        <PrimaryButton title="Faturaya dönüştür" onPress={convertInvoice} color={colors.primary} testID="quote-to-invoice" />
       ) : null}
       {!isNew && kind === "project" && project?.can_invoice && canEdit ? (
         <PrimaryButton title="Projeyi faturalandır" onPress={convert} color={colors.primary} testID="project-invoice" />
