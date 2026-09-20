@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
@@ -21,6 +21,61 @@ const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 }
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const STATUS = { draft: ["Taslak", "bg-slate-100 text-slate-600"], sent: ["Gönderildi", "bg-blue-50 text-blue-700"], accepted: ["Kabul / Faturalandı", "bg-emerald-50 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-50 text-rose-700"], planning: ["Planlama", "bg-slate-100 text-slate-600"], active: ["Devam Ediyor", "bg-blue-50 text-blue-700"], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700"], on_hold: ["Beklemede", "bg-amber-50 text-amber-700"], planned: ["Planlandı", "bg-slate-100 text-slate-600"], done: ["Yapıldı", "bg-blue-50 text-blue-700"], quoted: ["Teklife Dönüştü", "bg-emerald-50 text-emerald-700"] };
 const Badge = ({ s, map }) => { const [l, c] = (map && map[s]) || STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
+
+/** Sabit slot’lu teklif aksiyon çubuğu — satırlar hizalı kalsın. */
+const QuoteActions = ({
+  q, dense = false,
+  onPrint, onEdit, onApproval, onPlan, onSent, onProject, onInvoice, onReject, onDelete,
+}) => {
+  const pad = dense ? "px-2 py-1 text-[11px]" : "px-2.5 py-1.5 text-xs";
+  const iconPad = dense ? "p-1.5" : "p-2";
+  const ph = (w, label) => (
+    <span className={`${pad} ${w} invisible pointer-events-none select-none inline-flex items-center justify-center gap-1 font-semibold`} aria-hidden>
+      {label}
+    </span>
+  );
+  return (
+    <div className={`flex items-center ${dense ? "justify-end flex-nowrap" : "flex-wrap"} gap-1`} data-testid={`quote-actions-${q.quote_number}`}>
+      <button type="button" onClick={onPrint} className={`${iconPad} text-slate-500 hover:bg-slate-100 rounded-lg`} title="Yazdır" data-testid={`print-quote-${q.quote_number}`}><Printer className="w-4 h-4" /></button>
+      <button type="button" onClick={onEdit} className={`${iconPad} text-slate-500 hover:bg-slate-100 rounded-lg`} title="Düzenle" data-testid={`edit-quote-${q.quote_number}`}><Pencil className="w-4 h-4" /></button>
+      <button
+        type="button"
+        onClick={onApproval}
+        className={`${pad} min-w-[6.75rem] justify-center rounded-lg font-semibold inline-flex items-center ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`}
+        data-testid={`approval-quote-${q.quote_number}`}
+      >
+        {q.approval ? "Onay Durumu" : "Onaya Gönder"}
+      </button>
+      <button
+        type="button"
+        onClick={onPlan}
+        className={`${pad} min-w-[5.5rem] justify-center border rounded-lg font-semibold inline-flex items-center ${q.payment_plan ? "border-violet-300 text-violet-700 bg-violet-50" : "text-slate-600"}`}
+        data-testid={`plan-quote-${q.quote_number}`}
+      >
+        {q.payment_plan ? `${q.payment_plan.rows?.length || 0} Taksit` : "Ödeme Planı"}
+      </button>
+      {q.status === "draft" ? (
+        <button type="button" onClick={onSent} className={`${iconPad} border rounded-lg text-slate-600 hover:bg-slate-50`} title="Gönderildi işaretle" data-testid={`send-quote-${q.quote_number}`}><Send className="w-4 h-4" /></button>
+      ) : (
+        <span className={`${iconPad} invisible`} aria-hidden><Send className="w-4 h-4" /></span>
+      )}
+      {!q.project_id ? (
+        <button type="button" onClick={onProject} className={`${pad} min-w-[7rem] justify-center bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1`} data-testid={`quote-to-project-${q.quote_number}`}>
+          <Briefcase className="w-3 h-3" /> Projeye
+        </button>
+      ) : ph("min-w-[7rem]", <><Briefcase className="w-3 h-3" /> Projeye</>)}
+      {!q.invoice_id ? (
+        <button type="button" onClick={onInvoice} className={`${pad} min-w-[7.5rem] justify-center bg-emerald-600 text-white rounded-lg font-semibold inline-flex items-center gap-1`} data-testid={`convert-quote-${q.quote_number}`}>
+          <FileText className="w-3 h-3" /> Faturaya
+        </button>
+      ) : ph("min-w-[7.5rem]", <><FileText className="w-3 h-3" /> Faturaya</>)}
+      {!q.invoice_id ? (
+        <button type="button" onClick={onReject} className={`${pad} min-w-[2.75rem] justify-center border rounded-lg text-rose-600 font-semibold inline-flex items-center`} data-testid={`reject-quote-${q.quote_number}`}>Red</button>
+      ) : ph("min-w-[2.75rem]", "Red")}
+      <button type="button" onClick={onDelete} className={`${iconPad} text-slate-300 hover:text-rose-600 rounded-lg`} title="Sil" data-testid={`delete-quote-${q.quote_number}`}><Trash2 className="w-4 h-4" /></button>
+    </div>
+  );
+};
 
 const SURVEY_STATUS_ICON = {
   planned: { Icon: CalendarClock, tip: "Planlandı", cls: "bg-slate-100 text-slate-600 border-slate-200" },
@@ -150,6 +205,7 @@ const FILTER_KEY = "tamkobi_qp_only_pending";
 export default function ProjectsPage({ section } = {}) {
   const { activeCompany, loading: authLoading } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || (!authLoading ? "comp_nexus_main_01" : "");
   const pathTab = section || (location.pathname.includes("/surveys") ? "surveys" : location.pathname.includes("/projects") && !location.pathname.includes("/quotes") ? "projects" : "quotes");
   const [tab, setTab] = useState(pathTab);
@@ -313,7 +369,23 @@ export default function ProjectsPage({ section } = {}) {
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
 
-  const act = async (fn, msg) => { try { const r = await fn(); toast.success(r?.data?.message || msg); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  const act = async (fn, msg) => { try { const r = await fn(); toast.success(r?.data?.message || msg); load(); return r; } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); return null; } };
+  const convertQuoteToInvoice = async (q) => {
+    try {
+      const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {});
+      toast.success(r.data?.message || "Fatura oluşturuldu.");
+      const inv = r.data?.invoice;
+      const invId = inv?.id || inv?._id;
+      if (invId) {
+        navigate(`/invoices?edit=${encodeURIComponent(invId)}`);
+        return;
+      }
+      load();
+      navigate("/invoices");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Fatura oluşturulamadı.");
+    }
+  };
   const advanceFromSurvey = async (surveyId) => {
     if (!window.confirm("Keşif tamamlandı. Teklife dönüştürülsün mü? (İptal = sadece durum güncellenir; teklifi sonra da ayrı oluşturabilirsiniz.)")) return;
     await act(() => axios.post(`${API_URL}/surveys/${surveyId}/convert-to-quote`), "Teklif oluşturuldu.");
@@ -384,22 +456,25 @@ export default function ProjectsPage({ section } = {}) {
                   <div className="text-right shrink-0"><div className="font-bold">{fmt(q.grand_total)} ₺</div><Badge s={q.status} /></div>
                 </div>
                 <ImageStrip entity="quote" doc={q} onUpdated={load} />
-                <div className="flex flex-wrap gap-1.5 pt-1 border-t">
-                  <button onClick={() => openPrintQuote(q)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır"><Printer className="w-4 h-4" /></button>
-                  <button onClick={() => openEditQuote(q)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg" title="Düzenle" data-testid={`edit-quote-${q.quote_number}`}><Pencil className="w-4 h-4" /></button>
-                  <button onClick={() => openApproval(q)} className={`px-2.5 py-1.5 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`}>{q.approval ? "Onay" : "Onaya Gönder"}</button>
-                  <button onClick={() => setPlanQuote(q)} className="px-2.5 py-1.5 border rounded-lg font-semibold text-slate-600">Ödeme Planı</button>
-                  {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2.5 py-1.5 border rounded-lg font-semibold">Gönderildi</button>}
-                  {!q.project_id && <button onClick={() => advanceFromQuote(q.id)} className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white rounded-lg font-semibold"><Briefcase className="w-3 h-3" /> Projeye</button>}
-                  {!q.invoice_id && <button onClick={() => act(() => axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}), "Fatura oluşturuldu.")} className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold"><FileText className="w-3 h-3" /> Fatura</button>}
-                  {!q.invoice_id && <button onClick={() => setStatus("quotes", q.id, "rejected")} className="px-2.5 py-1.5 border rounded-lg text-rose-600">Red</button>}
-                  <button onClick={() => del("quotes", q.id)} className="p-2 text-slate-300 hover:text-rose-600 ml-auto"><Trash2 className="w-4 h-4" /></button>
+                <div className="pt-1 border-t">
+                  <QuoteActions
+                    q={q}
+                    onPrint={() => openPrintQuote(q)}
+                    onEdit={() => openEditQuote(q)}
+                    onApproval={() => openApproval(q)}
+                    onPlan={() => setPlanQuote(q)}
+                    onSent={() => setStatus("quotes", q.id, "sent")}
+                    onProject={() => advanceFromQuote(q.id)}
+                    onInvoice={() => convertQuoteToInvoice(q)}
+                    onReject={() => setStatus("quotes", q.id, "rejected")}
+                    onDelete={() => del("quotes", q.id)}
+                  />
                 </div>
               </div>
             ))}
           </div>
-          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 overflow-x-auto"><table className="min-w-[720px] w-full text-left text-xs">
-            <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Teklif</th><th className="px-4 py-2">Cari</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2"></th></tr></thead>
+          <div className="hidden md:block bg-white rounded-2xl border border-slate-200 overflow-x-auto"><table className="min-w-[960px] w-full text-left text-xs">
+            <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Teklif</th><th className="px-4 py-2">Cari</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2 text-right">İşlem</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {visibleQuotes.map((q) => (
                 <tr key={q.id} data-testid={`quote-row-desk-${q.quote_number}`}>
@@ -408,17 +483,21 @@ export default function ProjectsPage({ section } = {}) {
                   <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
                   <td className="px-4 py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td>
                   <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.project_number && <div className="font-mono text-[10px] text-indigo-700">{q.project_number}</div>}{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
-                  <td className="px-4 py-2"><div className="flex justify-end gap-1 flex-wrap">
-                    <button onClick={() => openPrintQuote(q)} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Yazdır" data-testid={`print-quote-${q.quote_number}`}><Printer className="w-4 h-4" /></button>
-                    <button onClick={() => openEditQuote(q)} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg" title="Düzenle" data-testid={`edit-quote-${q.quote_number}`}><Pencil className="w-4 h-4" /></button>
-                    <button onClick={() => openApproval(q)} className={`px-2 py-1 rounded-lg font-semibold ${q.approval?.status === "accepted" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-900 text-white"}`} data-testid={`approval-quote-${q.quote_number}`}>{q.approval ? "Onay Durumu" : "Onaya Gönder"}</button>
-                    <button onClick={() => setPlanQuote(q)} className={`px-2 py-1 border rounded-lg font-semibold ${q.payment_plan ? "border-violet-300 text-violet-700 bg-violet-50" : "text-slate-600"}`} data-testid={`plan-quote-${q.quote_number}`}>{q.payment_plan ? `${q.payment_plan.rows.length} Taksit` : "Ödeme Planı"}</button>
-                    {q.status === "draft" && <button onClick={() => setStatus("quotes", q.id, "sent")} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`send-quote-${q.quote_number}`}>Gönderildi</button>}
-                    {!q.project_id && <button onClick={() => advanceFromQuote(q.id)} className="flex items-center gap-1 px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`quote-to-project-${q.quote_number}`}><Briefcase className="w-3 h-3" /> Projeye Çevir</button>}
-                    {!q.invoice_id && <button onClick={() => act(() => axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}), "Fatura oluşturuldu.")} className="flex items-center gap-1 px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`convert-quote-${q.quote_number}`}><FileText className="w-3 h-3" /> Faturaya Çevir</button>}
-                    {!q.invoice_id && <button onClick={() => setStatus("quotes", q.id, "rejected")} className="px-2 py-1 border rounded-lg text-rose-600" data-testid={`reject-quote-${q.quote_number}`}>Red</button>}
-                    <button onClick={() => del("quotes", q.id)} className="p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-quote-${q.quote_number}`}><Trash2 className="w-4 h-4" /></button>
-                  </div></td>
+                  <td className="px-4 py-2">
+                    <QuoteActions
+                      dense
+                      q={q}
+                      onPrint={() => openPrintQuote(q)}
+                      onEdit={() => openEditQuote(q)}
+                      onApproval={() => openApproval(q)}
+                      onPlan={() => setPlanQuote(q)}
+                      onSent={() => setStatus("quotes", q.id, "sent")}
+                      onProject={() => advanceFromQuote(q.id)}
+                      onInvoice={() => convertQuoteToInvoice(q)}
+                      onReject={() => setStatus("quotes", q.id, "rejected")}
+                      onDelete={() => del("quotes", q.id)}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody></table></div>
