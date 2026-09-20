@@ -467,7 +467,26 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {kind !== "project" ? (
         <Card>
-          <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
+          <Row style={{ alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
+            {canEdit ? (
+              <Pressable
+                onPress={() => setItems((rows) => [...rows, emptyItem()])}
+                testID="q-add-item-btn"
+                accessibilityLabel="Kalem ekle"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: colors.indigo50,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="add-circle" size={26} color={colors.indigo} />
+              </Pressable>
+            ) : null}
+          </Row>
           <Field dense label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
           {prodHits.map((p) => (
             <ProductPickRow
@@ -498,36 +517,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 gap: 6,
               }}
             >
-              <View style={{ gap: 4 }}>
-                <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                  <View style={{ width: 52 }}>
-                    <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
-                  </View>
-                </Row>
-                <Row style={{ alignItems: "center", gap: 8 }}>
-                  <View style={{ width: 52, alignItems: "center", justifyContent: "center" }}>
-                    {canEdit && i === items.length - 1 ? (
-                      <Pressable
-                        onPress={() => setItems((rows) => [...rows, emptyItem()])}
-                        testID="q-add-item-btn"
-                        accessibilityLabel="Kalem ekle"
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 16,
-                          backgroundColor: colors.indigo50,
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        <Ionicons name="add-circle" size={26} color={colors.indigo} />
-                      </Pressable>
-                    ) : null}
-                  </View>
-                  <Row style={{ flex: 1, minWidth: 0, alignItems: "flex-end", gap: 6 }}>
+              <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
+                <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                  <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
+                  <Row style={{ alignItems: "flex-end", gap: 6 }}>
                     <View style={{ width: 52, flexShrink: 0 }}>
                       <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
                     </View>
@@ -548,8 +542,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       </Pressable>
                     ) : null}
                   </Row>
-                </Row>
-              </View>
+                </View>
+              </Row>
             </View>
             );
           })}
