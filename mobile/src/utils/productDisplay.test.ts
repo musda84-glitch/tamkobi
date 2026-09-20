@@ -1,4 +1,4 @@
-import { filterProducts, productCategoryGroups, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { filterProducts, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -9,6 +9,12 @@ describe("productDisplay", () => {
     expect(productImage({ images: [{ image_url: "g.jpg" }] as unknown as string[] })).toBe("g.jpg");
     expect(productImage({ image: "cover.jpg" })).toBe("cover.jpg");
     expect(productImage({})).toBe("");
+  });
+
+  it("lists gallery urls then cover", () => {
+    expect(productGalleryUrls({ images: ["a.jpg", "", "b.jpg", "a.jpg"], image_url: "cover.jpg" })).toEqual(["a.jpg", "b.jpg"]);
+    expect(productGalleryUrls({ image_url: "cover.jpg" })).toEqual(["cover.jpg"]);
+    expect(productGalleryUrls({})).toEqual([]);
   });
 
   it("flags negative stock and min-level warnings", () => {

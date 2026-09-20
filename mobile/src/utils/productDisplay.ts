@@ -22,6 +22,14 @@ export function productImage(p: Pick<Product, "thumbnail_url" | "image_url" | "i
   return mediaRef(p.thumbnail_url) || mediaRef(p.image_url) || mediaRef(p.image) || mediaRef(p.photo) || gallery;
 }
 
+/** Stok kartı galerisi: images[] varsa o, yoksa kapak. */
+export function productGalleryUrls(p: Pick<Product, "thumbnail_url" | "image_url" | "images">): string[] {
+  const fromList = Array.isArray(p.images) ? p.images.map(mediaRef).filter(Boolean) : [];
+  if (fromList.length) return Array.from(new Set(fromList));
+  const cover = mediaRef(p.image_url) || mediaRef(p.thumbnail_url);
+  return cover ? [cover] : [];
+}
+
 export type StockBadge = { label: string; tone: "danger" | "warning" | "muted" };
 
 /** Takip kapalı / hizmet olsa da kayıtlı adet okunur. */
