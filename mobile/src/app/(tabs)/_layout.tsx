@@ -2,6 +2,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
+import { resolveMediaUrl } from "@/utils/media";
 import { showFinanceSubstituteTabs, showSelfPersonnelTabs } from "@/utils/permissions";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
@@ -12,7 +13,7 @@ function tabIconColor(color: unknown): string {
 }
 
 export default function TabsLayout() {
-  const { can, moduleOn, user, activeCompany, license } = useAuth();
+  const { can, moduleOn, user, activeCompany, license, baseUrl } = useAuth();
   const show = (path: string) => can(path) && moduleOn(path);
   const selfTabs = showSelfPersonnelTabs(user, license);
   const financeTabs = showFinanceSubstituteTabs(user);
@@ -33,7 +34,14 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Özet",
-          headerTitle: () => <HomeHeaderTitle name={user?.name} company={activeCompany?.name} />,
+          headerTitleAlign: "left",
+          headerTitle: () => (
+            <HomeHeaderTitle
+              name={user?.name}
+              company={activeCompany?.name}
+              logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url)}
+            />
+          )}
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
       />
