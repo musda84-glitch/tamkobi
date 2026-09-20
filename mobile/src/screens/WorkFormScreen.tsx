@@ -426,7 +426,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           gap: 4,
         }}
       >
-        <Muted>Cari Seç</Muted>
+        <Pressable onPress={() => router.push("/contacts/new")} testID="q-new-contact" style={{ minHeight: 22, justifyContent: "center" }}>
+          <Text style={{ color: colors.indigo, fontWeight: "800", fontSize: 13 }}>Yeni Cari Aç</Text>
+        </Pressable>
         {contactId ? (
           <Pressable
             onPress={() => { setContactId(""); setContactName(""); }}
