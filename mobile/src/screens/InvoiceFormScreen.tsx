@@ -14,6 +14,7 @@ import {
   addProductToItems,
   computeLine,
   emptyLine,
+  removeInvoiceItem,
   type InvoiceLine,
   VAT_OPTIONS,
 } from "../utils/documentLines";
@@ -50,12 +51,14 @@ function Chip({
   onPress,
   testID,
   color,
+  compact,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
   testID?: string;
   color?: string;
+  compact?: boolean;
 }) {
   const bg = color || colors.primary;
   return (
@@ -63,15 +66,15 @@ function Chip({
       testID={testID}
       onPress={onPress}
       style={{
-        paddingVertical: 8,
-        paddingHorizontal: 12,
+        paddingVertical: compact ? 4 : 8,
+        paddingHorizontal: compact ? 8 : 12,
         borderRadius: 999,
         backgroundColor: active ? bg : "#fff",
         borderWidth: 1,
         borderColor: active ? bg : colors.border,
       }}
     >
-      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700", fontSize: compact ? 11 : 12 }}>{label}</Text>
     </Pressable>
   );
 }
@@ -456,9 +459,14 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
         ))}
         {draft.items.map((it, idx) => (
-          <View key={idx} style={{ ...itemStripe(idx), borderRadius: 10, paddingHorizontal: 8, paddingVertical: 8, gap: 8 }} testID={`inv-item-${idx}`}>
-            <Row style={{ justifyContent: "space-between" }}>
+          <View
+            key={idx}
+            style={{ ...itemStripe(idx), borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, gap: 6 }}
+            testID={`inv-item-${idx}`}
+          >
+            <Row style={{ alignItems: "center", gap: 6 }}>
               <Chip
+                compact
                 label={it.is_service ? "Hizmet" : "Ürün"}
                 active
                 color={it.is_service ? colors.indigo : colors.primary}
@@ -474,13 +482,16 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   }));
                 }}
               />
-              {draft.items.length > 1 ? (
-                <Pressable onPress={() => setDraft((d) => ({ ...d, items: d.items.filter((_, i) => i !== idx) }))} testID={`inv-item-del-${idx}`}>
-                  <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                </Pressable>
-              ) : null}
+              <Pressable
+                onPress={() => setDraft((d) => ({ ...d, items: removeInvoiceItem(d.items, idx, defaultVat) }))}
+                testID={`inv-item-del-${idx}`}
+                accessibilityLabel="Kalemi sil"
+                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginLeft: "auto" }}
+              >
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              </Pressable>
             </Row>
-            <Row style={{ alignItems: "flex-start", gap: 6 }}>
+            <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Field
                   compact
@@ -490,39 +501,40 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   onChangeText={(v) => patchLine(idx, "name", v)}
                 />
               </View>
-              <View style={{ width: 56 }}>
+              <View style={{ width: 52, flexShrink: 0 }}>
                 <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
               </View>
-              <View style={{ width: 84 }}>
+              <View style={{ width: 68, flexShrink: 0 }}>
                 <Field compact label="Fiyat" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
-            <Row style={{ alignItems: "flex-start", gap: 6 }}>
-              <View style={{ flex: 1 }}>
+            <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
+              <View style={{ width: 58, flexShrink: 0 }}>
                 <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ width: 68, flexShrink: 0 }}>
                 <Field compact label="KDV'li" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
               </View>
-            </Row>
-            <Row>
-              <View style={{ flex: 1 }}>
-                <Field label="İskonto %" testID={`inv-item-disc-${idx}`} value={String(it.discount_rate)} onChangeText={(v) => patchLine(idx, "discount_rate", n(v))} keyboardType="decimal-pad" />
+              <View style={{ width: 52, flexShrink: 0 }}>
+                <Field compact label="İsk %" testID={`inv-item-disc-${idx}`} value={String(it.discount_rate)} onChangeText={(v) => patchLine(idx, "discount_rate", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
-            <Muted>KDV %</Muted>
-            <Row style={{ flexWrap: "wrap" }}>
+            <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
               {VAT_OPTIONS.map((v) => (
-                <Chip key={v} label={`%${v}`} active={Number(it.vat_rate) === v} onPress={() => patchLine(idx, "vat_rate", v)} />
+                <Chip compact key={v} label={`%${v}`} active={Number(it.vat_rate) === v} onPress={() => patchLine(idx, "vat_rate", v)} />
               ))}
+              <Muted>{`${fmtMoney(it.total, draft.currency)} hariç · ${fmtMoney(it.total_incl, draft.currency)} dahil`}</Muted>
             </Row>
             {(draft.trade_kind === "export" || draft.trade_kind === "import") ? (
-              <>
-                <Field label="GTIP" testID={`inv-item-gtip-${idx}`} value={it.gtip || ""} onChangeText={(v) => patchLine(idx, "gtip", v)} />
-                <Field label="Menşe ülke" testID={`inv-item-origin-${idx}`} value={it.origin_country || ""} onChangeText={(v) => patchLine(idx, "origin_country", v)} />
-              </>
+              <Row style={{ gap: 6 }}>
+                <View style={{ flex: 1 }}>
+                  <Field compact label="GTIP" testID={`inv-item-gtip-${idx}`} value={it.gtip || ""} onChangeText={(v) => patchLine(idx, "gtip", v)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Field compact label="Menşe" testID={`inv-item-origin-${idx}`} value={it.origin_country || ""} onChangeText={(v) => patchLine(idx, "origin_country", v)} />
+                </View>
+              </Row>
             ) : null}
-            <Muted>{`${fmtMoney(it.total, draft.currency)} hariç · ${fmtMoney(it.total_incl, draft.currency)} dahil`}</Muted>
           </View>
         ))}
         <PrimaryButton
