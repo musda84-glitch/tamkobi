@@ -127,6 +127,7 @@ export function PersonnelScreen() {
         await post(client, "/personnel/generate-payroll", {
           company_id: companyId,
           period: new Date().toISOString().slice(0, 7),
+          employee_id: idOf(emp),
         });
         const pays = await get<Payroll[]>(client, "/personnel/payrolls", { company_id: companyId });
         setPayrolls(pays || []);
