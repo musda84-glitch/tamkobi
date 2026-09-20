@@ -7,20 +7,20 @@ import { Muted } from "./kit";
 export type SelectOption = { value: string; label: string };
 export type SelectGroup = { label: string; options: SelectOption[] };
 
-const selectStyle: React.CSSProperties = {
+const selectStyle = (dense?: boolean): React.CSSProperties => ({
   width: "100%",
-  minHeight: 48,
+  minHeight: dense ? 30 : 48,
   borderWidth: 1,
   borderStyle: "solid",
   borderColor: colors.border,
   borderRadius: radius.md,
-  paddingLeft: 12,
-  paddingRight: 12,
-  fontSize: 16,
+  paddingLeft: dense ? 8 : 12,
+  paddingRight: dense ? 8 : 12,
+  fontSize: dense ? 13 : 16,
   fontWeight: 700,
   color: colors.text,
   backgroundColor: "#fff",
-};
+});
 
 function NativeGroupedSelect({
   value,
@@ -28,12 +28,14 @@ function NativeGroupedSelect({
   groups,
   emptyLabel,
   testID,
+  dense,
 }: {
   value: string;
   onChange: (v: string) => void;
   groups: SelectGroup[];
   emptyLabel?: string;
   testID?: string;
+  dense?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const all = groups.flatMap((g) => g.options);
@@ -45,16 +47,16 @@ function NativeGroupedSelect({
         testID={testID}
         onPress={() => setOpen((v) => !v)}
         style={{
-          minHeight: 48,
+          minHeight: dense ? 30 : 48,
           borderWidth: 1,
           borderColor: colors.border,
           borderRadius: radius.md,
-          paddingHorizontal: 12,
+          paddingHorizontal: dense ? 8 : 12,
           justifyContent: "center",
           backgroundColor: "#fff",
         }}
       >
-        <Text style={{ fontWeight: "700", color: colors.text }}>{title}</Text>
+        <Text style={{ fontWeight: "700", color: colors.text, fontSize: dense ? 13 : 15 }}>{title}</Text>
       </Pressable>
       {open ? (
         <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginTop: 6, backgroundColor: "#fff" }}>
@@ -91,6 +93,7 @@ export function GroupedSelect({
   groups,
   emptyLabel,
   testID,
+  dense,
 }: {
   label?: string;
   value: string;
@@ -98,9 +101,10 @@ export function GroupedSelect({
   groups: SelectGroup[];
   emptyLabel?: string;
   testID?: string;
+  dense?: boolean;
 }) {
   return (
-    <View style={{ marginBottom: spacing.md }} testID={testID ? `${testID}-wrap` : undefined}>
+    <View style={{ marginBottom: dense ? 4 : spacing.md }} testID={testID ? `${testID}-wrap` : undefined}>
       {label ? <Muted>{label}</Muted> : null}
       {Platform.OS === "web"
         ? createElement(
@@ -109,7 +113,7 @@ export function GroupedSelect({
               value,
               onChange: (e: { target: { value: string } }) => onChange(e.target.value),
               "data-testid": testID,
-              style: selectStyle,
+              style: selectStyle(dense),
             },
             [
               emptyLabel != null ? createElement("option", { key: "__empty", value: "" }, emptyLabel) : null,
@@ -123,7 +127,7 @@ export function GroupedSelect({
             ]
           )
         : (
-          <NativeGroupedSelect value={value} onChange={onChange} groups={groups} emptyLabel={emptyLabel} testID={testID} />
+          <NativeGroupedSelect value={value} onChange={onChange} groups={groups} emptyLabel={emptyLabel} testID={testID} dense={dense} />
         )}
     </View>
   );

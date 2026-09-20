@@ -1,15 +1,27 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { createInvoiceButtonLabel, INVOICE_FILTERS } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+
+const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
+  all: { icon: "apps-outline", color: colors.slate800 },
+  sales: { icon: "receipt-outline", color: colors.primary },
+  purchase: { icon: "cart-outline", color: colors.indigo },
+  proforma: { icon: "document-text-outline", color: "#0EA5E9" },
+  return: { icon: "return-down-back-outline", color: colors.danger },
+  export: { icon: "airplane-outline", color: "#0284C7" },
+  import: { icon: "download-outline", color: "#7C3AED" },
+  dispatch: { icon: "cube-outline", color: "#D97706" },
+};
 
 export function InvoicesScreen() {
   const { client, companyId, can } = useAuth();
@@ -53,18 +65,37 @@ export function InvoicesScreen() {
           testID="create-new-invoice-btn"
         />
       ) : null}
-      <Row style={{ flexWrap: "wrap" }}>
-        {INVOICE_FILTERS.map((f) => (
-          <Pressable
-            key={f.key}
-            testID={`filter-tab-${f.key}`}
-            onPress={() => setType(f.key)}
-            style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: type === f.key ? colors.primary : "#fff", borderWidth: 1, borderColor: type === f.key ? colors.primary : colors.border }}
-          >
-            <Text style={{ color: type === f.key ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>{f.label}</Text>
-          </Pressable>
-        ))}
-      </Row>
+      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {INVOICE_FILTERS.map((f) => {
+          const meta = FILTER_ICONS[f.key] || FILTER_ICONS.all;
+          const active = type === f.key;
+          return (
+            <Pressable
+              key={f.key}
+              testID={`filter-tab-${f.key}`}
+              accessibilityLabel={f.label}
+              onPress={() => setType(f.key)}
+              style={{ width: "25%", alignItems: "center", gap: 4, paddingVertical: 6 }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: active ? meta.color : colors.slate100,
+                }}
+              >
+                <Ionicons name={meta.icon} size={20} color={active ? "#fff" : colors.muted} />
+              </View>
+              <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? meta.color : colors.muted }}>
+                {f.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
       <Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" testID="inv-search" />
       <ErrorBanner message={error} />
       {!filtered.length ? (

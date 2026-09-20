@@ -5,7 +5,9 @@ import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { confirmAction } from "../components/chips";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
@@ -40,10 +42,19 @@ import {
   withholdingValue,
   type InvoiceDraft,
 } from "../utils/invoiceDraft";
+import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { contactTypeTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 
 type Project = { id?: string; _id?: string; name?: string; project_number?: string };
+
+const TYPE_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; short: string; color: string }> = {
+  sales: { icon: "receipt-outline", short: "Satış", color: colors.primary },
+  purchase: { icon: "cart-outline", short: "Alış", color: colors.indigo },
+  proforma: { icon: "document-text-outline", short: "Proforma", color: "#0EA5E9" },
+  return: { icon: "return-down-back-outline", short: "İade", color: colors.danger },
+  dispatch: { icon: "cube-outline", short: "İrsaliye", color: "#D97706" },
+};
 
 function Chip({
   label,
@@ -100,6 +111,9 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [payAccount, setPayAccount] = useState("");
   const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
   const [projQ, setProjQ] = useState("");
@@ -126,14 +140,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   const loadLookups = useCallback(async () => {
     try {
-      const [c, p, pr] = await Promise.all([
+      const [c, p, pr, acc, pars] = await Promise.all([
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }),
         get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         get<Project[]>(client, "/projects", { company_id: companyId }).catch(() => []),
+        get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setContacts(c || []);
       setProducts((p || []).filter((x) => x.is_active !== false));
       setProjects(pr || []);
+      setAccounts(acc || []);
+      setPartners((pars || []).filter((x) => x.is_active !== false));
     } catch (err) {
       setError(apiErrorMessage(err, "Cari / stok listesi yüklenemedi."));
     }
@@ -210,6 +228,13 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const totals = invoiceTotals(draft);
   const defaultVat = draft.trade_kind === "export" || draft.e_type === "e_export" ? 0 : 20;
   const withholdingGroups = useMemo(() => withholdingSelectGroups(), []);
+  const canCollectCash = draft.invoice_type === "sales" || draft.invoice_type === "purchase" || draft.invoice_type === "return";
+  const payGroups = useMemo(
+    () => paymentTargetGroups(accounts, partners, { collectableOnly: draft.invoice_type === "sales" }),
+    [accounts, partners, draft.invoice_type],
+  );
+  const cashAccountLabel =
+    draft.invoice_type === "purchase" ? "Peşin alış hesabı" : draft.invoice_type === "return" ? "İade hesabı" : "Peşin satış hesabı";
 
   const pickContact = (c: Contact) => {
     const due = c.payment_term_days ? plusDaysIso(draft.issue_date, Number(c.payment_term_days)) : draft.due_date;
@@ -296,24 +321,28 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }
   };
 
-  const save = async () => {
+  const persist = async (status: "draft" | "approved") => {
     const invalid = validateInvoiceDraft(draft);
-    if (invalid) { setError(invalid); return; }
-    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return; }
+    if (invalid) { setError(invalid); return null; }
+    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return null; }
+    const next = { ...draft, status: draft.invoice_type === "dispatch" ? "draft" : status };
+    if (isNew) {
+      return post<Invoice>(client, "/invoices", invoicePayload(next, companyId));
+    }
+    const saved = await put<Invoice>(client, `/invoices/${invoiceId}`, invoiceUpdateBody(next));
+    if (next.status === "approved") {
+      await post(client, `/invoices/${invoiceId}/approve`);
+    }
+    return saved;
+  };
+
+  const save = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      let saved: Invoice;
-      if (isNew) {
-        saved = await post<Invoice>(client, "/invoices", invoicePayload(draft, companyId));
-        setMessage(draft.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura oluşturuldu ve cariye işlendi.");
-      } else {
-        saved = await put<Invoice>(client, `/invoices/${invoiceId}`, invoiceUpdateBody(draft));
-        if (draft.status === "approved") {
-          await post(client, `/invoices/${invoiceId}/approve`);
-        }
-        setMessage("Taslak fatura güncellendi.");
-      }
+      const saved = await persist(draft.status === "approved" ? "approved" : "draft");
+      if (!saved) return;
+      setMessage(draft.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura oluşturuldu ve cariye işlendi.");
       setError(null);
       const id = idOf(saved) || invoiceId || "";
       if (id) router.replace({ pathname: "/invoices/[id]", params: { id } });
@@ -323,6 +352,56 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const issue = () => {
+    const isDispatch = draft.invoice_type === "dispatch";
+    const cash = canCollectCash && payAccount && totals.grandTotal > 0;
+    const cashHint = cash
+      ? draft.invoice_type === "purchase"
+        ? " Peşin tutar seçilen hesaptan düşülecek."
+        : " Peşin tutar seçilen hesaba aktarılacak."
+      : "";
+    confirmAction(
+      isDispatch ? "İrsaliye kes" : "Fatura kes",
+      (isDispatch ? "İrsaliye kaydedilip GİB'e kesilsin mi?" : "Fatura onaylanıp GİB'e kesilsin mi?") + cashHint,
+      async () => {
+        setBusy(true);
+        setMessage(null);
+        try {
+          const saved = await persist(isDispatch ? "draft" : "approved");
+          if (!saved) return;
+          const id = idOf(saved) || invoiceId || "";
+          if (!id) throw new Error("Fatura kaydı oluşmadı.");
+          const eType = isDispatch ? "e_dispatch" : draft.e_type;
+          await post(client, `/invoices/${id}/send-to-gib`, { e_type: eType });
+          let issuedMsg = isDispatch ? "İrsaliye kesildi." : "Fatura kesildi.";
+          if (cash) {
+            try {
+              const target = splitPaymentTarget(payAccount);
+              await post(client, `/invoices/${id}/record-payment`, {
+                amount: totals.grandTotal,
+                account_id: target.account_id || undefined,
+                partner_id: target.partner_id || undefined,
+              });
+              issuedMsg = isDispatch ? issuedMsg : "Fatura kesildi, peşin ödeme hesaba aktarıldı.";
+            } catch (payErr) {
+              setError(apiErrorMessage(payErr, "Fatura kesildi ancak peşin ödeme aktarılamadı."));
+              setMessage(issuedMsg);
+              router.replace({ pathname: "/invoices/[id]", params: { id } });
+              return;
+            }
+          }
+          setError(null);
+          setMessage(issuedMsg);
+          router.replace({ pathname: "/invoices/[id]", params: { id } });
+        } catch (err) {
+          setError(apiErrorMessage(err, "Fatura kesilemedi."));
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
   };
 
   const selectedContact = contacts.find((c) => idOf(c) === draft.contact_id);
@@ -335,25 +414,46 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
 
       <Muted>Fatura türü</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {INVOICE_TYPES.map((t) => (
-          <Chip
-            key={t.key}
-            label={t.label}
-            active={draft.invoice_type === t.key}
-            testID={`inv-type-${t.key}`}
-            onPress={() => {
-              setDraft((d) => ({
-                ...d,
-                invoice_type: t.key,
-                e_type: t.key === "dispatch" ? "e_dispatch" : d.e_type === "e_dispatch" ? "paper" : d.e_type,
-                status: t.key === "dispatch" ? "draft" : d.status,
-              }));
-            }}
-          />
-        ))}
+      <Row style={{ alignItems: "flex-start" }}>
+        {INVOICE_TYPES.map((t) => {
+          const meta = TYPE_ICONS[t.key];
+          const active = draft.invoice_type === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              testID={`inv-type-${t.key}`}
+              accessibilityLabel={t.label}
+              onPress={() => {
+                setDraft((d) => ({
+                  ...d,
+                  invoice_type: t.key,
+                  e_type: t.key === "dispatch" ? "e_dispatch" : d.e_type === "e_dispatch" ? "paper" : d.e_type,
+                  status: t.key === "dispatch" ? "draft" : d.status,
+                }));
+              }}
+              style={{ flex: 1, alignItems: "center", gap: 4, paddingVertical: 4 }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: active ? meta.color : colors.slate100,
+                }}
+              >
+                <Ionicons name={meta.icon} size={20} color={active ? "#fff" : colors.muted} />
+              </View>
+              <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? meta.color : colors.muted }}>
+                {meta.short}
+              </Text>
+            </Pressable>
+          );
+        })}
       </Row>
       <GroupedSelect
+        dense
         label="E-belge türü"
         testID="inv-etype-select"
         value={draft.e_type}
@@ -361,6 +461,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         groups={[{ label: "E-belge", options: E_TYPES.map((t) => ({ value: t.key, label: t.label })) }]}
       />
       <GroupedSelect
+        dense
         label="Dış ticaret"
         testID="inv-trade-select"
         value={draft.trade_kind}
@@ -391,6 +492,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       ) : null}
 
       <GroupedSelect
+        dense
         label="Tevkifat (hizmet faturası)"
         testID="inv-withholding-select"
         value={withholdingValue(draft)}
@@ -430,15 +532,39 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         )}
       </Card>
 
-      <Field label="Proje (opsiyonel)" testID="inv-project-search" value={projQ} onChangeText={setProjQ} placeholder="Proje ara" />
-      {draft.project_id ? (
-        <ListRow title={draft.project_number || draft.project_id} subtitle="Projesiz yapmak için dokunun" onPress={() => { set("project_id", ""); set("project_number", ""); }} />
-      ) : projHits.map((p) => (
-        <ListRow key={idOf(p)} title={`${p.project_number || ""} · ${p.name || ""}`.trim()} onPress={() => { set("project_id", idOf(p)); set("project_number", p.project_number || ""); setProjQ(""); }} />
-      ))}
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 12,
+          backgroundColor: "#fff",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          gap: 4,
+        }}
+      >
+        <Field dense label="Proje (opsiyonel)" testID="inv-project-search" value={projQ} onChangeText={setProjQ} placeholder="Proje ara" />
+        {draft.project_id ? (
+          <ListRow title={draft.project_number || draft.project_id} subtitle="Projesiz yapmak için dokunun" onPress={() => { set("project_id", ""); set("project_number", ""); }} />
+        ) : projHits.map((p) => (
+          <ListRow key={idOf(p)} title={`${p.project_number || ""} · ${p.name || ""}`.trim()} onPress={() => { set("project_id", idOf(p)); set("project_number", p.project_number || ""); setProjQ(""); }} />
+        ))}
+      </View>
 
-      <Field label="Düzenleme tarihi" testID="inv-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} placeholder="YYYY-MM-DD" />
-      <Field label="Vade tarihi" testID="inv-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} placeholder="YYYY-MM-DD" />
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 12,
+          backgroundColor: "#fff",
+          paddingHorizontal: 10,
+          paddingTop: 6,
+          paddingBottom: 2,
+        }}
+      >
+        <DateField label="Düzenleme tarihi" testID="inv-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} />
+        <DateField label="Vade tarihi" testID="inv-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} min={draft.issue_date} />
+      </View>
       <Muted>Para birimi</Muted>
       <Row style={{ flexWrap: "wrap" }}>
         {CURRENCIES.map((c) => (
@@ -491,31 +617,29 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 <Ionicons name="trash-outline" size={20} color={colors.danger} />
               </Pressable>
             </Row>
+            <Field
+              compact
+              label={it.is_service ? "Hizmet adı" : "Ad"}
+              testID={`inv-item-name-${idx}`}
+              value={it.name}
+              onChangeText={(v) => patchLine(idx, "name", v)}
+            />
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Field
-                  compact
-                  label={it.is_service ? "Hizmet adı" : "Ad"}
-                  testID={`inv-item-name-${idx}`}
-                  value={it.name}
-                  onChangeText={(v) => patchLine(idx, "name", v)}
-                />
+              <View style={{ width: 64, flexShrink: 0 }}>
+                <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
-              <View style={{ width: 52, flexShrink: 0 }}>
+              <View style={{ width: 72, flexShrink: 0 }}>
                 <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
               </View>
-              <View style={{ width: 68, flexShrink: 0 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Field compact label="Fiyat" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
-              <View style={{ width: 58, flexShrink: 0 }}>
-                <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
-              </View>
-              <View style={{ width: 68, flexShrink: 0 }}>
+              <View style={{ flex: 1, minWidth: 88 }}>
                 <Field compact label="KDV'li" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
               </View>
-              <View style={{ width: 52, flexShrink: 0 }}>
+              <View style={{ width: 64, flexShrink: 0 }}>
                 <Field compact label="İsk %" testID={`inv-item-disc-${idx}`} value={String(it.discount_rate)} onChangeText={(v) => patchLine(idx, "discount_rate", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
@@ -578,6 +702,41 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       </Card>
 
       <Field label="Not" testID="inv-notes" value={draft.notes} onChangeText={(v) => set("notes", v)} />
+      {canCollectCash ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 12,
+            backgroundColor: "#fff",
+            paddingHorizontal: 10,
+            paddingTop: 6,
+            paddingBottom: 2,
+          }}
+        >
+          {payGroups.some((g) => g.options.length) ? (
+            <GroupedSelect
+              dense
+              label={cashAccountLabel}
+              testID="inv-cash-account-select"
+              value={payAccount}
+              onChange={setPayAccount}
+              emptyLabel="Vadeli — hesap seçilmedi"
+              groups={payGroups}
+            />
+          ) : (
+            <Muted>Hesap yok — peşin aktarım için kasa / banka ekleyin. Boş bırakılırsa vadeli kalır.</Muted>
+          )}
+        </View>
+      ) : null}
+      <PrimaryButton
+        title={busy ? "Kesiliyor…" : draft.invoice_type === "dispatch" ? "İrsaliye Kes" : "Fatura Kes"}
+        onPress={issue}
+        loading={busy}
+        disabled={!canEdit}
+        color={colors.indigo}
+        testID="issue-invoice-btn"
+      />
       <PrimaryButton
         title={busy ? "Kaydediliyor…" : draft.status === "draft" ? "Taslak Olarak Kaydet" : "Faturayı Kaydet & Onayla"}
         onPress={save}
