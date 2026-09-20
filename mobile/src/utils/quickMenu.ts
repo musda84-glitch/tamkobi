@@ -23,6 +23,7 @@ export type QuickTile = {
  */
 export const QUICK_TILES: QuickTile[] = [
   { id: "invoices", label: "Faturalar", path: "/invoices", href: "/invoices", icon: "document-text", tone: "emerald" },
+  { id: "edoc", label: "Gelen e-Fatura", path: "/edoc-inbox", href: "/edoc-inbox", icon: "file-tray", tone: "indigo" },
   { id: "contacts", label: "Cariler", path: "/contacts", href: "/contacts", icon: "people", tone: "sky" },
   { id: "orders", label: "Siparişler", path: "/orders", href: "/orders", icon: "cart", tone: "amber" },
   { id: "banking", label: "Banka & Kasa", path: "/banking", href: "/banking", icon: "wallet", tone: "teal" },
@@ -54,6 +55,7 @@ export const QUICK_TONE_COLORS: Record<QuickTone, { bg: string; border: string; 
 
 const TASK_PATH_MAP: Record<string, string> = {
   "/invoices": "/invoices",
+  "/edoc-inbox": "/edoc-inbox",
   "/contacts": "/contacts",
   "/orders": "/orders",
   "/banking": "/banking",

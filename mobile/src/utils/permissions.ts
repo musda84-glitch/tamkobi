@@ -95,6 +95,7 @@ export const MOBILE_MODULES: MobileModule[] = [
   { key: "cheques", path: "/cheques", label: "Çek & Senet" },
   { key: "contacts", path: "/contacts", label: "Cariler" },
   { key: "invoices", path: "/invoices", label: "Faturalar" },
+  { key: "edoc", path: "/edoc-inbox", label: "Gelen e-Faturalar" },
   { key: "orders", path: "/orders", label: "Siparişler" },
   { key: "banking", path: "/banking", label: "Kasa & Banka" },
   { key: "expenses", path: "/expenses", label: "Masraflar" },

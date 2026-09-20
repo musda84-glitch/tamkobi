@@ -72,7 +72,23 @@ describe("visibleQuickTiles", () => {
       sevk: "Sevkiyat",
       atolye: "Atölye Ekranı",
       personnel: "Personel",
+      edoc: "Gelen e-Fatura",
     });
+  });
+
+  it("places Gelen e-Fatura after Faturalar and gates it on /edoc-inbox", () => {
+    const ids = QUICK_TILES.map((t) => t.id);
+    expect(ids.indexOf("edoc")).toBe(ids.indexOf("invoices") + 1);
+    expect(QUICK_TILES.find((t) => t.id === "edoc")).toMatchObject({
+      label: "Gelen e-Fatura",
+      path: "/edoc-inbox",
+      href: "/edoc-inbox",
+    });
+    const accountant = { role: "accountant", permissions: { "/edoc-inbox": "edit", "/invoices": "edit" } };
+    expect(visibleQuickTiles(accountant, null).map((t) => t.id)).toContain("edoc");
+    const warehouse = { role: "warehouse", permissions: { "/edoc-inbox": "none", "/invoices": "none" } };
+    expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).not.toContain("edoc");
+    expect(visibleQuickTiles({ role: "admin" }, { modules: { "/edoc-inbox": false } }).map((t) => t.id)).not.toContain("edoc");
   });
 
   it("places Atölye Ekranı after Sevkiyat and gates it on /atolye", () => {
@@ -114,6 +130,7 @@ describe("splitNotificationsTile", () => {
 describe("resolveMobilePath", () => {
   it("maps dashboard task paths onto mobile routes", () => {
     expect(resolveMobilePath("/invoices")).toBe("/invoices");
+    expect(resolveMobilePath("/edoc-inbox")).toBe("/edoc-inbox");
     expect(resolveMobilePath("/stock")).toBe("/stok");
     expect(resolveMobilePath("/personnel")).toBe("/personnel");
     expect(resolveMobilePath("/sevk")).toBe("/sevk");
