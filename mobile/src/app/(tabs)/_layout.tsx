@@ -41,7 +41,7 @@ export default function TabsLayout() {
               company={activeCompany?.name}
               logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url)}
             />
-          )}
+          ),
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
       />
