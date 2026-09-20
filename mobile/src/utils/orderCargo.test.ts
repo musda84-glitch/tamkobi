@@ -18,12 +18,14 @@ describe("orderCargo", () => {
     expect(canChangeMarketplaceCargo({ channel: "saha", order_status: "pending" })).toBe(false);
   });
 
-  it("shows pazaryeri approve on marketplace rows; only pending/created can submit", () => {
-    expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "delivered" })).toBe(true);
+  it("hides pazaryeri approve once the order is approved or delivered", () => {
+    expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "pending", marketplace_status: "Created" })).toBe(true);
+    expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "approved" })).toBe(false);
+    expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "delivered", marketplace_status: "Delivered" })).toBe(false);
+    expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "pending", marketplace_status: "Picking" })).toBe(false);
     expect(canShowMarketplaceApprove({ channel: "trendyol", order_status: "cancelled" })).toBe(false);
     expect(canApproveMarketplaceOrder({ channel: "trendyol", order_status: "pending" })).toBe(true);
-    expect(canApproveMarketplaceOrder({ channel: "trendyol", order_status: "approved", marketplace_status: "Created" })).toBe(true);
-    expect(canApproveMarketplaceOrder({ channel: "trendyol", order_status: "delivered", marketplace_status: "Delivered" })).toBe(false);
+    expect(canApproveMarketplaceOrder({ channel: "trendyol", order_status: "approved", marketplace_status: "Created" })).toBe(false);
     expect(canApproveMarketplaceOrder({ channel: "saha", order_status: "pending" })).toBe(true);
     expect(approveActionLabel({ channel: "trendyol" })).toBe("Pazaryeri onayla");
     expect(approveActionLabel({ channel: "saha" })).toBe("Onayla");

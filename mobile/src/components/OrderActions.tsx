@@ -130,11 +130,7 @@ export function OrderActions({
   };
 
   const approve = () => {
-    if (marketplace && !canApproveMarketplaceOrder(order)) {
-      onError?.("Sipariş pazaryerinde onaylanacak durumda değil.");
-      return;
-    }
-    if (!marketplace && !canApproveOrder(order)) return;
+    if (!canApproveMarketplaceOrder(order)) return;
     confirmAction(approveActionLabel(order), approveOrderConfirm(order), async () => {
       setBusy("approve");
       try {

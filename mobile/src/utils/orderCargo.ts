@@ -26,24 +26,26 @@ export const FALLBACK_CARGO_CATALOG: CargoCatalogItem[] = [
 ];
 
 const CLOSED = new Set(["cancelled", "canceled", "returned", "partially_returned"]);
+const ALREADY_APPROVED = new Set(["approved", "delivered", "shipped", "completed"]);
 const CREATED = new Set(["Created", "WaitingInAction", "UnPacked"]);
+const MP_ALREADY_APPROVED = new Set(["Picking", "Invoiced", "Shipped", "Delivered", "AtCollectionPoint"]);
 
 export function canChangeMarketplaceCargo(order: Pick<Order, "channel" | "order_status">): boolean {
   const st = String(order.order_status || "").toLowerCase();
   return isMarketplaceChannel(order.channel) && !CLOSED.has(st);
 }
 
-/** Pazaryeri satırında buton her zaman (iptal/iade hariç). */
-export function canShowMarketplaceApprove(order: Pick<Order, "channel" | "order_status">): boolean {
-  const st = String(order.order_status || "").toLowerCase();
-  return isMarketplaceChannel(order.channel) && !CLOSED.has(st);
+/** Onaylanmış / teslim siparişte buton kaybolur. */
+export function canShowMarketplaceApprove(order: Pick<Order, "channel" | "order_status" | "marketplace_status">): boolean {
+  return canApproveMarketplaceOrder(order);
 }
 
 export function canApproveMarketplaceOrder(order: Pick<Order, "channel" | "order_status" | "marketplace_status">): boolean {
   if (!isMarketplaceChannel(order.channel)) return canApproveOrder(order);
   const st = String(order.order_status || "").toLowerCase();
-  if (CLOSED.has(st)) return false;
-  return canApproveOrder(order) || CREATED.has(String(order.marketplace_status || ""));
+  const mp = String(order.marketplace_status || "");
+  if (CLOSED.has(st) || ALREADY_APPROVED.has(st) || MP_ALREADY_APPROVED.has(mp)) return false;
+  return canApproveOrder(order) || CREATED.has(mp);
 }
 
 export function approveActionLabel(order: Pick<Order, "channel">): string {
