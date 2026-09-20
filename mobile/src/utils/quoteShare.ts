@@ -1,9 +1,8 @@
-import { File as CacheFile, Paths } from "expo-file-system";
 import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
 import { Platform, Share } from "react-native";
 import type { ApiClient } from "../api/client";
 import { normalizeApiBase } from "../api/url";
+import { htmlToPdfFile, printHtmlNative, sharePdfFile } from "./nativePrint";
 import { openPrintHtml, type PrintCompany } from "./orderPrint";
 import { enrichPrintCompany, loadPrintProducts, loadPrintTemplate } from "./orderShare";
 import {
@@ -25,56 +24,6 @@ async function quotePrintParts(quote: QuoteDoc, company?: PrintCompany | null, c
   });
   const title = `Teklif ${quote.quote_number || ""}`.trim();
   return { printCompany, body, title, html: quotePrintDocument(title, body) };
-}
-
-function triggerBlobDownload(blob: Blob, filename: string): boolean {
-  if (typeof document === "undefined") return false;
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = filename;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 1500);
-  return true;
-}
-
-async function sharePdfFile(bytes: Uint8Array, filename: string): Promise<boolean> {
-  if (Platform.OS === "web") {
-    const copy = Uint8Array.from(bytes);
-    return triggerBlobDownload(new Blob([copy.buffer], { type: "application/pdf" }), filename);
-  }
-  const file = new CacheFile(Paths.cache, filename);
-  file.create({ overwrite: true });
-  await file.write(bytes);
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(file.uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf", dialogTitle: filename });
-    return true;
-  }
-  await file.preview();
-  return true;
-}
-
-async function printHtmlNative(html: string): Promise<boolean> {
-  if (Platform.OS === "web") return false;
-  await Print.printAsync({ html });
-  return true;
-}
-
-async function htmlToPdfFile(html: string, filename: string): Promise<boolean> {
-  if (Platform.OS === "web") return false;
-  const printed = await Print.printToFileAsync({ html });
-  if (printed.uri && await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(printed.uri, { mimeType: "application/pdf", dialogTitle: filename });
-    return true;
-  }
-  if (printed.uri) {
-    await Share.share({ url: printed.uri, title: filename }).catch(() => null);
-    return true;
-  }
-  return false;
 }
 
 export async function printQuoteForm(
