@@ -8,9 +8,8 @@ import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../co
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
-import { createInvoiceButtonLabel, INVOICE_FILTERS } from "../utils/invoiceDraft";
-import { eTypeTr, invoiceTypeTr, statusTr } from "../utils/labels";
-import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle } from "../utils/invoiceDraft";
+import { fmtMoney, idOf } from "../utils/money";
 
 const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
   all: { icon: "apps-outline", color: colors.slate800 },
@@ -109,7 +108,7 @@ export function InvoicesScreen() {
           key={idOf(inv)}
           testID={`inv-row-${idOf(inv)}`}
           title={inv.invoice_number || "Fatura"}
-          subtitle={`${invoiceTypeTr(inv.invoice_type)} · ${eTypeTr(inv.e_type)} · ${statusTr(inv.status)} · ${fmtDate(inv.issue_date)}`}
+          subtitle={invoiceListSubtitle(inv)}
           right={fmtMoney(inv.grand_total, inv.currency)}
           onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
         />
