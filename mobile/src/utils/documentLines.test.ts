@@ -1,4 +1,4 @@
-import { addProductToItems, computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "./documentLines";
+import { addProductToItems, computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct, removeInvoiceItem } from "./documentLines";
 
 describe("documentLines", () => {
   it("fills dual unit prices and net/gross totals with discount", () => {
@@ -81,5 +81,15 @@ describe("documentLines", () => {
     const bumped = addProductToItems(first, prod, "sales");
     expect(bumped).toHaveLength(1);
     expect(bumped[0].quantity).toBe(2);
+  });
+
+  it("removes an invoice line and keeps one empty row", () => {
+    const a = computeLine({ ...emptyLine(), name: "Kapı", unit_price: 10 });
+    const b = computeLine({ ...emptyLine(), name: "Kasa", unit_price: 20 });
+    expect(removeInvoiceItem([a, b], 0).map((x) => x.name)).toEqual(["Kasa"]);
+    const last = removeInvoiceItem([a], 0);
+    expect(last).toHaveLength(1);
+    expect(last[0].name).toBe("");
+    expect(last[0].quantity).toBe(1);
   });
 });

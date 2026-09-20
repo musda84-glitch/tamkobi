@@ -164,3 +164,9 @@ export function addProductToItems(
   if (emptyIdx >= 0) return items.map((it, i) => (i === emptyIdx ? line : it));
   return [...items, line];
 }
+
+/** Drops an invoice line; keeps one empty row so the editor stays usable. */
+export function removeInvoiceItem(items: InvoiceLine[], index: number, defaultVat = 20): InvoiceLine[] {
+  const next = items.filter((_, i) => i !== index);
+  return next.length ? next : [computeLine(emptyLine({ vat_rate: defaultVat }))];
+}
