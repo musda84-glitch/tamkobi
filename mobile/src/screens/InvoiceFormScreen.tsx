@@ -499,6 +499,9 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
               onChangeText={(v) => patchLine(idx, "name", v)}
             />
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
+              <View style={{ width: 64, flexShrink: 0 }}>
+                <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
+              </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
               </View>
@@ -507,13 +510,10 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
               </View>
             </Row>
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
-              <View style={{ width: 58, flexShrink: 0 }}>
-                <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
-              </View>
               <View style={{ flex: 1, minWidth: 88 }}>
                 <Field compact label="KDV'li" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
               </View>
-              <View style={{ width: 52, flexShrink: 0 }}>
+              <View style={{ width: 64, flexShrink: 0 }}>
                 <Field compact label="İsk %" testID={`inv-item-disc-${idx}`} value={String(it.discount_rate)} onChangeText={(v) => patchLine(idx, "discount_rate", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
