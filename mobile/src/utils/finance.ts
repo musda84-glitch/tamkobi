@@ -256,6 +256,54 @@ export function splitPaymentTarget(value?: string | null): { partner_id?: string
   return { account_id: v || null, partner_id: null };
 }
 
+export function validateContactPayment(amount: string, accountId: string): string | null {
+  const amt = Number(String(amount).replace(",", "."));
+  if (!(amt > 0)) return "Geçerli bir tutar girin.";
+  if (!String(accountId || "").trim()) return "Kasa / banka / ortak seçin.";
+  return null;
+}
+
+export function contactPaymentRequest(opts: {
+  companyId: string;
+  contactId: string;
+  contactName: string;
+  type: "inflow" | "outflow";
+  amount: number;
+  accountId: string;
+  description: string;
+  accounts: BankAccount[];
+}) {
+  const target = splitPaymentTarget(opts.accountId);
+  if (target.partner_id) {
+    return {
+      path: `/contacts/${opts.contactId}/record-payment`,
+      body: {
+        partner_id: target.partner_id,
+        type: opts.type,
+        amount: opts.amount,
+        description: opts.description,
+      },
+    };
+  }
+  const acc = opts.accounts.find((a) => idOf(a) === target.account_id);
+  return {
+    path: "/banking/transactions",
+    body: {
+      company_id: opts.companyId,
+      account_id: target.account_id,
+      account_name: acc?.account_name,
+      type: opts.type,
+      category: opts.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme",
+      amount: opts.amount,
+      currency: "TRY",
+      description: `${opts.contactName}: ${opts.description}`,
+      contact_id: opts.contactId,
+      contact_name: opts.contactName,
+      source: "manual",
+    },
+  };
+}
+
 export function totalLiquidity(accounts: BankAccount[]): number {
   return (accounts || [])
     .filter((a) => normalizeAccountType(a.type) !== "credit_card")
