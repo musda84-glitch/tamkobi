@@ -461,12 +461,24 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         )}
       </Card>
 
-      <Field label="Proje (opsiyonel)" testID="inv-project-search" value={projQ} onChangeText={setProjQ} placeholder="Proje ara" />
-      {draft.project_id ? (
-        <ListRow title={draft.project_number || draft.project_id} subtitle="Projesiz yapmak için dokunun" onPress={() => { set("project_id", ""); set("project_number", ""); }} />
-      ) : projHits.map((p) => (
-        <ListRow key={idOf(p)} title={`${p.project_number || ""} · ${p.name || ""}`.trim()} onPress={() => { set("project_id", idOf(p)); set("project_number", p.project_number || ""); setProjQ(""); }} />
-      ))}
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 12,
+          backgroundColor: "#fff",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          gap: 4,
+        }}
+      >
+        <Field dense label="Proje (opsiyonel)" testID="inv-project-search" value={projQ} onChangeText={setProjQ} placeholder="Proje ara" />
+        {draft.project_id ? (
+          <ListRow title={draft.project_number || draft.project_id} subtitle="Projesiz yapmak için dokunun" onPress={() => { set("project_id", ""); set("project_number", ""); }} />
+        ) : projHits.map((p) => (
+          <ListRow key={idOf(p)} title={`${p.project_number || ""} · ${p.name || ""}`.trim()} onPress={() => { set("project_id", idOf(p)); set("project_number", p.project_number || ""); setProjQ(""); }} />
+        ))}
+      </View>
 
       <Field label="Düzenleme tarihi" testID="inv-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} placeholder="YYYY-MM-DD" />
       <Field label="Vade tarihi" testID="inv-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} placeholder="YYYY-MM-DD" />
