@@ -3,26 +3,31 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
 import { colors, radius } from "../theme";
+import {
+  appendPickerAsset,
+  imageUploadRequest,
+  imageUploaderCopy,
+  uploadedImageUrl,
+  type ImageEntity,
+} from "../utils/formDataFile";
 
-type UploadResult = { url?: string };
-
-/** /files/upload görseli kaydeder ve quote/project/survey dokümanına images[] olarak ekler. */
+/** Keşif/proje/teklif: /files/upload. Stok kartı: /products/:id/image. Native’de File/Blob gönderilmez. */
 export function ImageUploader({
   entity,
   entityId,
   images,
   onUploaded,
   editable = true,
-  label = "Fotoğraflar",
+  label,
   hint,
   testID = "image-uploader",
 }: {
-  entity: "survey" | "project" | "quote";
+  entity: ImageEntity;
   entityId?: string;
   images: string[];
   onUploaded: (url: string) => void;
@@ -32,8 +37,11 @@ export function ImageUploader({
   testID?: string;
 }) {
   const { client, companyId } = useAuth();
+  const copy = imageUploaderCopy(entity);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const title = label ?? copy.label;
+  const help = hint ?? copy.hint;
 
   const send = async (asset: ImagePicker.ImagePickerAsset) => {
     if (!entityId) { setError("Önce kaydı oluşturun, sonra fotoğraf ekleyin."); return; }
@@ -41,19 +49,12 @@ export function ImageUploader({
     setError(null);
     try {
       const form = new FormData();
-      const name = asset.fileName || `photo-${Date.now()}.jpg`;
-      const type = asset.mimeType || "image/jpeg";
-      if (asset.file) {
-        form.append("file", asset.file, name);
-      } else {
-        form.append("file", { uri: asset.uri, name, type } as unknown as Blob);
-      }
-      const res = await upload<UploadResult>(client, "/files/upload", form, {
-        entity,
-        entity_id: entityId,
-        company_id: companyId,
-      });
-      if (res?.url) onUploaded(res.url);
+      appendPickerAsset(form, asset, Platform.OS);
+      const { path, query } = imageUploadRequest(entity, entityId, companyId);
+      const res = await upload<unknown>(client, path, form, query);
+      const url = uploadedImageUrl(res);
+      if (url) onUploaded(url);
+      else setError("Fotoğraf yüklendi ama adres dönmedi.");
     } catch (err) {
       setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
     } finally {
@@ -79,8 +80,8 @@ export function ImageUploader({
 
   return (
     <Card testID={testID}>
-      <Muted>{label}</Muted>
-      {hint ? <Muted>{hint}</Muted> : null}
+      <Muted>{title}</Muted>
+      {help ? <Muted>{help}</Muted> : null}
       {error ? <Text style={{ color: colors.danger, fontWeight: "700" }}>{error}</Text> : null}
       {!entityId ? <Muted>Kayıt oluşturulduktan sonra fotoğraf ekleyebilirsiniz.</Muted> : null}
       <Row style={{ flexWrap: "wrap" }}>

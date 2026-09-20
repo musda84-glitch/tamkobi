@@ -50,6 +50,7 @@ export type QuoteDoc = {
   invoice_id?: string;
   survey_id?: string;
   approval?: QuoteApproval;
+  images?: string[];
 };
 
 export type ProjectDoc = {

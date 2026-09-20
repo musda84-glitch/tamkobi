@@ -167,6 +167,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setNotes(q.notes || "");
         setStatus(q.status || "draft");
         setLinkedProjectId(q.project_id || "");
+        setPhotos(q.images || []);
         const its = (q.items || []).filter((i) => i?.name);
         const nextItems = its.length
           ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 }))
@@ -605,18 +606,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "quote" ? (
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
       ) : null}
-      {kind !== "quote" ? (
-        <ImageUploader
-          entity={kind}
-          entityId={docId}
-          images={photos}
-          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
-          editable={canEdit}
-          label={kind === "survey" ? "Keşif fotoğrafları" : "Proje fotoğrafları"}
-          hint="Yüklenen fotoğraflar web’deki keşif / proje kartında da görünür."
-          testID="work-photos"
-        />
-      ) : null}
+      <ImageUploader
+        entity={kind}
+        entityId={docId}
+        images={photos}
+        onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+        editable={canEdit}
+        testID="work-photos"
+      />
 
       <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       {isNew || kind !== "quote" ? (
