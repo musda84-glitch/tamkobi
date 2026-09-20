@@ -45,6 +45,14 @@ import { fmtMoney, idOf } from "../utils/money";
 
 type Project = { id?: string; _id?: string; name?: string; project_number?: string };
 
+const TYPE_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; short: string; color: string }> = {
+  sales: { icon: "receipt-outline", short: "Satış", color: colors.primary },
+  purchase: { icon: "cart-outline", short: "Alış", color: colors.indigo },
+  proforma: { icon: "document-text-outline", short: "Proforma", color: "#0EA5E9" },
+  return: { icon: "return-down-back-outline", short: "İade", color: colors.danger },
+  dispatch: { icon: "cube-outline", short: "İrsaliye", color: "#D97706" },
+};
+
 function Chip({
   label,
   active,
@@ -335,23 +343,43 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
 
       <Muted>Fatura türü</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {INVOICE_TYPES.map((t) => (
-          <Chip
-            key={t.key}
-            label={t.label}
-            active={draft.invoice_type === t.key}
-            testID={`inv-type-${t.key}`}
-            onPress={() => {
-              setDraft((d) => ({
-                ...d,
-                invoice_type: t.key,
-                e_type: t.key === "dispatch" ? "e_dispatch" : d.e_type === "e_dispatch" ? "paper" : d.e_type,
-                status: t.key === "dispatch" ? "draft" : d.status,
-              }));
-            }}
-          />
-        ))}
+      <Row style={{ alignItems: "flex-start" }}>
+        {INVOICE_TYPES.map((t) => {
+          const meta = TYPE_ICONS[t.key];
+          const active = draft.invoice_type === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              testID={`inv-type-${t.key}`}
+              accessibilityLabel={t.label}
+              onPress={() => {
+                setDraft((d) => ({
+                  ...d,
+                  invoice_type: t.key,
+                  e_type: t.key === "dispatch" ? "e_dispatch" : d.e_type === "e_dispatch" ? "paper" : d.e_type,
+                  status: t.key === "dispatch" ? "draft" : d.status,
+                }));
+              }}
+              style={{ flex: 1, alignItems: "center", gap: 4, paddingVertical: 4 }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: active ? meta.color : colors.slate100,
+                }}
+              >
+                <Ionicons name={meta.icon} size={20} color={active ? "#fff" : colors.muted} />
+              </View>
+              <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? meta.color : colors.muted }}>
+                {meta.short}
+              </Text>
+            </Pressable>
+          );
+        })}
       </Row>
       <GroupedSelect
         dense
