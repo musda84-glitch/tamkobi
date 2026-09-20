@@ -11,7 +11,6 @@ import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendAp
 import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
 import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/ProjectExpenseTeamModals";
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
-import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
