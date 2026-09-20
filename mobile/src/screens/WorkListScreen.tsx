@@ -598,20 +598,16 @@ function ProjectTrackSheet({
             : null}
         </View>
       ) : null}
-      <Row style={{ gap: 8, marginTop: 8 }}>
-        <View style={{ flex: 1 }}>
-          <PrimaryButton title="Sadece link üret" testID="track-mint" color={colors.slate800} loading={busy} onPress={() => send([])} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <PrimaryButton
-            title={(project?.tracking?.sent_count || 0) > 0 ? "Tekrar Gönder" : "Gönder"}
-            testID="track-send"
-            color={colors.primary}
-            loading={busy}
-            onPress={() => send(approvalChannels(flags))}
-          />
-        </View>
-      </Row>
+      <View style={{ gap: 8, marginTop: 8 }}>
+        <PrimaryButton title="Sadece link üret" testID="track-mint" color={colors.slate800} loading={busy} onPress={() => send([])} />
+        <PrimaryButton
+          title={(project?.tracking?.sent_count || 0) > 0 ? "Tekrar Gönder" : "Gönder"}
+          testID="track-send"
+          color={colors.primary}
+          loading={busy}
+          onPress={() => send(approvalChannels(flags))}
+        />
+      </View>
     </B2BSheet>
   );
 }
