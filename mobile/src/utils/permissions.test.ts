@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeFinanceSummary, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -77,6 +77,7 @@ describe("permissions", () => {
     const staff = { role: "sales", employee_id: "emp_1", permissions: { "/mesai": "view", "/contacts": "edit", "/banking": "view" } };
     expect(hasSelfPersonnelRecord(owner)).toBe(false);
     expect(showFinanceSubstituteTabs(owner)).toBe(true);
+    expect(showHomeFinanceSummary(owner)).toBe(true);
     expect(showSelfPersonnelTabs(owner, null)).toBe(false);
     expect(isMoreLinkVisible({ path: "/personelim" }, owner, null)).toBe(false);
     expect(isMoreLinkVisible({ path: "/banking" }, owner, null)).toBe(false);
@@ -85,8 +86,16 @@ describe("permissions", () => {
     expect(hasSelfPersonnelRecord(staff)).toBe(true);
     expect(showSelfPersonnelTabs(staff, null)).toBe(true);
     expect(showFinanceSubstituteTabs(staff)).toBe(false);
+    expect(showHomeFinanceSummary(staff)).toBe(false);
     expect(isMoreLinkVisible({ path: "/personelim" }, staff, null)).toBe(true);
     expect(isMoreLinkVisible({ path: "/banking" }, staff, null)).toBe(true);
     expect(isMoreLinkVisible({ path: "/contacts" }, staff, null)).toBe(true);
+  });
+
+  it("hides the Özet ciro card when the login is tied to a personnel record", () => {
+    expect(showHomeFinanceSummary({ role: "admin" })).toBe(true);
+    expect(showHomeFinanceSummary({ role: "sales", employee_id: null })).toBe(true);
+    expect(showHomeFinanceSummary({ role: "admin", employee_id: "emp_1" })).toBe(false);
+    expect(showHomeFinanceSummary({ role: "personel", employee_id: "e2" })).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { pendingSevkCount, type PickRow } from "../utils/orderPick";
+import { showHomeFinanceSummary } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 import { openWorkOrderCount, type WorkOrder } from "../utils/shopFloor";
 
@@ -25,6 +26,7 @@ export function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  const showFinance = showHomeFinanceSummary(user);
   const { tiles, notifications } = useMemo(
     () => splitNotificationsTile(visibleQuickTiles(user, license)),
     [user, license]
@@ -52,7 +54,9 @@ export function HomeScreen() {
       const [ov, list, st, pending, ops, unmatched, picks, wos] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
-        get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null),
+        showFinance
+          ? get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null)
+          : Promise.resolve(null),
         get<{ count?: number }>(client, "/personnel/pending-requests", { company_id: companyId }).catch(() => null),
         get<{ groups?: { key?: string; count?: number }[] }>(client, "/dashboard/ops-alerts", { company_id: companyId }).catch(() => null),
         get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
@@ -79,7 +83,7 @@ export function HomeScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [can, client, companyId, user]);
+  }, [can, client, companyId, showFinance, user]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -112,16 +116,18 @@ export function HomeScreen() {
         ) : null}
       </View>
 
-      <StatRows
-        testID="home-summary"
-        items={[
-          { key: "sales", ...monthlySalesRow(stats, overview) },
-          ...(profitRow ? [{ key: "profit", ...profitRow, valueColor: (stats?.net_profit ?? 0) < 0 ? colors.danger : colors.primaryHover }] : []),
-          { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
-          { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
-          { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
-        ]}
-      />
+      {showFinance ? (
+        <StatRows
+          testID="home-summary"
+          items={[
+            { key: "sales", ...monthlySalesRow(stats, overview) },
+            ...(profitRow ? [{ key: "profit", ...profitRow, valueColor: (stats?.net_profit ?? 0) < 0 ? colors.danger : colors.primaryHover }] : []),
+            { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
+            { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
+            { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
+          ]}
+        />
+      ) : null}
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
         {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {
