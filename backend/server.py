@@ -7422,6 +7422,34 @@ async def approve_order(order_id: str, req: Dict[str, Any] = None):
         out["marketplace_push"] = {k: push.get(k) for k in ("ok", "simulated", "error", "channel") if k in push}
     return out
 
+
+@api_router.put("/orders/{order_id}/cargo-carrier")
+async def update_order_cargo_carrier(order_id: str, req: Dict[str, Any] = None):
+    """Pazaryeri siparişinin kargo firmasını günceller ve entegrasyona iletir."""
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    req = req or {}
+    code = str(req.get("cargo_carrier") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Kargo firması seçin.")
+    name = str(req.get("cargo_carrier_name") or "").strip() or resolve_cargo_name(code)
+    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_carrier": code, "cargo_carrier_name": name}})
+    updated = await db.orders.find_one({"_id": order_id})
+    push = await _push_order_cargo_to_marketplace(updated)
+    out = clean_doc(updated)
+    channel = str((updated or {}).get("channel") or "")
+    if push and push.get("ok"):
+        out["message"] = f"Kargo firması {name} olarak güncellendi. {channel or 'Pazaryeri'} entegrasyonuna iletildi."
+    elif push and push.get("simulated"):
+        out["message"] = f"Kargo firması {name} olarak güncellendi. Pazaryeri entegrasyonuna iletildi (SİMÜLE)."
+    else:
+        out["message"] = f"Kargo firması {name} olarak güncellendi."
+    if push:
+        out["marketplace_push"] = {k: push.get(k) for k in ("ok", "simulated", "error", "channel") if k in push}
+    return out
+
+
 @api_router.post("/orders/{order_id}/return")
 async def return_order(order_id: str, req: Dict[str, Any]):
     o = await db.orders.find_one({"_id": order_id})
@@ -7767,7 +7795,25 @@ async def backfill_order_contacts(req: Dict[str, Any]):
     return {"status": "success", "linked": linked, "created": created, "skipped": skipped, "message": f"{linked} sipariş cariye bağlandı ({created} yeni cari açıldı)." + (f" {skipped} siparişte müşteri adı yok." if skipped else "")}
 
 SHOPPHP_STATUS_CODES = {"approved": 2, "preparing": 3, "shipped": 51, "completed": 81, "cancelled": 90}
-CARGO_NAME_TR = {"yurtici": "Yurtiçi Kargo", "aras": "Aras Kargo", "mng": "MNG Kargo", "ptt": "PTT Kargo", "surat": "Sürat Kargo", "ups": "UPS", "dhl": "DHL", "hepsijet": "HepsiJet", "sendeo": "Sendeo", "kolaygelsin": "Kolay Gelsin", "trendyol_express": "Trendyol Express", "geliver": "Geliver"}
+CARGO_NAME_TR = {"yurtici": "Yurtiçi Kargo", "aras": "Aras Kargo", "mng": "MNG Kargo", "ptt": "PTT Kargo", "surat": "Sürat Kargo", "ups": "UPS", "dhl": "DHL", "hepsijet": "HepsiJet", "sendeo": "Sendeo", "kolaygelsin": "Kolay Gelsin", "trendyol_express": "Trendyol Express", "trendyolexpress": "Trendyol Express", "geliver": "Geliver", "horoz": "Horoz Lojistik", "ceva": "CEVA"}
+
+_CARGO_ALIASES = {"trendyolexpress": "trendyol_express", "tyexpress": "trendyol_express"}
+
+
+def resolve_cargo_name(code: str, fallback: str = "") -> str:
+    raw = (code or "").strip()
+    key = _CARGO_ALIASES.get(raw.lower().replace(" ", "_"), raw.lower().replace(" ", "_"))
+    if key in CARGO_NAME_TR:
+        return CARGO_NAME_TR[key]
+    if raw.lower() in CARGO_NAME_TR:
+        return CARGO_NAME_TR[raw.lower()]
+    cat = next((c for c in CARGO_CATALOG if c["carrier_code"] in (key, raw, raw.lower())), None)
+    if cat:
+        return cat["carrier_name"]
+    ty = marketplace_providers.ty_cargo_provider_name(key) or marketplace_providers.ty_cargo_provider_name(raw)
+    if ty:
+        return ty.replace(" Marketplace", "")
+    return fallback or raw
 
 @api_router.put("/integrations/ecommerce/{channel_id}/rest-credentials")
 async def set_shopphp_rest_credentials(channel_id: str, req: Dict[str, Any]):
@@ -7840,6 +7886,46 @@ async def _push_order_to_marketplace(order: dict, reason: str = "approve") -> Op
         return {"ok": bool(log.get("ok")), "channel": "shopphp", "error": log.get("error")}
     if channel == "trendyol":
         return await _push_trendyol_approve(order)
+    if channel in cargo_label.MARKETPLACE_CHANNELS:
+        return {"ok": False, "simulated": True, "channel": channel}
+    return None
+
+
+async def _push_trendyol_cargo(order: dict) -> Dict[str, Any]:
+    """Trendyol paketinin kargo firmasını günceller."""
+    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": "trendyol", "is_active": {"$ne": False}})
+    if not cfg or not marketplace_providers.has_live_credentials(cfg):
+        return {"ok": False, "simulated": True, "channel": "trendyol"}
+    pkg_id = order.get("shipment_package_id") or order.get("external_id")
+    if not pkg_id:
+        return {"ok": False, "simulated": True, "channel": "trendyol", "error": "Pazaryeri paket id yok."}
+    provider = marketplace_providers.ty_cargo_provider_name(order.get("cargo_carrier")) or order.get("cargo_carrier_name")
+    if not provider:
+        return {"ok": False, "channel": "trendyol", "error": "Kargo firması eşleşmedi."}
+    client = marketplace_providers.TrendyolClient(cfg)
+    try:
+        raw = await client.update_cargo_provider(str(pkg_id), provider)
+        await db.orders.update_one(
+            {"_id": order["_id"]},
+            {"$set": {"marketplace_push": {"at": datetime.now(timezone.utc).isoformat(), "ok": True, "reason": "cargo"}}},
+        )
+        return {"ok": True, "channel": "trendyol", "response": raw}
+    except Exception as e:
+        logger.exception("trendyol cargo push failed")
+        return {"ok": False, "channel": "trendyol", "error": str(getattr(e, "detail", e))}
+    finally:
+        await client.close()
+
+
+async def _push_order_cargo_to_marketplace(order: dict) -> Optional[Dict[str, Any]]:
+    channel = str(order.get("channel") or "")
+    if channel == "shopphp":
+        log = await _push_order_to_shopphp(order, reason="cargo")
+        if not log:
+            return {"ok": False, "simulated": True, "channel": "shopphp"}
+        return {"ok": bool(log.get("ok")), "channel": "shopphp", "error": log.get("error")}
+    if channel == "trendyol":
+        return await _push_trendyol_cargo(order)
     if channel in cargo_label.MARKETPLACE_CHANNELS:
         return {"ok": False, "simulated": True, "channel": channel}
     return None

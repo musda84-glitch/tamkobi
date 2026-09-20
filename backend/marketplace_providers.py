@@ -12,6 +12,18 @@ TY_STATUS = {"Created": "pending", "Picking": "approved", "Invoiced": "approved"
              "Cancelled": "cancelled", "UnDelivered": "returned", "Returned": "returned", "UnSupplied": "cancelled", "UnPacked": "pending"}
 TY_CARRIER = {"Yurtiçi Kargo Marketplace": "yurtici", "Aras Kargo Marketplace": "aras", "MNG Kargo Marketplace": "mng", "PTT Kargo Marketplace": "ptt", "Sürat Kargo Marketplace": "surat",
               "Trendyol Express Marketplace": "trendyolexpress", "Horoz Lojistik Marketplace": "horoz", "UPS Kargo Marketplace": "ups", "CEVA Marketplace": "ceva", "Kolay Gelsin Marketplace": "kolaygelsin"}
+TY_CARGO_PROVIDER = {code: name for name, code in TY_CARRIER.items()}
+TY_CARGO_PROVIDER["trendyol_express"] = "Trendyol Express Marketplace"
+
+
+def ty_cargo_provider_name(code: Optional[str]) -> Optional[str]:
+    """Kargo kodunu Trendyol'un cargoProvider adına çevirir (tersi de kabul)."""
+    if not code:
+        return None
+    raw = str(code).strip()
+    if raw in TY_CARRIER:
+        return raw
+    return TY_CARGO_PROVIDER.get(raw.lower().replace(" ", "_"))
 
 
 def has_live_credentials(cfg: dict) -> bool:
@@ -102,6 +114,14 @@ class TrendyolClient:
         if invoice_number:
             body["params"]["invoiceNumber"] = invoice_number
         return await self._call("PUT", f"/integration/order/sellers/{self.seller_id}/shipment-packages/{package_id}", json=body)
+
+    async def update_cargo_provider(self, package_id: str, cargo_provider: str) -> Any:
+        """Pazaryeri paketinin kargo firmasını değiştirir."""
+        return await self._call(
+            "PUT",
+            f"/integration/order/sellers/{self.seller_id}/shipment-packages/{package_id}",
+            json={"cargoProvider": cargo_provider},
+        )
 
     async def common_label(self, cargo_tracking_number: str) -> Any:
         """Pazaryerinin oluşturduğu kargo etiketi (PDF / URL)."""
