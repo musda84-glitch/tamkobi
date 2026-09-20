@@ -35,6 +35,7 @@ import {
   projectTrackingPayload,
   quoteListSubtitle,
   quoteListTitle,
+  quoteStatusTone,
   trackingAbsoluteLink,
   trackingBadgeLabel,
   trackingShareMessage,
@@ -120,12 +121,13 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         title: quoteListTitle(r),
         subtitle: quoteListSubtitle(r),
         right: fmtMoney(r.grand_total),
+        quote: r,
         project: undefined as ProjectDoc | undefined,
       }));
     }
     if (kind === "project") {
       const list = s ? projects.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : projects;
-      return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", project: r }));
+      return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, project: r }));
     }
     const list = s ? surveys.filter((r) => [r.survey_number, r.contact_name, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : surveys;
     return list.slice(0, 80).map((r) => ({
@@ -133,6 +135,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       title: r.survey_number || "Keşif",
       subtitle: `${r.contact_name || "—"} · ${r.address || ""} · ${statusTr(r.status)} · ${fmtDate(r.survey_date)}`,
       right: "",
+      quote: undefined as QuoteDoc | undefined,
       project: undefined as ProjectDoc | undefined,
     }));
   }, [kind, q, quotes, projects, surveys]);
@@ -162,7 +165,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         <ListRow
           key={r.id}
           testID={`${kind}-row-${r.id}`}
-          title={r.title}
+          title={r.quote ? <QuoteListHeading quote={r.quote} /> : r.title}
           subtitle={r.subtitle}
           right={r.right || undefined}
           onPress={() => go(meta.goDetail, { id: r.id })}
@@ -190,6 +193,20 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         onError={setError}
       />
     </Screen>
+  );
+}
+
+function QuoteListHeading({ quote }: { quote: Pick<QuoteDoc, "contact_name" | "status" | "valid_until"> }) {
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+      <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }} numberOfLines={1}>
+        {quote.contact_name || "—"}
+      </Text>
+      <View testID="quote-status-badge">
+        <Badge label={statusTr(quote.status)} tone={quoteStatusTone(quote.status)} />
+      </View>
+      <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }}>{fmtDate(quote.valid_until)}</Text>
+    </View>
   );
 }
 

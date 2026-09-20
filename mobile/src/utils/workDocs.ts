@@ -1,6 +1,5 @@
 import { normalizeApiBase } from "../api/url";
 import { coordValue } from "./geo";
-import { statusTr } from "./labels";
 import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
@@ -454,9 +453,20 @@ export function trackingShareMessage(
   return `Sayın ${who}, ${label} projenizin güncel durumunu bu linkten takip edebilirsiniz: ${link}`;
 }
 
-/** Liste: cari + durum üstte, teklif no altta (eskiden tersiydi). */
-export function quoteListTitle(quote: Pick<QuoteDoc, "contact_name" | "status" | "valid_until">): string {
-  return [quote.contact_name || "—", statusTr(quote.status), fmtDate(quote.valid_until)].join(" · ");
+/** Liste: cari + geçerlilik üstte; durum ayrı renkli rozet. */
+export function quoteListTitle(quote: Pick<QuoteDoc, "contact_name" | "valid_until">): string {
+  return [quote.contact_name || "—", fmtDate(quote.valid_until)].join(" · ");
+}
+
+export type QuoteStatusTone = "slate" | "green" | "red" | "amber";
+
+/** Gönderildi amber, kabul yeşil, red kırmızı, taslak gri. */
+export function quoteStatusTone(status?: string | null): QuoteStatusTone {
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "sent") return "amber";
+  if (key === "accepted") return "green";
+  if (key === "rejected") return "red";
+  return "slate";
 }
 
 export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title">): string {
