@@ -459,23 +459,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         </>
       ) : null}
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
-      {kind !== "quote" ? <Field label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
-      {kind !== "quote" ? (
-        <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
-      ) : null}
-
-      {kind !== "quote" ? (
-        <ImageUploader
-          entity={kind}
-          entityId={docId}
-          images={photos}
-          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
-          editable={canEdit}
-          label={kind === "survey" ? "Keşif fotoğrafları" : "Proje fotoğrafları"}
-          hint="Yüklenen fotoğraflar web’deki keşif / proje kartında da görünür."
-          testID="work-photos"
-        />
-      ) : null}
 
       {!isNew ? (
         <>
@@ -502,7 +485,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               paddingHorizontal: 6,
             }}
           >
-            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
             {canEdit ? (
               <Pressable
                 onPress={() => setItems((rows) => [...rows, emptyItem()])}
@@ -589,9 +572,26 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         </Card>
       ) : null}
 
+      {kind !== "quote" ? <Field dense label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
+      {kind !== "quote" ? (
+        <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
+      ) : null}
+      {kind !== "quote" ? (
+        <ImageUploader
+          entity={kind}
+          entityId={docId}
+          images={photos}
+          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          editable={canEdit}
+          label={kind === "survey" ? "Keşif fotoğrafları" : "Proje fotoğrafları"}
+          hint="Yüklenen fotoğraflar web’deki keşif / proje kartında da görünür."
+          testID="work-photos"
+        />
+      ) : null}
+
       <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       {isNew || kind !== "quote" ? (
-        <PrimaryButton title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
+        <PrimaryButton title={busy ? "Kaydediliyor…" : "Kaydet"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
       ) : null}
 
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
