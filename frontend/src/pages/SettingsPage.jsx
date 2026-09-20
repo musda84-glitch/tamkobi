@@ -296,7 +296,7 @@ const UnitsCategories = ({ companyId }) => {
   useEffect(() => { load(); }, [load]);
   const call = async (fn, ok) => { try { await fn(); toast.success(ok); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   return (<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <UcBox title="Birimler" sub="Adet, Kg, Mt… Stok kartında listelenir; kullanılan birim silinemez, yeniden adlandırılabilir." items={units} base="/products/units" testId="units-box" companyId={companyId} call={call} />
+    <UcBox title="Birimler" sub="Adet, Kg, Mt… Stok kartı birim alanından çekilir; kartta yazılan yeni birim buraya da eklenir. Kullanılan birim silinemez, yeniden adlandırılabilir." items={units} base="/products/units" testId="units-box" companyId={companyId} call={call} />
     <UcBox title="Kategoriler" sub="Stok kartından girilen kategoriler otomatik kaydedilir; burada yönetin." items={cats} base="/products/categories" testId="categories-box" companyId={companyId} call={call} />
   </div>);
 };
