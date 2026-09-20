@@ -467,23 +467,33 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {kind !== "project" ? (
         <Card>
-          <Row style={{ alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ fontWeight: "800", color: colors.text }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
+          <Row
+            style={{
+              alignItems: "center",
+              justifyContent: "space-between",
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 12,
+              backgroundColor: "#fff",
+              minHeight: 30,
+              paddingHorizontal: 6,
+            }}
+          >
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>{kind === "survey" ? "Ölçüler" : "Kalemler"}</Text>
             {canEdit ? (
               <Pressable
                 onPress={() => setItems((rows) => [...rows, emptyItem()])}
                 testID="q-add-item-btn"
                 accessibilityLabel="Kalem ekle"
                 style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
-                  backgroundColor: colors.indigo50,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
-                <Ionicons name="add-circle" size={26} color={colors.indigo} />
+                <Ionicons name="add-circle" size={22} color={colors.indigo} />
               </Pressable>
             ) : null}
           </Row>
