@@ -9705,24 +9705,24 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/employees")
 async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
-    employees = await db.employees.find({"company_id": company_id}).to_list(2000)
+    employees = await db.employees.find({"company_id": company_id}).to_list(100)
     month = datetime.now(timezone.utc).strftime("%Y-%m")
-    if not employees:
+    ids = [e["_id"] for e in employees]
+    if not ids:
         return []
-    # Şirket bazlı çek: employee_id $in MySQL JSON IN ile kaçırabiliyor; kart bakiyesi 0 kalıyordu.
-    payrolls = await db.payrolls.find({"company_id": company_id}).to_list(8000)
-    bonuses = await db.bonus_payments.find({"company_id": company_id}).to_list(8000)
-    expenses = await db.expenses.find({"company_id": company_id}).to_list(12000)
+    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}}).to_list(4000)
+    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}}).to_list(4000)
+    expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
     pmap, bmap, emap = {}, {}, {}
     for p in payrolls:
-        pmap.setdefault(str(p.get("employee_id") or ""), []).append(p)
+        pmap.setdefault(p.get("employee_id"), []).append(p)
     for b in bonuses:
-        bmap.setdefault(str(b.get("employee_id") or ""), []).append(b)
+        bmap.setdefault(b.get("employee_id"), []).append(b)
     for x in expenses:
-        emap.setdefault(str(x.get("employee_id") or ""), []).append(x)
+        emap.setdefault(x.get("employee_id"), []).append(x)
     out = []
     for e in employees:
-        eid = str(e.get("_id") or e.get("id") or "")
+        eid = e["_id"]
         bal = await _employee_receivable(e, pmap.get(eid) or [], bmap.get(eid) or [], month, expenses=emap.get(eid) or [])
         doc = clean_doc(e)
         doc["balance"] = bal
@@ -9762,10 +9762,7 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     emp_id = emp.get("_id") or emp.get("id")
     if expenses is None:
         expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
-    unpaid_payroll = round(sum(
-        _emp_num(p.get("final_payable") if p.get("final_payable") not in (None, "") else None, _emp_num(p.get("net_salary")))
-        for p in payrolls if p.get("status") != "paid"
-    ), 2)
+    unpaid_payroll = round(sum(_emp_num(p.get("final_payable"), _emp_num(p.get("net_salary"))) for p in payrolls if p.get("status") != "paid"), 2)
     unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
     meal = round(_emp_num(emp.get("meal_allowance")), 2)
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
@@ -10144,28 +10141,17 @@ async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period
 @api_router.post("/personnel/generate-payroll")
 async def generate_payroll(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
-    employees = await db.employees.find({"company_id": company_id}).to_list(2000)
-    employees = [e for e in employees if (e.get("status") or "active") != "terminated"]
-    only_id = str(req.get("employee_id") or "").strip()
-    if only_id:
-        employees = [e for e in employees if str(e.get("_id") or e.get("id") or "") == only_id]
-        if not employees:
-            raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    period = req.get("period", datetime.now().strftime("%Y-%m"))
+    employees = await db.employees.find({"company_id": company_id, "status": "active"}).to_list(100)
     company = await db.companies.find_one({"_id": company_id}) or {}
 
     generated = []
     for emp in employees:
-        emp_id = str(emp.get("_id") or emp.get("id") or "")
-        if not emp_id:
-            continue
         net = float(emp.get("salary", 30000.0) or 0)
         gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
         second = float(emp.get("second_salary") or 0)
         ot = await attendance.overtime_pay_for_period(company, emp, period)
-        existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": emp_id, "period": period})
-        if not existing and emp.get("_id") != emp_id:
-            existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": emp.get("_id"), "period": period})
+        existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": str(emp["_id"]), "period": period})
         if existing and existing.get("status") == "paid":
             continue
         bonus = float((existing or {}).get("bonus") or 0)
@@ -10174,7 +10160,7 @@ async def generate_payroll(req: Dict[str, Any]):
         payroll_doc = {
             "_id": existing["_id"] if existing else f"pay_{uuid.uuid4().hex[:8]}",
             "company_id": company_id,
-            "employee_id": emp_id,
+            "employee_id": str(emp.get("_id", emp.get("id"))),
             "employee_name": emp.get("full_name"),
             "period": period,
             "net_salary": net,
