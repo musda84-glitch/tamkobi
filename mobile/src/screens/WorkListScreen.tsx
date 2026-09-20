@@ -1,14 +1,46 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
-import { get } from "../api/client";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Linking, Platform, Pressable, Share, Text, View } from "react-native";
+import { get, post, put } from "../api/client";
+import { normalizeApiBase } from "../api/url";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { B2BSheet } from "../components/b2b/B2BSheet";
+import { Chip } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
-import { newButtonLabel, projectCardBits, type ProjectDoc, type QuoteDoc, type SurveyDoc, type WorkKind } from "../utils/workDocs";
+import type { Employee, ProjectTask } from "../utils/personnel";
+import {
+  approvalChannels,
+  approvalPublicOrigin,
+  channelResultLabel,
+  defaultApprovalFlags,
+  validateApprovalSend,
+} from "../utils/quoteApproval";
+import {
+  PROJECT_STATUSES,
+  applyTaskAssignee,
+  assigneeSelectGroups,
+  cleanProjectTasks,
+  emptyProjectTask,
+  newButtonLabel,
+  projectCardBits,
+  projectTaskRows,
+  projectTaskSummary,
+  projectTrackingPayload,
+  trackingAbsoluteLink,
+  trackingBadgeLabel,
+  trackingShareMessage,
+  type ProjectDoc,
+  type ProjectTrackingResult,
+  type QuoteDoc,
+  type SurveyDoc,
+  type WorkKind,
+} from "../utils/workDocs";
 
 const META: Record<WorkKind, { path: string; perm: string; empty: string; icon: "document-text-outline" | "briefcase-outline" | "construct-outline"; goNew: string; goDetail: string }> = {
   quote: { path: "/quotes", perm: "/quotes", empty: "Teklif yok", icon: "document-text-outline", goNew: "QuoteNew", goDetail: "QuoteDetail" },
@@ -18,7 +50,7 @@ const META: Record<WorkKind, { path: string; perm: string; empty: string; icon: 
 
 export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const meta = META[kind];
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, baseUrl } = useAuth();
   const canEdit = can(meta.perm, "edit");
   const canExp = can("/expenses", "edit");
   const canQuote = can("/quotes", "edit");
@@ -28,6 +60,9 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
+  const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -52,6 +87,27 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const patchProject = useCallback((id: string, patch: Partial<ProjectDoc>) => {
+    setProjects((rows) => rows.map((p) => (idOf(p) === id ? { ...p, ...patch } : p)));
+    setTeamProject((cur) => (cur && idOf(cur) === id ? { ...cur, ...patch } : cur));
+    setTrackProject((cur) => (cur && idOf(cur) === id ? { ...cur, ...patch } : cur));
+  }, []);
+
+  const setProjectStatus = async (id: string, status: string) => {
+    const current = projects.find((p) => idOf(p) === id);
+    if (!current || current.status === status || statusBusyId) return;
+    setStatusBusyId(id);
+    try {
+      await put(client, `/projects/${id}`, { status });
+      patchProject(id, { status });
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Aşama güncellenemedi."));
+    } finally {
+      setStatusBusyId(null);
+    }
+  };
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (kind === "quote") {
@@ -69,13 +125,13 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", project: r }));
     }
     const list = s ? surveys.filter((r) => [r.survey_number, r.contact_name, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : surveys;
-      return list.slice(0, 80).map((r) => ({
-        id: idOf(r),
-        title: r.survey_number || "Keşif",
-        subtitle: `${r.contact_name || "—"} · ${r.address || ""} · ${statusTr(r.status)} · ${fmtDate(r.survey_date)}`,
-        right: "",
-        project: undefined as ProjectDoc | undefined,
-      }));
+    return list.slice(0, 80).map((r) => ({
+      id: idOf(r),
+      title: r.survey_number || "Keşif",
+      subtitle: `${r.contact_name || "—"} · ${r.address || ""} · ${statusTr(r.status)} · ${fmtDate(r.survey_date)}`,
+      right: "",
+      project: undefined as ProjectDoc | undefined,
+    }));
   }, [kind, q, quotes, projects, surveys]);
 
   return (
@@ -91,8 +147,13 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         <ProjectCard
           key={r.id}
           project={r.project!}
+          canEdit={canEdit}
           canExp={canExp}
           canQuote={canQuote}
+          statusBusy={statusBusyId === r.id}
+          onStatus={(status) => setProjectStatus(r.id, status)}
+          onTeam={() => setTeamProject(r.project!)}
+          onTrack={() => setTrackProject(r.project!)}
         />
       )) : filtered.map((r) => (
         <ListRow
@@ -104,6 +165,27 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           onPress={() => go(meta.goDetail, { id: r.id })}
         />
       ))}
+      <ProjectTeamSheet
+        visible={!!teamProject}
+        project={teamProject}
+        client={client}
+        companyId={companyId}
+        onClose={() => setTeamProject(null)}
+        onSaved={(id, tasks) => {
+          patchProject(id, { tasks });
+          setTeamProject(null);
+        }}
+        onError={setError}
+      />
+      <ProjectTrackSheet
+        visible={!!trackProject}
+        project={trackProject}
+        client={client}
+        baseUrl={baseUrl}
+        onClose={() => setTrackProject(null)}
+        onMinted={(id, tracking) => patchProject(id, { tracking })}
+        onError={setError}
+      />
     </Screen>
   );
 }
@@ -117,24 +199,75 @@ function Metric({ label, value, testID, tone }: { label: string; value: string; 
   );
 }
 
+function ActionBtn({
+  title,
+  onPress,
+  testID,
+  bg,
+  border,
+  color,
+}: {
+  title: string;
+  onPress: () => void;
+  testID: string;
+  bg: string;
+  border?: string;
+  color: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={{
+        flex: 1,
+        minHeight: 40,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: bg,
+        borderWidth: border ? 1 : 0,
+        borderColor: border,
+        paddingHorizontal: 8,
+      }}
+    >
+      <Text style={{ fontWeight: "800", color, fontSize: 12 }}>{title}</Text>
+    </Pressable>
+  );
+}
+
 function ProjectCard({
   project,
+  canEdit,
   canExp,
   canQuote,
+  statusBusy,
+  onStatus,
+  onTeam,
+  onTrack,
 }: {
   project: ProjectDoc;
+  canEdit: boolean;
   canExp: boolean;
   canQuote: boolean;
+  statusBusy: boolean;
+  onStatus: (status: string) => void;
+  onTeam: () => void;
+  onTrack: () => void;
 }) {
   const id = idOf(project);
   const bits = projectCardBits(project);
+  const taskBits = projectTaskSummary(project.tasks);
+  const trackLabel = trackingBadgeLabel(project.tracking);
   return (
     <Card testID={`project-row-${id}`}>
       <Pressable onPress={() => go("ProjectDetail", { id })}>
         {bits.codes ? <Muted>{bits.codes}</Muted> : null}
         <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <Text style={{ flex: 1, fontWeight: "800", color: colors.text, fontSize: 15 }} numberOfLines={2}>{bits.name}</Text>
-          <Badge label={statusTr(project.status)} tone={project.status === "completed" ? "green" : project.status === "on_hold" ? "amber" : "slate"} />
+          <Badge
+            label={statusTr(project.status)}
+            tone={project.status === "completed" ? "green" : project.status === "on_hold" ? "amber" : project.status === "active" ? "indigo" : "slate"}
+          />
         </Row>
         <Muted>{bits.contact}</Muted>
         <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
@@ -143,34 +276,342 @@ function ProjectCard({
           <Metric label="Faturalanan" value={fmtMoney(bits.invoiced)} testID={`project-invoiced-${id}`} tone="green" />
         </Row>
         {bits.expense > 0 ? <Muted>Masraf {fmtMoney(bits.expense)}</Muted> : null}
+        {taskBits || trackLabel ? (
+          <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+            {taskBits ? (
+              <View testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
+              </View>
+            ) : null}
+            {trackLabel ? (
+              <View testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
+                <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
+              </View>
+            ) : null}
+          </Row>
+        ) : null}
       </Pressable>
-      {canExp || canQuote ? (
-        <Row style={{ flexWrap: "wrap", marginTop: 4 }}>
-          {canExp ? (
-            <Pressable
-              testID={`project-expense-${id}`}
-              onPress={() => go("ProjectDetail", { id, open_expense: "1" })}
-              style={{ flex: 1, minHeight: 40, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.rose50, borderWidth: 1, borderColor: "#FECDD3" }}
-            >
-              <Text style={{ fontWeight: "800", color: "#9F1239", fontSize: 12 }}>Masraf Ekle</Text>
-            </Pressable>
-          ) : null}
-          {canQuote ? (
-            <Pressable
-              testID={`project-quote-${id}`}
-              onPress={() => go("QuoteNew", {
-                contact_id: project.contact_id || "",
-                contact_name: project.contact_name || "",
-                project_id: id,
-                title: `${bits.name} teklifi`,
-              })}
-              style={{ flex: 1, minHeight: 40, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.secondary }}
-            >
-              <Text style={{ fontWeight: "800", color: "#fff", fontSize: 12 }}>Teklif Oluştur</Text>
-            </Pressable>
-          ) : null}
+      {canEdit ? (
+        <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }} testID={`project-status-${id}`}>
+          {PROJECT_STATUSES.map((s) => (
+            <Chip
+              key={s.key}
+              compact
+              label={s.label}
+              active={(project.status || "planning") === s.key}
+              onPress={() => !statusBusy && onStatus(s.key)}
+              testID={`project-status-${id}-${s.key}`}
+            />
+          ))}
         </Row>
       ) : null}
+      {canExp || canEdit || canQuote ? (
+        <View style={{ gap: 6, marginTop: 8 }}>
+          {canExp || canEdit ? (
+            <Row style={{ flexWrap: "wrap" }}>
+              {canExp ? (
+                <ActionBtn
+                  title="Masraf Ekle"
+                  testID={`project-expense-${id}`}
+                  onPress={() => go("ProjectDetail", { id, open_expense: "1" })}
+                  bg={colors.rose50}
+                  border="#FECDD3"
+                  color="#9F1239"
+                />
+              ) : null}
+              {canEdit ? (
+                <ActionBtn
+                  title="Görev Ata"
+                  testID={`project-team-${id}`}
+                  onPress={onTeam}
+                  bg={colors.indigo50}
+                  border="#C7D2FE"
+                  color="#3730A3"
+                />
+              ) : null}
+            </Row>
+          ) : null}
+          {canEdit || canQuote ? (
+            <Row style={{ flexWrap: "wrap" }}>
+              {canEdit ? (
+                <ActionBtn
+                  title="Takip Linki"
+                  testID={`project-track-${id}`}
+                  onPress={onTrack}
+                  bg={colors.emerald50}
+                  border="#A7F3D0"
+                  color="#047857"
+                />
+              ) : null}
+              {canQuote ? (
+                <ActionBtn
+                  title="Teklif Oluştur"
+                  testID={`project-quote-${id}`}
+                  onPress={() => go("QuoteNew", {
+                    contact_id: project.contact_id || "",
+                    contact_name: project.contact_name || "",
+                    project_id: id,
+                    title: `${bits.name} teklifi`,
+                  })}
+                  bg={colors.secondary}
+                  color="#fff"
+                />
+              ) : null}
+            </Row>
+          ) : null}
+        </View>
+      ) : null}
     </Card>
+  );
+}
+
+function ProjectTeamSheet({
+  visible,
+  project,
+  client,
+  companyId,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  visible: boolean;
+  project: ProjectDoc | null;
+  client: { baseUrl: string; token: string | null };
+  companyId: string;
+  onClose: () => void;
+  onSaved: (id: string, tasks: ProjectTask[]) => void;
+  onError: (msg: string) => void;
+}) {
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [tasks, setTasks] = useState<ProjectTask[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible || !project) return;
+    let cancelled = false;
+    setTasks(projectTaskRows(project.tasks));
+    setLocalError(null);
+    setLoading(true);
+    (async () => {
+      try {
+        const emps = await get<Employee[]>(client, "/personnel/employees", { company_id: companyId });
+        if (!cancelled) setEmployees(emps || []);
+      } catch (err) {
+        if (!cancelled) {
+          setEmployees([]);
+          setLocalError(apiErrorMessage(err, "Personel listesi yüklenemedi."));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, project, client, companyId]);
+
+  const save = async () => {
+    if (!project) return;
+    const id = idOf(project);
+    const cleaned = cleanProjectTasks(tasks);
+    setBusy(true);
+    try {
+      await put(client, `/projects/${id}`, { tasks: cleaned });
+      onSaved(id, cleaned);
+    } catch (err) {
+      onError(apiErrorMessage(err, "Görevler kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <B2BSheet
+      visible={visible}
+      title="Görev ata"
+      subtitle={project ? `${project.name || "Proje"}${project.project_number ? ` · ${project.project_number}` : ""}` : undefined}
+      onClose={onClose}
+      testID="project-team-sheet"
+    >
+      <ErrorBanner message={localError} />
+      {loading ? <Muted>Personel yükleniyor…</Muted> : null}
+      {tasks.map((t, i) => (
+        <View
+          key={t.id || `task-${i}`}
+          testID={`project-task-row-${i}`}
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: colors.slate50, gap: 8 }}
+        >
+          <Row style={{ alignItems: "center", gap: 8 }}>
+            <Pressable
+              testID={`project-task-done-${i}`}
+              onPress={() => setTasks((rows) => rows.map((x, j) => (j === i ? { ...x, done: !x.done } : x)))}
+              hitSlop={8}
+            >
+              <Ionicons name={t.done ? "checkbox" : "square-outline"} size={22} color={t.done ? colors.primary : colors.muted} />
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Field
+                dense
+                label="Görev"
+                testID={`project-task-title-${i}`}
+                value={t.title || ""}
+                onChangeText={(title) => setTasks((rows) => rows.map((x, j) => (j === i ? { ...x, title } : x)))}
+                placeholder="Keşif, montaj…"
+              />
+            </View>
+            <Pressable
+              testID={`project-task-del-${i}`}
+              onPress={() => setTasks((rows) => (rows.length > 1 ? rows.filter((_, j) => j !== i) : [emptyProjectTask()]))}
+              hitSlop={8}
+            >
+              <Ionicons name="trash-outline" size={18} color={colors.danger} />
+            </Pressable>
+          </Row>
+          <GroupedSelect
+            dense
+            label="Personel"
+            testID={`project-task-assignee-${i}`}
+            value={t.assignee_id || ""}
+            onChange={(v) => setTasks((rows) => rows.map((x, j) => (j === i ? applyTaskAssignee(x, employees, v) : x)))}
+            groups={assigneeSelectGroups(employees)}
+            emptyLabel="Personel seçin"
+          />
+        </View>
+      ))}
+      <Pressable
+        testID="project-task-add"
+        onPress={() => setTasks((rows) => [...rows, emptyProjectTask()])}
+        style={{ minHeight: 40, borderRadius: 10, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#C7D2FE", backgroundColor: colors.indigo50, marginBottom: 10 }}
+      >
+        <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 13 }}>Görev ekle</Text>
+      </Pressable>
+      <PrimaryButton title="Dağılımı Kaydet" testID="project-team-save" color={colors.indigo} loading={busy} onPress={save} />
+    </B2BSheet>
+  );
+}
+
+function shareOrCopy(value: string) {
+  if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+    navigator.clipboard.writeText(value).catch(() => Share.share({ message: value }));
+    return;
+  }
+  Share.share({ message: value }).catch(() => null);
+}
+
+function ProjectTrackSheet({
+  visible,
+  project,
+  client,
+  baseUrl,
+  onClose,
+  onMinted,
+  onError,
+}: {
+  visible: boolean;
+  project: ProjectDoc | null;
+  client: { baseUrl: string; token: string | null };
+  baseUrl: string;
+  onClose: () => void;
+  onMinted: (id: string, tracking: ProjectDoc["tracking"]) => void;
+  onError: (msg: string) => void;
+}) {
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [flags, setFlags] = useState(defaultApprovalFlags("", ""));
+  const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [result, setResult] = useState<ProjectTrackingResult | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    setPhone("");
+    setEmail("");
+    setFlags(defaultApprovalFlags("", ""));
+    setLocalError(null);
+    setResult(null);
+  }, [visible, project]);
+
+  const origin = approvalPublicOrigin(normalizeApiBase(baseUrl), project?.tracking?.link);
+  const link = trackingAbsoluteLink(project?.tracking, result, baseUrl);
+
+  const send = async (channels: string[]) => {
+    if (!project) return;
+    if (channels.length) {
+      const invalid = validateApprovalSend(channels, phone, email);
+      if (invalid) { setLocalError(invalid); return; }
+    }
+    const id = idOf(project);
+    setBusy(true);
+    try {
+      const res = await post<ProjectTrackingResult>(client, `/projects/${id}/send-tracking`, projectTrackingPayload(channels, phone, email, origin));
+      setResult(res);
+      onMinted(id, {
+        ...(project.tracking || {}),
+        token: res.token,
+        link: res.link,
+        sent_count: (project.tracking?.sent_count || 0) + (channels.length ? 1 : 0),
+      });
+      setLocalError(null);
+    } catch (err) {
+      onError(apiErrorMessage(err, "Takip linki oluşturulamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <B2BSheet
+      visible={visible}
+      title="Takip linki"
+      subtitle={project ? `${project.contact_name || "Müşteri"} · giriş gerektirmez` : undefined}
+      onClose={onClose}
+      testID="project-track-sheet"
+    >
+      <ErrorBanner message={localError} />
+      <Muted>SMS, WhatsApp veya e-posta ile gönderin; ya da yalnız link üretin.</Muted>
+      <Row style={{ flexWrap: "wrap", gap: 6, marginVertical: 8 }}>
+        {(["sms", "email", "whatsapp"] as const).map((k) => (
+          <Chip
+            key={k}
+            compact
+            label={k === "sms" ? "SMS" : k === "email" ? "E-posta" : "WhatsApp"}
+            active={!!flags[k]}
+            onPress={() => setFlags((f) => ({ ...f, [k]: !f[k] }))}
+            testID={`track-ch-${k}`}
+          />
+        ))}
+      </Row>
+      <Field dense label="Telefon" testID="track-phone" value={phone} onChangeText={setPhone} placeholder="05XX…" keyboardType="phone-pad" />
+      <Field dense label="E-posta" testID="track-email" value={email} onChangeText={setEmail} placeholder="musteri@firma.com" autoCapitalize="none" keyboardType="email-address" />
+      {link ? (
+        <View testID="track-result" style={{ backgroundColor: colors.slate50, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: 10, marginVertical: 8, gap: 6 }}>
+          <Muted>Takip linki</Muted>
+          <Text testID="track-link" selectable style={{ fontWeight: "700", color: colors.primaryHover, fontSize: 12 }}>{link}</Text>
+          <Row style={{ gap: 8 }}>
+            <ActionBtn title="Paylaş" testID="track-share" onPress={() => shareOrCopy(trackingShareMessage(project || {}, link))} bg={colors.emerald50} border="#A7F3D0" color="#047857" />
+            <ActionBtn title="Aç" testID="track-preview" onPress={() => Linking.openURL(link).catch(() => null)} bg="#fff" border={colors.border} color={colors.text} />
+          </Row>
+          {result?.results
+            ? Object.entries(result.results).map(([k, v]) => (
+              <Muted key={k}>{k}: {channelResultLabel(v.status)}{v.detail ? ` · ${v.detail}` : ""}</Muted>
+            ))
+            : null}
+        </View>
+      ) : null}
+      <Row style={{ gap: 8, marginTop: 8 }}>
+        <View style={{ flex: 1 }}>
+          <PrimaryButton title="Sadece link üret" testID="track-mint" color={colors.slate800} loading={busy} onPress={() => send([])} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <PrimaryButton
+            title={(project?.tracking?.sent_count || 0) > 0 ? "Tekrar Gönder" : "Gönder"}
+            testID="track-send"
+            color={colors.primary}
+            loading={busy}
+            onPress={() => send(approvalChannels(flags))}
+          />
+        </View>
+      </Row>
+    </B2BSheet>
   );
 }

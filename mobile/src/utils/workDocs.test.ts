@@ -1,12 +1,22 @@
 import {
+  applyTaskAssignee,
+  assigneeSelectGroups,
+  cleanProjectTasks,
   emptyItem,
+  emptyProjectTask,
   namedItems,
   removeWorkItem,
   newButtonLabel,
   projectCardBits,
   projectPayload,
+  projectTaskRows,
+  projectTaskSummary,
+  projectTrackingPayload,
   quotePayload,
   surveyPayload,
+  trackingAbsoluteLink,
+  trackingBadgeLabel,
+  trackingShareMessage,
   validateProjectName,
   validateQuoteItems,
   workItemFromProduct,
@@ -145,5 +155,46 @@ describe("workDocs", () => {
     expect(itemStripe(0).backgroundColor).toBe("#F1F5F9");
     expect(itemStripe(1).backgroundColor).toBe("#EEF2FF");
     expect(itemStripe(2).backgroundColor).not.toBe(itemStripe(1).backgroundColor);
+  });
+
+  it("summarizes project tasks and assignee options like the web card", () => {
+    expect(projectTaskSummary([])).toBeNull();
+    expect(projectTaskSummary([
+      { id: "t1", title: "Keşif", done: true, assignee_name: "Ali" },
+      { id: "t2", title: "Montaj", assignee_id: "e2" },
+      { id: "t3", title: "  " },
+    ])).toEqual({ done: 1, total: 2, assigned: 2, label: "1/2 görev · 2 atanmış" });
+    const rows = projectTaskRows([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("");
+    expect(cleanProjectTasks([{ ...emptyProjectTask("t1"), title: " Keşif " }, emptyProjectTask("t2")])).toEqual([
+      { id: "t1", title: "Keşif", done: false, assignee_id: null, assignee_name: null },
+    ]);
+    expect(applyTaskAssignee(rows[0], [{ id: "e1", full_name: "Ayşe" }], "e1")).toMatchObject({
+      assignee_id: "e1",
+      assignee_name: "Ayşe",
+    });
+    expect(assigneeSelectGroups([{ id: "e1", full_name: "Ayşe", position: "Usta" }])[0].options[0]).toEqual({
+      value: "e1",
+      label: "Ayşe · Usta",
+    });
+  });
+
+  it("builds a public tracking link and share text", () => {
+    expect(trackingBadgeLabel({})).toBeNull();
+    expect(trackingBadgeLabel({ token: "abc" })).toBe("Takip linki hazır");
+    expect(trackingBadgeLabel({ token: "abc", sent_count: 1 })).toBe("Takip linki gönderildi");
+    expect(trackingBadgeLabel({ token: "abc", sent_count: 1, view_count: 3 })).toBe("Takip · 3 görüntüleme");
+    expect(trackingAbsoluteLink({ link: "/proje/tok" }, null, "https://tamkobi.com/api")).toBe("https://tamkobi.com/proje/tok");
+    expect(trackingAbsoluteLink({ token: "tok" }, { link: "https://ornek.tamkobi.com/proje/tok" }, "https://tamkobi.com")).toBe("https://ornek.tamkobi.com/proje/tok");
+    expect(projectTrackingPayload(["whatsapp"], " 0555 ", "", "https://tamkobi.com/")).toEqual({
+      channels: ["whatsapp"],
+      phone: "0555",
+      email: "",
+      base_url: "https://tamkobi.com",
+    });
+    expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa", contact_name: "Mustafa" }, "https://x/proje/t"))
+      .toContain("Mustafa");
+    expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa" }, "https://x/proje/t")).toContain("https://x/proje/t");
   });
 });

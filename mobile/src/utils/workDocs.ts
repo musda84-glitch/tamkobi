@@ -1,6 +1,9 @@
+import { normalizeApiBase } from "../api/url";
 import { coordValue } from "./geo";
 import { idOf } from "./money";
+import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
+import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
 
@@ -73,6 +76,24 @@ export type ProjectDoc = {
   latitude?: number | null;
   longitude?: number | null;
   images?: string[];
+  tasks?: ProjectTask[];
+  tracking?: ProjectTracking;
+};
+
+export type ProjectTracking = {
+  token?: string;
+  link?: string;
+  sent_count?: number;
+  view_count?: number;
+  last_viewed_at?: string;
+};
+
+export type ProjectTrackingResult = {
+  status?: string;
+  link?: string;
+  token?: string;
+  message?: string;
+  results?: Record<string, { status?: string; detail?: string; wa_link?: string }>;
 };
 
 export type SurveyDoc = {
@@ -307,6 +328,98 @@ export function projectCardBits(p: ProjectDoc) {
     invoiced: Number(p.invoiced_total) || 0,
     expense: Number(p.expense_total) || 0,
   };
+}
+
+export function projectTaskSummary(tasks?: ProjectTask[] | null) {
+  const rows = normalizeProjectTasks(tasks);
+  if (!rows.length) return null;
+  const assigned = rows.filter((t) => t.assignee_id || t.assignee_name).length;
+  const done = rows.filter((t) => t.done).length;
+  return {
+    done,
+    total: rows.length,
+    assigned,
+    label: `${done}/${rows.length} görev${assigned ? ` · ${assigned} atanmış` : ""}`,
+  };
+}
+
+export function emptyProjectTask(id?: string): ProjectTask {
+  return { id: id || newTaskId(), title: "", done: false, assignee_id: null, assignee_name: null };
+}
+
+export function projectTaskRows(tasks?: ProjectTask[] | null): ProjectTask[] {
+  const rows = normalizeProjectTasks(tasks);
+  return rows.length ? rows : [emptyProjectTask()];
+}
+
+export function cleanProjectTasks(tasks: ProjectTask[]): ProjectTask[] {
+  return tasks
+    .map((t) => ({
+      id: t.id,
+      title: (t.title || "").trim(),
+      done: !!t.done,
+      assignee_id: t.assignee_id || null,
+      assignee_name: t.assignee_name || null,
+    }))
+    .filter((t) => t.title);
+}
+
+export function applyTaskAssignee(
+  task: ProjectTask,
+  employees: Pick<Employee, "id" | "_id" | "full_name">[],
+  employeeId: string,
+): ProjectTask {
+  const emp = employees.find((e) => idOf(e) === employeeId);
+  return {
+    ...task,
+    assignee_id: employeeId || null,
+    assignee_name: emp?.full_name || null,
+  };
+}
+
+export function assigneeSelectGroups(employees: Pick<Employee, "id" | "_id" | "full_name" | "position">[]) {
+  return [{
+    label: "Personel",
+    options: (employees || []).map((e) => ({
+      value: idOf(e),
+      label: [e.full_name || "Personel", e.position].filter(Boolean).join(" · "),
+    })),
+  }];
+}
+
+export function trackingAbsoluteLink(
+  tracking?: Pick<ProjectTracking, "token" | "link"> | null,
+  minted?: Pick<ProjectTrackingResult, "token" | "link"> | null,
+  apiBase?: string,
+): string {
+  const raw = String(minted?.link || tracking?.link || "").trim();
+  const token = String(minted?.token || tracking?.token || "").trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const origin = approvalPublicOrigin(normalizeApiBase(apiBase), raw);
+  if (raw.startsWith("/")) return `${origin}${raw}`;
+  if (token) return `${origin}/proje/${token}`;
+  return "";
+}
+
+export function trackingBadgeLabel(tracking?: Pick<ProjectTracking, "token" | "sent_count" | "view_count"> | null): string | null {
+  if (!tracking?.token) return null;
+  const views = tracking.view_count || 0;
+  const sent = tracking.sent_count || 0;
+  if (sent) return views ? `Takip · ${views} görüntüleme` : "Takip linki gönderildi";
+  return "Takip linki hazır";
+}
+
+export function projectTrackingPayload(channels: string[], phone: string, email: string, baseUrl: string) {
+  return approvalPayload(channels, phone, email, baseUrl);
+}
+
+export function trackingShareMessage(
+  project: Pick<ProjectDoc, "name" | "project_number" | "contact_name">,
+  link: string,
+): string {
+  const who = project.contact_name || "müşterimiz";
+  const label = [project.project_number, project.name].filter(Boolean).join(" — ");
+  return `Sayın ${who}, ${label} projenizin güncel durumunu bu linkten takip edebilirsiniz: ${link}`;
 }
 
 export function newButtonLabel(kind: WorkKind): string {
