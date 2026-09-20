@@ -15,6 +15,8 @@ import {
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
+  quoteListSubtitle,
+  quoteListTitle,
   quotePayload,
   surveyPayload,
   trackingAbsoluteLink,
@@ -224,5 +226,11 @@ describe("workDocs", () => {
     expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa", contact_name: "Mustafa" }, "https://x/proje/t"))
       .toContain("Mustafa");
     expect(trackingShareMessage({ project_number: "PRJ-1", name: "Villa" }, "https://x/proje/t")).toContain("https://x/proje/t");
+  });
+
+  it("puts cari and status on top of the quote list, number underneath", () => {
+    expect(quoteListTitle({ contact_name: "Mustafa BAL", status: "accepted" })).toBe("Mustafa BAL · Kabul Edildi · —");
+    expect(quoteListSubtitle({ quote_number: "TKF-2026-0012" })).toBe("TKF-2026-0012");
+    expect(quoteListSubtitle({ title: "Villa teklifi" })).toBe("Villa teklifi");
   });
 });

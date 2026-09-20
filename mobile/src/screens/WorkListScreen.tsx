@@ -33,6 +33,8 @@ import {
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
+  quoteListSubtitle,
+  quoteListTitle,
   trackingAbsoluteLink,
   trackingBadgeLabel,
   trackingShareMessage,
@@ -115,8 +117,8 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       const list = s ? quotes.filter((r) => [r.quote_number, r.title, r.contact_name].some((v) => String(v || "").toLowerCase().includes(s))) : quotes;
       return list.slice(0, 80).map((r) => ({
         id: idOf(r),
-        title: r.quote_number || r.title || "Teklif",
-        subtitle: `${r.contact_name || "—"} · ${statusTr(r.status)} · ${fmtDate(r.valid_until)}`,
+        title: quoteListTitle(r),
+        subtitle: quoteListSubtitle(r),
         right: fmtMoney(r.grand_total),
         project: undefined as ProjectDoc | undefined,
       }));

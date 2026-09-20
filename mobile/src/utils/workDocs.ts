@@ -1,6 +1,7 @@
 import { normalizeApiBase } from "../api/url";
 import { coordValue } from "./geo";
-import { idOf } from "./money";
+import { statusTr } from "./labels";
+import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
@@ -451,6 +452,15 @@ export function trackingShareMessage(
   const who = project.contact_name || "müşterimiz";
   const label = [project.project_number, project.name].filter(Boolean).join(" — ");
   return `Sayın ${who}, ${label} projenizin güncel durumunu bu linkten takip edebilirsiniz: ${link}`;
+}
+
+/** Liste: cari + durum üstte, teklif no altta (eskiden tersiydi). */
+export function quoteListTitle(quote: Pick<QuoteDoc, "contact_name" | "status" | "valid_until">): string {
+  return [quote.contact_name || "—", statusTr(quote.status), fmtDate(quote.valid_until)].join(" · ");
+}
+
+export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title">): string {
+  return quote.quote_number || quote.title || "Teklif";
 }
 
 export function newButtonLabel(kind: WorkKind): string {
