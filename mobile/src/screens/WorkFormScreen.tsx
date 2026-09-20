@@ -429,8 +429,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 gap: 6,
               }}
             >
-              <Row style={{ alignItems: "center", gap: 8 }}>
-                <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
+              <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                <View style={{ width: 52, alignItems: "center", gap: 4 }}>
+                  <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
+                  {canEdit && i === items.length - 1 ? (
+                    <Pressable
+                      onPress={() => setItems((rows) => [...rows, emptyItem()])}
+                      testID="q-add-item-btn"
+                      style={{ paddingVertical: 2, paddingHorizontal: 4 }}
+                    >
+                      <Text style={{ fontSize: 10, fontWeight: "800", color: colors.indigo, textAlign: "center" }}>+ Kalem</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
                 <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                   <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
                   <Row style={{ alignItems: "flex-end", gap: 6 }}>
@@ -459,7 +470,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             </View>
             );
           })}
-          <PrimaryButton title="Kalem ekle" color={colors.indigo} testID="q-add-item-btn" onPress={() => setItems((rows) => [...rows, emptyItem()])} />
           {namedItems(items).length ? (
             <Row style={{ justifyContent: "space-between" }}>
               <Text style={{ fontWeight: "800" }}>Toplam (KDV Dahil)</Text>
