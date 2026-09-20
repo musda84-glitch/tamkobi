@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -480,8 +481,20 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         ))}
       </View>
 
-      <Field label="Düzenleme tarihi" testID="inv-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} placeholder="YYYY-MM-DD" />
-      <Field label="Vade tarihi" testID="inv-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} placeholder="YYYY-MM-DD" />
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 12,
+          backgroundColor: "#fff",
+          paddingHorizontal: 10,
+          paddingTop: 6,
+          paddingBottom: 2,
+        }}
+      >
+        <DateField label="Düzenleme tarihi" testID="inv-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} />
+        <DateField label="Vade tarihi" testID="inv-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} min={draft.issue_date} />
+      </View>
       <Muted>Para birimi</Muted>
       <Row style={{ flexWrap: "wrap" }}>
         {CURRENCIES.map((c) => (
