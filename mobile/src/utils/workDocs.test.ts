@@ -9,6 +9,7 @@ import {
   validateProjectName,
   validateQuoteItems,
   workItemFromProduct,
+  workItemImage,
   workItemLineGross,
   workItemTotals,
   hydrateWorkItem,
@@ -24,8 +25,9 @@ describe("workDocs", () => {
     expect(t.vat).toBe(20);
     expect(t.grandTotal).toBe(120);
     expect(workItemLineGross({ name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true })).toBe(120);
-    const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true });
+    const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true, thumbnail_url: "koltuk.jpg" });
     expect(fromCard.price_includes_vat).toBe(true);
+    expect(fromCard.image_url).toBe("koltuk.jpg");
     expect(workItemTotals([fromCard]).grandTotal).toBe(120);
     const saved = hydrateWorkItem({ name: "Koltuk", quantity: 1, unit_price: 100, unit_price_incl: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true });
     expect(saved.price_includes_vat).toBe(false);
@@ -100,6 +102,14 @@ describe("workDocs", () => {
     expect(newButtonLabel("quote")).toBe("Yeni Teklif");
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
+  });
+
+  it("prefers the line photo then the stock card image", () => {
+    expect(workItemImage({ image_url: "line.jpg" }, { thumbnail_url: "card.jpg" })).toBe("line.jpg");
+    expect(workItemImage({}, { image_url: "card.jpg" })).toBe("card.jpg");
+    expect(workItemImage({})).toBe("");
+    const hydrated = hydrateWorkItem({ name: "Raf", quantity: 1, unit_price: 10, vat_rate: 20, unit: "Adet" }, { image_url: "raf.jpg" });
+    expect(hydrated.image_url).toBe("raf.jpg");
   });
 
   it("stripes item rows in alternating tones", () => {

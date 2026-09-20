@@ -13,6 +13,7 @@ import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Scree
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { ProductPickRow } from "../components/ProductPickRow";
+import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
@@ -46,6 +47,8 @@ import {
   validateProjectName,
   validateQuoteItems,
   workItemFromProduct,
+  workItemImage,
+  workItemLineGross,
   workItemTotals,
   itemStripe,
   type ProjectDoc,
@@ -412,42 +415,49 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               }}
             />
           ))}
-          {items.map((it, i) => (
+          {items.map((it, i) => {
+            const prod = products.find((p) => idOf(p) === it.product_id);
+            return (
             <View
               key={i}
               testID={`q-item-row-${i}`}
               style={{
                 ...itemStripe(i),
-                borderRadius: 10,
-                paddingHorizontal: 8,
-                paddingVertical: 8,
-                flexDirection: "row",
-                flexWrap: "nowrap",
-                alignItems: "flex-start",
-                gap: 6,
+                borderRadius: 12,
+                padding: 8,
+                gap: 8,
               }}
             >
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Field compact label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
-              </View>
-              <View style={{ width: 58, flexShrink: 0 }}>
-                <Field compact label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-              </View>
-              <View style={{ width: 86, flexShrink: 0 }}>
-                <Field compact label="Birim fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-              </View>
-              {canEdit ? (
-                <Pressable
-                  onPress={() => removeItem(i)}
-                  testID={`q-item-del-${i}`}
-                  accessibilityLabel="Kalemi sil"
-                  style={{ width: 36, height: 40, marginTop: 18, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                >
-                  <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                </Pressable>
-              ) : null}
+              <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                <ProductThumb uri={workItemImage(it, prod)} size={64} testID={`q-item-thumb-${i}`} />
+                <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+                  <Field compact label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
+                  <Row style={{ alignItems: "flex-end", gap: 6 }}>
+                    <View style={{ width: 58, flexShrink: 0 }}>
+                      <Field compact label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                    </View>
+                    <View style={{ width: 78, flexShrink: 0 }}>
+                      <Field compact label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                    </View>
+                    <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, marginBottom: 8 }} testID={`q-item-gross-${i}`}>
+                      {it.name ? fmtMoney(workItemLineGross(it)) : ""}
+                    </Text>
+                    {canEdit ? (
+                      <Pressable
+                        onPress={() => removeItem(i)}
+                        testID={`q-item-del-${i}`}
+                        accessibilityLabel="Kalemi sil"
+                        style={{ width: 32, height: 40, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                      >
+                        <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                      </Pressable>
+                    ) : null}
+                  </Row>
+                </View>
+              </Row>
             </View>
-          ))}
+            );
+          })}
           <PrimaryButton title="Kalem ekle" color={colors.indigo} testID="q-add-item-btn" onPress={() => setItems((rows) => [...rows, emptyItem()])} />
           {namedItems(items).length ? (
             <Row style={{ justifyContent: "space-between" }}>
