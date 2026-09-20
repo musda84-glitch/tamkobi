@@ -22,13 +22,14 @@ import {
   validateApprovalSend,
 } from "../utils/quoteApproval";
 import {
-  PROJECT_STATUSES,
+  PROJECT_QUOTE_ACTION,
   applyTaskAssignee,
   assigneeSelectGroups,
   cleanProjectTasks,
   emptyProjectTask,
   newButtonLabel,
   projectCardBits,
+  projectStatusSelectGroups,
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
@@ -190,11 +191,12 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   );
 }
 
-function Metric({ label, value, testID, tone }: { label: string; value: string; testID?: string; tone?: "green" }) {
+function Metric({ label, value, testID, tone }: { label: string; value: string; testID?: string; tone?: "green" | "rose" }) {
+  const color = tone === "green" ? colors.primaryHover : tone === "rose" ? colors.danger : colors.text;
   return (
     <View style={{ flex: 1, backgroundColor: colors.slate50, borderRadius: 10, padding: 8, minWidth: 0 }}>
       <Muted>{label}</Muted>
-      <Text testID={testID} numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: tone === "green" ? colors.primaryHover : colors.text }}>{value}</Text>
+      <Text testID={testID} numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color }}>{value}</Text>
     </View>
   );
 }
@@ -273,9 +275,11 @@ function ProjectCard({
         <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
           <Metric label="Bütçe" value={fmtMoney(bits.budget)} testID={`project-budget-${id}`} />
           <Metric label="Teklif" value={`${bits.quoteCount} · ${fmtMoney(bits.quoted)}`} testID={`project-quoted-${id}`} />
-          <Metric label="Faturalanan" value={fmtMoney(bits.invoiced)} testID={`project-invoiced-${id}`} tone="green" />
         </Row>
-        {bits.expense > 0 ? <Muted>Masraf {fmtMoney(bits.expense)}</Muted> : null}
+        <Row style={{ alignItems: "stretch", gap: 6, marginTop: 6 }}>
+          <Metric label="Faturalanan" value={fmtMoney(bits.invoiced)} testID={`project-invoiced-${id}`} tone="green" />
+          <Metric label="Masraf" value={fmtMoney(bits.expense)} testID={`project-expense-total-${id}`} tone="rose" />
+        </Row>
         {taskBits || trackLabel ? (
           <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
             {taskBits ? (
@@ -292,18 +296,17 @@ function ProjectCard({
         ) : null}
       </Pressable>
       {canEdit ? (
-        <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 8 }} testID={`project-status-${id}`}>
-          {PROJECT_STATUSES.map((s) => (
-            <Chip
-              key={s.key}
-              compact
-              label={s.label}
-              active={(project.status || "planning") === s.key}
-              onPress={() => !statusBusy && onStatus(s.key)}
-              testID={`project-status-${id}-${s.key}`}
-            />
-          ))}
-        </Row>
+        <View style={{ marginTop: 8 }}>
+          <GroupedSelect
+            dense
+            label="Aşama"
+            testID={`project-status-${id}`}
+            value={project.status || "planning"}
+            onChange={(v) => !statusBusy && onStatus(v)}
+            groups={projectStatusSelectGroups(project.status)}
+            emptyLabel="Aşama seçin"
+          />
+        </View>
       ) : null}
       {canExp || canEdit || canQuote ? (
         <View style={{ gap: 6, marginTop: 8 }}>
@@ -345,7 +348,7 @@ function ProjectCard({
               ) : null}
               {canQuote ? (
                 <ActionBtn
-                  title="Teklif Oluştur"
+                  title={PROJECT_QUOTE_ACTION}
                   testID={`project-quote-${id}`}
                   onPress={() => go("QuoteNew", {
                     contact_id: project.contact_id || "",

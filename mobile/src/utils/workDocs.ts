@@ -129,6 +129,16 @@ export const PROJECT_STATUSES = [
   { key: "completed", label: "Tamamlandı" },
 ];
 
+/** Kart / form açılır listesi — listeye yeni aşama eklenince dropdown da büyür. */
+export function projectStatusSelectGroups(current?: string | null) {
+  const options = PROJECT_STATUSES.map((s) => ({ value: s.key, label: s.label }));
+  const cur = String(current || "").trim();
+  if (cur && !options.some((o) => o.value === cur)) {
+    options.push({ value: cur, label: cur });
+  }
+  return [{ label: "Aşamalar", options }];
+}
+
 export const SURVEY_STATUSES = [
   { key: "planned", label: "Planlandı" },
   { key: "done", label: "Yapıldı" },
@@ -337,7 +347,7 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
   };
 }
 
-/** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura. */
+/** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura-masraf. */
 export function projectCardBits(p: ProjectDoc) {
   return {
     codes: [p.project_number, p.quote_number].filter(Boolean).join(" · "),
@@ -448,6 +458,9 @@ export function newButtonLabel(kind: WorkKind): string {
   if (kind === "project") return "Yeni Proje";
   return "Yeni Keşif";
 }
+
+/** Proje kartındaki teklif aksiyonu. */
+export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
 
 /** Kalem satırlarını birbirinden ayıran zebra tonları. */
 export function itemStripe(index: number): { backgroundColor: string } {

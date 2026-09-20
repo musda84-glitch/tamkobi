@@ -6,7 +6,10 @@ import {
   emptyProjectTask,
   namedItems,
   removeWorkItem,
+  PROJECT_QUOTE_ACTION,
+  PROJECT_STATUSES,
   newButtonLabel,
+  projectStatusSelectGroups,
   projectCardBits,
   projectPayload,
   projectTaskRows,
@@ -143,17 +146,29 @@ describe("workDocs", () => {
       quote_count: 1,
       quoted_total: 52.8,
       invoiced_total: 0,
+      expense_total: 18.5,
     });
     expect(bits.codes).toBe("PRJ-2026-0011 · TKF-2026-0004");
     expect(bits.contact).toBe("Mustafa BAL · Kadıköy");
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
+    expect(bits.expense).toBe(18.5);
   });
 
   it("labels create buttons like web", () => {
     expect(newButtonLabel("quote")).toBe("Yeni Teklif");
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
+    expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
+  });
+
+  it("builds a stage dropdown that can grow with new statuses", () => {
+    const groups = projectStatusSelectGroups("planning");
+    expect(groups[0].label).toBe("Aşamalar");
+    expect(groups[0].options.map((o) => o.value)).toEqual(PROJECT_STATUSES.map((s) => s.key));
+    expect(groups[0].options.map((o) => o.label)).toEqual(["Planlama", "Devam Ediyor", "Beklemede", "Tamamlandı"]);
+    const extra = projectStatusSelectGroups("keşif");
+    expect(extra[0].options.some((o) => o.value === "keşif" && o.label === "keşif")).toBe(true);
   });
 
   it("prefers the line photo then the stock card image", () => {
