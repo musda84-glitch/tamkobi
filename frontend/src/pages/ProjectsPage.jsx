@@ -349,7 +349,18 @@ export default function ProjectsPage({ section } = {}) {
           {projects.map((p) => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
-              <div className="grid grid-cols-3 gap-1 text-[10px]"><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count} • {fmt(p.quoted_total)} ₺</b></div><div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div></div>
+              <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count || 0} • {fmt(p.quoted_total)} ₺</b></div>
+                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div>
+                <div className="bg-slate-50 rounded-lg p-1.5" data-testid={`project-expense-total-${p.project_number}`}>
+                  <div className="text-slate-400">Masraf</div>
+                  <b className={(p.expense_total || 0) > 0 ? "text-rose-700" : ""}>{fmt(p.expense_total)} ₺</b>
+                  {(p.purchase_invoice_total || 0) > 0 ? (
+                    <div className="text-[9px] text-slate-400 font-semibold mt-0.5">Harcanan {fmt(p.cost_total)} ₺</div>
+                  ) : null}
+                </div>
+              </div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
               <ImageStrip entity="project" doc={p} onUpdated={load} />
               <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
@@ -357,19 +368,12 @@ export default function ProjectsPage({ section } = {}) {
                 const tasks = p.tasks || [];
                 const assigned = tasks.filter((t) => t.assignee_name || t.assignee_id);
                 const done = tasks.filter((t) => t.done || t.status === "done" || t.status === "completed").length;
-                if (!tasks.length && !(p.expense_total > 0)) return null;
+                if (!tasks.length) return null;
                 return (
                   <div className="flex flex-wrap gap-1.5 text-[10px]" data-testid={`project-summary-${p.project_number}`}>
-                    {tasks.length > 0 && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100">
-                        <Users className="w-3 h-3" /> {done}/{tasks.length} görev{assigned.length ? ` · ${assigned.length} atanmış` : ""}
-                      </span>
-                    )}
-                    {p.expense_total > 0 && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-semibold border border-rose-100">
-                        <Receipt className="w-3 h-3" /> Masraf {fmt(p.expense_total)} ₺
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100">
+                      <Users className="w-3 h-3" /> {done}/{tasks.length} görev{assigned.length ? ` · ${assigned.length} atanmış` : ""}
+                    </span>
                   </div>
                 );
               })()}
