@@ -466,6 +466,8 @@ export function canCompleteProject(status?: string | null): boolean {
   return String(status || "").trim().toLowerCase() !== "completed";
 }
 
+export const PROJECT_MAP_ACTION = "Kayıtlı Konuma Git";
+
 /** Kalem satırlarını birbirinden ayıran zebra tonları. */
 export function itemStripe(index: number): { backgroundColor: string } {
   return { backgroundColor: index % 2 === 0 ? "#F1F5F9" : "#EEF2FF" };

@@ -7,6 +7,7 @@ import {
   namedItems,
   removeWorkItem,
   PROJECT_QUOTE_ACTION,
+  PROJECT_MAP_ACTION,
   canCompleteProject,
   PROJECT_STATUSES,
   newButtonLabel,
@@ -161,6 +162,7 @@ describe("workDocs", () => {
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
     expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
+    expect(PROJECT_MAP_ACTION).toBe("Kayıtlı Konuma Git");
     expect(canCompleteProject("active")).toBe(true);
     expect(canCompleteProject("planning")).toBe(true);
     expect(canCompleteProject("completed")).toBe(false);

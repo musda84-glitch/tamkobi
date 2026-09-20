@@ -11,6 +11,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
+import { mapsLink } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import type { Employee, ProjectTask } from "../utils/personnel";
@@ -23,6 +24,7 @@ import {
 } from "../utils/quoteApproval";
 import {
   PROJECT_QUOTE_ACTION,
+  PROJECT_MAP_ACTION,
   canCompleteProject,
   applyTaskAssignee,
   assigneeSelectGroups,
@@ -154,6 +156,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           onStatus={(status) => setProjectStatus(r.id, status)}
           onTeam={() => setTeamProject(r.project!)}
           onTrack={() => setTrackProject(r.project!)}
+          onMissingLocation={() => setError("Bu projede kayıtlı konum yok.")}
         />
       )) : filtered.map((r) => (
         <ListRow
@@ -244,6 +247,7 @@ function ProjectCard({
   onStatus,
   onTeam,
   onTrack,
+  onMissingLocation,
 }: {
   project: ProjectDoc;
   canEdit: boolean;
@@ -252,11 +256,13 @@ function ProjectCard({
   onStatus: (status: string) => void;
   onTeam: () => void;
   onTrack: () => void;
+  onMissingLocation: () => void;
 }) {
   const id = idOf(project);
   const bits = projectCardBits(project);
   const taskBits = projectTaskSummary(project.tasks);
   const trackLabel = trackingBadgeLabel(project.tracking);
+  const mapHref = mapsLink(project);
   return (
     <Card testID={`project-row-${id}`}>
       <Pressable onPress={() => go("ProjectDetail", { id })}>
@@ -305,8 +311,22 @@ function ProjectCard({
           />
         </View>
       ) : null}
-      {canExp || canEdit ? (
+      {canExp || canEdit || mapHref ? (
         <View style={{ gap: 6, marginTop: 8 }}>
+          <ActionBtn
+            title={PROJECT_MAP_ACTION}
+            testID={`project-map-${id}`}
+            onPress={() => {
+              if (!mapHref) {
+                onMissingLocation();
+                return;
+              }
+              Linking.openURL(mapHref);
+            }}
+            bg="#F0F9FF"
+            border="#BAE6FD"
+            color="#0369A1"
+          />
           {canExp || canEdit ? (
             <Row style={{ flexWrap: "wrap" }}>
               {canExp ? (
