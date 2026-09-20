@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2 } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
@@ -19,6 +19,72 @@ const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 }
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const STATUS = { draft: ["Taslak", "bg-slate-100 text-slate-600"], sent: ["Gönderildi", "bg-blue-50 text-blue-700"], accepted: ["Kabul / Faturalandı", "bg-emerald-50 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-50 text-rose-700"], planning: ["Planlama", "bg-slate-100 text-slate-600"], active: ["Devam Ediyor", "bg-blue-50 text-blue-700"], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700"], on_hold: ["Beklemede", "bg-amber-50 text-amber-700"], planned: ["Planlandı", "bg-slate-100 text-slate-600"], done: ["Yapıldı", "bg-blue-50 text-blue-700"], quoted: ["Teklife Dönüştü", "bg-emerald-50 text-emerald-700"] };
 const Badge = ({ s, map }) => { const [l, c] = (map && map[s]) || STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
+
+const SURVEY_STATUS_ICON = {
+  planned: { Icon: CalendarClock, tip: "Planlandı", cls: "bg-slate-100 text-slate-600 border-slate-200" },
+  done: { Icon: Check, tip: "Yapıldı", cls: "bg-blue-50 text-blue-700 border-blue-200" },
+  quoted: { Icon: FileSignature, tip: "Teklife dönüştü", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+};
+
+/** Keşif satırı: durum + aksiyonlar ikon toolbar. */
+const SurveyActions = ({ s, onDone, onToQuote, onDelete, dense = false }) => {
+  const st = SURVEY_STATUS_ICON[s.status] || { Icon: Ruler, tip: STATUS[s.status]?.[0] || s.status, cls: "bg-slate-100 text-slate-600 border-slate-200" };
+  const StatusIcon = st.Icon;
+  const btn = dense ? "p-1.5" : "p-2";
+  return (
+    <div className="flex items-center justify-end gap-1 flex-wrap" data-testid={`survey-actions-${s.survey_number}`}>
+      <span
+        className={`inline-flex items-center justify-center ${btn} rounded-lg border ${st.cls}`}
+        title={st.tip}
+        aria-label={st.tip}
+        data-testid={`survey-status-icon-${s.survey_number}`}
+      >
+        <StatusIcon className="w-4 h-4" />
+      </span>
+      {s.status === "planned" && (
+        <button
+          type="button"
+          onClick={onDone}
+          className={`inline-flex items-center justify-center ${btn} rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-emerald-700`}
+          title="Yapıldı olarak işaretle"
+          data-testid={`survey-done-${s.survey_number}`}
+        >
+          <CheckCircle2 className="w-4 h-4" />
+        </button>
+      )}
+      {!s.quote_id && (
+        <button
+          type="button"
+          onClick={onToQuote}
+          className={`inline-flex items-center justify-center gap-1 ${dense ? "px-2 py-1.5" : "px-2.5 py-2"} rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold`}
+          title="Teklife çevir"
+          data-testid={`survey-to-quote-${s.survey_number}`}
+        >
+          <FileSignature className="w-4 h-4" />
+          <ArrowRight className="w-3 h-3 opacity-80" />
+        </button>
+      )}
+      {s.quote_id && (
+        <span
+          className={`inline-flex items-center justify-center ${btn} rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700`}
+          title="Teklife bağlı"
+          data-testid={`survey-quoted-${s.survey_number}`}
+        >
+          <FileText className="w-4 h-4" />
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onDelete}
+        className={`inline-flex items-center justify-center ${btn} text-slate-300 hover:text-rose-600 rounded-lg`}
+        title="Sil"
+        data-testid={`survey-del-${s.survey_number}`}
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  );
+};
 
 const ImageStrip = ({ entity, doc, onUpdated }) => {
   const [busy, setBusy] = useState(false);
