@@ -426,7 +426,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           gap: 4,
         }}
       >
-        <Muted>Cari</Muted>
+        <Muted>Cari Seç</Muted>
         {contactId ? (
           <Pressable
             onPress={() => { setContactId(""); setContactName(""); }}
