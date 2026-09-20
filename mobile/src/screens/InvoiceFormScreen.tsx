@@ -354,6 +354,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         ))}
       </Row>
       <GroupedSelect
+        dense
         label="E-belge türü"
         testID="inv-etype-select"
         value={draft.e_type}
@@ -361,6 +362,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         groups={[{ label: "E-belge", options: E_TYPES.map((t) => ({ value: t.key, label: t.label })) }]}
       />
       <GroupedSelect
+        dense
         label="Dış ticaret"
         testID="inv-trade-select"
         value={draft.trade_kind}
@@ -391,6 +393,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       ) : null}
 
       <GroupedSelect
+        dense
         label="Tevkifat (hizmet faturası)"
         testID="inv-withholding-select"
         value={withholdingValue(draft)}
