@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Save, Loader2, RefreshCw, Package } from "lucide-react";
 import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
+import { confirmGenerateBarcode } from "../utils/barcodeFormat";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
@@ -25,7 +26,10 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
-  const genBarcode = () => set("barcode", "868" + String(Math.floor(Math.random() * 1e10)).padStart(10, "0"));
+  const genBarcode = () => {
+    if (!confirmGenerateBarcode(f.barcode)) return;
+    set("barcode", "868" + String(Math.floor(Math.random() * 1e10)).padStart(10, "0"));
+  };
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
