@@ -3,20 +3,21 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
 import { colors, radius } from "../theme";
 import {
-  appendPickerAsset,
+  appendUploadBlob,
   imageUploadRequest,
   imageUploaderCopy,
+  resolveUploadBlob,
   uploadedImageUrl,
   type ImageEntity,
 } from "../utils/formDataFile";
 
-/** Keşif/proje/teklif: /files/upload. Stok kartı: /products/:id/image. Native’de File/Blob gönderilmez. */
+/** Keşif/proje/teklif: /files/upload. Stok kartı: /products/:id/image. Expo fetch Blob ister. */
 export function ImageUploader({
   entity,
   entityId,
@@ -49,7 +50,8 @@ export function ImageUploader({
     setError(null);
     try {
       const form = new FormData();
-      appendPickerAsset(form, asset, Platform.OS);
+      const { blob, name } = await resolveUploadBlob(asset);
+      appendUploadBlob(form, blob, name);
       const { path, query } = imageUploadRequest(entity, entityId, companyId);
       const res = await upload<unknown>(client, path, form, query);
       const url = uploadedImageUrl(res);
