@@ -111,6 +111,11 @@ describe("finance drafts", () => {
     expect(first[0].label).toBe("Ortaklar Hesabı");
     expect(first[0].options[0]).toEqual({ value: "partner:p1", label: expect.stringContaining("Ali") });
 
+    const payIn = paymentTargetGroups(accounts, partners, { collectableOnly: true, partnersFirst: true });
+    expect(payIn[0].label).toBe("Ortaklar Hesabı");
+    expect(payIn[0].options.map((o) => o.value)).toEqual(["partner:p1"]);
+    expect(payIn.map((g) => g.label)).not.toContain("Kredi Kartı");
+
     const spend = paymentTargetGroups(accounts, partners);
     expect(spend.map((g) => g.label)).toContain("Kredi Kartı");
 

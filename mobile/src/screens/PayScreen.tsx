@@ -137,6 +137,11 @@ export function PayScreen() {
             emptyLabel="Hesap seçin"
             groups={groups}
           />
+          <Muted testID="pay-account-hint">
+            {form.type === "inflow"
+              ? "Tahsilatta kredi kartı yok; ortaklar kasası (Ortaklar Hesabı) listenin başında."
+              : "Ödemede kasa, banka, kart ve ortaklar kasası seçilebilir."}
+          </Muted>
           <Field label="Tutar" testID="pay-amount" value={form.amount} onChangeText={(v) => setForm({ ...form, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="pay-desc" value={form.description} onChangeText={(v) => setForm({ ...form, description: v })} />
           <PrimaryButton title={busy ? "Kaydediliyor…" : "Kaydet"} onPress={save} loading={busy} color={colors.primary} testID="pay-save" />
