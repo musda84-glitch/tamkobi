@@ -207,6 +207,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const newParam = searchParams.get("new");
   const newContactParam = searchParams.get("contact_id");
   const newProjectParam = searchParams.get("project_id");
+  const editParam = searchParams.get("edit");
   useEffect(() => {
     if (!newParam) return;
     if (newContactParam && contacts.length === 0) return;
@@ -336,6 +337,34 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     });
     setShowNewModal(true);
   };
+
+  useEffect(() => {
+    if (!editParam) return undefined;
+    let cancelled = false;
+    const openFromId = async () => {
+      try {
+        let inv = invoices.find((x) => x.id === editParam || x._id === editParam);
+        if (!inv) {
+          const r = await axios.get(`${API_URL}/invoices/${editParam}`);
+          inv = r.data;
+        }
+        if (cancelled || !inv) return;
+        openEditInvoice(inv);
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("edit");
+          return next;
+        }, { replace: true });
+      } catch {
+        if (!cancelled) toast.error("Taslak fatura açılamadı.");
+      }
+    };
+    openFromId();
+    return () => { cancelled = true; };
+    // One-shot deep link from teklif → fatura
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editParam]);
+
   const handleDeleteInvoice = async (inv) => {
     const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
     if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
