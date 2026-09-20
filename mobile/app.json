@@ -2,7 +2,7 @@
   "expo": {
     "name": "TamKobi",
     "slug": "tamkobi",
-    "version": "1.0.7",
+    "version": "1.0.10",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tamkobi",
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.tamkobi.app",
-      "versionCode": 8,
+      "versionCode": 11,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A",
@@ -64,8 +64,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Keşif ve proje fotoğraflarını yüklemek için galeriye izin verin.",
-          "cameraPermission": "Keşif ve proje fotoğrafı çekmek için kameraya izin verin."
+          "photosPermission": "Keşif, proje, teklif ve stok kartı fotoğraflarını yüklemek için galeriye izin verin.",
+          "cameraPermission": "Keşif, proje, teklif ve stok kartı fotoğrafı çekmek için kameraya izin verin."
         }
       ],
       [
