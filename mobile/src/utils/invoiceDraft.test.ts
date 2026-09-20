@@ -2,6 +2,7 @@ import {
   applyTradeKind,
   canDeleteInvoice,
   createInvoiceButtonLabel,
+  invoiceListSubtitle,
   draftFromInvoice,
   eTypeForContact,
   emptyInvoiceDraft,
@@ -112,6 +113,17 @@ describe("invoiceDraft", () => {
     expect(createInvoiceButtonLabel("all")).toBe("Yeni Fatura Kes");
     expect(createInvoiceButtonLabel("purchase")).toBe("Alış Faturası Gir");
     expect(createInvoiceButtonLabel("dispatch")).toBe("Yeni İrsaliye");
+  });
+
+  it("puts the contact name first on the invoice list row", () => {
+    expect(invoiceListSubtitle({
+      contact_name: "Acme Mobilya",
+      invoice_type: "sales",
+      e_type: "e_archive",
+      status: "draft",
+      issue_date: "2026-09-20",
+    })).toBe("Acme Mobilya · Satış · E-Arşiv · Taslak · 20 Eyl 2026");
+    expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Cari yok · Satış/);
   });
 
   it("deletes drafts and unpaid paper, not issued e-docs", () => {

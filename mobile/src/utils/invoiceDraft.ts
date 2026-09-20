@@ -6,7 +6,8 @@ import {
   hydrateLine,
   type InvoiceLine,
 } from "./documentLines";
-import { todayIso } from "./money";
+import { eTypeTr, invoiceTypeTr, statusTr } from "./labels";
+import { fmtDate, todayIso } from "./money";
 
 export type GdMode = "percent" | "amount";
 
@@ -338,6 +339,20 @@ export function createInvoiceButtonLabel(filterType: string): string {
   if (filterType === "dispatch") return "Yeni İrsaliye";
   if (filterType === "purchase") return "Alış Faturası Gir";
   return "Yeni Fatura Kes";
+}
+
+/** Liste satırı: önce cari, sonra tür / belge / durum / tarih. */
+export function invoiceListSubtitle(inv: {
+  contact_name?: string;
+  invoice_type?: string;
+  e_type?: string;
+  status?: string;
+  issue_date?: string;
+}): string {
+  const cari = (inv.contact_name || "").trim() || "Cari yok";
+  return [cari, invoiceTypeTr(inv.invoice_type), eTypeTr(inv.e_type), statusTr(inv.status), fmtDate(inv.issue_date)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function defaultInvoiceTypeForFilter(filterType: string): Partial<InvoiceDraft> {
