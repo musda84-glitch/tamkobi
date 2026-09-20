@@ -436,9 +436,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                     <Pressable
                       onPress={() => setItems((rows) => [...rows, emptyItem()])}
                       testID="q-add-item-btn"
-                      style={{ paddingVertical: 2, paddingHorizontal: 4 }}
+                      accessibilityLabel="Kalem ekle"
+                      style={{ width: 28, height: 28, alignItems: "center", justifyContent: "center" }}
                     >
-                      <Text style={{ fontSize: 10, fontWeight: "800", color: colors.indigo, textAlign: "center" }}>+ Kalem</Text>
+                      <Ionicons name="add-circle-outline" size={20} color={colors.indigo} />
                     </Pressable>
                   ) : null}
                 </View>
