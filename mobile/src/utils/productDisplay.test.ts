@@ -38,6 +38,12 @@ describe("productDisplay", () => {
     expect(stockBadge({})?.label).toBe("0 Adet");
   });
 
+  it("keeps quantity on the right label so the name column can stay wide", () => {
+    expect(stockRightLabel({ stock_quantity: -3 })).toBe("Stok -3 Adet");
+    expect(productPickSubtitle({ sku: "WOKS_2K5R_BY", barcode: "0749460621171" }))
+      .toBe("SKU WOKS_2K5R_BY · Barkod 0749460621171");
+  });
+
   it("keeps SKU and barcode off the list row copy", () => {
     expect(stockRowSubtitle({ sku: "YÜK.DRA.ÇEKME", barcode: "YÜK.DRA.ÇEKME", type: "trade" }, "Ticari Mal", "0,00 ₺"))
       .toBe("Ticari Mal · 0,00 ₺");
