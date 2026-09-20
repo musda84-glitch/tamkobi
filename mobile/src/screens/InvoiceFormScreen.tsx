@@ -7,6 +7,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { confirmAction } from "../components/chips";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
@@ -305,24 +306,28 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }
   };
 
-  const save = async () => {
+  const persist = async (status: "draft" | "approved") => {
     const invalid = validateInvoiceDraft(draft);
-    if (invalid) { setError(invalid); return; }
-    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return; }
+    if (invalid) { setError(invalid); return null; }
+    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return null; }
+    const next = { ...draft, status: draft.invoice_type === "dispatch" ? "draft" : status };
+    if (isNew) {
+      return post<Invoice>(client, "/invoices", invoicePayload(next, companyId));
+    }
+    const saved = await put<Invoice>(client, `/invoices/${invoiceId}`, invoiceUpdateBody(next));
+    if (next.status === "approved") {
+      await post(client, `/invoices/${invoiceId}/approve`);
+    }
+    return saved;
+  };
+
+  const save = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      let saved: Invoice;
-      if (isNew) {
-        saved = await post<Invoice>(client, "/invoices", invoicePayload(draft, companyId));
-        setMessage(draft.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura oluşturuldu ve cariye işlendi.");
-      } else {
-        saved = await put<Invoice>(client, `/invoices/${invoiceId}`, invoiceUpdateBody(draft));
-        if (draft.status === "approved") {
-          await post(client, `/invoices/${invoiceId}/approve`);
-        }
-        setMessage("Taslak fatura güncellendi.");
-      }
+      const saved = await persist(draft.status === "approved" ? "approved" : "draft");
+      if (!saved) return;
+      setMessage(draft.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura oluşturuldu ve cariye işlendi.");
       setError(null);
       const id = idOf(saved) || invoiceId || "";
       if (id) router.replace({ pathname: "/invoices/[id]", params: { id } });
@@ -332,6 +337,33 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const issue = () => {
+    const isDispatch = draft.invoice_type === "dispatch";
+    confirmAction(
+      isDispatch ? "İrsaliye kes" : "Fatura kes",
+      isDispatch ? "İrsaliye kaydedilip GİB'e kesilsin mi?" : "Fatura onaylanıp GİB'e kesilsin mi?",
+      async () => {
+        setBusy(true);
+        setMessage(null);
+        try {
+          const saved = await persist(isDispatch ? "draft" : "approved");
+          if (!saved) return;
+          const id = idOf(saved) || invoiceId || "";
+          if (!id) throw new Error("Fatura kaydı oluşmadı.");
+          const eType = isDispatch ? "e_dispatch" : draft.e_type;
+          await post(client, `/invoices/${id}/send-to-gib`, { e_type: eType });
+          setError(null);
+          setMessage(isDispatch ? "İrsaliye kesildi." : "Fatura kesildi.");
+          router.replace({ pathname: "/invoices/[id]", params: { id } });
+        } catch (err) {
+          setError(apiErrorMessage(err, "Fatura kesilemedi."));
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
   };
 
   const selectedContact = contacts.find((c) => idOf(c) === draft.contact_id);
@@ -632,6 +664,14 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       </Card>
 
       <Field label="Not" testID="inv-notes" value={draft.notes} onChangeText={(v) => set("notes", v)} />
+      <PrimaryButton
+        title={busy ? "Kesiliyor…" : draft.invoice_type === "dispatch" ? "İrsaliye Kes" : "Fatura Kes"}
+        onPress={issue}
+        loading={busy}
+        disabled={!canEdit}
+        color={colors.indigo}
+        testID="issue-invoice-btn"
+      />
       <PrimaryButton
         title={busy ? "Kaydediliyor…" : draft.status === "draft" ? "Taslak Olarak Kaydet" : "Faturayı Kaydet & Onayla"}
         onPress={save}
