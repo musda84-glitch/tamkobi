@@ -8,6 +8,7 @@ import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
 import { colors, radius } from "../theme";
+import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
   imageUploadRequest,
@@ -50,7 +51,8 @@ export function ImageUploader({
     setError(null);
     try {
       const form = new FormData();
-      const { blob, name } = await resolveUploadBlob(asset);
+      const compact = await compressPickerAsset(asset);
+      const { blob, name } = await resolveUploadBlob(compact);
       appendUploadBlob(form, blob, name);
       const { path, query } = imageUploadRequest(entity, entityId, companyId);
       const res = await upload<unknown>(client, path, form, query);
@@ -71,8 +73,8 @@ export function ImageUploader({
         : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") { setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi."); return; }
       const res = fromCamera
-        ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
-        : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ["images"] });
+        ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
       if (res.canceled || !res.assets?.length) return;
       await send(res.assets[0]);
     } catch (err) {
