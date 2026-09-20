@@ -1,7 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,6 +17,7 @@ import {
 } from "react-native";
 import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
+import { contentBottomPad, SCREEN_BASE_PAD } from "../utils/keyboardPad";
 import { trUpper } from "../utils/labels";
 import { ProductThumb } from "./ProductThumb";
 
@@ -23,15 +27,31 @@ export function Screen({ children, onRefresh, refreshing, padded = true }: {
   refreshing?: boolean;
   padded?: boolean;
 }) {
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const show = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: 40 }]}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
-    >
-      {children}
-    </ScrollView>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
+        refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
+      >
+        {children}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -205,6 +225,7 @@ export function Kpi({ label, value, sub }: { label: string; value: string; sub?:
 /** Minimal düzen: dar boşluklar, ince çerçeveler; dokunma hedefleri 44 px altına inmez. */
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  flex: { flex: 1 },
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
   card: {

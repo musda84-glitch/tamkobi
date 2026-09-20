@@ -7,12 +7,14 @@ export function Chip({
   onPress,
   testID,
   color,
+  compact,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
   testID?: string;
   color?: string;
+  compact?: boolean;
 }) {
   const bg = color || colors.primary;
   return (
@@ -21,15 +23,15 @@ export function Chip({
       onPress={onPress}
       style={{
         flexShrink: 0,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
+        paddingVertical: compact ? 4 : 8,
+        paddingHorizontal: compact ? 8 : 12,
         borderRadius: 999,
         backgroundColor: active ? bg : "#fff",
         borderWidth: 1,
         borderColor: active ? bg : colors.border,
       }}
     >
-      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700", fontSize: compact ? 11 : 12 }}>{label}</Text>
     </Pressable>
   );
 }
