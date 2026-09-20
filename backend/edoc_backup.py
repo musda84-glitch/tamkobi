@@ -213,7 +213,8 @@ async def _send_reminder(company: dict, backup: Optional[dict]) -> Dict[str, Any
                 f"Giden e-Fatura ve e-Arşiv XML/PDF kopyalarını Mali Müşavir Paneli'nden en fazla {MAX_DAYS} günlük "
                 f"tarih aralığıyla indirip yedeklemeniz önerilir.")
     res: Dict[str, Any] = {"notification": True, "email": []}
-    await _db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()), "company_id": cid, "type": "edoc_backup", "title": title, "message": body,
         "link": "/accountant", "ref_type": "edoc_backup", "is_read": False, "created_at": _now(),
     })

@@ -225,6 +225,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      if (state.token) {
+        const { unregisterDevicePush } = await import("../utils/pushRegister");
+        await unregisterDevicePush({ baseUrl: state.baseUrl, token: state.token });
+      }
+    } catch {
+      /* token kaydı çıkışı engellemesin */
+    }
+    try {
       if (state.token) await post({ baseUrl: state.baseUrl, token: state.token }, "/auth/logout", {});
     } catch {
       /* ignore */

@@ -59,7 +59,8 @@ async def queue(db, *, company_id: str, kind: str, payload: dict, account_ids: L
         "created_at": _now(),
     }
     await db.cash_approval_requests.insert_one(doc)
-    await db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
         "type": "cash_approval",

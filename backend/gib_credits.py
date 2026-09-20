@@ -110,7 +110,8 @@ async def apply_purchase(tx: dict) -> int:
         "credits": credits, "pack_id": tx.get("pack_id") or tx.get("plan_id"),
         "payment_id": tx.get("_id"), "amount": tx.get("amount"), "created_at": _now(),
     })
-    await _db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()), "company_id": cid, "type": "gib", "title": f"{credits} GİB kontörü yüklendi",
         "message": f"Ödemeniz alındı. Hesabınıza {credits} e-fatura/e-arşiv kontörü eklendi.",
         "ref_type": "gib_credits", "ref_id": tx.get("_id"), "is_read": False, "created_at": _now(),

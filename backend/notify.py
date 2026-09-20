@@ -3,7 +3,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
+import logging
+import os
+import re
 import uuid
+
+logger = logging.getLogger("TamKobiERP")
+
+EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL", "https://exp.host/--/api/v2/push/send")
+EXPO_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$")
 
 TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "order_pick_missing": ("admin", "manager", "warehouse"),
@@ -119,3 +127,200 @@ async def users_with_roles(db, company_id: str, roles: Iterable[str]) -> List[Di
         "is_super_admin": {"$ne": True},
         "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
     }).to_list(100)
+
+
+def is_expo_push_token(token: Optional[str]) -> bool:
+    return bool(EXPO_TOKEN_RE.match(str(token or "").strip()))
+
+
+def user_ids_of(user: Optional[Dict[str, Any]]) -> List[str]:
+    if not user:
+        return []
+    out: List[str] = []
+    for key in ("_id", "id"):
+        val = str(user.get(key) or "").strip()
+        if val and val not in out:
+            out.append(val)
+    return out
+
+
+def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Expo Push API gövdesi — başlık/metin + uygulama içi yönlendirme verisi."""
+    title = str(note.get("title") or "TamKobi").strip() or "TamKobi"
+    body = str(note.get("message") or note.get("body") or "").strip()
+    data = {
+        "type": str(note.get("type") or ""),
+        "link": str(note.get("link") or ""),
+        "ref_type": str(note.get("ref_type") or ""),
+        "ref_id": str(note.get("ref_id") or ""),
+        "notification_id": str(note.get("_id") or note.get("id") or ""),
+    }
+    msgs: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in tokens:
+        token = str(raw or "").strip()
+        if not is_expo_push_token(token) or token in seen:
+            continue
+        seen.add(token)
+        msgs.append({
+            "to": token,
+            "title": title,
+            "body": body,
+            "sound": "default",
+            "channelId": "tamkobi",
+            "priority": "high",
+            "data": data,
+        })
+    return msgs
+
+
+async def recipient_user_ids(db, note: Dict[str, Any]) -> List[str]:
+    """Bildirimi görmesi gereken kullanıcı id'leri (rol + doğrudan atama)."""
+    ids: List[str] = []
+    seen: set[str] = set()
+
+    def add(value: Optional[str]) -> None:
+        v = str(value or "").strip()
+        if v and v not in seen:
+            seen.add(v)
+            ids.append(v)
+
+    add(note.get("user_id"))
+    emp_id = str(note.get("employee_id") or "").strip()
+    if emp_id:
+        add(emp_id)
+        emp_user = await db.users.find_one({"employee_id": emp_id})
+        if emp_user:
+            for uid in user_ids_of(emp_user):
+                add(uid)
+    roles = note.get("roles")
+    if roles is None:
+        roles = roles_for_type(note.get("type") or "")
+    company_id = str(note.get("company_id") or "")
+    if company_id and roles:
+        for user in await users_with_roles(db, company_id, roles):
+            for uid in user_ids_of(user):
+                add(uid)
+    return ids
+
+
+async def tokens_for_users(db, user_ids: Iterable[str]) -> List[str]:
+    ids = [str(i) for i in user_ids if i]
+    if not ids:
+        return []
+    rows = await db.push_tokens.find({"user_id": {"$in": ids}}).to_list(400)
+    return [str(r.get("token") or "") for r in rows if is_expo_push_token(r.get("token"))]
+
+
+async def upsert_push_token(
+    db,
+    *,
+    user_id: str,
+    company_id: str,
+    token: str,
+    platform: str = "",
+    device_id: str = "",
+) -> Dict[str, Any]:
+    token = str(token or "").strip()
+    if not is_expo_push_token(token):
+        raise ValueError("Geçerli bir Expo push token gerekli.")
+    now = datetime.now(timezone.utc).isoformat()
+    user_id = str(user_id or "").strip()
+    await db.push_tokens.update_one(
+        {"token": token},
+        {
+            "$set": {
+                "user_id": user_id,
+                "company_id": company_id,
+                "token": token,
+                "platform": (platform or "")[:20],
+                "device_id": (device_id or "")[:80],
+                "updated_at": now,
+            },
+            "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": now},
+        },
+        upsert=True,
+    )
+    return {"status": "ok", "token": token}
+
+
+async def remove_push_token(db, token: str, user_id: Optional[str] = None) -> int:
+    token = str(token or "").strip()
+    if not token:
+        return 0
+    q: Dict[str, Any] = {"token": token}
+    if user_id:
+        q["user_id"] = str(user_id)
+    r = await db.push_tokens.delete_many(q)
+    return int(getattr(r, "deleted_count", 0) or 0)
+
+
+async def send_expo_push(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not messages:
+        return {"sent": 0, "tickets": []}
+    import httpx
+    tickets: List[Any] = []
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        for i in range(0, len(messages), 100):
+            chunk = messages[i:i + 100]
+            res = await client.post(
+                EXPO_PUSH_URL,
+                json=chunk,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+            res.raise_for_status()
+            payload = res.json() if res.content else {}
+            data = payload.get("data") if isinstance(payload, dict) else payload
+            if isinstance(data, list):
+                tickets.extend(data)
+            elif data is not None:
+                tickets.append(data)
+    return {"sent": len(messages), "tickets": tickets}
+
+
+async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[Any]) -> int:
+    doomed: List[str] = []
+    token_list = [str(t) for t in tokens]
+    for i, ticket in enumerate(tickets):
+        if not isinstance(ticket, dict):
+            continue
+        details = str(ticket.get("details", {}).get("error") if isinstance(ticket.get("details"), dict) else ticket.get("details") or "")
+        if ticket.get("status") == "error" and "DeviceNotRegistered" in details:
+            if i < len(token_list):
+                doomed.append(token_list[i])
+    if not doomed:
+        return 0
+    r = await db.push_tokens.delete_many({"token": {"$in": doomed}})
+    return int(getattr(r, "deleted_count", 0) or 0)
+
+
+async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
+    recipients = await recipient_user_ids(db, note)
+    tokens = await tokens_for_users(db, recipients)
+    messages = expo_push_messages(tokens, note)
+    if not messages:
+        return {"sent": 0}
+    result = await send_expo_push(messages)
+    try:
+        await drop_invalid_push_tokens(db, [m["to"] for m in messages], result.get("tickets") or [])
+    except Exception:
+        logger.exception("invalid push token cleanup failed")
+    return result
+
+
+async def insert_notification(db, doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Uygulama içi kaydı yazar ve kayıtlı telefonlara Expo push gönderir."""
+    if not doc.get("_id"):
+        doc["_id"] = str(uuid.uuid4())
+    if not doc.get("created_at"):
+        doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    if "is_read" not in doc:
+        doc["is_read"] = False
+    if "roles" not in doc:
+        doc["roles"] = roles_for_type(doc.get("type") or "")
+    await db.notifications.insert_one(doc)
+    try:
+        await dispatch_push(db, doc)
+    except Exception:
+        logger.exception("push dispatch failed")
+    return doc

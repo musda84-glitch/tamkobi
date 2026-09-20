@@ -547,6 +547,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "type", "title", "is_read", "ref_id"),
         "refs": ("companies._id",),
     },
+    "push_tokens": {
+        "scope": SCOPE_TENANT,
+        "description": "Mobil Expo push tokenları.",
+        "keys": ("_id", "user_id", "company_id", "token", "platform"),
+        "refs": ("users._id", "companies._id"),
+    },
     "b2b_password_resets": {
         "scope": SCOPE_TENANT,
         "description": "B2B portal şifre sıfırlama tokenları.",
