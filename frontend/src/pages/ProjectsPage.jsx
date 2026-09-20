@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
+import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
@@ -13,6 +14,7 @@ import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/Projec
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
@@ -124,22 +126,23 @@ const ImageStrip = ({ entity, doc, onUpdated }) => {
   );
 };
 
-const ItemsEditor = ({ items, setItems, products }) => {
-  const upd = (i, k, v) => setItems(items.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
-  return (
-    <div className="space-y-1.5">
-      {items.map((it, i) => (
-        <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-1.5 items-center">
-          <div className="sm:col-span-5"><SearchSelect value={it.product_id} options={products} placeholder={it.name || "Ürün seç veya yaz"} getLabel={(p) => p.name} getSub={(p) => `${p.sku} • ${fmt(p.sale_price)} ₺`} getImage={(p) => p.image_url} onChange={(id, p) => setItems(items.map((x, idx) => (idx === i ? { ...x, product_id: id, name: p.name, unit_price: p.sale_price, vat_rate: p.vat_rate, unit: p.unit, price_includes_vat: !!p.price_includes_vat } : x)))} testId={`q-item-${i}`} /></div>
-          <input value={it.name} onChange={(e) => upd(i, "name", e.target.value)} placeholder="Açıklama" className="sm:col-span-3 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-name-${i}`} />
-          <input type="number" value={it.quantity} onChange={(e) => upd(i, "quantity", Number(e.target.value))} className="sm:col-span-1 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-qty-${i}`} />
-          <input type="number" value={it.unit_price} onChange={(e) => upd(i, "unit_price", Number(e.target.value))} className="sm:col-span-2 bg-slate-50 border rounded-lg p-1.5" data-testid={`q-item-price-${i}`} />
-          <button type="button" onClick={() => setItems(items.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
-        </div>
-      ))}
-      <button type="button" onClick={() => setItems([...items, { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }])} className="text-emerald-600 font-semibold flex items-center gap-1" data-testid="q-add-item-btn"><Plus className="w-3.5 h-3.5" /> Kalem Ekle</button>
-    </div>
-  );
+const toQuoteLinePayload = (it) => {
+  const line = computeLine(it);
+  return {
+    product_id: line.product_id || "",
+    name: line.name || line.product_name || "",
+    sku: line.sku || "",
+    quantity: Number(line.quantity) || 0,
+    unit: line.unit || "Adet",
+    unit_price: Number(line.unit_price) || 0,
+    unit_price_incl: Number(line.unit_price_incl) || 0,
+    vat_rate: Number(line.vat_rate) || 0,
+    discount_rate: Number(line.discount_rate) || 0,
+    total: Number(line.total) || 0,
+    total_incl: Number(line.total_incl) || 0,
+    vat_amount: Number(line.vat_amount) || 0,
+    is_service: !!line.is_service,
+  };
 };
 
 const FILTER_KEY = "tamkobi_qp_only_pending";
@@ -229,7 +232,7 @@ export default function ProjectsPage({ section } = {}) {
 
   const openForm = (kind) => {
     setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [] });
-    setItems([{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]);
+    setItems([computeLine(emptyLine())]);
     ensureFormRefs();
   };
   const openEditQuote = async (q) => {
@@ -254,19 +257,13 @@ export default function ProjectsPage({ section } = {}) {
         measurements: [],
         project_id: full.project_id || "",
       });
-      const its = (full.items || []).filter((i) => i?.name);
-      setItems(its.length ? its.map((i) => ({
-        product_id: i.product_id || "",
-        name: i.name || "",
-        quantity: Number(i.quantity) || 1,
-        unit_price: Number(i.unit_price) || 0,
-        vat_rate: Number(i.vat_rate) || 20,
-        unit: i.unit || "Adet",
-      })) : [{ name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" }]);
+      const its = (full.items || []).filter((i) => i?.name || i?.product_name);
+      setItems(its.length ? its.map((i) => hydrateLine(i)) : [computeLine(emptyLine())]);
     } catch {
       toast.error("Teklif yüklenemedi.");
     }
   };
+  const lineTotals = useMemo(() => documentLineTotals(items), [items]);
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });
   const [newContact, setNewContact] = useState(null);
   const createContact = async (e) => {
@@ -280,8 +277,11 @@ export default function ProjectsPage({ section } = {}) {
   const save = async (e) => {
     e.preventDefault();
     try {
-      const lineItems = items.filter((i) => i.name);
+      const lineItems = items
+        .map((i) => toQuoteLinePayload(i))
+        .filter((i) => (i.name || "").trim() && Number(i.quantity) > 0);
       if (form.kind === "quote") {
+        if (!lineItems.length) { toast.error("En az bir kalem ekleyin."); return; }
         if (form.id) {
           await axios.put(`${API_URL}/quotes/${form.id}`, {
             title: form.title,
@@ -296,7 +296,19 @@ export default function ProjectsPage({ section } = {}) {
           await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, items: lineItems });
         }
       } else if (form.kind === "project") await axios.post(`${API_URL}/projects`, { company_id: companyId, ...form, budget: Number(form.budget || 0) });
-      else await axios.post(`${API_URL}/surveys`, { company_id: companyId, ...form, measurements: lineItems.map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit, unit_price: i.unit_price })) });
+      else await axios.post(`${API_URL}/surveys`, {
+        company_id: companyId,
+        ...form,
+        measurements: lineItems.map((i) => ({
+          name: i.name,
+          quantity: i.quantity,
+          unit: i.unit,
+          unit_price: i.unit_price,
+          vat_rate: i.vat_rate,
+          discount_rate: i.discount_rate,
+          product_id: i.product_id || undefined,
+        })),
+      });
       toast.success(form.id ? "Güncellendi." : "Kaydedildi."); setForm(null); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
@@ -529,7 +541,7 @@ export default function ProjectsPage({ section } = {}) {
 
       {form && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <form onSubmit={save} className="bg-white rounded-t-2xl sm:rounded-2xl max-w-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" data-testid={`${form.kind}-form`}>
+          <form onSubmit={save} className={`bg-white rounded-t-2xl sm:rounded-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto ${form.kind === "project" ? "max-w-2xl" : "max-w-6xl"}`} data-testid={`${form.kind}-form`}>
             <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
@@ -560,7 +572,27 @@ export default function ProjectsPage({ section } = {}) {
               </div>
               {form.latitude && <div className="text-[10px] text-emerald-700 font-mono">Konum: {form.latitude}, {form.longitude} <a href={form.location_url} target="_blank" rel="noreferrer" className="underline">haritada aç</a></div>}
             </div>}
-            {form.kind !== "project" && <div><label className="block font-semibold mb-1">{form.kind === "quote" ? "Kalemler" : "Ölçüler / Kalemler (isteğe bağlı fiyat)"}</label><ItemsEditor items={items} setItems={setItems} products={products} /></div>}
+            {form.kind !== "project" && (
+              <div className="space-y-2">
+                <label className="block font-semibold">{form.kind === "quote" ? "Kalemler" : "Ölçüler / Kalemler (isteğe bağlı fiyat)"}</label>
+                <DocumentLineEditor
+                  items={items}
+                  onChange={setItems}
+                  products={products}
+                  kind="quote"
+                  allowService
+                  invoiceType="sales"
+                  testIdPrefix="q-item"
+                  defaultVat={20}
+                />
+                <LineTotalsFooter
+                  subtotal={lineTotals.subtotal}
+                  vat={lineTotals.vat}
+                  lineDiscount={lineTotals.lineDiscount}
+                  grandTotal={lineTotals.grandTotal}
+                />
+              </div>
+            )}
             <div><label className="block font-semibold mb-1">Notlar</label><textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} className={inputCls} /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-save-btn">Kaydet</button></div>
           </form>
