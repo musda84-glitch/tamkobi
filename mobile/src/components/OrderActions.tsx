@@ -5,12 +5,11 @@ import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import type { Order } from "../types";
-import { approveOrderBody, approveOrderConfirm, canApproveOrder, isMarketplaceChannel } from "../utils/orderApprove";
+import { approveOrderBody, approveOrderConfirm } from "../utils/orderApprove";
 import {
   approveActionLabel,
   canApproveMarketplaceOrder,
   canChangeMarketplaceCargo,
-  canShowMarketplaceApprove,
   cargoChangeBody,
   cargoChangeConfirm,
   cargoNameOf,
@@ -23,7 +22,6 @@ import { printCargoLabel, printOrderForm } from "../utils/orderShare";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
 import { ActionTiles, type ActionTile } from "./ActionTiles";
 import { B2BSheet } from "./b2b/B2BSheet";
-import { confirmAction } from "./chips";
 import { GroupedSelect } from "./GroupedSelect";
 import { Muted, PrimaryButton } from "./kit";
 
@@ -89,11 +87,12 @@ export function OrderActions({
   const { client, activeCompany, companyId, can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const [cargoOpen, setCargoOpen] = useState(false);
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [prodOpen, setProdOpen] = useState(false);
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
   const canProduce = can("/production", "edit") || can("/sevk", "edit") || can("/orders", "edit");
   const canEdit = can("/orders", "edit");
-  const marketplace = isMarketplaceChannel(order.channel);
   const oid = idOf(order);
 
   const ensure = async () => {
@@ -129,20 +128,19 @@ export function OrderActions({
     }
   };
 
-  const approve = () => {
+  const submitApprove = async () => {
     if (!canApproveMarketplaceOrder(order)) return;
-    confirmAction(approveActionLabel(order), approveOrderConfirm(order), async () => {
-      setBusy("approve");
-      try {
-        const r = await post<{ message?: string }>(client, `/orders/${oid}/approve`, approveOrderBody(order));
-        onMessage?.(r.message || "Sipariş onaylandı; pazaryeri entegrasyonuna iletildi.");
-        onChanged?.();
-      } catch (err) {
-        onError?.(apiErrorMessage(err, "Sipariş onaylanamadı."));
-      } finally {
-        setBusy(null);
-      }
-    });
+    setBusy("approve");
+    try {
+      const r = await post<{ message?: string }>(client, `/orders/${oid}/approve`, approveOrderBody(order));
+      onMessage?.(r.message || "Sipariş onaylandı; pazaryeri entegrasyonuna iletildi.");
+      setApproveOpen(false);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Sipariş onaylanamadı."));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const openCargo = async () => {
@@ -156,46 +154,38 @@ export function OrderActions({
     }
   };
 
-  const saveCargo = () => {
+  const saveCargo = async () => {
     if (!carrier) {
       onError?.("Kargo firması seçin.");
       return;
     }
-    const name = cargoNameOf(carriers, carrier, order.cargo_carrier_name);
-    confirmAction("Kargo firması", cargoChangeConfirm(order, name), async () => {
-      setBusy("cargo");
-      try {
-        const r = await put<{ message?: string }>(client, `/orders/${oid}/cargo-carrier`, cargoChangeBody(carrier));
-        onMessage?.(r.message || "Pazaryeri kargo firması güncellendi.");
-        setCargoOpen(false);
-        onChanged?.();
-      } catch (err) {
-        onError?.(apiErrorMessage(err, "Kargo firması güncellenemedi."));
-      } finally {
-        setBusy(null);
-      }
-    });
+    setBusy("cargo");
+    try {
+      const r = await put<{ message?: string }>(client, `/orders/${oid}/cargo-carrier`, cargoChangeBody(carrier));
+      onMessage?.(r.message || "Pazaryeri kargo firması güncellendi.");
+      setCargoOpen(false);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Kargo firması güncellenemedi."));
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const toProduction = () => {
-    confirmAction(
-      "Üretim emri",
-      `${order.order_number || "Sipariş"} için eksik kalemler üretime alınsın mı?`,
-      async () => {
-        setBusy("prod");
-        try {
-          const r = await post<{ message?: string }>(client, `/order-picks/${oid}/to-production`, {});
-          onMessage?.(r.message || "Üretim emri açıldı.");
-        } catch (err) {
-          onError?.(apiErrorMessage(err, "Üretim emri açılamadı."));
-        } finally {
-          setBusy(null);
-        }
-      },
-    );
+  const submitProduction = async () => {
+    setBusy("prod");
+    try {
+      const r = await post<{ message?: string }>(client, `/order-picks/${oid}/to-production`, {});
+      onMessage?.(r.message || "Üretim emri açıldı.");
+      setProdOpen(false);
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Üretim emri açılamadı."));
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
+  const showApprove = canEdit && canApproveMarketplaceOrder(order);
   const showCargo = canEdit && canChangeMarketplaceCargo(order);
 
   const defs: ActionDef[] = [
@@ -203,40 +193,78 @@ export function OrderActions({
       ? [{ key: "cargo", label: "Kargo firma", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: openCargo }]
       : []),
     ...(showApprove
-      ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
+      ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: () => setApproveOpen(true) }]
       : []),
     { key: "print", label: "Yazdır", icon: "print", tone: "slate", busyKey: "print", testID: `order-print-${oid}`, onPress: printForm },
     { key: "label", label: "Kargo etiketi", icon: "pricetag", tone: "teal", busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel },
     ...(canProduce
-      ? [{ key: "prod", label: "Üretim emri", icon: "construct" as const, tone: "orange" as const, busyKey: "prod", testID: `order-prod-${oid}`, onPress: toProduction }]
+      ? [{ key: "prod", label: "Üretim emri", icon: "construct" as const, tone: "orange" as const, busyKey: "prod", testID: `order-prod-${oid}`, onPress: () => setProdOpen(true) }]
       : []),
   ];
 
-  const sheet = (
-    <B2BSheet
-      visible={cargoOpen}
-      title="Pazaryeri kargo firması"
-      subtitle={order.order_number}
-      onClose={() => setCargoOpen(false)}
-      testID={`order-cargo-sheet-${oid}`}
-    >
-      <GroupedSelect
-        label="Kargo firması"
-        testID={`order-cargo-select-${oid}`}
-        value={carrier}
-        onChange={setCarrier}
-        groups={cargoSelectGroups(carriers, order.cargo_carrier, order.cargo_carrier_name)}
-        emptyLabel="Kargo firması seçin"
-      />
-      <View style={{ height: 10 }} />
-      <PrimaryButton
-        title="Pazaryerine kaydet"
-        testID={`order-cargo-save-${oid}`}
-        loading={busy === "cargo"}
-        disabled={!carrier || !!busy}
-        onPress={saveCargo}
-      />
-    </B2BSheet>
+  const sheets = (
+    <>
+      <B2BSheet
+        visible={cargoOpen}
+        title="Pazaryeri kargo firması"
+        subtitle={order.order_number}
+        onClose={() => setCargoOpen(false)}
+        testID={`order-cargo-sheet-${oid}`}
+      >
+        <Muted>{cargoChangeConfirm(order, cargoNameOf(carriers, carrier, order.cargo_carrier_name))}</Muted>
+        <View style={{ height: 10 }} />
+        <GroupedSelect
+          label="Kargo firması"
+          testID={`order-cargo-select-${oid}`}
+          value={carrier}
+          onChange={setCarrier}
+          groups={cargoSelectGroups(carriers, order.cargo_carrier, order.cargo_carrier_name)}
+          emptyLabel="Kargo firması seçin"
+        />
+        <View style={{ height: 10 }} />
+        <PrimaryButton
+          title="Pazaryerine kaydet"
+          testID={`order-cargo-save-${oid}`}
+          loading={busy === "cargo"}
+          disabled={!carrier || !!busy}
+          onPress={saveCargo}
+        />
+      </B2BSheet>
+      <B2BSheet
+        visible={approveOpen}
+        title={approveActionLabel(order)}
+        subtitle={order.order_number}
+        onClose={() => setApproveOpen(false)}
+        testID={`order-approve-sheet-${oid}`}
+      >
+        <Muted>{approveOrderConfirm(order)}</Muted>
+        <View style={{ height: 12 }} />
+        <PrimaryButton
+          title="Onayla ve pazaryerine gönder"
+          testID={`order-approve-save-${oid}`}
+          loading={busy === "approve"}
+          disabled={!!busy}
+          onPress={submitApprove}
+        />
+      </B2BSheet>
+      <B2BSheet
+        visible={prodOpen}
+        title="Üretim emri"
+        subtitle={order.order_number}
+        onClose={() => setProdOpen(false)}
+        testID={`order-prod-sheet-${oid}`}
+      >
+        <Muted>{`${order.order_number || "Sipariş"} için eksik kalemler üretime alınsın mı?`}</Muted>
+        <View style={{ height: 12 }} />
+        <PrimaryButton
+          title="Üretime al"
+          testID={`order-prod-save-${oid}`}
+          loading={busy === "prod"}
+          disabled={!!busy}
+          onPress={submitProduction}
+        />
+      </B2BSheet>
+    </>
   );
 
   if (compact) {
@@ -244,7 +272,7 @@ export function OrderActions({
       <>
         <ActionPills items={defs} busy={busy} />
         {busy ? <Muted>Hazırlanıyor…</Muted> : null}
-        {sheet}
+        {sheets}
       </>
     );
   }
@@ -263,7 +291,7 @@ export function OrderActions({
     <>
       <ActionTiles items={items} columns={3} size={size} />
       {busy ? <Muted>Hazırlanıyor…</Muted> : null}
-      {sheet}
+      {sheets}
     </>
   );
 }

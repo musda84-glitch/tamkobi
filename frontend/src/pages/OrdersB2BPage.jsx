@@ -30,8 +30,10 @@ import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/Marke
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
+import { ChangeCargoModal } from "../components/ChangeCargoModal";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { channelTr, statusTr } from "../utils/labels";
+import { canChangeMarketplaceCargo, canShowMarketplaceApprove } from "../utils/orderMarketplace";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
@@ -56,6 +58,7 @@ export default function OrdersB2BPage() {
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
+  const [cargoOrder, setCargoOrder] = useState(null);
   const [shipOrder, setShipOrder] = useState(null);
   const [selected, setSelected] = useState([]);
   const [bulkLabels, setBulkLabels] = useState(null);
@@ -268,6 +271,7 @@ export default function OrdersB2BPage() {
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
       {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setShipOrder(null)} onDone={loadData} />}
       {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
+      {cargoOrder && <ChangeCargoModal order={cargoOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCargoOrder(null)} onDone={loadData} />}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
           <h3 className="text-sm font-bold">İade — {returnOrder.order_number}</h3><p className="text-slate-500">Tüm kalemler iade alınır, stok geri eklenir ve iade kaydı oluşturulur.</p>
@@ -477,13 +481,15 @@ export default function OrdersB2BPage() {
                             <Printer className="w-3 h-3" /> {ord.cargo_tracking_number}{ord.label_printed_at ? " ✓" : ""}
                           </button>
                         )}
-                        {["pending", "new"].includes(ord.order_status) ? <button onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
+                        {canShowMarketplaceApprove(ord) ? <button onClick={() => setApproveOrder(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Pazaryeri onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-7 h-7" aria-hidden="true" />}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
                             {[
+                              [Truck, "Pazaryeri kargo firmasını değiştir", () => setCargoOrder(ord), `change-cargo-btn-${ord.order_number}`, canChangeMarketplaceCargo(ord)],
+                              [CheckCircle, "Pazaryeri onayla", () => setApproveOrder(ord), `mp-approve-btn-${ord.order_number}`, canShowMarketplaceApprove(ord)],
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
