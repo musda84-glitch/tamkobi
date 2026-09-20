@@ -474,6 +474,25 @@ export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title"
   return quote.quote_number || quote.title || "Teklif";
 }
 
+export type SurveyStatusTone = "slate" | "indigo" | "green";
+
+export function surveyStatusTone(status?: string | null): SurveyStatusTone {
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "done") return "indigo";
+  if (key === "quoted") return "green";
+  return "slate";
+}
+
+/** Teklife dönüşen keşif listede durmaz. */
+export function isSurveyConverted(survey: Pick<SurveyDoc, "status" | "quote_id">): boolean {
+  const status = String(survey.status || "").trim().toLowerCase();
+  return status === "quoted" || Boolean(survey.quote_id);
+}
+
+export function surveyListSubtitle(survey: Pick<SurveyDoc, "contact_name" | "address" | "survey_date">): string {
+  return [survey.contact_name || "—", survey.address, survey.survey_date ? fmtDate(survey.survey_date) : ""].filter(Boolean).join(" · ");
+}
+
 export function newButtonLabel(kind: WorkKind): string {
   if (kind === "quote") return "Yeni Teklif";
   if (kind === "project") return "Yeni Proje";

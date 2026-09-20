@@ -37,6 +37,9 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quoteStatusTone,
+  isSurveyConverted,
+  surveyListSubtitle,
+  surveyStatusTone,
   trackingAbsoluteLink,
   trackingBadgeLabel,
   trackingShareMessage,
@@ -122,20 +125,23 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         subtitle: quoteListSubtitle(r),
         right: fmtMoney(r.grand_total),
         quote: r,
+        survey: undefined as SurveyDoc | undefined,
         project: undefined as ProjectDoc | undefined,
       }));
     }
     if (kind === "project") {
       const list = s ? projects.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : projects;
-      return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, project: r }));
+      return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, survey: undefined as SurveyDoc | undefined, project: r }));
     }
-    const list = s ? surveys.filter((r) => [r.survey_number, r.contact_name, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : surveys;
+    const open = surveys.filter((r) => !isSurveyConverted(r));
+    const list = s ? open.filter((r) => [r.survey_number, r.contact_name, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : open;
     return list.slice(0, 80).map((r) => ({
       id: idOf(r),
       title: r.survey_number || "Keşif",
-      subtitle: `${r.contact_name || "—"} · ${r.address || ""} · ${statusTr(r.status)} · ${fmtDate(r.survey_date)}`,
+      subtitle: surveyListSubtitle(r),
       right: "",
       quote: undefined as QuoteDoc | undefined,
+      survey: r,
       project: undefined as ProjectDoc | undefined,
     }));
   }, [kind, q, quotes, projects, surveys]);
@@ -164,7 +170,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         <ListRow
           key={r.id}
           testID={`${kind}-row-${r.id}`}
-          title={r.quote ? <QuoteListHeading quote={r.quote} /> : r.title}
+          title={r.quote ? <QuoteListHeading quote={r.quote} /> : r.survey ? <SurveyListHeading survey={r.survey} /> : r.title}
           subtitle={r.subtitle}
           right={r.right || undefined}
           onPress={() => go(meta.goDetail, { id: r.id })}
@@ -192,6 +198,21 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         onError={setError}
       />
     </Screen>
+  );
+}
+
+function SurveyListHeading({ survey }: { survey: Pick<SurveyDoc, "survey_number" | "status" | "quote_id"> }) {
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+      <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }} numberOfLines={1}>
+        {survey.survey_number || "Keşif"}
+      </Text>
+      {!isSurveyConverted(survey) ? (
+        <View testID="survey-status-badge">
+          <Badge label={statusTr(survey.status)} tone={surveyStatusTone(survey.status)} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
