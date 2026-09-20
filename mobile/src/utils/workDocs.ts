@@ -459,8 +459,12 @@ export function newButtonLabel(kind: WorkKind): string {
   return "Yeni Keşif";
 }
 
-/** Proje kartındaki teklif aksiyonu. */
+/** Proje kartındaki tamamla aksiyonu. */
 export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
+
+export function canCompleteProject(status?: string | null): boolean {
+  return String(status || "").trim().toLowerCase() !== "completed";
+}
 
 /** Kalem satırlarını birbirinden ayıran zebra tonları. */
 export function itemStripe(index: number): { backgroundColor: string } {
