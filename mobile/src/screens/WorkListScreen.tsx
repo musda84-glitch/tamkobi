@@ -23,13 +23,13 @@ import {
 } from "../utils/quoteApproval";
 import {
   PROJECT_QUOTE_ACTION,
-  PROJECT_STATUSES,
   applyTaskAssignee,
   assigneeSelectGroups,
   cleanProjectTasks,
   emptyProjectTask,
   newButtonLabel,
   projectCardBits,
+  projectStatusSelectGroups,
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
@@ -293,36 +293,17 @@ function ProjectCard({
         ) : null}
       </Pressable>
       {canEdit ? (
-        <Row style={{ alignItems: "flex-start", marginTop: 8 }} testID={`project-status-${id}`}>
-          {PROJECT_STATUSES.map((s) => {
-            const active = (project.status || "planning") === s.key;
-            return (
-              <Pressable
-                key={s.key}
-                testID={`project-status-${id}-${s.key}`}
-                accessibilityLabel={s.label}
-                onPress={() => !statusBusy && onStatus(s.key)}
-                style={{ flex: 1, alignItems: "center", gap: 4, paddingVertical: 2 }}
-              >
-                <View
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: active ? s.color : colors.slate100,
-                  }}
-                >
-                  <Ionicons name={s.icon} size={20} color={active ? "#fff" : colors.muted} />
-                </View>
-                <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? s.color : colors.muted }}>
-                  {s.short}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </Row>
+        <View style={{ marginTop: 8 }}>
+          <GroupedSelect
+            dense
+            label="Aşama"
+            testID={`project-status-${id}`}
+            value={project.status || "planning"}
+            onChange={(v) => !statusBusy && onStatus(v)}
+            groups={projectStatusSelectGroups(project.status)}
+            emptyLabel="Aşama seçin"
+          />
+        </View>
       ) : null}
       {canExp || canEdit || canQuote ? (
         <View style={{ gap: 6, marginTop: 8 }}>

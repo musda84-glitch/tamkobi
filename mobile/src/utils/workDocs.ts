@@ -123,11 +123,21 @@ export const QUOTE_STATUSES = [
 ];
 
 export const PROJECT_STATUSES = [
-  { key: "planning", label: "Planlama", short: "Plan", icon: "clipboard-outline", color: "#64748B" },
-  { key: "active", label: "Devam Ediyor", short: "Devam", icon: "play-circle", color: "#4F46E5" },
-  { key: "on_hold", label: "Beklemede", short: "Bekle", icon: "pause-circle", color: "#D97706" },
-  { key: "completed", label: "Tamamlandı", short: "Bitti", icon: "checkmark-done-circle", color: "#059669" },
-] as const;
+  { key: "planning", label: "Planlama" },
+  { key: "active", label: "Devam Ediyor" },
+  { key: "on_hold", label: "Beklemede" },
+  { key: "completed", label: "Tamamlandı" },
+];
+
+/** Kart / form açılır listesi — listeye yeni aşama eklenince dropdown da büyür. */
+export function projectStatusSelectGroups(current?: string | null) {
+  const options = PROJECT_STATUSES.map((s) => ({ value: s.key, label: s.label }));
+  const cur = String(current || "").trim();
+  if (cur && !options.some((o) => o.value === cur)) {
+    options.push({ value: cur, label: cur });
+  }
+  return [{ label: "Aşamalar", options }];
+}
 
 export const SURVEY_STATUSES = [
   { key: "planned", label: "Planlandı" },

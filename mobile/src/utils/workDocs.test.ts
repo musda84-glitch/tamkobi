@@ -9,6 +9,7 @@ import {
   PROJECT_QUOTE_ACTION,
   PROJECT_STATUSES,
   newButtonLabel,
+  projectStatusSelectGroups,
   projectCardBits,
   projectPayload,
   projectTaskRows,
@@ -159,10 +160,13 @@ describe("workDocs", () => {
     expect(PROJECT_QUOTE_ACTION).toBe("Teklifi Tamamla");
   });
 
-  it("keeps project stages as a single icon row", () => {
-    expect(PROJECT_STATUSES.map((s) => s.key)).toEqual(["planning", "active", "on_hold", "completed"]);
-    expect(PROJECT_STATUSES.every((s) => s.icon && s.short && s.color)).toBe(true);
-    expect(PROJECT_STATUSES.map((s) => s.short)).toEqual(["Plan", "Devam", "Bekle", "Bitti"]);
+  it("builds a stage dropdown that can grow with new statuses", () => {
+    const groups = projectStatusSelectGroups("planning");
+    expect(groups[0].label).toBe("Aşamalar");
+    expect(groups[0].options.map((o) => o.value)).toEqual(PROJECT_STATUSES.map((s) => s.key));
+    expect(groups[0].options.map((o) => o.label)).toEqual(["Planlama", "Devam Ediyor", "Beklemede", "Tamamlandı"]);
+    const extra = projectStatusSelectGroups("keşif");
+    expect(extra[0].options.some((o) => o.value === "keşif" && o.label === "keşif")).toBe(true);
   });
 
   it("prefers the line photo then the stock card image", () => {
