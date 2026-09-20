@@ -685,7 +685,8 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
         {"_id": att_id},
         {"$set": {"early_leave_request": elr, "early_leave_approved": approved, "updated_at": _now()}},
     )
-    await _db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
         "company_id": rec["company_id"],
         "user_id": rec.get("employee_id"),
@@ -824,7 +825,8 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
             {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": approved, "updated_at": _now()}},
         )
         saved = _clean(await _db.attendance.find_one({"_id": att_id}))
-    await _db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
         "company_id": rec["company_id"],
         "user_id": rec.get("employee_id"),
@@ -892,7 +894,7 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
         msg = f"{emp['full_name']} için {date} fazla mesai ataması kaldırıldı."
     else:
         import notify as _notify
-        await _db.notifications.insert_one(_notify.notification_doc(
+        await _notify.insert_notification(_db, _notify.notification_doc(
             emp["company_id"], "overtime_assigned",
             f"+ Mesai yazıldı: {emp.get('full_name')}",
             msg,
@@ -934,7 +936,8 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], request: Request)
     if not note:
         raise HTTPException(status_code=400, detail="İtiraz açıklaması gerekli.")
     await _db.attendance.update_one({"_id": att_id}, {"$set": {"employee_confirmed": False, "dispute_note": note, "disputed_at": _now()}})
-    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": rec["company_id"], "type": "attendance_dispute", "title": "Puantaj itirazı",
+    import notify as _notify
+    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": rec["company_id"], "type": "attendance_dispute", "title": "Puantaj itirazı",
                                         "message": f"{rec.get('employee_name')} {rec.get('date')} kaydına itiraz etti: {note[:120]}", "link": "/personnel?tab=attendance", "is_read": False, "created_at": _now()})
     return _clean(await _db.attendance.find_one({"_id": att_id}))
 
@@ -956,7 +959,7 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
         await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
     import notify as _notify
     roles = _notify.roles_for_type(ntype)
-    await _db.notifications.insert_one(_notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
+    await _notify.insert_notification(_db, _notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
     mail = {"status": "skipped"}
     if _mail_account_fn and _smtp_send_fn:
         try:

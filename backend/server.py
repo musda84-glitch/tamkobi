@@ -1260,7 +1260,8 @@ async def public_quote_respond(token: str, req: Dict[str, Any], request: Request
     ip = request_ip(request)
     ap.update({"status": decision, "responded_at": now, "responder_name": name, "note": (req.get("note") or "").strip(), "ip": ip, "user_agent": request.headers.get("user-agent", "")[:200]})
     await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval": ap, "status": decision}})
-    await db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": q["company_id"], "type": "quote_response", "title": f"{q.get('quote_number')} {'ONAYLANDI' if decision == 'accepted' else 'REDDEDİLDİ'}",
+    import notify as _notify
+    await _notify.insert_notification(db, {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "type": "quote_response", "title": f"{q.get('quote_number')} {'ONAYLANDI' if decision == 'accepted' else 'REDDEDİLDİ'}",
                                        "message": f"{q.get('contact_name')} ({name}) teklifi {'onayladı' if decision == 'accepted' else 'reddetti'}." + (f" Not: {ap['note']}" if ap.get("note") else ""),
                                        "ref_type": "quote", "ref_id": q["_id"], "is_read": False, "created_at": now})
     company = await db.companies.find_one({"_id": q["company_id"]}) or {}
@@ -1283,6 +1284,32 @@ async def list_notifications(request: Request, company_id: Optional[str] = "comp
 async def read_notification(notif_id: str):
     await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
     return {"status": "success"}
+
+@api_router.post("/notifications/push-token")
+async def register_push_token(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    import notify as _notify
+    token = str(req.get("token") or "").strip()
+    try:
+        return await _notify.upsert_push_token(
+            db,
+            user_id=str(user.get("id") or user.get("_id") or ""),
+            company_id=str(user.get("active_company_id") or req.get("company_id") or ""),
+            token=token,
+            platform=str(req.get("platform") or ""),
+            device_id=str(req.get("device_id") or ""),
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+@api_router.post("/notifications/push-token/unregister")
+async def unregister_push_token(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    import notify as _notify
+    deleted = await _notify.remove_push_token(
+        db,
+        str(req.get("token") or ""),
+        str(user.get("id") or user.get("_id") or ""),
+    )
+    return {"status": "success", "deleted": deleted}
 
 @api_router.get("/quotes/{quote_id}")
 async def get_quote(quote_id: str):
@@ -2955,7 +2982,7 @@ async def _b2b_owned_order(token: str, order_id: str) -> tuple:
 
 async def _notify_company(company_id: str, typ: str, title: str, message: str, ref_id: str):
     import notify as _notify
-    await db.notifications.insert_one(_notify.notification_doc(
+    await _notify.insert_notification(db, _notify.notification_doc(
         company_id, typ, title, message, ref_type="order", ref_id=ref_id,
     ))
 
@@ -2979,7 +3006,7 @@ async def _notify_new_task_assignees(project: Dict[str, Any], previous_tasks: Li
         seen.add(emp_id)
         emp = await db.employees.find_one({"_id": emp_id}) or {}
         title = (t.get("title") or t.get("name") or "Görev").strip()
-        await db.notifications.insert_one(_notify.notification_doc(
+        await _notify.insert_notification(db, _notify.notification_doc(
             project.get("company_id"), "task_assigned",
             f"Göreve atandı: {title}",
             f"{emp.get('full_name') or t.get('assignee_name') or 'Personel'} · {project.get('name') or 'Proje'}"
@@ -5876,7 +5903,8 @@ async def approve_cash_request(req_id: str, request: Request):
     except Exception:
         await db.cash_approval_requests.update_one({"_id": req_id}, {"$set": {"status": "pending", "approved_by": None, "approved_by_name": None, "approved_at": None}})
         raise
-    await db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
         "company_id": doc["company_id"],
         "type": "cash_approval",
@@ -5909,7 +5937,8 @@ async def reject_cash_request(req_id: str, request: Request):
     )
     if not claimed.modified_count:
         raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
-    await db.notifications.insert_one({
+    import notify as _notify
+    await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
         "company_id": doc["company_id"],
         "type": "cash_approval",
@@ -6138,7 +6167,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         bal_note = f" Bakiye farkı: {balance_delta:+,.2f} ₺."
     if inserted:
         import notify as _notify
-        await db.notifications.insert_one(_notify.notification_doc(
+        await _notify.insert_notification(db, _notify.notification_doc(
             doc["company_id"], "bank_sync",
             f"{inserted} yeni banka hareketi",
             f"{acc.get('account_name') or 'Hesap'}: {inserted} eşleşmemiş hareket geldi.{bal_note}",
@@ -9961,7 +9990,7 @@ async def _notify_role_assigned(company_id: str, emp: Dict[str, Any], role: str,
     import notify as _notify
     name = (emp or {}).get("full_name") or (emp or {}).get("name") or "Personel"
     label = _notify.role_label(role)
-    await db.notifications.insert_one(_notify.notification_doc(
+    await _notify.insert_notification(db, _notify.notification_doc(
         company_id, "role_assigned",
         f"Rol atandı: {label}",
         f"{name} kullanıcısına {label} rolü verildi.",

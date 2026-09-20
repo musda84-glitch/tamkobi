@@ -1211,7 +1211,8 @@ async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(re
         lid = await license_id_of(r["company_id"])
         await _db.company_licenses.update_one({"_id": lid}, {"$set": {"plan_id": r["plan_id"], "status": "active", "module_overrides": {}, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
         invalidate(lid)
-    await _db.notifications.insert_one({"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {req.get('note') or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
+    import notify as _notify
+    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {req.get('note') or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
     return _clean(await _db.upgrade_requests.find_one({"_id": req_id}))
 
 

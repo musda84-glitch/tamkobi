@@ -13,7 +13,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Barkod okutmak, keşif fotoğrafı çekmek ve stok/saha siparişinde ürün bulmak için kamera gerekir.",
         "NSPhotoLibraryUsageDescription": "Keşif ve proje fotoğraflarını yüklemek için galeri erişimi gerekir.",
-        "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir."
+        "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir.",
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -26,7 +27,10 @@
       "permissions": [
         "CAMERA",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
       ]
     },
     "web": {
@@ -60,6 +64,13 @@
         {
           "photosPermission": "Keşif ve proje fotoğraflarını yüklemek için galeriye izin verin.",
           "cameraPermission": "Keşif ve proje fotoğrafı çekmek için kameraya izin verin."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#059669",
+          "defaultChannel": "tamkobi"
         }
       ],
       "expo-secure-store",
