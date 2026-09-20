@@ -5,12 +5,23 @@ import { API_BASE_HEADER, normalizeApiBase, requestTarget } from "../api/url";
 import type { Company, Order, Product } from "../types";
 import { idOf } from "./money";
 import {
+  A4_PRINT_PX,
+  THERMAL_LABEL_PX,
+  htmlToPdfFile,
+  printHtmlNative,
+  printOfficialBlob,
+} from "./nativePrint";
+import {
+  cargoLabelFilename,
   cargoLabelHtml,
   cargoLabelText,
   mergePrintTemplate,
   openPrintHtml,
   orderFormHtml,
   orderFormText,
+  orderPdfFilename,
+  printDocumentHtml,
+  safePrintFilename,
   type PrintCompany,
   type PrintProduct,
   type PrintTemplate,
@@ -78,6 +89,23 @@ export async function loadPrintProducts(
   }
 }
 
+async function printHtmlDocument(title: string, bodyHtml: string, page: "a4" | "thermal", filename: string): Promise<boolean> {
+  const document = printDocumentHtml(title, bodyHtml, page);
+  const size = page === "thermal" ? THERMAL_LABEL_PX : A4_PRINT_PX;
+  if (Platform.OS === "web" && openPrintHtml(title, bodyHtml, { page })) return true;
+  try {
+    if (await printHtmlNative(document, size)) return true;
+  } catch {
+    /* PDF file */
+  }
+  try {
+    if (await htmlToPdfFile(document, filename, size)) return true;
+  } catch {
+    /* last resort */
+  }
+  return false;
+}
+
 export async function printOrderForm(
   order: Order,
   company?: PrintCompany | null,
@@ -92,9 +120,10 @@ export async function printOrderForm(
     products,
     mediaBase: client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined,
   });
-  if (Platform.OS === "web" && openPrintHtml(title, html, { page: "a4" })) return true;
-  await Share.share({ message: orderFormText(order, printCompany), title }).catch(() => null);
-  return true;
+  if (await printHtmlDocument(title, html, "a4", orderPdfFilename(order))) return true;
+  const shared = await Share.share({ message: orderFormText(order, printCompany), title }).catch(() => null);
+  if (shared) return true;
+  throw new Error("Yazdırılamadı.");
 }
 
 function openHref(href: string, title: string): boolean {
@@ -110,22 +139,7 @@ function openHref(href: string, title: string): boolean {
   return true;
 }
 
-export async function openOfficialLabel(url: string, title: string): Promise<boolean> {
-  if (Platform.OS === "web" && openHref(url, title)) return true;
-  const can = await Linking.canOpenURL(url).catch(() => false);
-  if (can) {
-    await Linking.openURL(url);
-    return true;
-  }
-  await Share.share({ message: url, title }).catch(() => null);
-  return true;
-}
-
-export async function fetchOfficialLabelBlob(client: ApiClient, orderId: string): Promise<Blob | null> {
-  const { url, proxiedBase } = requestTarget(client.baseUrl, `/orders/${orderId}/cargo-label/file`);
-  const headers: Record<string, string> = { Accept: "application/pdf,image/*,*/*" };
-  if (client.token) headers.Authorization = `Bearer ${client.token}`;
-  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
+export async function fetchLabelBlobFromUrl(url: string, headers?: Record<string, string>): Promise<Blob | null> {
   let res: Response;
   try {
     res = await fetch(url, { headers });
@@ -134,10 +148,32 @@ export async function fetchOfficialLabelBlob(client: ApiClient, orderId: string)
   }
   if (!res.ok) return null;
   const type = (res.headers.get("content-type") || "").toLowerCase();
-  if (type.includes("json") || type.includes("html") && !type.includes("pdf")) return null;
+  if (type.includes("json") || (type.includes("html") && !type.includes("pdf"))) return null;
   const blob = await res.blob();
   if (!blob.size) return null;
   return blob;
+}
+
+export async function openOfficialLabel(url: string, title: string): Promise<boolean> {
+  if (Platform.OS === "web" && openHref(url, title)) return true;
+  const blob = await fetchLabelBlobFromUrl(url);
+  if (blob && await printOfficialBlob(blob, `kargo-${safePrintFilename(title, "etiket")}`)) {
+    return true;
+  }
+  const can = await Linking.canOpenURL(url).catch(() => false);
+  if (can) {
+    await Linking.openURL(url);
+    return true;
+  }
+  return false;
+}
+
+export async function fetchOfficialLabelBlob(client: ApiClient, orderId: string): Promise<Blob | null> {
+  const { url, proxiedBase } = requestTarget(client.baseUrl, `/orders/${orderId}/cargo-label/file`);
+  const headers: Record<string, string> = { Accept: "application/pdf,image/*,*/*" };
+  if (client.token) headers.Authorization = `Bearer ${client.token}`;
+  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
+  return fetchLabelBlobFromUrl(url, headers);
 }
 
 export async function printCargoLabel(
@@ -148,15 +184,19 @@ export async function printCargoLabel(
   const title = `Kargo ${order.order_number || ""}`.trim();
   const id = idOf(order);
   const printCompany = await enrichPrintCompany(client, company);
+  const fileBase = `kargo-${safePrintFilename(order.order_number, "etiket")}`;
   if (client && id) {
     const blob = await fetchOfficialLabelBlob(client, id);
     if (blob && Platform.OS === "web" && typeof URL !== "undefined") {
       const href = URL.createObjectURL(blob);
       if (openHref(href, title)) return "official";
     }
-    if (blob && Platform.OS !== "web") {
-      await Share.share({ message: cargoLabelText(order, printCompany), title, url: order.cargo_label_url }).catch(() => null);
-      return "official";
+    if (blob) {
+      try {
+        if (await printOfficialBlob(blob, fileBase)) return "official";
+      } catch {
+        /* URL / thermal */
+      }
     }
     try {
       const meta = await get<CargoLabelMeta>(client, `/orders/${id}/cargo-label`);
@@ -167,7 +207,9 @@ export async function printCargoLabel(
   } else if (order.cargo_label_url && await openOfficialLabel(order.cargo_label_url, title)) {
     return "official";
   }
-  if (Platform.OS === "web" && openPrintHtml(title, cargoLabelHtml(order, printCompany), { page: "thermal" })) return "thermal";
-  await Share.share({ message: cargoLabelText(order, printCompany), title }).catch(() => null);
-  return "thermal";
+  const thermalBody = cargoLabelHtml(order, printCompany);
+  if (await printHtmlDocument(title, thermalBody, "thermal", cargoLabelFilename(order))) return "thermal";
+  const shared = await Share.share({ message: cargoLabelText(order, printCompany), title }).catch(() => null);
+  if (shared) return "thermal";
+  throw new Error("Etiket yazdırılamadı.");
 }

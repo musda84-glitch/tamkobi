@@ -420,6 +420,47 @@ export function thermalLabelCss(size = "100x150"): string {
   .items{font-size:8pt;flex:1;overflow:hidden;line-height:1.3}.muted{color:#555}.bc{text-align:center}.bc svg{max-width:100%;height:auto}.foot{font-size:8pt;text-align:center;border-top:1px solid #000;padding-top:1mm}.mono{font-family:monospace;font-size:14pt;font-weight:800}`;
 }
 
+export function safePrintFilename(raw: unknown, fallback: string): string {
+  const cleaned = String(raw || "").replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+export function orderPdfFilename(order: { order_number?: string } | null | undefined): string {
+  return `${safePrintFilename(order?.order_number, "siparis")}.pdf`;
+}
+
+export function cargoLabelFilename(order: { order_number?: string } | null | undefined, ext = "pdf"): string {
+  return `kargo-${safePrintFilename(order?.order_number, "etiket")}.${ext}`;
+}
+
+export function officialLabelFileMeta(type?: string | null, bytes?: Uint8Array | null): {
+  mime: string;
+  ext: string;
+  kind: "pdf" | "image" | "file";
+} {
+  const t = String(type || "").toLowerCase();
+  const b = bytes || new Uint8Array();
+  const pdfMagic = b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
+  const pngMagic = b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+  const jpegMagic = b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  const gifMagic = b.length >= 3 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46;
+  const webpMagic = b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46
+    && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50;
+  if (/pdf/.test(t) || pdfMagic) return { mime: "application/pdf", ext: "pdf", kind: "pdf" };
+  if (/png/.test(t) || pngMagic) return { mime: "image/png", ext: "png", kind: "image" };
+  if (/jpe?g/.test(t) || jpegMagic) return { mime: "image/jpeg", ext: "jpg", kind: "image" };
+  if (/webp/.test(t) || webpMagic) return { mime: "image/webp", ext: "webp", kind: "image" };
+  if (/gif/.test(t) || gifMagic) return { mime: "image/gif", ext: "gif", kind: "image" };
+  return { mime: t || "application/octet-stream", ext: "bin", kind: "file" };
+}
+
+/** Native expo-print belgesi — window.print scripti yok. */
+export function printDocumentHtml(title: string, bodyHtml: string, page: PrintPageKind = "a4"): string {
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>${documentCss(page)}</style>
+    </head><body>${bodyHtml}</body></html>`;
+}
+
 function documentCss(page: PrintPageKind): string {
   if (page === "thermal") return thermalLabelCss();
   if (page === "a4") {

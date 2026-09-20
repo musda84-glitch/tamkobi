@@ -1,4 +1,16 @@
-import { cargoLabelCode, cargoLabelHtml, cargoLabelText, mergePrintTemplate, orderFormHtml, orderFormText, thermalLabelCss } from "./orderPrint";
+import {
+  cargoLabelCode,
+  cargoLabelFilename,
+  cargoLabelHtml,
+  cargoLabelText,
+  mergePrintTemplate,
+  officialLabelFileMeta,
+  orderFormHtml,
+  orderFormText,
+  orderPdfFilename,
+  printDocumentHtml,
+  thermalLabelCss,
+} from "./orderPrint";
 
 const order = {
   order_number: "11573451170",
@@ -81,5 +93,43 @@ describe("orderPrint", () => {
   it("prefers cargo barcode over tracking for the printed code", () => {
     expect(cargoLabelCode({ cargo_tracking_number: "TR", cargo_barcode: "8691" })).toBe("8691");
     expect(cargoLabelCode({ order_number: "1157" })).toBe("1157");
+  });
+
+  it("wraps native print HTML without window.print script", () => {
+    const form = printDocumentHtml("Sipariş 1157", orderFormHtml(order, { name: "Matek" }), "a4");
+    expect(form).toContain("<!doctype html>");
+    expect(form).toContain("SİPARİŞ FORMU");
+    expect(form).toContain("size:A4");
+    expect(form).not.toContain("window.print");
+    const label = printDocumentHtml("Kargo 1157", cargoLabelHtml(order, { name: "Matek" }), "thermal");
+    expect(label).toContain("100mm 150mm");
+    expect(label).toContain('class="label"');
+    expect(label).not.toContain("window.print");
+  });
+
+  it("names pdf files after the order number", () => {
+    expect(orderPdfFilename(order)).toBe("11573451170.pdf");
+    expect(cargoLabelFilename(order)).toBe("kargo-11573451170.pdf");
+    expect(orderPdfFilename({})).toBe("siparis.pdf");
+  });
+
+  it("detects official cargo label mime from type or magic", () => {
+    expect(officialLabelFileMeta("application/pdf")).toEqual({ mime: "application/pdf", ext: "pdf", kind: "pdf" });
+    expect(officialLabelFileMeta("image/png")).toEqual({ mime: "image/png", ext: "png", kind: "image" });
+    expect(officialLabelFileMeta("", new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]))).toEqual({
+      mime: "application/pdf",
+      ext: "pdf",
+      kind: "pdf",
+    });
+    expect(officialLabelFileMeta("", new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toEqual({
+      mime: "image/png",
+      ext: "png",
+      kind: "image",
+    });
+    expect(officialLabelFileMeta("application/octet-stream")).toEqual({
+      mime: "application/octet-stream",
+      ext: "bin",
+      kind: "file",
+    });
   });
 });
