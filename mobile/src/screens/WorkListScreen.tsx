@@ -23,6 +23,7 @@ import {
 } from "../utils/quoteApproval";
 import {
   PROJECT_QUOTE_ACTION,
+  canCompleteProject,
   applyTaskAssignee,
   assigneeSelectGroups,
   cleanProjectTasks,
@@ -57,7 +58,6 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const { client, companyId, can, baseUrl } = useAuth();
   const canEdit = can(meta.perm, "edit");
   const canExp = can("/expenses", "edit");
-  const canQuote = can("/quotes", "edit");
   const [quotes, setQuotes] = useState<QuoteDoc[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
   const [surveys, setSurveys] = useState<SurveyDoc[]>([]);
@@ -155,7 +155,6 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           project={r.project!}
           canEdit={canEdit}
           canExp={canExp}
-          canQuote={canQuote}
           statusBusy={statusBusyId === r.id}
           onStatus={(status) => setProjectStatus(r.id, status)}
           onTeam={() => setTeamProject(r.project!)}
@@ -262,7 +261,6 @@ function ProjectCard({
   project,
   canEdit,
   canExp,
-  canQuote,
   statusBusy,
   onStatus,
   onTeam,
@@ -271,7 +269,6 @@ function ProjectCard({
   project: ProjectDoc;
   canEdit: boolean;
   canExp: boolean;
-  canQuote: boolean;
   statusBusy: boolean;
   onStatus: (status: string) => void;
   onTeam: () => void;
@@ -329,7 +326,7 @@ function ProjectCard({
           />
         </View>
       ) : null}
-      {canExp || canEdit || canQuote ? (
+      {canExp || canEdit ? (
         <View style={{ gap: 6, marginTop: 8 }}>
           {canExp || canEdit ? (
             <Row style={{ flexWrap: "wrap" }}>
@@ -355,29 +352,22 @@ function ProjectCard({
               ) : null}
             </Row>
           ) : null}
-          {canEdit || canQuote ? (
+          {canEdit ? (
             <Row style={{ flexWrap: "wrap" }}>
-              {canEdit ? (
-                <ActionBtn
-                  title="Takip Linki"
-                  testID={`project-track-${id}`}
-                  onPress={onTrack}
-                  bg={colors.emerald50}
-                  border="#A7F3D0"
-                  color="#047857"
-                />
-              ) : null}
-              {canQuote ? (
+              <ActionBtn
+                title="Takip Linki"
+                testID={`project-track-${id}`}
+                onPress={onTrack}
+                bg={colors.emerald50}
+                border="#A7F3D0"
+                color="#047857"
+              />
+              {canCompleteProject(project.status) ? (
                 <ActionBtn
                   title={PROJECT_QUOTE_ACTION}
                   testID={`project-quote-${id}`}
-                  onPress={() => go("QuoteNew", {
-                    contact_id: project.contact_id || "",
-                    contact_name: project.contact_name || "",
-                    project_id: id,
-                    title: `${bits.name} teklifi`,
-                  })}
-                  bg={colors.secondary}
+                  onPress={() => !statusBusy && onStatus("completed")}
+                  bg={colors.primary}
                   color="#fff"
                 />
               ) : null}

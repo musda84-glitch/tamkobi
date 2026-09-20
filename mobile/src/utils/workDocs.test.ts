@@ -7,6 +7,7 @@ import {
   namedItems,
   removeWorkItem,
   PROJECT_QUOTE_ACTION,
+  canCompleteProject,
   PROJECT_STATUSES,
   newButtonLabel,
   projectStatusSelectGroups,
@@ -163,6 +164,9 @@ describe("workDocs", () => {
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
     expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
+    expect(canCompleteProject("active")).toBe(true);
+    expect(canCompleteProject("planning")).toBe(true);
+    expect(canCompleteProject("completed")).toBe(false);
   });
 
   it("builds a stage dropdown that can grow with new statuses", () => {
