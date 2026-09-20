@@ -491,20 +491,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 <Ionicons name="trash-outline" size={20} color={colors.danger} />
               </Pressable>
             </Row>
+            <Field
+              compact
+              label={it.is_service ? "Hizmet adı" : "Ad"}
+              testID={`inv-item-name-${idx}`}
+              value={it.name}
+              onChangeText={(v) => patchLine(idx, "name", v)}
+            />
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Field
-                  compact
-                  label={it.is_service ? "Hizmet adı" : "Ad"}
-                  testID={`inv-item-name-${idx}`}
-                  value={it.name}
-                  onChangeText={(v) => patchLine(idx, "name", v)}
-                />
-              </View>
-              <View style={{ width: 52, flexShrink: 0 }}>
                 <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
               </View>
-              <View style={{ width: 68, flexShrink: 0 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Field compact label="Fiyat" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
               </View>
             </Row>
