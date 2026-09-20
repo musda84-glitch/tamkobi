@@ -100,6 +100,7 @@ describe("notificationRoute", () => {
     expect(notificationRoute({ link: "/production" })).toBe("/atolye");
     expect(notificationRoute({ ref_type: "work_order" })).toBe("/atolye");
     expect(notificationRoute({ ref_type: "cash_approval" })).toBe("/banking");
+    expect(notificationRoute({ link: "/edoc-inbox", ref_type: "edoc" })).toBe("/edoc-inbox");
     expect(notificationRoute({ type: "announcement" })).toBeNull();
   });
 });

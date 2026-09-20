@@ -22,6 +22,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push({ pathname: "/contacts/statement/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
     case "Invoices":
       return router.push("/invoices");
+    case "EdocInbox":
+      return router.push("/edoc-inbox");
     case "InvoiceDetail":
       return router.push({ pathname: "/invoices/[id]", params: { id: String(params?.id || "") } });
     case "InvoiceNew":
