@@ -13,11 +13,12 @@ import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/Projec
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
+import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const STATUS = { draft: ["Taslak", "bg-slate-100 text-slate-600"], sent: ["Gönderildi", "bg-blue-50 text-blue-700"], accepted: ["Kabul / Faturalandı", "bg-emerald-50 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-50 text-rose-700"], planning: ["Planlama", "bg-slate-100 text-slate-600"], active: ["Devam Ediyor", "bg-blue-50 text-blue-700"], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700"], on_hold: ["Beklemede", "bg-amber-50 text-amber-700"], planned: ["Planlandı", "bg-slate-100 text-slate-600"], done: ["Yapıldı", "bg-blue-50 text-blue-700"], quoted: ["Teklife Dönüştü", "bg-emerald-50 text-emerald-700"] };
-const Badge = ({ s }) => { const [l, c] = STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
+const Badge = ({ s, map }) => { const [l, c] = (map && map[s]) || STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
 
 const ImageStrip = ({ entity, doc, onUpdated }) => {
   const [busy, setBusy] = useState(false);
@@ -98,6 +99,7 @@ export default function ProjectsPage({ section } = {}) {
   const [trackingProject, setTrackingProject] = useState(null);
   const [expenseProject, setExpenseProject] = useState(null);
   const [teamProject, setTeamProject] = useState(null);
+  const [projectStages, setProjectStages] = useState(DEFAULT_PROJECT_STAGES);
   const [editTpl, setEditTpl] = useState(false);
   const parseLoc = (v) => { const m = v.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) || v.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{1,3}\.\d{4,})/); return m ? { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) } : {}; };
   const useMyLocation = () => { if (!navigator.geolocation) { toast.error("Tarayıcı konum desteklemiyor."); return; } navigator.geolocation.getCurrentPosition((p) => { const lat = p.coords.latitude.toFixed(6), lng = p.coords.longitude.toFixed(6); setForm((f) => ({ ...f, latitude: Number(lat), longitude: Number(lng), location_url: `https://www.google.com/maps?q=${lat},${lng}` })); toast.success("Mevcut konum alındı."); }, () => toast.error("Konum alınamadı.")); };
@@ -107,16 +109,20 @@ export default function ProjectsPage({ section } = {}) {
     if (!companyId) return;
     setListLoading(true);
     try {
-      const [q, p, s] = await Promise.all([
+      const [q, p, s, st] = await Promise.all([
         axios.get(`${API_URL}/quotes?company_id=${companyId}&summary=1`),
         axios.get(`${API_URL}/projects?company_id=${companyId}&light=1`),
         axios.get(`${API_URL}/surveys?company_id=${companyId}`),
+        axios.get(`${API_URL}/companies/${companyId}/project-stages`).catch(() => ({ data: { stages: DEFAULT_PROJECT_STAGES } })),
       ]);
       setQuotes(q.data || []); setProjects(p.data || []); setSurveys(s.data || []);
+      setProjectStages(normalizeProjectStages(st.data?.stages));
     } finally {
       setListLoading(false);
     }
   }, [companyId]);
+  const projectStatusMap = projectStageMap(projectStages);
+  const finalStage = finalProjectStageKey(projectStages);
   useEffect(() => {
     if (authLoading || !companyId) return;
     load().catch(() => { setListLoading(false); toast.error("Veriler yüklenemedi."); });
@@ -348,7 +354,7 @@ export default function ProjectsPage({ section } = {}) {
           {projects.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">Henüz proje yok.</div>}
           {projects.map((p) => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
-              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} /></div>
+              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
               <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count || 0} • {fmt(p.quoted_total)} ₺</b></div>
@@ -386,14 +392,17 @@ export default function ProjectsPage({ section } = {}) {
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t">
-                <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>{["planning", "active", "on_hold", "completed"].map((s) => <option key={s} value={s}>{STATUS[s][0]}</option>)}</select>
+                <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>
+                  {!projectStages.some((s) => s.key === p.status) && p.status ? <option value={p.status}>{STATUS[p.status]?.[0] || p.status}</option> : null}
+                  {projectStages.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
                 <button onClick={() => openTracking(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-lg font-semibold" data-testid={`project-track-${p.project_number}`} title="Müşteriye durum takip linki gönder"><Link2 className="w-3.5 h-3.5" /> Takip Linki</button>
-                {p.status !== "completed" ? (
+                {p.status !== finalStage ? (
                   <button
                     type="button"
                     onClick={() => {
                       if (!window.confirm(`${p.name || p.project_number} projesi tamamlandı olarak işaretlensin mi?`)) return;
-                      setStatus("projects", p.id, "completed");
+                      setStatus("projects", p.id, finalStage);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold"
                     data-testid={`project-complete-${p.project_number}`}
@@ -403,7 +412,7 @@ export default function ProjectsPage({ section } = {}) {
                   </button>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg font-semibold" data-testid={`project-completed-${p.project_number}`}>
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Proje Tamamlandı
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {projectStatusMap[finalStage]?.[0] || "Proje Tamamlandı"}
                   </span>
                 )}
                 <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
