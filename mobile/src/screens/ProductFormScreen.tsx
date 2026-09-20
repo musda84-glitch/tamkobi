@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { del, fileUrl, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { confirmAction } from "../components/chips";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Product } from "../types";
@@ -15,6 +16,7 @@ import {
   draftFromProduct,
   emptyProductDraft,
   generateBarcode,
+  generateBarcodeConfirm,
   productPayload,
   validateProductDraft,
   type ProductDraft,
@@ -200,7 +202,12 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         </View>
       </Row>
       {canEdit ? (
-        <PrimaryButton title="Barkod üret" color={colors.indigo} onPress={() => set("barcode", generateBarcode())} testID="stock-gen-barcode" />
+        <PrimaryButton
+          title="Barkod üret"
+          color={colors.indigo}
+          onPress={() => confirmAction("Barkod üret", generateBarcodeConfirm(draft.barcode), () => set("barcode", generateBarcode()))}
+          testID="stock-gen-barcode"
+        />
       ) : null}
 
       <Muted>Tür</Muted>
