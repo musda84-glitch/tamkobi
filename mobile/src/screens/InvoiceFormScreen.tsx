@@ -502,7 +502,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
               <View style={{ width: 64, flexShrink: 0 }}>
                 <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
+              <View style={{ width: 72, flexShrink: 0 }}>
                 <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
