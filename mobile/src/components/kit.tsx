@@ -132,6 +132,8 @@ export function ListRow({
   leading,
   image,
   badge,
+  titleLines = 1,
+  compactRight,
   onPress,
   testID,
 }: {
@@ -145,6 +147,8 @@ export function ListRow({
   leading?: React.ReactNode;
   image?: string;
   badge?: React.ReactNode;
+  titleLines?: number;
+  compactRight?: boolean;
   onPress?: () => void;
   testID?: string;
 }) {
@@ -153,13 +157,13 @@ export function ListRow({
       {leading || image != null ? (
         <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
       ) : null}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.listTitle} numberOfLines={1}>{title}</Text>
+      <View style={{ flex: 1, minWidth: 80 }}>
+        <Text style={styles.listTitle} numberOfLines={titleLines}>{title}</Text>
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
       {badge}
       {right || rightSub ? (
-        <View style={{ alignItems: "flex-end", marginLeft: 8, minWidth: 88, maxWidth: 168 }}>
+        <View style={{ alignItems: "flex-end", marginLeft: 6, flexShrink: 0, maxWidth: compactRight ? 96 : 120 }}>
           {right ? <Text testID={rightTestID} style={[styles.listRight, rightColor ? { color: rightColor } : null]} numberOfLines={1}>{right}</Text> : null}
           {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{rightSub}</Text> : null}
         </View>

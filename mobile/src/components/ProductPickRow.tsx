@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, ListRow } from "./kit";
+import { ListRow } from "./kit";
 import { ProductThumb } from "./ProductThumb";
 import { colors } from "../theme";
 import type { Product } from "../types";
@@ -23,13 +23,14 @@ export function ProductPickRow({
     <ListRow
       testID={testID || `prod-pick-${id}`}
       image={photo}
-      leading={<ProductThumb uri={photo} size={64} testID={`prod-pick-thumb-${id}`} />}
+      leading={<ProductThumb uri={photo} size={48} testID={`prod-pick-thumb-${id}`} />}
       title={product.name}
+      titleLines={2}
+      compactRight
       subtitle={productPickSubtitle(product)}
       right={fmtMoney(product.sale_price)}
       rightSub={stockRightLabel(product)}
       rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
-      badge={<Badge label={badge?.label || stockRightLabel(product)} tone={qtyTone} />}
       onPress={onPress}
     />
   );
