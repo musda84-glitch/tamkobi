@@ -415,17 +415,38 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "quote" ? <Field label="Başlık" testID="q-title" value={title} onChangeText={setTitle} editable={canEdit} /> : null}
       {kind === "project" ? <Field label="Proje adı" testID="p-name" value={name} onChangeText={setName} editable={canEdit} /> : null}
 
-      <Muted>Cari</Muted>
-      {contactId ? (
-        <ListRow title={contactName || "Cari"} subtitle="Değiştirmek için dokunun" onPress={() => { setContactId(""); setContactName(""); }} />
-      ) : (
-        <>
-          <Field label="Cari ara" value={custQ} onChangeText={setCustQ} placeholder="Ad / telefon" />
-          {custHits.map((c) => (
-            <ListRow key={idOf(c)} title={c.name} subtitle={c.phone || c.city} onPress={() => { setContactId(idOf(c)); setContactName(c.name); setAddress((a) => a || c.address || ""); setCustQ(""); }} />
-          ))}
-        </>
-      )}
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 12,
+          backgroundColor: "#fff",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          gap: 4,
+        }}
+      >
+        <Muted>Cari</Muted>
+        {contactId ? (
+          <Pressable
+            onPress={() => { setContactId(""); setContactName(""); }}
+            style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 30 }}
+          >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontWeight: "700", color: colors.text, fontSize: 14 }} numberOfLines={1}>{contactName || "Cari"}</Text>
+              <Muted>Değiştirmek için dokunun</Muted>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
+        ) : (
+          <>
+            <Field dense label="Cari ara" value={custQ} onChangeText={setCustQ} placeholder="Ad / telefon" />
+            {custHits.map((c) => (
+              <ListRow key={idOf(c)} title={c.name} subtitle={c.phone || c.city} onPress={() => { setContactId(idOf(c)); setContactName(c.name); setAddress((a) => a || c.address || ""); setCustQ(""); }} />
+            ))}
+          </>
+        )}
+      </View>
 
       {kind === "quote" ? <DateField label="Geçerlilik" testID="q-valid" value={validUntil} onChangeText={setValidUntil} editable={canEdit} /> : null}
       {kind === "project" ? (
