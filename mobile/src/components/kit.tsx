@@ -88,14 +88,14 @@ export function PrimaryButton({
   );
 }
 
-export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean }) {
-  const { label, style, compact, ...rest } = props;
+export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean; dense?: boolean }) {
+  const { label, style, compact, dense, ...rest } = props;
   return (
-    <View style={{ marginBottom: compact ? 0 : spacing.md }}>
-      <Text style={styles.label}>{trUpper(label)}</Text>
+    <View style={{ marginBottom: compact || dense ? 0 : spacing.md }}>
+      <Text style={[styles.label, dense && styles.labelDense]}>{trUpper(label)}</Text>
       <TextInput
         placeholderTextColor={colors.muted}
-        style={[styles.input, compact && styles.inputCompact, style]}
+        style={[styles.input, compact && styles.inputCompact, dense && styles.inputDense, style]}
         {...rest}
       />
     </View>
@@ -219,6 +219,7 @@ const styles = StyleSheet.create({
   btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
   btnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
   label: { fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 },
+  labelDense: { fontSize: 10, marginBottom: 2 },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -235,6 +236,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
     fontSize: 14,
+  },
+  inputDense: {
+    minHeight: 30,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    fontSize: 13,
   },
   empty: { alignItems: "center", paddingVertical: 24, gap: 6 },
   emptyTitle: { fontWeight: "700", color: colors.text },

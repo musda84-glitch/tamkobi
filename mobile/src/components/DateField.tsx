@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { createElement, useMemo, useState } from "react";
-import { Modal, Platform, Pressable, Text, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { Modal, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
@@ -11,26 +11,10 @@ type DateFieldProps = {
   onChangeText: (value: string) => void;
   testID?: string;
   min?: string;
+  editable?: boolean;
 };
 
-const webInputStyle: Record<string, string | number> = {
-  width: "100%",
-  boxSizing: "border-box",
-  borderWidth: 1,
-  borderStyle: "solid",
-  borderColor: colors.border,
-  borderRadius: 10,
-  paddingLeft: 12,
-  paddingRight: 12,
-  paddingTop: 10,
-  paddingBottom: 10,
-  minHeight: 44,
-  fontSize: 15,
-  color: colors.text,
-  backgroundColor: "#fff",
-};
-
-export function DateField({ label, value, onChangeText, testID, min }: DateFieldProps) {
+export function DateField({ label, value, onChangeText, testID, min, editable = true }: DateFieldProps) {
   const [open, setOpen] = useState(false);
   const ymd = normalizeYmd(value);
   const minYmd = normalizeYmd(min || "");
@@ -52,6 +36,7 @@ export function DateField({ label, value, onChangeText, testID, min }: DateField
   };
 
   const openCal = () => {
+    if (!editable) return;
     const d = parseYmd(ymd) || new Date();
     setCursor({ year: d.getFullYear(), month0: d.getMonth() });
     setOpen(true);
@@ -60,21 +45,15 @@ export function DateField({ label, value, onChangeText, testID, min }: DateField
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
-      {Platform.OS === "web" ? (
-        createElement("input", {
-          type: "date",
-          value: ymd,
-          min: minYmd || undefined,
-          onChange: (e: { target: { value: string } }) => commit(e.target.value),
-          "data-testid": testID,
-          style: webInputStyle,
-        })
-      ) : (
-        <Pressable testID={testID} onPress={openCal} style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
-          <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
-          <Ionicons name="calendar-outline" size={18} color={colors.muted} />
-        </Pressable>
-      )}
+      <Pressable
+        testID={testID}
+        onPress={openCal}
+        disabled={!editable}
+        style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between", opacity: editable ? 1 : 0.6 }]}
+      >
+        <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
+        <Ionicons name="calendar-outline" size={18} color={colors.muted} />
+      </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.35)", justifyContent: "center", padding: 16 }}>
           <Pressable

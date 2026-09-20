@@ -9,6 +9,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { DateField } from "../components/DateField";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
@@ -357,15 +358,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         </>
       )}
 
-      {kind === "quote" ? <Field label="Geçerlilik" testID="q-valid" value={validUntil} onChangeText={setValidUntil} placeholder="YYYY-MM-DD" editable={canEdit} /> : null}
+      {kind === "quote" ? <DateField label="Geçerlilik" testID="q-valid" value={validUntil} onChangeText={setValidUntil} editable={canEdit} /> : null}
       {kind === "project" ? (
         <>
           <Field label="Bütçe" testID="p-budget" value={budget} onChangeText={setBudget} keyboardType="decimal-pad" editable={canEdit} />
-          <Field label="Başlangıç" value={startDate} onChangeText={setStartDate} placeholder="YYYY-MM-DD" editable={canEdit} />
-          <Field label="Bitiş" value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD" editable={canEdit} />
+          <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} />
+          <DateField label="Bitiş" testID="p-end" value={endDate} onChangeText={setEndDate} min={startDate} editable={canEdit} />
         </>
       ) : null}
-      {kind === "survey" ? <Field label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} placeholder="YYYY-MM-DD" editable={canEdit} /> : null}
+      {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
       {kind !== "quote" ? <Field label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
       {kind !== "quote" ? (
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
@@ -424,22 +425,22 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               style={{
                 ...itemStripe(i),
                 borderRadius: 12,
-                padding: 8,
-                gap: 8,
+                padding: 6,
+                gap: 6,
               }}
             >
-              <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                <ProductThumb uri={workItemImage(it, prod)} size={64} testID={`q-item-thumb-${i}`} />
-                <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
-                  <Field compact label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
+              <Row style={{ alignItems: "center", gap: 8 }}>
+                <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
+                <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                  <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
                   <Row style={{ alignItems: "flex-end", gap: 6 }}>
-                    <View style={{ width: 58, flexShrink: 0 }}>
-                      <Field compact label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                    <View style={{ width: 52, flexShrink: 0 }}>
+                      <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
                     </View>
-                    <View style={{ width: 78, flexShrink: 0 }}>
-                      <Field compact label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                    <View style={{ width: 70, flexShrink: 0 }}>
+                      <Field dense label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
                     </View>
-                    <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, marginBottom: 8 }} testID={`q-item-gross-${i}`}>
+                    <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, fontSize: 13, marginBottom: 4 }} testID={`q-item-gross-${i}`}>
                       {it.name ? fmtMoney(workItemLineGross(it)) : ""}
                     </Text>
                     {canEdit ? (
@@ -447,7 +448,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         onPress={() => removeItem(i)}
                         testID={`q-item-del-${i}`}
                         accessibilityLabel="Kalemi sil"
-                        style={{ width: 32, height: 40, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                        style={{ width: 28, height: 30, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                       >
                         <Ionicons name="trash-outline" size={20} color={colors.danger} />
                       </Pressable>
