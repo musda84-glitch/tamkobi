@@ -70,10 +70,10 @@ export function uploadedImageUrl(res: unknown): string {
 }
 
 const COPY: Record<ImageEntity, { label: string; hint: string }> = {
-  survey: { label: "Keşif fotoğrafları", hint: "Yüklenen fotoğraflar web’deki keşif kartında da görünür." },
-  project: { label: "Proje fotoğrafları", hint: "Yüklenen fotoğraflar web’deki proje kartında da görünür." },
-  quote: { label: "Teklif fotoğrafları", hint: "Yüklenen fotoğraflar web’deki teklif kartında da görünür." },
-  product: { label: "Stok kartı fotoğrafları", hint: "Yüklenen fotoğraflar web’deki stok kartında da görünür." },
+  survey: { label: "Keşif fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki keşif kartında da görünür." },
+  project: { label: "Proje fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki proje kartında da görünür." },
+  quote: { label: "Teklif fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki teklif kartında da görünür." },
+  product: { label: "Stok kartı fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki stok kartında da görünür." },
 };
 
 export function imageUploaderCopy(entity: ImageEntity) {
