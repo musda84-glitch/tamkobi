@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
@@ -201,6 +201,7 @@ const toQuoteLinePayload = (it) => {
 };
 
 const FILTER_KEY = "tamkobi_qp_only_pending";
+const SHOW_COMPLETED_KEY = "tamkobi_qp_show_completed_projects";
 
 export default function ProjectsPage({ section } = {}) {
   const { activeCompany, loading: authLoading } = useAuth();
@@ -409,20 +410,31 @@ export default function ProjectsPage({ section } = {}) {
   };
   const del = (coll, id) => act(() => axios.delete(`${API_URL}/${coll}/${id}`), "Silindi.");
 
-  // Varsayılan: tüm kayıtlar görünür (yenilemede "kayboldu" hissi olmasın).
+  // Varsayılan: teklif/keşifte tüm kayıtlar; projelerde tamamlananlar gizli.
   const [onlyPending, setOnlyPending] = useState(() => {
     try { return sessionStorage.getItem(FILTER_KEY) === "1"; } catch { return false; }
+  });
+  const [showCompletedProjects, setShowCompletedProjects] = useState(() => {
+    try { return sessionStorage.getItem(SHOW_COMPLETED_KEY) === "1"; } catch { return false; }
   });
   const toggleOnlyPending = (on) => {
     setOnlyPending(on);
     try { sessionStorage.setItem(FILTER_KEY, on ? "1" : "0"); } catch { /* ignore */ }
   };
+  const toggleShowCompleted = (on) => {
+    setShowCompletedProjects(on);
+    try { sessionStorage.setItem(SHOW_COMPLETED_KEY, on ? "1" : "0"); } catch { /* ignore */ }
+  };
+  const isCompletedProject = (p) => p.status === finalStage || p.status === "completed";
   const pendingQuotes = quotes.filter((q) => q.status === "draft" || (q.status === "sent" && (!q.approval || q.approval.status === "pending")) || (q.status === "accepted" && !q.project_id && !q.invoice_id));
   const pendingSurveys = surveys.filter((s) => s.status === "planned" || (s.status === "done" && !s.quote_id));
+  const completedProjects = projects.filter(isCompletedProject);
+  const activeProjects = projects.filter((p) => !isCompletedProject(p));
+  const visibleProjects = showCompletedProjects ? projects : activeProjects;
   const visibleQuotes = onlyPending ? pendingQuotes : quotes;
   const visibleSurveys = onlyPending ? pendingSurveys : surveys;
   const hiddenCount = tab === "quotes" ? quotes.length - pendingQuotes.length : tab === "surveys" ? surveys.length - pendingSurveys.length : 0;
-  const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, projects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
+  const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, visibleProjects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
   const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
 
   return (
@@ -432,13 +444,27 @@ export default function ProjectsPage({ section } = {}) {
         <button onClick={() => openForm(kind)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold" data-testid={`new-${kind}-btn`}><Plus className="w-4 h-4" /> {kind === "quote" ? "Yeni Teklif" : kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</button>
       </div>
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
-        {tab !== "projects" && (
+        {tab === "projects" ? (
+          <button
+            type="button"
+            onClick={() => toggleShowCompleted(!showCompletedProjects)}
+            className={`ml-auto mb-px inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${showCompletedProjects ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+            data-testid="toggle-completed-projects"
+          >
+            {showCompletedProjects ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showCompletedProjects ? "Tamamlananları gizle" : "Tamamlananları göster"}
+            {completedProjects.length ? ` (${completedProjects.length})` : ""}
+          </button>
+        ) : (
           <label className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500 pb-1 cursor-pointer" data-testid="only-pending-toggle">
             <input type="checkbox" checked={onlyPending} onChange={(e) => toggleOnlyPending(e.target.checked)} className="rounded" />
             Sadece bekleyenler {hiddenCount > 0 ? `(${hiddenCount} gizli)` : ""}
           </label>
         )}
       </div>
+      {tab === "projects" && !showCompletedProjects && completedProjects.length > 0 && (
+        <p className="text-[11px] text-slate-400 -mt-3" data-testid="completed-projects-hint">{completedProjects.length} tamamlanan proje gizlendi — «Tamamlananları göster» ile açılır.</p>
+      )}
       {tab !== "projects" && onlyPending && hiddenCount > 0 && <p className="text-[11px] text-slate-400 -mt-3" data-testid="archived-hint">{hiddenCount} kayıt filtrelendi — gönderilen teklifler ve yapılan keşifler listede gizli; filtreyi kapatınca görünür.</p>}
 
       {listLoading && (
@@ -506,9 +532,15 @@ export default function ProjectsPage({ section } = {}) {
 
       {!listLoading && tab === "projects" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {projects.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">Henüz proje yok.</div>}
-          {projects.map((p) => (
-            <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs" data-testid={`project-card-${p.project_number}`}>
+          {visibleProjects.length === 0 && (
+            <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl" data-testid="projects-empty">
+              {!showCompletedProjects && completedProjects.length
+                ? "Açık proje yok — tamamlananları göstermek için üstteki düğmeyi kullanın."
+                : "Henüz proje yok."}
+            </div>
+          )}
+          {visibleProjects.map((p) => (
+            <div key={p.id} className={`bg-white border rounded-2xl p-4 space-y-2 text-xs ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"}`} data-testid={`project-card-${p.project_number}`}>
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
               <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
