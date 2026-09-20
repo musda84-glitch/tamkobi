@@ -1,5 +1,6 @@
 import { coordValue } from "./geo";
 import { idOf } from "./money";
+import { productImage } from "./productDisplay";
 
 export type WorkKind = "quote" | "project" | "survey";
 
@@ -12,6 +13,8 @@ export type WorkItem = {
   vat_rate: number;
   unit: string;
   price_includes_vat?: boolean;
+  image_url?: string;
+  thumbnail_url?: string;
 };
 
 export type QuoteApproval = {
@@ -132,7 +135,11 @@ export function workItemFromProduct(prod: {
   vat_rate?: number;
   unit?: string;
   price_includes_vat?: boolean;
+  thumbnail_url?: string;
+  image_url?: string;
+  images?: string[];
 }): WorkItem {
+  const photo = productImage(prod);
   return {
     ...emptyItem(),
     product_id: idOf(prod),
@@ -141,7 +148,16 @@ export function workItemFromProduct(prod: {
     vat_rate: Number(prod.vat_rate) || 20,
     unit: prod.unit || "Adet",
     price_includes_vat: !!prod.price_includes_vat,
+    image_url: photo || undefined,
+    thumbnail_url: prod.thumbnail_url || undefined,
   };
+}
+
+export function workItemImage(
+  item: Pick<WorkItem, "image_url" | "thumbnail_url">,
+  product?: { thumbnail_url?: string; image_url?: string; images?: string[] } | null,
+): string {
+  return item.thumbnail_url || item.image_url || (product ? productImage(product) : "");
 }
 
 function nearly(a: number, b: number, eps = 0.05): boolean {
@@ -150,8 +166,12 @@ function nearly(a: number, b: number, eps = 0.05): boolean {
 
 export function hydrateWorkItem(
   item: WorkItem,
-  product?: { price_includes_vat?: boolean; sale_price?: number } | null,
+  product?: { price_includes_vat?: boolean; sale_price?: number; thumbnail_url?: string; image_url?: string; images?: string[] } | null,
 ): WorkItem {
+  if (!item.image_url && !item.thumbnail_url && product) {
+    const photo = productImage(product);
+    if (photo) item = { ...item, image_url: photo };
+  }
   const fromProd = !!product?.price_includes_vat;
   const net = Number(item.unit_price || 0);
   const incl = Number(item.unit_price_incl || 0);
