@@ -46,6 +46,15 @@ describe("workDocs", () => {
     expect(workItemTotals([fromLite]).grandTotal).toBe(520);
   });
 
+  it("keeps the selected quote VAT rate on the payload and total", () => {
+    const line = { name: "Kapı", quantity: 1, unit_price: 100, vat_rate: 10, unit: "Adet" };
+    expect(workItemLineGross(line)).toBe(110);
+    expect(workItemTotals([line]).vat).toBe(10);
+    expect(workItemTotals([{ ...line, vat_rate: 0 }]).grandTotal).toBe(100);
+    const q = quotePayload("comp", { contact_id: "c1", contact_name: "Acme", title: "T", valid_until: "", notes: "" }, [line]);
+    expect(q.items[0].vat_rate).toBe(10);
+  });
+
   it("totals quote lines with VAT", () => {
     const t = workItemTotals([
       { name: "Kapı", quantity: 2, unit_price: 100, vat_rate: 20, unit: "Adet" },

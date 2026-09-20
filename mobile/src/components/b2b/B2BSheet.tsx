@@ -35,7 +35,7 @@ export function B2BSheet({
               <Ionicons name="close" size={22} color={colors.muted} />
             </Pressable>
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>{children}</ScrollView>
         </Pressable>
       </Pressable>
     </Modal>

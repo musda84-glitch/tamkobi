@@ -18,6 +18,7 @@ import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
+import { VAT_OPTIONS } from "../utils/documentLines";
 import { coordText } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
@@ -558,6 +559,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       </Pressable>
                     ) : null}
                   </Row>
+                  {kind === "quote" ? (
+                    <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                      {VAT_OPTIONS.map((v) => (
+                        <Chip
+                          compact
+                          key={v}
+                          label={`%${v}`}
+                          active={Number(it.vat_rate) === v}
+                          onPress={() => canEdit && patchItem(i, "vat_rate", v)}
+                          testID={`q-item-vat-${i}-${v}`}
+                        />
+                      ))}
+                    </Row>
+                  ) : null}
                 </View>
               </Row>
             </View>
