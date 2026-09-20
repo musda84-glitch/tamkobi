@@ -70,16 +70,16 @@ describe("visibleQuickTiles", () => {
       banking: "Banka & Kasa",
       cheques: "Çek",
       sevk: "Sevkiyat",
-      atolye: "Atölye",
+      atolye: "Atölye Ekranı",
       personnel: "Personel",
     });
   });
 
-  it("places Atölye after Sevkiyat and gates it on /atolye", () => {
+  it("places Atölye Ekranı after Sevkiyat and gates it on /atolye", () => {
     const ids = QUICK_TILES.map((t) => t.id);
     expect(ids.indexOf("atolye")).toBe(ids.indexOf("sevk") + 1);
     expect(QUICK_TILES.find((t) => t.id === "atolye")).toMatchObject({
-      label: "Atölye",
+      label: "Atölye Ekranı",
       path: "/atolye",
       href: "/atolye",
     });

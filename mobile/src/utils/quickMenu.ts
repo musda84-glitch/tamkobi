@@ -34,7 +34,7 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "stock", label: "Stok", path: "/stock", href: "/stok", icon: "cube", tone: "indigo" },
   { id: "barcode", label: "Barkod", path: "/stock", href: "/stok?scan=1", icon: "barcode", tone: "indigo" },
   { id: "sevk", label: "Sevkiyat", path: "/sevk", href: "/sevk", icon: "cube", tone: "teal" },
-  { id: "atolye", label: "Atölye", path: "/atolye", href: "/atolye", icon: "build", tone: "orange" },
+  { id: "atolye", label: "Atölye Ekranı", path: "/atolye", href: "/atolye", icon: "build", tone: "orange" },
   { id: "personnel", label: "Personel", path: "/personnel", href: "/personnel", icon: "people-circle", tone: "violet" },
   { id: "notifications", label: "Bildirimler", path: "/", href: "/notifications", icon: "notifications", tone: "rose", always: true },
 ];
