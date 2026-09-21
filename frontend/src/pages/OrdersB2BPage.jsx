@@ -36,7 +36,7 @@ import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel
 import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
-import { OrdersToolbar, applyOrderFilters, ORDER_FILTER_DEFAULTS } from "../components/OrdersToolbar";
+import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -109,7 +109,14 @@ export default function OrdersB2BPage() {
   const [searchParams] = useSearchParams();
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
   const customerFilter = searchParams.get("customer") || "";
-  const [ordF, setOrdF] = useState(ORDER_FILTER_DEFAULTS);
+  const [ordF, setOrdF] = useState(() => orderFiltersFromSearch(searchParams));
+  useEffect(() => {
+    const next = orderFiltersFromSearch(searchParams);
+    setOrdF((prev) => {
+      if (prev.status === next.status && (!next.q || prev.q === next.q)) return prev;
+      return { ...prev, status: next.status, ...(next.q ? { q: next.q } : {}) };
+    });
+  }, [searchParams]);
   const [sort, setSort] = useState({ key: "order_date", dir: "desc" });
   const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
   const visibleOrders = useMemo(() => {

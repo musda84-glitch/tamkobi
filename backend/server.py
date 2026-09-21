@@ -2000,39 +2000,78 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
             "budget_warnings": budgets["warnings"]}
 
 
+def _stock_alert_min(p: dict) -> float:
+    """Unset min matches dashboard stats (default 5). Explicit 0 stays 0."""
+    raw = p.get("min_stock_alert")
+    if raw is None or raw == "":
+        return 5.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 5.0
+
+
+_INCOMING_ORDER_STATUSES = ["pending", "new", "approved"]
+_DISPATCHED_ORDER_STATUSES = ["shipped", "delivered", "completed"]
+
+
+def _incoming_orders_query(company_id: str) -> dict:
+    return {
+        "company_id": company_id,
+        "order_status": {"$in": _INCOMING_ORDER_STATUSES},
+        "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}],
+    }
+
+
+def _dispatched_orders_query(company_id: str) -> dict:
+    return {
+        "company_id": company_id,
+        "$or": [
+            {"order_status": {"$in": _DISPATCHED_ORDER_STATUSES}},
+            {
+                "cargo_tracking_number": {"$gt": ""},
+                "order_status": {"$nin": ["cancelled", "returned", "partially_returned"]},
+            },
+        ],
+    }
+
+
 @api_router.get("/dashboard/ops-alerts")
 async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
     """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
-    products, new_orders, shipped, prod_orders = await asyncio.gather(
+    products, new_count, new_orders, ship_count, shipped, prod_count, prod_orders = await asyncio.gather(
         db.products.find(
             {"company_id": company_id, "track_stock": {"$ne": False}},
             {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1},
         ).to_list(5000),
+        db.orders.count_documents(_incoming_orders_query(company_id)),
         db.orders.find(
-            {"company_id": company_id, "order_status": {"$in": ["pending", "new"]}},
-            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1},
-        ).sort("created_at", -1).to_list(20),
+            _incoming_orders_query(company_id),
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1, "order_status": 1},
+        ).sort("created_at", -1).to_list(8),
+        db.orders.count_documents(_dispatched_orders_query(company_id)),
         db.orders.find(
-            {"company_id": company_id, "order_status": "shipped"},
-            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "cargo_tracking_number": 1, "order_date": 1},
-        ).sort("updated_at", -1).to_list(20),
+            _dispatched_orders_query(company_id),
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "created_at": 1, "cargo_tracking_number": 1, "order_date": 1, "channel": 1, "order_status": 1},
+        ).sort("created_at", -1).to_list(8),
+        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
         db.production_orders.find(
             {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
             {"order_code": 1, "order_number": 1, "finished_product_name": 1, "product_name": 1, "status": 1, "quantity": 1, "planned_quantity": 1, "created_at": 1},
-        ).sort("created_at", -1).to_list(20),
+        ).sort("created_at", -1).to_list(8),
     )
     low_sorted = sorted(
         [
             {
                 "id": str(p.get("_id") or ""),
                 "title": p.get("name") or p.get("sku") or "Ürün",
-                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {float(p.get('min_stock_alert') or 0):g}"
+                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {_stock_alert_min(p):g}"
                 + (f" · {p['sku']}" if p.get("sku") else ""),
-                "path": "/stock",
+                "path": "/stock?status=critical&q=" + quote(str(p.get("sku") or p.get("name") or "")),
                 "_qty": float(p.get("stock_quantity") or 0),
             }
             for p in products
-            if float(p.get("stock_quantity") or 0) <= float(p.get("min_stock_alert") or 0)
+            if float(p.get("stock_quantity") or 0) <= _stock_alert_min(p)
         ],
         key=lambda x: x["_qty"],
     )
@@ -2072,10 +2111,12 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
             "path": "/production",
         }
 
+    pick_q = {"company_id": company_id, "type": {"$in": ["order_pick_missing", "order_pick_production"]}, "is_read": False}
+    pick_count = await db.notifications.count_documents(pick_q)
     pick_notes = await db.notifications.find(
-        {"company_id": company_id, "type": {"$in": ["order_pick_missing", "order_pick_production"]}, "is_read": False},
+        pick_q,
         {"title": 1, "message": 1, "link": 1, "type": 1, "ref_id": 1, "order_number": 1, "created_at": 1},
-    ).sort("created_at", -1).to_list(20)
+    ).sort("created_at", -1).to_list(8)
     pick_items = [
         {
             "id": str(n.get("_id") or ""),
@@ -2085,12 +2126,17 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
         }
         for n in pick_notes
     ]
+
+    def _order_link(o, status_key: str) -> str:
+        num = quote(str(o.get("order_number") or ""))
+        return f"/orders?status={status_key}" + (f"&q={num}" if num else "")
+
     groups = [
-        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": len(pick_items), "items": pick_items[:8]},
-        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock", "count": len(low_sorted), "items": low_sorted[:8]},
-        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": len(prod_orders), "items": [prod_row(o) for o in prod_orders[:8]]},
-        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders", "count": len(shipped), "items": [order_row(o) for o in shipped[:8]]},
-        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders", "count": len(new_orders), "items": [order_row(o) for o in new_orders[:8]]},
+        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": int(pick_count or 0), "items": pick_items},
+        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock?status=critical", "count": len(low_sorted), "items": low_sorted[:8]},
+        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": int(prod_count or 0), "items": [prod_row(o) for o in prod_orders]},
+        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders?status=dispatched", "count": int(ship_count or 0), "items": [order_row(o, _order_link(o, "dispatched")) for o in shipped]},
+        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders?status=incoming", "count": int(new_count or 0), "items": [order_row(o, _order_link(o, "incoming")) for o in new_orders]},
     ]
     total = sum(g["count"] for g in groups)
     return {"count": total, "groups": groups}

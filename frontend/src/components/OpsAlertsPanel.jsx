@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
   AlertTriangle,
@@ -17,15 +17,23 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 const GROUP_META = {
-  pick_missing: { Icon: ClipboardList, tone: "text-amber-800 bg-amber-50 border-amber-100" },
-  low_stock: { Icon: Package, tone: "text-amber-700 bg-amber-50 border-amber-100" },
-  production: { Icon: Factory, tone: "text-indigo-700 bg-indigo-50 border-indigo-100" },
-  shipped: { Icon: Truck, tone: "text-sky-700 bg-sky-50 border-sky-100" },
-  new_orders: { Icon: ShoppingBag, tone: "text-emerald-700 bg-emerald-50 border-emerald-100" },
+  pick_missing: { Icon: ClipboardList, tone: "text-amber-800 bg-amber-50 border-amber-100", dest: "/sevk" },
+  low_stock: { Icon: Package, tone: "text-amber-700 bg-amber-50 border-amber-100", dest: "/stock?status=critical" },
+  production: { Icon: Factory, tone: "text-indigo-700 bg-indigo-50 border-indigo-100", dest: "/production" },
+  shipped: { Icon: Truck, tone: "text-sky-700 bg-sky-50 border-sky-100", dest: "/orders?status=dispatched" },
+  new_orders: { Icon: ShoppingBag, tone: "text-emerald-700 bg-emerald-50 border-emerald-100", dest: "/orders?status=incoming" },
 };
+
+function groupDest(g) {
+  const fallback = GROUP_META[g?.key]?.dest || g?.path || "/";
+  const path = g?.path || fallback;
+  if (fallback.includes("?") && !String(path).includes("?")) return fallback;
+  return path;
+}
 
 /** Dashboard operasyon bildirimleri: stok / üretim / sevk / yeni sipariş */
 export function OpsAlertsPanel({ companyId }) {
+  const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -95,7 +103,7 @@ export function OpsAlertsPanel({ companyId }) {
             <button
               key={g.key}
               type="button"
-              onClick={() => setActive(g.key)}
+              onClick={() => navigate(groupDest(g))}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors ${
                 on ? "bg-slate-900 text-white border-slate-900" : `${meta.tone} hover:opacity-90`
               }`}
@@ -140,7 +148,7 @@ export function OpsAlertsPanel({ companyId }) {
 
       {current?.path && current.count > 0 && (
         <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
-          <Link to={current.path} className="text-[11px] font-bold text-slate-700 hover:text-slate-900 inline-flex items-center gap-1" data-testid="ops-alerts-see-all">
+          <Link to={groupDest(current)} className="text-[11px] font-bold text-slate-700 hover:text-slate-900 inline-flex items-center gap-1" data-testid="ops-alerts-see-all">
             Tümünü gör <ChevronRight className="w-3.5 h-3.5" />
           </Link>
         </div>

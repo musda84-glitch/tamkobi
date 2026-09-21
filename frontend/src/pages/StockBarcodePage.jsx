@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { StockCountPanel } from "../components/StockCountPanel";
-import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
+import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStock } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
@@ -64,7 +64,13 @@ export default function StockBarcodePage() {
   const [labelQuickProduct, setLabelQuickProduct] = useState(null);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
-  const [stockF, setStockF] = useState(STOCK_FILTER_DEFAULTS);
+  const [stockF, setStockF] = useState(() => stockFiltersFromSearch(searchParams));
+  useEffect(() => {
+    const next = stockFiltersFromSearch(searchParams);
+    setStockF((prev) => (prev.status === next.status ? prev : { ...prev, status: next.status }));
+    const q = searchParams.get("q");
+    if (q) setSearchTerm(q);
+  }, [searchParams]);
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
   const loadCategories = useCallback(() => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {}), [activeCompany]);
@@ -510,7 +516,7 @@ export default function StockBarcodePage() {
   const stockListResetKey = useMemo(() => `${filterCategory}|${searchTerm}|${JSON.stringify(stockF)}`, [filterCategory, searchTerm, stockF]);
   const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(filtered, { resetKey: stockListResetKey });
   const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
-  const criticalCount = useMemo(() => products.filter((p) => p.track_stock !== false && p.stock_quantity <= (p.min_stock_alert ?? 0)).length, [products]);
+  const criticalCount = useMemo(() => products.filter((p) => isCriticalStock(p)).length, [products]);
 
   return (
     <div className="space-y-6" data-testid="stock-page">
@@ -699,7 +705,7 @@ export default function StockBarcodePage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pagedProducts.map((prod) => {
-                const isCritical = prod.stock_quantity <= prod.min_stock_alert;
+                const isCritical = isCriticalStock(prod);
                 return (
                   <tr key={prod.id || prod._id} className={`hover:bg-slate-50/70 transition ${selected.includes(productId(prod)) ? "bg-indigo-50/40" : ""}`} data-testid={`prod-row-${prod.sku}`}>
                     <td className="px-3 py-3">
