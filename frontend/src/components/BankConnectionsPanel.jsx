@@ -84,19 +84,22 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [invoices, setInvoices] = useState([]);
   const [matched, setMatched] = useState([]);
   const [showMatched, setShowMatched] = useState(false);
+  const [partners, setPartners] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [p, c, u, r, inv, m, sug] = await Promise.all([
+      const [p, c, u, r, inv, m, sug, pr] = await Promise.all([
         axios.get(`${API_URL}/banking/providers`),
         axios.get(`${API_URL}/banking/connections?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/transactions/unmatched?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`),
         axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] })),
-        axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] }))
+        axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).catch(() => ({ data: [] })),
       ]);
       setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data); setSuggestions(sug.data);
+      setPartners((pr.data || []).filter((x) => x.is_active !== false));
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -326,7 +329,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
               <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
-              <select value={newRule.target_account_id} onChange={(e) => setNewRule({ ...newRule, target_account_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-target-select"><option value="">Kasa/Hesap virman (ops.)</option>{accounts.filter((a) => !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
+              <select value={newRule.target_account_id} onChange={(e) => setNewRule({ ...newRule, target_account_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-52" data-testid="rule-target-select">
+                <option value="">Kasa/Hesap/Ortak virman (ops.)</option>
+                {accounts.filter((a) => !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}
+                {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak)</option>)}
+              </select>
               <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>
             <div className="flex flex-wrap gap-1.5">
@@ -347,7 +354,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </thead>
             <tbody className="divide-y divide-slate-100">
               {unmatched.length === 0 && <tr><td colSpan={6} className="px-4 py-5 text-center text-slate-400">Eşleştirme bekleyen hareket yok.</td></tr>}
-              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} onDone={() => { load(); onSynced?.(); }} />)}
+              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} companyId={companyId} onDone={() => { load(); onSynced?.(); }} />)}
             </tbody>
           </table>
         </div>

@@ -1,5 +1,4 @@
-
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
@@ -10,19 +9,29 @@ const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 const MODES = [["contact", "Cari"], ["invoice", "Cari + Fatura"], ["transfer", "Kasa / Hesap (Virman)"], ["category", "Sadece Kategori"]];
 
-export const BankMatchRow = ({ tx, contacts, accounts, invoices, onDone }) => {
+export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDone }) => {
   const [mode, setMode] = useState(tx.suggested_contact_id ? "contact" : "contact");
   const [contactId, setContactId] = useState(tx.suggested_contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
-  const [targetId, setTargetId] = useState("");
+  const [targetId, setTargetId] = useState(tx.suggested_target_account_id || "");
   const [category, setCategory] = useState("");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [partners, setPartners] = useState([]);
   const isIn = tx.type === "inflow";
+  const cid = companyId || tx.company_id;
+
+  useEffect(() => {
+    if (!cid) return;
+    axios.get(`${API_URL}/banking/partners?company_id=${cid}`)
+      .then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false)))
+      .catch(() => setPartners([]));
+  }, [cid]);
+
   const openInvoices = useMemo(() => invoices
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
     .sort((a, b) => Math.abs((a.grand_total - a.paid_amount) - tx.amount) - Math.abs((b.grand_total - b.paid_amount) - tx.amount)), [invoices, contactId, isIn, tx.amount]);
-  const targets = accounts.filter((a) => a.id !== tx.account_id && !a.is_integrated);
+  const targets = accounts.filter((a) => (a.id || a._id) !== tx.account_id && !a.is_integrated);
   const canSubmit = mode === "category" ? !!category.trim() : mode === "transfer" ? !!targetId : mode === "invoice" ? !!invoiceId : true;
   const submit = async () => {
     setBusy(true);
@@ -56,9 +65,25 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, onDone }) => {
             </select>
           )}
           {mode === "transfer" && (
-            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={`${sel} w-48`} data-testid={`match-target-select-${tx.id}`}>
+            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={`${sel} w-56`} data-testid={`match-target-select-${tx.id}`}>
               <option value="">{isIn ? "Para nereden geldi?" : "Para nereye gitti?"}</option>
-              {targets.map((a) => <option key={a.id} value={a.id}>{`${a.bank_name} — ${a.account_name}`}</option>)}
+              {targets.length > 0 && (
+                <optgroup label="Kasa / Hesap">
+                  {targets.map((a) => {
+                    const id = a.id || a._id;
+                    return <option key={id} value={id}>{`${a.bank_name || ""} — ${a.account_name}`.replace(/^ — /, "")}</option>;
+                  })}
+                </optgroup>
+              )}
+              {partners.length > 0 && (
+                <optgroup label="Ortaklar Hesabı">
+                  {partners.map((p) => {
+                    const id = p.id || p._id;
+                    const val = `partner:${id}`;
+                    return <option key={id} value={val}>{`${p.name} (Ortak · ${fmt(p.balance)} ₺)${tx.suggested_target_account_id === val ? " ★" : ""}`}</option>;
+                  })}
+                </optgroup>
+              )}
             </select>
           )}
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
