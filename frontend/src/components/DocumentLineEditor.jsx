@@ -7,7 +7,14 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
 
 const inp = "w-full bg-white border border-slate-200 rounded p-1.5 text-xs";
-const FALLBACK_UNITS = ["Adet", "Kg", "Gr", "Lt", "Mt", "Paket", "Koli"];
+const FALLBACK_UNITS = ["Adet", "Metre", "Kg", "Mt", "Paket", "Koli"];
+
+const unitOptions = (units, current) => {
+  const core = ["Adet", "Metre"];
+  const list = [...core, ...(units || []).filter((u) => u && !core.includes(u))];
+  if (current && !list.includes(current)) list.unshift(current);
+  return list;
+};
 
 export function DocumentLineEditor({
   items,
@@ -32,7 +39,7 @@ export function DocumentLineEditor({
     axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => {
       if (cancelled) return;
       const names = (r.data || []).map((u) => u.name).filter(Boolean);
-      if (names.length) setUnits(names);
+      if (names.length) setUnits(unitOptions(names));
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [activeCompany]);
@@ -131,10 +138,11 @@ export function DocumentLineEditor({
                             options={products}
                             placeholder="Ürün ara (ad / SKU / barkod)..."
                             getLabel={(p) => p.name}
-                            getSub={(p) => `SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"} • ${(p.sale_price || 0).toLocaleString("tr-TR")} ₺`}
+                            getSub={(p) => `${p.unit || "Adet"} • SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"}`}
                             getExtra={getProductExtra}
                             getImage={(p) => p.image_url}
                             onChange={(id) => pickProduct(idx, id)}
+                            inline
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
                           />
                           {!item.product_id && (
@@ -172,7 +180,7 @@ export function DocumentLineEditor({
                     className={inp}
                     data-testid={`${testIdPrefix}-unit-${idx}`}
                   >
-                    {(units.includes(item.unit || "Adet") ? units : [item.unit || "Adet", ...units]).map((u) => (
+                    {(unitOptions(units, item.unit || "Adet")).map((u) => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>
