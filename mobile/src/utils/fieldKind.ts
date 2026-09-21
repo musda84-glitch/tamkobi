@@ -5,7 +5,17 @@ export function fieldUsesDatePicker(testID?: string | null, placeholder?: string
   return ph.includes("YYYY-MM-DD") || /date-input$/.test(id) || /(^|-)date$/.test(id);
 }
 
-/** Mesai / saat test id → saat seçici. */
-export function fieldUsesTimePicker(testID?: string | null): boolean {
-  return /(hours-input|time-input)$/.test(String(testID || ""));
+/** Mesai / saat test id, “Saat” etiketi veya Örn: 2 kutusu → saat seçici. */
+export function fieldUsesTimePicker(
+  testID?: string | null,
+  label?: string | null,
+  placeholder?: string | null,
+): boolean {
+  const id = String(testID || "");
+  const lab = String(label || "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase().trim();
+  const ph = String(placeholder || "");
+  if (/(hours-input|time-input)$/.test(id)) return true;
+  if (lab === "saat" || lab === "toplam saat" || lab === "başlangıç saati" || lab === "bitiş saati") return true;
+  if (/örn:\s*2/i.test(ph)) return true;
+  return false;
 }

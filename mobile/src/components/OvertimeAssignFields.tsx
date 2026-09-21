@@ -70,7 +70,7 @@ export function OvertimeAssignFields({
         </Text>
       </View>
       <TimeField
-        label="Toplam saat"
+        label="Saat"
         testID="ot-hours-input"
         value={hoursToHm(value.hours)}
         onChangeText={(v) => {

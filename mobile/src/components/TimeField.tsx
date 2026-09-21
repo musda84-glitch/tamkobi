@@ -37,34 +37,33 @@ export function TimeField({ label, value, onChangeText, testID, optional }: Time
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
       {Platform.OS === "web" ? (
-        <input
-          type="time"
-          step={60}
-          data-testid={testID}
-          value={value || ""}
-          onChange={(e) => onChangeText(e.currentTarget.value)}
-          onFocus={(e) => {
-            const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-            try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
-          }}
-          onClick={(e) => {
-            const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-            try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
-          }}
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            borderWidth: 1,
-            borderStyle: "solid",
-            borderColor: colors.border,
-            borderRadius: 10,
-            padding: "10px 12px",
-            minHeight: 44,
-            fontSize: 15,
-            color: colors.text,
-            backgroundColor: "#fff",
-          }}
-        />
+        <View style={[inputStyle, { flexDirection: "row", alignItems: "center", paddingVertical: 0, paddingHorizontal: 8 }]}>
+          <input
+            type="time"
+            step={60}
+            data-testid={testID}
+            value={value || ""}
+            onChange={(e) => onChangeText(e.currentTarget.value)}
+            onFocus={(e) => {
+              const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+              try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
+            }}
+            onClick={(e) => {
+              const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+              try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
+            }}
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              minHeight: 44,
+              fontSize: 15,
+              color: colors.text,
+              backgroundColor: "transparent",
+            }}
+          />
+          <Ionicons name="time-outline" size={18} color={colors.muted} />
+        </View>
       ) : (
       <Pressable
         testID={testID}

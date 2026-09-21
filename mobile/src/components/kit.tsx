@@ -124,7 +124,7 @@ export function Field(props: TextInputProps & { label: string; testID?: string; 
       />
     );
   }
-  if (fieldUsesTimePicker(props.testID)) {
+  if (fieldUsesTimePicker(props.testID, label, typeof props.placeholder === "string" ? props.placeholder : undefined)) {
     return (
       <TimeField
         label={label}

@@ -11,5 +11,7 @@ describe("field picker routing", () => {
   it("opens a clock for hour fields", () => {
     expect(fieldUsesTimePicker("ot-hours-input")).toBe(true);
     expect(fieldUsesTimePicker("ot-date-input")).toBe(false);
+    expect(fieldUsesTimePicker(undefined, "Saat", "Örn: 2")).toBe(true);
+    expect(fieldUsesTimePicker("ot-note-input", "Not", "Opsiyonel")).toBe(false);
   });
 });
