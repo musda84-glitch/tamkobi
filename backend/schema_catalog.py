@@ -158,7 +158,7 @@ COLLECTIONS = {
     "contacts": {
         "scope": SCOPE_TENANT,
         "description": "Cari kartlar: müşteri, tedarikçi, both. B2B giriş alanları burada.",
-        "keys": ("_id", "company_id", "type", "name", "tax_number_or_id", "balance", "credit_limit", "b2b_enabled", "b2b_token"),
+        "keys": ("_id", "company_id", "type", "name", "tax_number_or_id", "balance", "credit_limit", "b2b_enabled", "b2b_token", "statement_share"),
         "refs": ("companies._id",),
     },
     "products": {
@@ -272,7 +272,7 @@ COLLECTIONS = {
     "projects": {
         "scope": SCOPE_TENANT,
         "description": "Projeler (keşif/teklif sonrası).",
-        "keys": ("_id", "company_id", "project_number", "name", "contact_id", "status", "budget"),
+        "keys": ("_id", "company_id", "project_number", "name", "contact_id", "status", "budget", "images", "stage_photos"),
         "refs": ("contacts._id", "quotes._id", "invoices._id"),
     },
     "surveys": {

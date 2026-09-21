@@ -10,6 +10,7 @@ import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument"
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
 import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
+import { ProjectStagePhotos } from "../components/ProjectStagePhotos";
 import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/ProjectExpenseTeamModals";
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
 import { compressImageFile } from "../utils/compressImage";
@@ -555,7 +556,7 @@ export default function ProjectsPage({ section } = {}) {
                 </div>
               </div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
-              <ImageStrip entity="project" doc={p} onUpdated={load} />
+              <ProjectStagePhotos project={p} stages={projectStages} onUpdated={load} />
               <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
               {(() => {
                 const tasks = p.tasks || [];

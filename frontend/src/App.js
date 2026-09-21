@@ -36,6 +36,7 @@ const ProjectsPage = page(() => import("./pages/ProjectsPage"));
 const InstallmentsPage = page(() => import("./pages/InstallmentsPage"));
 const QuoteApprovalPage = page(() => import("./pages/QuoteApprovalPage"));
 const ProjectTrackingPage = page(() => import("./pages/ProjectTrackingPage"));
+const StatementPublicPage = page(() => import("./pages/StatementPublicPage"));
 const ShopFloorPage = page(() => import("./pages/ShopFloorPage"));
 const StockCountKioskPage = page(() => import("./pages/StockCountKioskPage"));
 const OrderPickKioskPage = page(() => import("./pages/OrderPickKioskPage"));
@@ -117,6 +118,7 @@ export default function App() {
                   <Route path="/installments" element={<InstallmentsPage />} />
                   <Route path="/teklif/:token" element={<QuoteApprovalPage />} />
                   <Route path="/proje/:token" element={<ProjectTrackingPage />} />
+                  <Route path="/ekstre/:token" element={<StatementPublicPage />} />
                   <Route path="/atolye" element={<ShopFloorPage />} />
                   <Route path="/sayim" element={<StockCountKioskPage />} />
                   <Route path="/sevk" element={<OrderPickKioskPage />} />

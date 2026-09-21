@@ -1,14 +1,28 @@
 
-import React from "react";
-import { Building, Phone, Mail, MapPin, Navigation, MessageSquare, ChevronRight, Pencil } from "lucide-react";
+import React, { useState } from "react";
+import { Building, Phone, Mail, MapPin, Navigation, MessageSquare, ChevronRight, Pencil, Link2, FileDown } from "lucide-react";
 import { mapsLink } from "./ContactLocationModal";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { downloadStatementPdf, shareStatementLink } from "../utils/statementShare";
+import { toast } from "sonner";
 
 const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
 export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStatement, onLocation }) => {
   const tid = contact.tax_number_or_id;
   const bal = Number(contact.balance) || 0;
+  const [shareBusy, setShareBusy] = useState("");
+  const share = async (kind) => {
+    setShareBusy(kind);
+    try {
+      if (kind === "link") await shareStatementLink(contact);
+      else await downloadStatementPdf(contact);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || (kind === "link" ? "Link oluşturulamadı." : "PDF indirilemedi."));
+    } finally {
+      setShareBusy("");
+    }
+  };
   return (
     <div className="bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3" data-testid={`contact-card-${tid}`}>
       <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
@@ -43,9 +57,11 @@ export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStateme
           {bal > 0 ? `+${money(bal)} ₺` : `${money(bal)} ₺`}<span className="text-[10px] font-semibold text-slate-400 ml-1">{bal > 0 ? "Alacak" : bal < 0 ? "Borç" : ""}</span>
         </div>
       </div>
-      <div className="col-span-6 md:col-span-2 flex items-center justify-end gap-1.5">
+      <div className="col-span-6 md:col-span-2 flex items-center justify-end gap-1.5 flex-wrap">
         {onEdit && <button onClick={onEdit} className="p-1.5 text-slate-600 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 rounded-lg transition" title="Gelişmiş cari bilgilerini güncelle" data-testid={`edit-contact-btn-${tid}`}><Pencil className="w-4 h-4" /></button>}
         <button onClick={onMessage} className="p-1.5 text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 rounded-lg transition" title="SMS / E-posta Gönder" data-testid={`message-btn-${tid}`}><MessageSquare className="w-4 h-4" /></button>
+        <button type="button" onClick={() => share("link")} disabled={!!shareBusy} className="flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-1.5 rounded-lg transition disabled:opacity-50" title="Hesap ekstresi paylaşım linki" data-testid={`statement-link-btn-${tid}`}><Link2 className="w-3.5 h-3.5" />{shareBusy === "link" ? "…" : "Link"}</button>
+        <button type="button" onClick={() => share("pdf")} disabled={!!shareBusy} className="flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 px-2 py-1.5 rounded-lg transition disabled:opacity-50" title="Hesap ekstresini PDF indir" data-testid={`statement-pdf-btn-${tid}`}><FileDown className="w-3.5 h-3.5" />{shareBusy === "pdf" ? "…" : "PDF"}</button>
         <button onClick={onStatement} className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition" data-testid={`statement-btn-${tid}`}><span>Ekstre</span><ChevronRight className="w-3.5 h-3.5" /></button>
         <button onClick={onOpen} className="p-1.5 text-slate-500 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 rounded-lg transition" title="Cari Kartı Aç" data-testid={`open-contact-btn-${tid}`}><ChevronRight className="w-4 h-4" /></button>
       </div>
