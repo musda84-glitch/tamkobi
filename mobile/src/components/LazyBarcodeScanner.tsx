@@ -1,10 +1,6 @@
-import React, { Suspense, lazy } from "react";
+import React from "react";
 
-const BarcodeScannerModal = lazy(() =>
-  import("./BarcodeScannerModal").then((m) => ({ default: m.BarcodeScannerModal }))
-);
-
-/** Kamera native modülü stok listesi açılınca yüklenmesin; yalnız barkod okutunca gelsin. */
+/** Kamera JS’i stok ilk boyada yüklenmesin; React.lazy üretim APK’da ekranı düşürüyordu. */
 export function LazyBarcodeScanner({
   visible,
   onClose,
@@ -15,9 +11,6 @@ export function LazyBarcodeScanner({
   onScan: (code: string) => void;
 }) {
   if (!visible) return null;
-  return (
-    <Suspense fallback={null}>
-      <BarcodeScannerModal visible onClose={onClose} onScan={onScan} />
-    </Suspense>
-  );
+  const { BarcodeScannerModal } = require("./BarcodeScannerModal") as typeof import("./BarcodeScannerModal");
+  return <BarcodeScannerModal visible onClose={onClose} onScan={onScan} />;
 }

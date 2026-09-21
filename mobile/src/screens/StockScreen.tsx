@@ -9,7 +9,6 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { ProductThumb } from "../components/ProductThumb";
-import { ScreenErrorBoundary } from "../components/ScreenErrorBoundary";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Product } from "../types";
@@ -39,9 +38,14 @@ export function StockScreen() {
   const [shown, setShown] = useState(LIST_INITIAL_ROWS);
 
   const applyRows = useCallback((raw: unknown) => {
-    const next = slimListProducts<Product>(raw);
-    if (next.length) setRows(next);
-    return next;
+    try {
+      const next = slimListProducts<Product>(raw);
+      setRows(next);
+      return next;
+    } catch {
+      setRows([]);
+      return [];
+    }
   }, []);
 
   useEffect(() => {
@@ -137,15 +141,14 @@ export function StockScreen() {
 
   return (
     <Screen onRefresh={() => load(true)} refreshing={refreshing}>
-      <ScreenErrorBoundary title="Stok listesi açılamadı">
-        <ActionTiles
-          items={[
-            ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
-            { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
-            { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
-          ]}
-          columns={3}
-        />
+      <ActionTiles
+        items={[
+          ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
+          { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
+          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
+        ]}
+        columns={3}
+      />
         <GroupedSelect
           label="Kategori"
           testID="stock-category"
@@ -220,7 +223,6 @@ export function StockScreen() {
             );
           })}
         </B2BSheet>
-      </ScreenErrorBoundary>
     </Screen>
   );
 }
