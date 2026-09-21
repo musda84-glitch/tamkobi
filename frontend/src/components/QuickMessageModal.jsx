@@ -13,13 +13,13 @@ export const TEMPLATES = {
   order: (o) => `Sayın ${o.customer_name}, ${o.order_number} numaralı siparişiniz ${o.cargo_carrier || "kargo"} ile yola çıktı. Takip No: ${o.cargo_tracking_number || "-"}. İyi günler dileriz.`
 };
 
-export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", defaultMessage = "", context = "manual", refId = null, channel = "sms", onClose, onSent }) => {
+export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", defaultMessage = "", context = "manual", refId = null, channel = "sms", initialFiles = [], onClose, onSent }) => {
   const [tab, setTab] = useState(channel);
   const [phone, setPhone] = useState(recipient.phone || "");
   const [email, setEmail] = useState(recipient.email || "");
   const [subject, setSubject] = useState(defaultSubject);
   const [message, setMessage] = useState(defaultMessage);
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState(() => (Array.isArray(initialFiles) ? initialFiles.filter(Boolean) : []));
   const [sending, setSending] = useState(false);
 
   const send = async (e) => {
@@ -79,7 +79,7 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
             {tab === "sms" && <p className="text-[10px] text-slate-400 mt-1">{message.length} karakter • ~{smsCount} SMS</p>}
           </div>
           {tab === "email" && (
-            <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer"><Paperclip className="w-3.5 h-3.5" /> {files.length ? `${files.length} dosya eklendi` : "Dosya ekle"}<input type="file" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files || []))} data-testid="qm-files-input" /></label>
+            <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer"><Paperclip className="w-3.5 h-3.5" /> {files.length ? <span data-testid="qm-attached-files">{files.map((f) => f.name).join(", ")}</span> : "Dosya ekle"}<input type="file" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files || []))} data-testid="qm-files-input" /></label>
           )}
           <div className="flex justify-end gap-2 pt-2 border-t">
             <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2, Link2, FileDown } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
-import { downloadStatementPdf, shareStatementLink } from "../utils/statementShare";
+import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
 import { formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -27,31 +27,103 @@ export const statementText = (contact, rows, company) => {
   return `${company?.name || "Firmamız"} - Cari Hesap Ekstresi\nSayın ${contact.name}\nTarih: ${new Date().toLocaleDateString("tr-TR")}\n\n${lines.join("\n")}\n\nGüncel Bakiye: ${fmt(Math.abs(bal))} ₺ ${bal > 0 ? "(Borcunuz)" : bal < 0 ? "(Alacağınız)" : ""}\n\nBilgilerinize sunarız.`;
 };
 
+const pdfNote = (contact, pdfUrl) => `Sayın ${contact.name}, cari hesap ekstreniz PDF olarak hazırlanmıştır.${pdfUrl ? `\nEkstre PDF: ${pdfUrl}` : ""}`;
+
 export const StatementShareBar = ({ contact, rows, companyId }) => {
   const { activeCompany } = useAuth();
   const [msg, setMsg] = useState(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [shareLink, setShareLink] = useState("");
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfFile, setPdfFile] = useState(null);
   const [busy, setBusy] = useState("");
   const text = statementText(contact, rows, activeCompany);
   const sharedText = shareLink ? `${text}\n\nEkstre linki: ${shareLink}` : text;
+  const rememberShare = (share) => {
+    if (share?.link) setShareLink(share.link);
+    if (share?.pdfUrl) setPdfUrl(share.pdfUrl);
+    return share;
+  };
+  const ensureShare = async () => {
+    if (shareLink && pdfUrl) return { link: shareLink, pdfUrl };
+    return rememberShare(await fetchStatementShare(contact));
+  };
   const copy = async () => { try { await navigator.clipboard.writeText(sharedText); toast.success("Ekstre metni kopyalandı."); } catch { toast.error("Kopyalanamadı."); } };
   const whatsapp = async () => {
     const phone = (contact.phone || "").replace(/\D/g, "").replace(/^0/, "90");
     if (!phone) { toast.error("Carinin telefon numarası yok."); return; }
-    let link = shareLink;
-    if (!link) {
-      try { link = await shareStatementLink(contact, { silent: true }); setShareLink(link); } catch { /* metin yine gider */ }
+    const popup = window.open("about:blank", "_blank");
+    setBusy("whatsapp");
+    try {
+      let share = { link: shareLink, pdfUrl };
+      try { share = await ensureShare(); } catch { /* PDF linki yoksa kısa not gider */ }
+      let file = null;
+      try { file = await statementPdfFile(contact); } catch { /* dosya paylaşılamazsa link gider */ }
+      const body = pdfNote(contact, share?.pdfUrl);
+      const data = { title: `Ekstre - ${contact.name}`, text: body };
+      if (file) data.files = [file];
+      const canFileShare = !data.files || (typeof navigator.canShare === "function" && navigator.canShare(data));
+      let shared = false;
+      if (typeof navigator.share === "function" && canFileShare) {
+        try {
+          await navigator.share(data);
+          shared = true;
+        } catch (err) {
+          if (err?.name === "AbortError") {
+            if (popup && !popup.closed) popup.close();
+            return;
+          }
+        }
+      }
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(body)}`;
+      if (!shared) {
+        if (popup && !popup.closed) popup.location.href = url;
+        else window.open(url, "_blank", "noopener,noreferrer");
+      } else if (popup && !popup.closed) {
+        popup.close();
+      }
+      try { await axios.post(`${API_URL}/comm/whatsapp/logs`, { company_id: companyId, contact_id: contact.id, contact_name: contact.name, phone: contact.phone, message: body, direction: "outbound" }); } catch { /* log optional */ }
+    } finally {
+      setBusy("");
     }
-    const body = link ? `${text}\n\nEkstre linki: ${link}` : text;
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(body)}`, "_blank");
-    try { await axios.post(`${API_URL}/comm/whatsapp/logs`, { company_id: companyId, contact_id: contact.id, contact_name: contact.name, phone: contact.phone, message: body, direction: "outbound" }); } catch { /* log optional */ }
+  };
+  const openEmail = async () => {
+    setBusy("email");
+    try {
+      setPdfFile(await statementPdfFile(contact));
+      setMsg("email");
+    } catch {
+      toast.error("Ekstre PDF hazırlanamadı.");
+    } finally {
+      setBusy("");
+    }
+  };
+  const openSms = async () => {
+    setBusy("sms");
+    try {
+      await ensureShare();
+      setMsg("sms");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Ekstre PDF linki oluşturulamadı.");
+    } finally {
+      setBusy("");
+    }
   };
   const mint = async () => {
     setBusy("link");
-    try { setShareLink(await shareStatementLink(contact)); }
-    catch (err) { toast.error(err.response?.data?.detail || "Link oluşturulamadı."); }
-    finally { setBusy(""); }
+    try {
+      const share = rememberShare(await fetchStatementShare(contact));
+      try {
+        await navigator.clipboard.writeText(share.link);
+        toast.success("Ekstre linki kopyalandı.", { description: share.link });
+      } catch {
+        toast.success("Ekstre linki hazır.", { description: share.link });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Link oluşturulamadı.");
+    } finally {
+      setBusy("");
+    }
   };
   const pdf = async () => {
     setBusy("pdf");
@@ -68,9 +140,9 @@ export const StatementShareBar = ({ contact, rows, companyId }) => {
           <B icon={Link2} label={busy === "link" ? "…" : "Link"} onClick={mint} disabled={!!busy} cls="bg-indigo-600 text-white border-indigo-600" testId="statement-link-btn" />
           <B icon={FileDown} label={busy === "pdf" ? "…" : "PDF"} onClick={pdf} disabled={!!busy} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-pdf-btn" />
           <B icon={Printer} label="Yazdır / PDF" onClick={() => setPrintOpen(true)} cls="bg-slate-900 text-white border-slate-900" testId="statement-print-btn" />
-          <B icon={Mail} label="E-posta" onClick={() => setMsg("email")} cls="bg-white text-emerald-700 border-emerald-200" testId="statement-email-btn" />
-          <B icon={MessageSquare} label="SMS" onClick={() => setMsg("sms")} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-sms-btn" />
-          <B icon={Phone} label="WhatsApp" onClick={whatsapp} cls="bg-white text-green-700 border-green-200" testId="statement-whatsapp-btn" />
+          <B icon={Mail} label={busy === "email" ? "…" : "E-posta"} onClick={openEmail} disabled={!!busy} cls="bg-white text-emerald-700 border-emerald-200" testId="statement-email-btn" />
+          <B icon={MessageSquare} label={busy === "sms" ? "…" : "SMS"} onClick={openSms} disabled={!!busy} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-sms-btn" />
+          <B icon={Phone} label={busy === "whatsapp" ? "…" : "WhatsApp"} onClick={whatsapp} disabled={!!busy} cls="bg-white text-green-700 border-green-200" testId="statement-whatsapp-btn" />
           <B icon={Copy} label="Kopyala" onClick={copy} cls="bg-white text-slate-700 border-slate-200" testId="statement-copy-btn" />
         </div>
         {shareLink && (
@@ -80,7 +152,7 @@ export const StatementShareBar = ({ contact, rows, companyId }) => {
           </div>
         )}
       </div>
-      {msg && <QuickMessageModal companyId={companyId} channel={msg} recipient={{ contact_id: contact.id, name: contact.name, phone: contact.phone, email: contact.email }} defaultSubject={`Cari Hesap Ekstresi - ${contact.name}`} defaultMessage={msg === "sms" ? `Sayın ${contact.name}, ${new Date().toLocaleDateString("tr-TR")} itibarıyla cari bakiyeniz ${fmt(Math.abs(contact.balance || 0))} ₺ ${contact.balance > 0 ? "borç" : "alacak"} olarak görünmektedir.${shareLink ? ` Ekstre: ${shareLink}` : " Detaylı ekstre için bize ulaşın."}` : sharedText} context="statement" refId={contact.id} onClose={() => setMsg(null)} />}
+      {msg && <QuickMessageModal companyId={companyId} channel={msg} initialFiles={msg === "email" && pdfFile ? [pdfFile] : []} recipient={{ contact_id: contact.id, name: contact.name, phone: contact.phone, email: contact.email }} defaultSubject={`Cari Hesap Ekstresi - ${contact.name}`} defaultMessage={msg === "sms" ? pdfNote(contact, pdfUrl || shareLink) : `Sayın ${contact.name},\n\nCari hesap ekstreniz PDF olarak ektedir.\n\n${activeCompany?.name || ""}`.trim()} context="statement" refId={contact.id} onClose={() => setMsg(null)} />}
       {printOpen && <StatementPrint contact={contact} rows={rows} company={activeCompany} onClose={() => setPrintOpen(false)} />}
     </>
   );
