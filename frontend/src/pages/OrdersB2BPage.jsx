@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import {
@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
-import { useSearchParams } from "react-router-dom";
+import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
@@ -45,6 +45,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+
+const ORDER_COL_DEFAULTS = {
+  order_number: 158,
+  customer_name: 335,
+  items: 332,
+  total_amount: 96,
+  order_status: 142,
+  actions: 400,
+};
+const ORDER_COL_LIMITS = {
+  min: { order_number: 110, customer_name: 140, items: 160, total_amount: 80, order_status: 120, actions: 240 },
+  max: { order_number: 480, customer_name: 760, items: 760, total_amount: 240, order_status: 360, actions: 720 },
+};
+const ORDER_SELECT_COL = 40;
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -269,7 +283,25 @@ export default function OrdersB2BPage() {
     const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
     return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
   }, [orders, customerFilter, ordF, sort]);
-  const SortTh = ({ k, children, className = "" }) => <th className={`px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>{children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span></th>;
+  const { widths: colW, onResizeStart } = usePersistedColumnWidths("orders", ORDER_COL_DEFAULTS, ORDER_COL_LIMITS);
+  const tableWidth = ORDER_SELECT_COL + Object.values(colW).reduce((sum, n) => sum + n, 0);
+  const ColResize = ({ k }) => (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      title="Sütun genişliğini ayarla"
+      data-testid={`ord-col-resize-${k}`}
+      className="absolute right-0 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-indigo-400"
+      onPointerDown={(e) => onResizeStart(k, e)}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+    />
+  );
+  const SortTh = ({ k, children, className = "" }) => (
+    <th className={`relative px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} style={{ width: colW[k] }} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>
+      {children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+      <ColResize k={k} />
+    </th>
+  );
   const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
@@ -507,7 +539,16 @@ export default function OrdersB2BPage() {
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <div className="overflow-x-auto overflow-y-hidden pr-3 [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
-            <table className="w-full text-left text-xs text-slate-600">
+            <table className="table-fixed text-left text-xs text-slate-600" style={{ width: tableWidth }}>
+                  <colgroup>
+                    <col style={{ width: ORDER_SELECT_COL }} />
+                    <col style={{ width: colW.order_number }} />
+                    <col style={{ width: colW.customer_name }} />
+                    <col style={{ width: colW.items }} />
+                    <col style={{ width: colW.total_amount }} />
+                    <col style={{ width: colW.order_status }} />
+                    <col style={{ width: colW.actions }} />
+                  </colgroup>
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
                   <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
@@ -516,7 +557,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="items">Ürünler</SortTh>
                   <SortTh k="total_amount" className="text-right">Tutar</SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
-                  <th className="px-4 py-3 pr-8 text-center w-[400px] min-w-[400px]">İşlemler</th>
+                  <th className="relative px-4 py-3 pr-8 text-center" style={{ width: colW.actions }}>İşlemler<ColResize k="actions" /></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -524,26 +565,26 @@ export default function OrdersB2BPage() {
                 {visibleOrders.map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className={`hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
-                    <td className="px-4 py-3 font-medium">
+                    <td className="px-4 py-3 font-medium overflow-hidden">
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
                       {ord.customer_order_number ? <div className="text-[10px] text-slate-500 font-mono" data-testid={`order-customer-no-${ord.order_number}`}>Müşteri no: {ord.customer_order_number}</div> : null}
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded">
                         {channelTr(ord.channel)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 cursor-pointer group" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>
-                      <div className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline decoration-dotted">{ord.customer_name}</div>
+                    <td className="px-4 py-3 cursor-pointer group overflow-hidden" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>
+                      <div className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline decoration-dotted truncate">{ord.customer_name}</div>
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
-                    <td className="px-4 py-3 align-top">
+                    <td className="px-4 py-3 align-top overflow-hidden">
                       {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = products.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "grid grid-cols-1 2xl:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => (
                             <div key={idx} className={`flex items-center gap-2 ${open ? "bg-slate-50 rounded-lg p-1.5" : ""}`}>
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
-                              <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
-                                <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 flex-1 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
+                                <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
                                 {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
                             </div>))}
@@ -578,7 +619,7 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 pr-8 text-center w-[280px] min-w-[280px]">
+                    <td className="px-4 py-3 pr-8 text-center overflow-hidden">
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
