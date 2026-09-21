@@ -11,6 +11,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
+import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
@@ -45,6 +46,7 @@ import {
 } from "../utils/installments";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import type { BankAccount } from "../utils/finance";
+import { canDeleteInvoice, canEditInvoiceItems } from "../utils/invoiceDraft";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
 import { printPaymentReceipt } from "../utils/chequeShare";
 
@@ -115,6 +117,7 @@ export function ContactDetailScreen() {
   const [termsBusy, setTermsBusy] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
+  const [openInvRow, setOpenInvRow] = useState<string | null>(null);
 
   const loadCash = useCallback(async () => {
     const [accs, pars] = await Promise.all([
@@ -400,6 +403,38 @@ export function ContactDetailScreen() {
         }
       },
     );
+  };
+
+  const removeInvoice = (inv: { id?: string; _id?: string; invoice_number?: string; status?: string; e_type?: string; paid_amount?: number; payment_status?: string }) => {
+    if (!canInvoice) { setError("Fatura silme yetkiniz yok."); return; }
+    if (!canDeleteInvoice(inv)) {
+      setOpenInvRow(null);
+      setError("Kesilmiş e-belge silinemez. Taslak veya ödenmemiş kağıt faturayı sola kaydırarak silebilirsiniz.");
+      return;
+    }
+    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+    confirmAction(
+      "Faturayı sil",
+      `${inv.invoice_number || "Fatura"} numaralı ${kind} çöp kutusuna taşınsın mı?`,
+      async () => {
+        try {
+          await del(client, `/invoices/${idOf(inv)}`);
+          setMessage("Fatura silindi.");
+          setOpenInvRow(null);
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "Fatura silinemedi."));
+        }
+      },
+    );
+  };
+
+  const editInvoice = (inv: { id?: string; _id?: string; status?: string }) => {
+    const iid = idOf(inv);
+    setOpenInvRow(null);
+    if (canInvoice && canEditInvoiceItems(inv)) go("InvoiceEdit", { id: iid });
+    else go("InvoiceDetail", { id: iid });
   };
 
   const removeOrder = (o: { order_number?: string; is_invoiced?: boolean; invoice_id?: string }) => {
@@ -785,16 +820,33 @@ export function ContactDetailScreen() {
       />
 
       {tab === "invoices" ? (
-        !invoices.length ? <Muted>Fatura yok.</Muted> : invoices.map((inv: any, idx: number) => (
-          <ListRow
-            key={idOf(inv) || idx}
-            testID={`detail-inv-${idOf(inv) || idx}`}
-            title={inv.invoice_number || "Fatura"}
-            subtitle={[invoiceTypeTr(inv.invoice_type), statusTr(inv.status), fmtDate(inv.issue_date)].filter(Boolean).join(" · ")}
-            right={fmtMoney(inv.grand_total)}
-            onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
-          />
-        ))
+        !invoices.length ? <Muted>Fatura yok.</Muted> : invoices.map((inv: any, idx: number) => {
+          const iid = idOf(inv) || String(idx);
+          const row = (
+            <ListRow
+              title={inv.invoice_number || "Fatura"}
+              subtitle={[invoiceTypeTr(inv.invoice_type), statusTr(inv.status), fmtDate(inv.issue_date)].filter(Boolean).join(" · ")}
+              right={fmtMoney(inv.grand_total)}
+              onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
+            />
+          );
+          if (!canInvoice) {
+            return <React.Fragment key={iid}>{row}</React.Fragment>;
+          }
+          return (
+            <SwipeRevealRow
+              key={iid}
+              rowKey={iid}
+              openKey={openInvRow}
+              onOpen={setOpenInvRow}
+              onEdit={() => editInvoice(inv)}
+              onDelete={() => removeInvoice(inv)}
+              testID={`detail-inv-${iid}`}
+            >
+              {row}
+            </SwipeRevealRow>
+          );
+        })
       ) : null}
 
       {tab === "payments" ? (

@@ -1,7 +1,11 @@
 import {
   applyTradeKind,
   canDeleteInvoice,
+  canEditInvoiceItems,
   createInvoiceButtonLabel,
+  invoiceDetailTotals,
+  invoiceDipPayload,
+  invoiceItemsPayload,
   invoiceListSubtitle,
   invoiceListTitle,
   draftFromInvoice,
@@ -128,6 +132,39 @@ describe("invoiceDraft", () => {
       issue_date: "2026-09-21",
     })).toBe("NX202600000017 · Satış · E-Arşiv · Taslak · 21 Eyl 2026");
     expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Fatura · Satış/);
+  });
+
+  it("allows item edits only on drafts and maps lines for PUT", () => {
+    expect(canEditInvoiceItems({ status: "draft" })).toBe(true);
+    expect(canEditInvoiceItems({ status: "approved" })).toBe(false);
+    const body = invoiceItemsPayload([
+      { product_id: "p1", name: "Raf", product_name: "Raf", sku: "", quantity: 2, unit: "Adet", unit_price: 10, unit_price_incl: 12, vat_rate: 20, discount_rate: 0, total: 20, total_incl: 24, vat_amount: 4, is_service: false },
+    ]);
+    expect(body.items[0].name).toBe("Raf");
+    expect(body.items[0].quantity).toBe(2);
+  });
+
+  it("invoiceDipPayload keeps amount-mode discount and live-updates detail totals", () => {
+    const lines = [
+      { product_id: "p1", name: "Raf", product_name: "Raf", sku: "", quantity: 1, unit: "Adet", unit_price: 200, unit_price_incl: 220, vat_rate: 10, discount_rate: 0, total: 200, total_incl: 220, vat_amount: 20, is_service: false },
+    ];
+    const pct = invoiceDipPayload(lines, "percent", 10);
+    expect(pct.general_discount_rate).toBe(10);
+    expect(pct.general_discount_amount).toBeUndefined();
+    const amt = invoiceDipPayload(lines, "amount", 25);
+    expect(amt.general_discount_amount).toBe(25);
+    expect(amt.general_discount_rate).toBeUndefined();
+    const cleared = invoiceDipPayload(lines, "amount", 0);
+    expect(cleared.general_discount_rate).toBe(0);
+    const live = invoiceDetailTotals(
+      { items: lines, general_discount_rate: 0, general_discount_amount: 0 },
+      "amount",
+      20,
+    );
+    expect(live.gd).toBeCloseTo(20);
+    expect(live.subtotal).toBeCloseTo(180);
+    expect(live.vat).toBeCloseTo(18);
+    expect(live.grandTotal).toBeCloseTo(198);
   });
 
   it("deletes drafts and unpaid paper, not issued e-docs", () => {

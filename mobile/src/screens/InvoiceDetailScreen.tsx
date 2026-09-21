@@ -4,19 +4,27 @@ import React, { useCallback, useState } from "react";
 import { Alert, Platform, Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { B2BSheet } from "../components/b2b/B2BSheet";
+import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
+import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
   canDeleteInvoice,
+  canEditInvoiceItems,
   E_TYPES,
+  invoiceDetailTotals,
+  invoiceDipPayload,
   isGibIssued,
   isIncomingPurchasePending,
   remainingAmount,
+  type GdMode,
 } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
@@ -48,6 +56,10 @@ export function InvoiceDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string; unit_price: string; vat_rate: number } | null>(null);
+  const [gdMode, setGdMode] = useState<GdMode>("amount");
+  const [gdValue, setGdValue] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +67,15 @@ export function InvoiceDetailScreen() {
       setInv(data);
       setDueDate(String(data.due_date || "").slice(0, 10));
       setNotes(data.notes || "");
+      const rate = Number(data.general_discount_rate || 0);
+      const amt = Number(data.general_discount_amount || 0);
+      if (rate) {
+        setGdMode("percent");
+        setGdValue(String(rate));
+      } else {
+        setGdMode("amount");
+        setGdValue(amt ? String(amt) : "");
+      }
       const left = remainingAmount(data);
       setPayAmount(left ? String(left) : "");
       setError(null);
@@ -100,6 +121,77 @@ export function InvoiceDetailScreen() {
   const leftover = remainingAmount(inv);
   const incomingPending = isIncomingPurchasePending(inv);
   const draft = inv.status === "draft";
+  const itemsEditable = canEdit && canEditInvoiceItems(inv);
+  const lines = inv.items || [];
+  const totals = invoiceDetailTotals(inv, gdMode, n(gdValue));
+  const gdNum = n(gdValue);
+
+  const persistItems = (next: typeof lines, okMsg = "Kalemler güncellendi.") =>
+    run(async () => {
+      await put(client, `/invoices/${id}`, invoiceDipPayload(next.map((it) => hydrateLine(it)), gdMode, gdNum));
+      setMessage(okMsg);
+      setEditLine(null);
+      setOpenRow(null);
+    }, "Kalemler kaydedilemedi.");
+
+  const saveDip = () => {
+    if (!itemsEditable) {
+      setError("Kesilmiş faturada dip toplam değiştirilemez. Taslakken genel iskontoyu güncelleyin.");
+      return;
+    }
+    persistItems(lines, "Dip toplamlar güncellendi.");
+  };
+
+  const blockedItems = () => {
+    setOpenRow(null);
+    setError("Kesilmiş faturada kalemler değiştirilemez. Taslakken sola kaydırarak düzenleyin veya silin.");
+  };
+
+  const openItemEdit = (index: number) => {
+    if (!itemsEditable) { blockedItems(); return; }
+    const it = lines[index] || {};
+    setOpenRow(null);
+    setEditLine({
+      index,
+      name: String(it.product_name || it.name || ""),
+      quantity: String(it.quantity ?? 1),
+      unit_price: String(it.unit_price ?? 0),
+      vat_rate: Number(it.vat_rate) || 0,
+    });
+  };
+
+  const removeItem = (index: number) => {
+    if (!itemsEditable) { blockedItems(); return; }
+    const named = lines.filter((it) => it.product_name || it.name);
+    if (named.length <= 1) {
+      setOpenRow(null);
+      setError("En az bir kalem gerekli.");
+      return;
+    }
+    const label = String(lines[index]?.product_name || lines[index]?.name || "Kalem");
+    confirmAction("Kalemi sil", `${label} satırı silinsin mi?`, () => {
+      persistItems(lines.filter((_, i) => i !== index));
+    });
+  };
+
+  const saveItemEdit = () => {
+    if (!editLine || !itemsEditable) return;
+    const qty = Number(String(editLine.quantity).replace(",", "."));
+    const price = Number(String(editLine.unit_price).replace(",", "."));
+    if (!editLine.name.trim()) { setError("Kalem adı gerekli."); return; }
+    if (!(qty > 0) || !(price >= 0)) { setError("Miktar ve fiyat geçerli olmalı."); return; }
+    persistItems(lines.map((it, i) => {
+      if (i !== editLine.index) return it;
+      return computeLine(hydrateLine({
+        ...it,
+        name: editLine.name.trim(),
+        product_name: editLine.name.trim(),
+        quantity: qty,
+        unit_price: price,
+        vat_rate: editLine.vat_rate,
+      }));
+    }));
+  };
 
   const remove = () => {
     if (!canDeleteInvoice(inv) || !canEdit) return;
@@ -136,20 +228,85 @@ export function InvoiceDetailScreen() {
           {inv.payment_status ? <Badge label={statusTr(inv.payment_status)} tone={inv.payment_status === "paid" ? "green" : "amber"} /> : null}
           {inv.trade_kind ? <Badge label={tradeKindTr(inv.trade_kind)} tone="indigo" /> : null}
         </Row>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }}>{fmtMoney(inv.grand_total, inv.currency)}</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }} testID="inv-header-total">{fmtMoney(totals.grandTotal, inv.currency)}</Text>
         <Muted>Ödenen {fmtMoney(inv.paid_amount, inv.currency)} · kalan {fmtMoney(leftover, inv.currency)} · vade {fmtDate(inv.due_date)}</Muted>
         {inv.gib_status ? <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted> : null}
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
       </Card>
 
-      {(inv.items || []).map((it, i) => (
-        <ListRow
-          key={i}
-          title={String(it.product_name || it.name || "Kalem")}
-          subtitle={`${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`}
-          right={fmtMoney(it.total_incl || it.total, inv.currency)}
-        />
-      ))}
+      {canEdit ? <Muted>Kalemi düzenlemek veya silmek için satırı sola kaydırın.</Muted> : null}
+      {lines.map((it, i) => {
+        const row = (
+          <ListRow
+            title={String(it.product_name || it.name || "Kalem")}
+            subtitle={`${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`}
+            right={fmtMoney(it.total_incl || it.total, inv.currency)}
+          />
+        );
+        if (!canEdit) return <React.Fragment key={i}>{row}</React.Fragment>;
+        return (
+          <SwipeRevealRow
+            key={i}
+            rowKey={String(i)}
+            openKey={openRow}
+            onOpen={setOpenRow}
+            onEdit={() => openItemEdit(i)}
+            onDelete={() => removeItem(i)}
+            testID={`inv-item-${i}`}
+          >
+            {row}
+          </SwipeRevealRow>
+        );
+      })}
+
+      <Card testID="inv-dip-totals">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Dip toplamlar</Text>
+        <Row style={{ justifyContent: "space-between" }}><Muted>Mal / hizmet</Muted><Text style={{ fontWeight: "700" }}>{fmtMoney(totals.itemsSum, inv.currency)}</Text></Row>
+        {totals.lineDiscount > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Satır iskontoları</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.lineDiscount, inv.currency)}</Text></Row>
+        ) : null}
+        <Muted>Genel iskonto</Muted>
+        {itemsEditable ? (
+          <>
+            <Row>
+              <Chip label="%" active={gdMode === "percent"} onPress={() => setGdMode("percent")} testID="gd-mode-percent" />
+              <Chip label="₺" active={gdMode === "amount"} onPress={() => setGdMode("amount")} testID="gd-mode-amount" />
+            </Row>
+            <Field
+              label={gdMode === "percent" ? "Genel iskonto %" : "Genel iskonto tutarı"}
+              testID="general-discount-input"
+              value={gdValue}
+              onChangeText={setGdValue}
+              keyboardType="decimal-pad"
+            />
+          </>
+        ) : (
+          <Muted>{inv.general_discount_rate ? `%${inv.general_discount_rate}` : fmtMoney(inv.general_discount_amount || 0, inv.currency)}</Muted>
+        )}
+        {totals.gd > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Genel iskonto</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.gd, inv.currency)}</Text></Row>
+        ) : null}
+        <Row style={{ justifyContent: "space-between" }}><Muted>Ara toplam</Muted><Text style={{ fontWeight: "700" }} testID="inv-dip-subtotal">{fmtMoney(totals.subtotal, inv.currency)}</Text></Row>
+        <Row style={{ justifyContent: "space-between" }}><Muted>Toplam KDV</Muted><Text style={{ fontWeight: "700" }} testID="inv-vat-total">{fmtMoney(totals.vat, inv.currency)}</Text></Row>
+        {totals.withholding > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Tevkifat</Muted><Text style={{ fontWeight: "700", color: colors.indigo }}>-{fmtMoney(totals.withholding, inv.currency)}</Text></Row>
+        ) : null}
+        <Row style={{ justifyContent: "space-between" }}>
+          <Text style={{ fontSize: 18, fontWeight: "800" }}>{totals.withholding > 0 ? "Ödenecek" : "Genel toplam"}</Text>
+          <Text style={{ fontSize: 18, fontWeight: "800", color: colors.primary }} testID="inv-grand-total">{fmtMoney(totals.grandTotal, inv.currency)}</Text>
+        </Row>
+        {itemsEditable ? (
+          <PrimaryButton
+            title={busy ? "Kaydediliyor…" : "Dip toplamı kaydet"}
+            testID="inv-dip-save"
+            color={colors.primary}
+            loading={busy}
+            onPress={saveDip}
+          />
+        ) : (
+          <Muted>Kesilmiş belgede dip toplam GİB kaydına bağlıdır; kalem veya iskonto değiştirilemez.</Muted>
+        )}
+      </Card>
 
       {canEdit && draft ? (
         <PrimaryButton title="Taslağı düzenle" onPress={() => go("InvoiceEdit", { id })} color={colors.primary} testID="inv-edit" />
@@ -301,6 +458,31 @@ export function InvoiceDetailScreen() {
           <Muted>{inv.notes}</Muted>
         </Card>
       ) : null}
+
+      <B2BSheet
+        visible={!!editLine}
+        title="Kalemi düzenle"
+        subtitle={inv.invoice_number}
+        onClose={() => setEditLine(null)}
+        testID="inv-item-edit"
+      >
+        <Field label="Ad" testID="inv-item-name" value={editLine?.name || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, name: v } : cur))} />
+        <Field label="Miktar" testID="inv-item-qty" value={editLine?.quantity || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, quantity: v } : cur))} keyboardType="decimal-pad" />
+        <Field label="Birim fiyat" testID="inv-item-price" value={editLine?.unit_price || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, unit_price: v } : cur))} keyboardType="decimal-pad" />
+        <Muted>KDV</Muted>
+        <Row>
+          {VAT_OPTIONS.map((v) => (
+            <Chip
+              key={v}
+              label={`%${v}`}
+              active={editLine?.vat_rate === v}
+              onPress={() => setEditLine((cur) => (cur ? { ...cur, vat_rate: v } : cur))}
+              testID={`inv-item-vat-${v}`}
+            />
+          ))}
+        </Row>
+        <PrimaryButton title={busy ? "Kaydediliyor…" : "Kalemi kaydet"} onPress={saveItemEdit} loading={busy} color={colors.primary} testID="inv-item-save" />
+      </B2BSheet>
     </Screen>
   );
 }
