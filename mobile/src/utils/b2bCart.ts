@@ -86,3 +86,9 @@ export function formatOrderItemLabel(item: { quantity?: number; qty?: number; pr
 export function cartCount(cart: B2BCart | null | undefined): number {
   return Object.values(cart || {}).reduce((s, line) => s + (Number(line.qty) || 0), 0);
 }
+
+export function productCartQty(cart: B2BCart | null | undefined, productId: string): number {
+  const id = String(productId || "");
+  if (!id) return 0;
+  return Object.values(cart || {}).reduce((s, line) => s + (line.productId === id ? Number(line.qty) || 0 : 0), 0);
+}

@@ -1,4 +1,4 @@
-import { addCartLine, cartCount, lineKey, normalizeNote, parseStoredCart, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, cartCount, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -45,5 +45,14 @@ describe("b2bCart", () => {
   test("normalizeNote trims and caps length", () => {
     expect(normalizeNote("  ab  ")).toBe("ab");
     expect(normalizeNote("x".repeat(600)).length).toBe(500);
+  });
+
+  test("productCartQty sums every line of that product", () => {
+    let cart = addCartLine({}, "prod_01", 1, "kırmızı");
+    cart = addCartLine(cart, "prod_01", 2, "mavi");
+    cart = addCartLine(cart, "prod_02", 4, "");
+    expect(productCartQty(cart, "prod_01")).toBe(3);
+    expect(productCartQty(cart, "prod_02")).toBe(4);
+    expect(productCartQty(cart, "prod_99")).toBe(0);
   });
 });

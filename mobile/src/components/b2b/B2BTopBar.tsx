@@ -9,6 +9,7 @@ export function B2BTopBar({
   company,
   contact,
   count,
+  ping,
   allowOrders,
   onCart,
   onMenu,
@@ -17,6 +18,7 @@ export function B2BTopBar({
   company?: string | null;
   contact?: string | null;
   count: number;
+  ping?: boolean;
   allowOrders: boolean;
   onCart: () => void;
   onMenu: () => void;
@@ -40,9 +42,16 @@ export function B2BTopBar({
         <Pressable
           testID="b2b-cart-btn"
           onPress={onCart}
-          style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: colors.emerald50, alignItems: "center", justifyContent: "center" }}
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            backgroundColor: ping ? colors.primary : colors.emerald50,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
         >
-          <Ionicons name="cart" size={22} color={colors.primaryHover} />
+          <Ionicons name={ping ? "checkmark-circle" : "cart"} size={22} color={ping ? "#fff" : colors.primaryHover} />
           {count > 0 ? (
             <View
               testID="b2b-cart-count"
@@ -54,7 +63,7 @@ export function B2BTopBar({
                 height: 18,
                 paddingHorizontal: 4,
                 borderRadius: 999,
-                backgroundColor: colors.danger,
+                backgroundColor: ping ? colors.primaryHover : colors.danger,
                 alignItems: "center",
                 justifyContent: "center",
               }}

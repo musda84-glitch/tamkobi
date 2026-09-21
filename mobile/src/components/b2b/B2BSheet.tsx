@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors } from "../../theme";
+import { useKeyboardAwareScroll } from "../../utils/useKeyboardAwareScroll";
 
 export function B2BSheet({
   visible,
@@ -18,6 +19,7 @@ export function B2BSheet({
   children: React.ReactNode;
   testID?: string;
 }) {
+  const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll(visible);
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.45)", justifyContent: "flex-end" }} onPress={onClose}>
@@ -35,7 +37,13 @@ export function B2BSheet({
               <Ionicons name="close" size={22} color={colors.muted} />
             </Pressable>
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>{children}</ScrollView>
+          <ScrollView
+            ref={scrollRef}
+            {...scrollProps}
+            contentContainerStyle={{ paddingBottom: keyboardHeight > 0 ? keyboardHeight : 8 }}
+          >
+            {children}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>

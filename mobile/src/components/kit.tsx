@@ -1,8 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   ActivityIndicator,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -19,6 +18,7 @@ import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
 import { fieldUsesDatePicker, fieldUsesTimePicker } from "../utils/fieldKind";
 import { contentBottomPad, SCREEN_BASE_PAD } from "../utils/keyboardPad";
+import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
 import { trUpper } from "../utils/labels";
 import { listRowText, isListRowNode } from "../utils/listRow";
 import { DateField } from "./DateField";
@@ -31,26 +31,15 @@ export function Screen({ children, onRefresh, refreshing, padded = true }: {
   refreshing?: boolean;
   padded?: boolean;
 }) {
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const show = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates.height));
-    const hide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
+  const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
+        ref={scrollRef}
         style={styles.flex}
         contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        automaticallyAdjustKeyboardInsets
+        {...scrollProps}
         refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
       >
         {children}
