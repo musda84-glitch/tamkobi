@@ -25,8 +25,9 @@ import { DateField } from "./DateField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, onRefresh, refreshing, padded = true }: {
+export function Screen({ children, stickyTop, onRefresh, refreshing, padded = true }: {
   children: React.ReactNode;
+  stickyTop?: React.ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
   padded?: boolean;
@@ -35,6 +36,7 @@ export function Screen({ children, onRefresh, refreshing, padded = true }: {
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      {stickyTop ? <View style={[styles.stickyTop, padded && styles.stickyPad]}>{stickyTop}</View> : null}
       <ScrollView
         ref={scrollRef}
         style={styles.flex}
@@ -244,6 +246,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
+  stickyTop: { backgroundColor: colors.background, zIndex: 20 },
+  stickyPad: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4, paddingBottom: spacing.xs },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
