@@ -115,9 +115,9 @@ export function BankingMatchPanel({
   });
 
   const toggleAuto = (c: BankConnection) => run(`auto-${idOf(c)}`, async () => {
-    await put(client, `/banking/connections/${idOf(c)}`, { auto_match: !c.auto_match });
+    const r = await put<{ message?: string }>(client, `/banking/connections/${idOf(c)}`, { auto_match: !c.auto_match });
     setMessage(!c.auto_match
-      ? "Otomatik işleme aktif: yeni hareketler öğrenilen kurallarla işlenecek."
+      ? (r?.message || "Otomatik işleme aktif: önceki eşleşme veya cari adı varsa hareket işlenir.")
       : "Otomatik işleme pasif: hareketler manuel eşleşme bekleyecek.");
   });
 
@@ -242,7 +242,7 @@ export function BankingMatchPanel({
                 <Text style={{ fontWeight: "800", color: c.auto_match ? "#5B21B6" : colors.text }}>
                   Otomatik işle {c.auto_match ? "açık" : "kapalı"}
                 </Text>
-                <Muted>Öğrenilen cari/kasa kurallarıyla yeni hareketleri işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</Muted>
+                <Muted>Önceki eşleşme veya cari adı varsa otomatik işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</Muted>
               </Pressable>
             ) : null}
             {canEdit ? (

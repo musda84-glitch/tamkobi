@@ -182,8 +182,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const toggleAutoMatch = async (c) => {
     try {
-      await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: !c.auto_match });
-      toast.success(!c.auto_match ? "Otomatik işleme AKTİF: yeni hareketler öğrenilen kurallarla anında işlenecek." : "Otomatik işleme PASİF: hareketler manuel eşleştirme bekleyecek.");
+      const r = await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: !c.auto_match });
+      toast.success(!c.auto_match
+        ? (r.data?.message || "Otomatik işleme AKTİF: önceki eşleşme veya cari adı varsa hareket işlenir.")
+        : "Otomatik işleme PASİF: hareketler manuel eşleştirme bekleyecek.");
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
@@ -254,7 +256,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </div>
             {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
             <button type="button" onClick={() => toggleAutoMatch(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_match ? "bg-violet-50 border-violet-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-match-toggle-${c.id}`} aria-pressed={!!c.auto_match}>
-              <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— öğrenilen cari/kasa kurallarıyla yeni hareketleri anında işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>
+              <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— önceki eşleşme veya cari adı varsa otomatik işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>
               <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
             </button>
             <div className="text-[10px] text-slate-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Bu hesaba manuel gelir/gider/virman girişi kapalıdır; hareketler bankadan gelir.</div>

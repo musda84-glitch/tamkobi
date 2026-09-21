@@ -6,6 +6,7 @@ from notify import (
     notification_visible,
     role_label,
     roles_for_type,
+    user_ids_of,
 )
 
 
@@ -66,6 +67,15 @@ def test_filter_keeps_matching_rows():
     ]
     out = filter_notifications(rows, {"id": "u-wh", "role": "warehouse"})
     assert [n["title"] for n in out] == ["depo", "görev"]
+
+
+def test_company_admin_would_receive_bank_sync_push():
+    note = notification_doc("c1", "bank_sync", "3 yeni banka hareketi", "Enpara", link="/banking")
+    admin = {"_id": "usr_admin", "role": "admin", "active_company_id": "c1"}
+    staff = {"_id": "usr_wh", "role": "warehouse", "active_company_id": "c1"}
+    assert notification_visible(note, admin)
+    assert not notification_visible(note, staff)
+    assert user_ids_of(admin) == ["usr_admin"]
 
 
 def test_expo_push_token_and_payload():
