@@ -1,9 +1,10 @@
+import { formatTrAmount } from "./money";
 /** Compact invoice slip used by the orders bulk menu. */
 
 export const miniInvoiceSize = (key) => (key === "8x20" ? { w: 80, h: 200, label: "8×20 cm" } : { w: 100, h: 150, label: "10×15 cm" });
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n) => formatTrAmount((Number(n) || 0));
 
 export const buildMiniInvoiceHtml = (orders, company = {}, sizeKey = "10x15") => {
   const { w, h } = miniInvoiceSize(sizeKey);

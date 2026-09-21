@@ -1,7 +1,8 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const moneyWords = (n) => `${fmt(n)} Türk Lirası`;
 
 /** Taksit planından üretilen senetleri yazdırır (her senet ayrı sayfa). */

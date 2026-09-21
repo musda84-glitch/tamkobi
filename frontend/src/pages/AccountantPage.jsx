@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Calculator, Download, FileText, Landmark, Users, Receipt, Archive, Loader2 } from "lucide-react";
 import { API_URL, BACKEND_URL, useAuth } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const MAX_BACKUP_DAYS = 62;
 const monthBounds = (ym) => {
   const [y, m] = (ym || "").split("-").map(Number);

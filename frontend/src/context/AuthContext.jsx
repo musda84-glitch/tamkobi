@@ -6,6 +6,7 @@ import { API_URL } from "../api/client";
 import { groupIdOf } from "../navGroups";
 import { loadRadialSlots, normalizeRadialSlots, saveRadialSlotsLocal } from "../utils/radialQuickMenu";
 import { selfPersonnelNavAllowed } from "../utils/selfPersonnelNav";
+import { setPriceDecimals } from "../utils/money";
 
 const AuthContext = createContext(null);
 
@@ -139,7 +140,11 @@ export const AuthProvider = ({ children }) => {
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
         const found = res.data.companies.find(c => c.id === res.data.user?.active_company_id || c._id === res.data.user?.active_company_id);
-        setActiveCompany(found || res.data.companies[0]);
+        const active = found || res.data.companies[0];
+        setActiveCompany(active);
+        setPriceDecimals(active?.price_decimals);
+      } else {
+        setPriceDecimals(2);
       }
     } catch (err) {
       setUser(null);
@@ -161,7 +166,9 @@ export const AuthProvider = ({ children }) => {
       setCompanies(res.data.companies || []);
       if (res.data.companies && res.data.companies.length > 0) {
         const found = res.data.companies.find(c => c.id === res.data.user.active_company_id || c._id === res.data.user.active_company_id);
-        setActiveCompany(found || res.data.companies[0]);
+        const active = found || res.data.companies[0];
+        setActiveCompany(active);
+        setPriceDecimals(active?.price_decimals);
       }
       toast.success(`Hoş geldiniz, ${res.data.user.name}`);
       return true;
@@ -178,6 +185,7 @@ export const AuthProvider = ({ children }) => {
       const comp = companies.find(c => (c.id === companyId || c._id === companyId));
       if (comp) {
         setActiveCompany(comp);
+        setPriceDecimals(comp.price_decimals);
         try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: companyId } }); setLicense(l.data); } catch { /* ignore */ }
         toast.success(`Aktif şirket değiştirildi: ${comp.name}`);
       }
@@ -195,9 +203,26 @@ export const AuthProvider = ({ children }) => {
     setLicense(null);
     setCompanies([]);
     setActiveCompany(null);
+    setPriceDecimals(2);
     toast.info("Oturum kapatıldı.");
     window.location.href = typeof to === "string" ? to : "/login";
   };
+
+  useEffect(() => {
+    const onCompany = (ev) => {
+      const doc = ev.detail;
+      if (!doc) return;
+      const id = doc.id || doc._id;
+      setCompanies((prev) => prev.map((c) => ((c.id || c._id) === id ? { ...c, ...doc } : c)));
+      setActiveCompany((prev) => {
+        if (!prev || (prev.id || prev._id) !== id) return prev;
+        return { ...prev, ...doc };
+      });
+      setPriceDecimals(doc.price_decimals);
+    };
+    window.addEventListener("tamkobi-company-updated", onCompany);
+    return () => window.removeEventListener("tamkobi-company-updated", onCompany);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, radialSlots, persistRadialSlots, resetRadialSlots, can, permPath, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>

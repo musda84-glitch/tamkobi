@@ -34,7 +34,16 @@ const CompanyForm = ({ companyId }) => {
   useEffect(() => { axios.get(`${API_URL}/companies/${companyId}`).then((r) => setC(r.data)); }, [companyId]);
   if (!c) return null;
   const set = (k, v) => setC({ ...c, [k]: v });
-  const save = async (e) => { e.preventDefault(); setBusy(true); try { await axios.put(`${API_URL}/companies/${companyId}`, c); toast.success("Şirket bilgileri kaydedildi."); } catch { toast.error("Kaydedilemedi."); } finally { setBusy(false); } };
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}`, c);
+      setC(r.data);
+      window.dispatchEvent(new CustomEvent("tamkobi-company-updated", { detail: r.data }));
+      toast.success("Şirket bilgileri kaydedildi.");
+    } catch { toast.error("Kaydedilemedi."); } finally { setBusy(false); }
+  };
   const uploadLogo = async (e) => {
     const raw = e.target.files?.[0];
     if (!raw) return;
@@ -57,6 +66,19 @@ const CompanyForm = ({ companyId }) => {
         <label className="flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold"><Upload className="w-3.5 h-3.5" /> Logo Yükle<input type="file" accept="image/*" className="hidden" onChange={uploadLogo} data-testid="company-logo-input" /></label>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{fields.map(([k, l]) => <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input value={c[k] || ""} onChange={(e) => set(k, e.target.value)} className={inputCls} data-testid={`company-${k}-input`} /></div>)}</div>
+      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50" data-testid="company-price-decimals">
+        <label className="block font-semibold text-slate-700 mb-1" htmlFor="company-price-decimals-select">Fiyat ondalık hassasiyeti</label>
+        <select id="company-price-decimals-select" value={String(c.price_decimals ?? 2)} onChange={(e) => set("price_decimals", Number(e.target.value))} className={inputCls} data-testid="company-price-decimals-select">
+          <option value="0">0 — tam sayı</option>
+          <option value="2">2 — kuruş (önerilen, e-fatura)</option>
+          <option value="3">3 hane</option>
+          <option value="4">4 hane — birim fiyat</option>
+        </select>
+        <p className="text-[11px] text-slate-500 mt-1" data-testid="company-price-decimals-hint">
+          Örnek: {(1250.5).toLocaleString("tr-TR", { minimumFractionDigits: Number(c.price_decimals ?? 2), maximumFractionDigits: Number(c.price_decimals ?? 2) })}.
+          Logo ve Mikro birim fiyatı çoğu zaman 2–4 hane tutar; Paraşüt ve Bizimhesap varsayılanı 2’dir (kuruş). Web, mobil ve B2B fiyat gösterimi bu ayarı kullanır. Kayıtlı tutarlar ile GİB XML kuruşta kalır; döviz kuru bundan ayrıdır.
+        </p>
+      </div>
       <div className="flex justify-end"><button type="submit" disabled={busy} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold disabled:opacity-60" data-testid="save-company-btn">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
   );

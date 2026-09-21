@@ -47,6 +47,7 @@ import {
   Clock,
   History,
 } from "lucide-react";
+import { formatTrAmount } from "../utils/money";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -629,7 +630,7 @@ export default function StockBarcodePage() {
                       <td className="px-2 py-1.5"><div className="font-semibold text-slate-900">{l.name}</div><div className="font-mono text-[10px] text-slate-400">{l.sku}</div></td>
                       <td className="px-2 py-1.5 text-right">{l.stock_quantity} / {l.min_stock_alert}</td>
                       <td className="px-2 py-1.5"><input type="number" min="1" value={l.quantity} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) }))} className="w-20 bg-slate-50 border rounded p-1 text-right" data-testid={`stock-reorder-qty-${l.sku}`} /></td>
-                      <td className="px-2 py-1.5 text-right">{Number(l.unit_price || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-2 py-1.5 text-right">{formatTrAmount(Number(l.unit_price || 0))}</td>
                       <td className="px-2 py-1.5">
                         <select value={l.contact_id || reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, contact_id: e.target.value, contact_name: (s.contacts.find((c) => c.id === e.target.value) || {}).name || "" } : x) }))} className="w-full bg-slate-50 border rounded p-1" data-testid={`stock-reorder-supplier-${l.sku}`}>
                           <option value="">Seçin</option>
@@ -753,21 +754,21 @@ export default function StockBarcodePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-slate-500 font-medium" data-testid={`stock-purchase-${prod.sku}`}>
-                      <div>{prod.purchase_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
+                      <div>{formatTrAmount(prod.purchase_price)} ₺</div>
                       {prod.last_purchase_price != null && (
                         <div className="text-[10px] text-amber-800 font-semibold" data-testid={`stock-last-buy-${prod.sku}`}>
-                          son {Number(prod.last_purchase_price).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                          son {formatTrAmount(Number(prod.last_purchase_price))} ₺
                           {prod.last_purchase_date ? ` · ${String(prod.last_purchase_date).slice(8, 10)}.${String(prod.last_purchase_date).slice(5, 7)}` : ""}
                         </div>
                       )}
                       {(prod.purchase_costs || []).length > 1 && (
-                        <div className="text-[10px] text-slate-400 truncate max-w-[140px] ml-auto" title={(prod.purchase_costs || []).map((c) => `${c.date || ""} ${Number(c.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`).join(" · ")}>
-                          {(prod.purchase_costs || []).slice(0, 3).map((c) => Number(c.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })).join(" · ")}
+                        <div className="text-[10px] text-slate-400 truncate max-w-[140px] ml-auto" title={(prod.purchase_costs || []).map((c) => `${c.date || ""} ${formatTrAmount(Number(c.unit_price))}`).join(" · ")}>
+                          {(prod.purchase_costs || []).slice(0, 3).map((c) => formatTrAmount(Number(c.unit_price))).join(" · ")}
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {prod.sale_price?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {formatTrAmount(prod.sale_price)} ₺
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${

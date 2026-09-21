@@ -1,8 +1,9 @@
+import { formatTrAmount } from "./money";
 /**
  * 80mm termal POS fişi — tarayıcı yazdırma penceresi (ESC/POS sürücüsü gerekmez).
  */
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-const money = (n) => Number(n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n) => formatTrAmount(Number(n || 0));
 
 const PAY_LABEL = { cash: "NAKİT", card: "KART", mixed: "NAKİT+KART" };
 

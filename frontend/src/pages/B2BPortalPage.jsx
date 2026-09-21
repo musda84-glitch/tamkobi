@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useParams } from "react-router-dom";
 import { ShoppingCart, Package, FileText, Truck, CalendarClock, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { getPriceDecimals, setPriceDecimals } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
@@ -52,6 +53,12 @@ export default function B2BPortalPage() {
     [token],
   );
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!data?.company) return undefined;
+    const prev = getPriceDecimals();
+    setPriceDecimals(data.company.price_decimals);
+    return () => setPriceDecimals(prev);
+  }, [data]);
   useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart, token]);
 
   const settings = data?.settings || {};

@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { RefreshCw, Upload, Link2, Loader2, Search, PackagePlus, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 // Adı ve yönelme hâli ayrı: "Trendyol'a" ile "web sitesine" aynı ekten türemiyor.
 const CHANNELS = { trendyol: { name: "Trendyol", to: "Trendyol'a" }, shopphp: { name: "Web Sitesi", to: "web sitesine" } };
 

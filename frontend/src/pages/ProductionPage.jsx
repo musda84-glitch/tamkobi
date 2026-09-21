@@ -6,8 +6,9 @@ import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, A
 import { API_URL, useAuth } from "../context/AuthContext";
 import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
 
 export default function ProductionPage() {

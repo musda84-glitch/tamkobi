@@ -5,6 +5,7 @@ import { Save, Loader2, RefreshCw, Package } from "lucide-react";
 import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 import { confirmGenerateBarcode } from "../utils/barcodeFormat";
+import { formatTrAmount } from "../utils/money";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
@@ -103,7 +104,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
           <F label="KDV İstisna Kodu"><input value={f.vat_exemption_code} onChange={(e) => set("vat_exemption_code", e.target.value)} placeholder="Örn: 301, 350" className={inputCls} /></F>
         </div>
         <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={f.price_includes_vat} onChange={(e) => set("price_includes_vat", e.target.checked)} data-testid="edit-vat-included-checkbox" /><span className="font-semibold">Satış fiyatı KDV dahil</span></label>
-        <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{(f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b> • KDV dahil: <b>{(f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b></div>
+        <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{formatTrAmount((f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)))} ₺</b> • KDV dahil: <b>{formatTrAmount((f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)))} ₺</b></div>
       </div>
 
       <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 space-y-2" data-testid="product-package-fields">

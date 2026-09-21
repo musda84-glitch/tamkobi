@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
+import { formatTrAmount } from "../utils/money";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -70,7 +71,7 @@ export const AttendancePanel = ({ companyId }) => {
             <td className="px-4 py-2 font-mono text-slate-600">{s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}${s.today.status !== "present" ? ` (${s.today.status === "absent" ? "Devamsız" : "İzinli"})` : ""}` : "—"}{s.today?.late_minutes ? <span className="ml-1 text-[9px] font-bold text-rose-600">{s.today.late_minutes} dk geç</span> : null}{s.today?.assigned_overtime_hours ? <span className="ml-1 text-[9px] font-bold text-indigo-600" title={`Beklenen çıkış ${s.today.expected_end || ""}`}>+{s.today.assigned_overtime_hours} sa atanan</span> : null}</td>
             <td className="px-4 py-2 text-right font-bold text-emerald-700">{s.days_present}</td><td className="px-4 py-2 text-right text-rose-600">{s.days_absent}</td><td className="px-4 py-2 text-right text-amber-600">{s.days_leave}</td>
             <td className="px-4 py-2 text-right font-bold">{s.total_hours}</td><td className="px-4 py-2 text-right font-bold text-indigo-700">{s.overtime_hours}</td>
-            <td className="px-4 py-2 text-right font-bold text-emerald-700" title={`${s.overtime_method === "fixed" ? "Sabit" : "Yasal"} · saatlik ${s.overtime_rate} ₺`} data-testid={`att-otpay-${s.employee_id}`}>{(s.overtime_pay || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</td>
+            <td className="px-4 py-2 text-right font-bold text-emerald-700" title={`${s.overtime_method === "fixed" ? "Sabit" : "Yasal"} · saatlik ${s.overtime_rate} ₺`} data-testid={`att-otpay-${s.employee_id}`}>{formatTrAmount((s.overtime_pay || 0))} ₺</td>
             <td className={`px-4 py-2 text-right font-semibold ${s.late_count ? "text-rose-600" : "text-slate-400"}`} title={`${s.late_minutes} dk`}>{s.late_count}</td>
             <td className={`px-4 py-2 text-right font-semibold ${s.unconfirmed ? "text-amber-600" : "text-slate-400"}`}>{s.unconfirmed}</td>
             <td className="px-4 py-2"><div className="flex justify-end gap-1">

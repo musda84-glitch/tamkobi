@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { get, post, type ApiClient } from "../api/client";
 import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
+import { setPriceDecimals } from "../utils/money";
 import { parseB2bToken } from "../utils/b2bToken";
 import { can as canPerm, moduleOn as moduleOnPerm } from "../utils/permissions";
 import {
@@ -85,13 +86,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const applySession = useCallback((baseUrl: string, token: string | null, payload: SessionPayload | null, error: string | null = null) => {
     const user = payload?.user || null;
     const companies = payload?.companies || [];
+    const active = pickCompany(companies, user?.active_company_id);
+    setPriceDecimals(active?.price_decimals);
     setState({
       ready: true,
       baseUrl,
       token,
       user,
       companies,
-      activeCompany: pickCompany(companies, user?.active_company_id),
+      activeCompany: active,
       license: payload?.license || null,
       error,
       sessionKind: token && user ? "erp" : null,
@@ -134,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       try {
         const portal = await get<B2BPortal>({ baseUrl, token: null }, `/public/b2b/${b2bToken}`);
+        setPriceDecimals(portal?.company?.price_decimals);
         applyB2b(baseUrl, b2bToken, portal?.contact?.name || b2bStoredName);
       } catch (err) {
         if (!isAuthRejection(err) && !(err instanceof ApiHttpError && err.status === 404)) {
@@ -202,6 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
     if (serverUrl) setState((s) => ({ ...s, baseUrl }));
     const portal = await get<B2BPortal>({ baseUrl, token: null }, `/public/b2b/${token}`);
+    setPriceDecimals(portal?.company?.price_decimals);
     await persistB2b(baseUrl, token, portal?.contact?.name);
   }, [persistB2b, state.baseUrl]);
 
@@ -241,6 +246,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearB2bSession();
     await saveSessionKind(null);
     await saveSessionCache(null);
+    setPriceDecimals(2);
     setState((s) => ({ ...s, ...loggedOut }));
   }, [state.baseUrl, state.token]);
 
@@ -261,6 +267,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearB2bSession();
     await saveSessionKind(null);
     await saveSessionCache(null);
+    setPriceDecimals(2);
     setState((s) => ({
       ...s,
       baseUrl: next,

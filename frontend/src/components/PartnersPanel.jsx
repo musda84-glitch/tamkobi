@@ -8,8 +8,9 @@ import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
 
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);

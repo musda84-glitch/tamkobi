@@ -7,8 +7,9 @@ import {
   AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2,
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const money = (n) => `${Number(n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
+const money = (n) => `${formatTrAmount(Number(n || 0))} ₺`;
 const statusTr = {
   paid: "Ödendi", unpaid: "Ödenmedi", pending: "Bekliyor", approved: "Onaylı",
   rejected: "Red", draft: "Taslak", planned: "Planlı", ready: "Hazır",

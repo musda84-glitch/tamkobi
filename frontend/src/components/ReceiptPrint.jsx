@@ -1,8 +1,9 @@
 
 import React from "react";
 import { X, Printer } from "lucide-react";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
   const isCollection = tx.type === "inflow";

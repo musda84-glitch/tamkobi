@@ -10,8 +10,9 @@ import { statusTr } from "../utils/labels";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel } from "../utils/b2bCart";
 import { LegalConsent } from "./LegalConsent";
+import { formatTrAmount } from "../utils/money";
 
-export const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+export const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 /** KDV dahil birim fiyat. price_gross yoksa vat_rate + price_includes_vat ile hesaplanır. */
 export const b2bGross = (p, field = "price") => {

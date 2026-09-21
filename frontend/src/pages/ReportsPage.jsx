@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { BarChart3, Download, Printer, TrendingUp, TrendingDown, Clock, Package, Wallet, Percent, PieChart } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const KINDS = [["sales", "Satış", TrendingUp], ["purchases", "Alış", TrendingDown], ["aging", "Cari Yaşlandırma", Clock], ["stock", "Stok", Package], ["cashflow", "Nakit Akışı", Wallet], ["vat", "KDV", Percent], ["profit", "Kârlılık", PieChart]];
 const COLS = {
   sales: [["name", "Cari / Grup"], ["count", "Fatura", "n"], ["quantity", "Miktar", "n"], ["net", "Net", "m"], ["vat", "KDV", "m"], ["gross", "Toplam", "m"], ["paid", "Tahsil", "m"]],

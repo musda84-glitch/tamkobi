@@ -7,8 +7,9 @@ import { CalendarClock, AlertTriangle, CalendarDays, ArrowDownRight, ArrowUpRigh
 import { API_URL, useAuth } from "../context/AuthContext";
 import { InstallmentRows } from "../components/InstallmentPlanModal";
 import { QuickMessageModal } from "../components/QuickMessageModal";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const FILTERS = [["pending", "Bekleyen"], ["overdue", "Vadesi Geçen"], ["receivable", "Alacak (Satış)"], ["payable", "Borç (Alış)"], ["paid", "Ödenen"], ["all", "Tümü"]];
 
 export default function InstallmentsPage() {

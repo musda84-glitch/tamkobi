@@ -38,6 +38,7 @@ import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModa
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
+import { formatTrAmount } from "../utils/money";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -543,7 +544,7 @@ export default function OrdersB2BPage() {
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate max-w-[260px]`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${Number(it.unit_price).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
                             </div>))}
                           </div>
@@ -551,7 +552,7 @@ export default function OrdersB2BPage() {
                         </div>); })()}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {(ord.grand_total ?? ord.total_amount)?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                      {formatTrAmount((ord.grand_total ?? ord.total_amount))} ₺
                       {Number(ord.vat_total) > 0 && <div className="text-[10px] font-semibold text-slate-400">KDV dahil</div>}
                     </td>
                     <td className="px-4 py-3">

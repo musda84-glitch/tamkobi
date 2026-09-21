@@ -2,8 +2,9 @@
 import React from "react";
 import { FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { formatTrAmount } from "../utils/money";
 
-const cell = (v) => (v === null || v === undefined ? "" : typeof v === "number" ? v.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(v));
+const cell = (v) => (v === null || v === undefined ? "" : typeof v === "number" ? formatTrAmount(v) : String(v));
 
 export const exportExcel = (rows, columns, filename) => {
   const head = columns.map((c) => c.label).join(";");

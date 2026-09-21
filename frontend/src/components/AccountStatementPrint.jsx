@@ -2,8 +2,9 @@
 import React, { useMemo } from "react";
 import { Printer, X } from "lucide-react";
 import { useEscape } from "../utils/useEscape";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 export const txSignedAmount = (tx, accountId) => {
   const amt = Number(tx.amount) || 0;

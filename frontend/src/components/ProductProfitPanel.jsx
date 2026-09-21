@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { TrendingUp, Link2, ChevronDown, ChevronUp, PackagePlus } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { channelTr } from "../utils/labels";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const tone = (m) => (m < 10 ? "text-rose-600" : m < 20 ? "text-amber-600" : "text-emerald-600");
 
 export const ProductProfitPanel = ({ companyId }) => {

@@ -6,8 +6,9 @@ import { TrendingUp, Percent, Save, AlertTriangle, Loader2, Wallet } from "lucid
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { channelTr } from "../utils/labels";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1 text-xs w-20";
 
 const FeeEditor = ({ ch, onSaved }) => {

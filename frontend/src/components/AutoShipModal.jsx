@@ -7,8 +7,9 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { channelTr } from "../utils/labels";
 import { ShipmentPackageFields, emptyPackageForm, packagePayload } from "./ShipmentPackageFields";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 export const AutoShipModal = ({ companyId, onClose, onDone }) => {
   useEscape(onClose);

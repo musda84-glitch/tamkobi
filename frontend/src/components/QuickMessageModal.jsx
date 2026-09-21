@@ -4,11 +4,12 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, MessageSquare, Mail, Send, Loader2, Paperclip } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
 export const TEMPLATES = {
-  balance: (c) => `Sayın ${c.name}, ${new Date().toLocaleDateString("tr-TR")} tarihi itibarıyla cari hesap bakiyeniz ${Math.abs(c.balance || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺ ${c.balance > 0 ? "borç" : "alacak"} olarak görünmektedir. Bilgilerinize sunarız.`,
-  invoice: (inv) => `Sayın ${inv.contact_name}, ${inv.invoice_number} numaralı ${inv.grand_total?.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺ tutarındaki faturanız düzenlenmiştir.${inv.due_date ? ` Son ödeme tarihi: ${inv.due_date}.` : ""} Teşekkür ederiz.`,
-  reminder: (inv) => `Sayın ${inv.contact_name}, ${inv.invoice_number} numaralı faturanızın ${(inv.grand_total - (inv.paid_amount || 0)).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺ tutarındaki bakiyesi ödenmemiştir. Ödemenizi rica ederiz.`,
+  balance: (c) => `Sayın ${c.name}, ${new Date().toLocaleDateString("tr-TR")} tarihi itibarıyla cari hesap bakiyeniz ${formatTrAmount(Math.abs(c.balance || 0))} ₺ ${c.balance > 0 ? "borç" : "alacak"} olarak görünmektedir. Bilgilerinize sunarız.`,
+  invoice: (inv) => `Sayın ${inv.contact_name}, ${inv.invoice_number} numaralı ${formatTrAmount(inv.grand_total)} ₺ tutarındaki faturanız düzenlenmiştir.${inv.due_date ? ` Son ödeme tarihi: ${inv.due_date}.` : ""} Teşekkür ederiz.`,
+  reminder: (inv) => `Sayın ${inv.contact_name}, ${inv.invoice_number} numaralı faturanızın ${formatTrAmount((inv.grand_total - (inv.paid_amount || 0)))} ₺ tutarındaki bakiyesi ödenmemiştir. Ödemenizi rica ederiz.`,
   order: (o) => `Sayın ${o.customer_name}, ${o.order_number} numaralı siparişiniz ${o.cargo_carrier || "kargo"} ile yola çıktı. Takip No: ${o.cargo_tracking_number || "-"}. İyi günler dileriz.`
 };
 

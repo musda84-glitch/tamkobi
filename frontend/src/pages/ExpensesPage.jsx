@@ -12,9 +12,10 @@ import { BudgetPanel } from "../components/BudgetPanel";
 import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
 const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
 const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer", description: "", amount: "", vat_rate: 20, vat_included: false, account_id: "", contact_id: "", employee_id: "", document_no: "", notes: "", is_recurring: false, receipt_url: "", currency: "TRY", fx_rate: 1, fx_source: "try" };

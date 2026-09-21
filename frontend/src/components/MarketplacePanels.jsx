@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { channelTr } from "../utils/labels";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const dt = (s) => (s ? new Date(s).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" }) : "—");
 const CLAIM_TR = { Created: "Yeni Talep", WaitingInAction: "Aksiyon Bekliyor", Accepted: "Kabul Edildi", Rejected: "Reddedildi", Cancelled: "İptal", Unresolved: "Çözümsüz", InAnalysis: "İncelemede" };
 

@@ -11,6 +11,7 @@ export type Company = {
   logo_url?: string | null;
   iban?: string;
   bank_name?: string;
+  price_decimals?: number;
 };
 
 export type User = {
@@ -324,6 +325,7 @@ export type B2BCompany = {
   logo_url?: string | null;
   iban?: string;
   bank_name?: string;
+  price_decimals?: number;
 };
 
 export type B2BSettings = {

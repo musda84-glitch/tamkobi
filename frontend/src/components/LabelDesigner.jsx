@@ -8,13 +8,14 @@ import { API_URL } from "../context/AuthContext";
 import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
+import { formatTrAmount } from "../utils/money";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
 const BUILTIN_SIZES = [[40, 20], [50, 30], [60, 40], [100, 30], [100, 50]];
 const FIELDS = [["name", "Ürün Adı"], ["price", "Fiyat"], ["sku", "SKU / Stok Kodu"], ["barcode_text", "Barkod No"], ["variant", "Varyant"], ["category", "Kategori"], ["company", "Firma Adı"], ["text", "Serbest Metin"]];
 const ELEMENT_TYPES = [["barcode", "Barkod", BarcodeIcon], ["qr", "QR Kod", QrCode], ["field", "Metin Alanı", Type], ["logo", "Firma Logosu", ImageIcon], ["image", "Ürün Görseli", ImageIcon], ["line", "Çizgi", Minus], ["box", "Kutu", Square]];
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const DEFAULT_TPL = (w = 100, h = 30) => {
   const compact = h <= 22;

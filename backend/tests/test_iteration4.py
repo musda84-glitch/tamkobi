@@ -94,6 +94,18 @@ class TestCompany:
         client.put(f"{BASE}/companies/{COMPANY}", json={"phone": old_phone, "iban": old_iban}, timeout=30)
         assert client.get(f"{BASE}/companies/{COMPANY}", timeout=30).json()["phone"] == old_phone
 
+    def test_price_decimals_saved_and_clamped(self, client):
+        current = client.get(f"{BASE}/companies/{COMPANY}", timeout=30).json()
+        old = current.get("price_decimals", 2)
+        up = client.put(f"{BASE}/companies/{COMPANY}", json={"price_decimals": 4}, timeout=30)
+        assert up.status_code == 200, up.text
+        assert up.json()["price_decimals"] == 4
+        clamped = client.put(f"{BASE}/companies/{COMPANY}", json={"price_decimals": 9}, timeout=30)
+        assert clamped.json()["price_decimals"] == 4
+        invalid = client.put(f"{BASE}/companies/{COMPANY}", json={"price_decimals": "x"}, timeout=30)
+        assert invalid.json()["price_decimals"] == 2
+        client.put(f"{BASE}/companies/{COMPANY}", json={"price_decimals": old if old is not None else 2}, timeout=30)
+
     def test_get_company_404(self, client):
         assert client.get(f"{BASE}/companies/nope_xx", timeout=30).status_code == 404
 

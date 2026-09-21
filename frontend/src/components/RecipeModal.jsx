@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { X, Plus, Trash2, BookOpen, ListOrdered } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 
 export const RecipeModal = ({ companyId, products, recipe, presetProductId, onClose, onSaved }) => {
   useEscape(onClose);

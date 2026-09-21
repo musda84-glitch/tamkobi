@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 const MODES = [["contact", "Cari"], ["invoice", "Cari + Fatura"], ["transfer", "Kasa / Hesap (Virman)"], ["category", "Sadece Kategori"]];
 

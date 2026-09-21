@@ -51,6 +51,7 @@ class Company(BaseDocument):
     phone: str
     email: str
     currency: str = "TRY"
+    price_decimals: int = 2
     logo_url: Optional[str] = None
     e_invoice_alias: Optional[str] = "urn:mail:defaultpk@gib.gov.tr"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

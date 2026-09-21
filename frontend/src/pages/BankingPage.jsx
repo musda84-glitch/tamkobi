@@ -13,6 +13,7 @@ import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
 import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 
+import { formatTrAmount } from "../utils/money";
 import {
   Landmark,
   Wallet,
@@ -39,7 +40,7 @@ const TABS = [
   { key: "connections", label: "Banka Entegrasyonu (Canlı Veri)", icon: Link2 }
 ];
 
-const money = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const money = (n) => formatTrAmount((n || 0));
 
 const ACCOUNT_GROUPS = [
   { type: "bank", badge: "Banka Hesapları", unit: "Hesap", icon: Landmark, card: "bg-blue-50/60 border-blue-200", iconBox: "bg-blue-100 text-blue-700", badgeCls: "text-blue-700 bg-blue-100", border: "border-blue-200/60" },
@@ -327,7 +328,7 @@ export default function BankingPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Banka, Kasa & POS Yönetimi</h1>
           <p className="text-xs sm:text-sm text-slate-500">
-            Toplam Likidite: <span className="font-bold text-emerald-600">{totalLiquidity.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+            Toplam Likidite: <span className="font-bold text-emerald-600">{formatTrAmount(totalLiquidity)} ₺</span>
           </p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -394,7 +395,7 @@ export default function BankingPage() {
             </div>
             <div className="pt-3 border-t border-amber-200/60">
               <div className="text-[10px] text-slate-400 uppercase font-semibold">Ortak Alacağı (Bakiye)</div>
-              <div className="text-xl font-bold text-slate-900 tracking-tight">{partnerSummary.total_balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
+              <div className="text-xl font-bold text-slate-900 tracking-tight">{formatTrAmount(partnerSummary.total_balance)} ₺</div>
             </div>
           </button>
         )}
@@ -520,8 +521,8 @@ export default function BankingPage() {
           {selectedAccount || openGroup ? (
             <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
               <span className="text-slate-500">{visibleTx.length} hareket</span>
-              <span className="font-semibold text-emerald-600">Giren +{txInflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-              <span className="font-semibold text-rose-600">Çıkan -{txOutflow.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-emerald-600">Giren +{formatTrAmount(txInflow)} ₺</span>
+              <span className="font-semibold text-rose-600">Çıkan -{formatTrAmount(txOutflow)} ₺</span>
             </div>
           ) : (
             <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>

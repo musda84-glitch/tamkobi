@@ -3,7 +3,7 @@ import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { moneySuffix } from "../utils/money";
+import { moneySuffix, formatTrAmount } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
@@ -30,7 +30,7 @@ const printThumbUrl = (raw) => {
 };
 
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
 const docTitle = (docType, doc) => {
   if (doc.e_type === "e_export" || doc.trade_kind === "export") return "e-İHRACAT FATURASI";

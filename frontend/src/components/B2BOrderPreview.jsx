@@ -5,8 +5,9 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { Barcode } from "./BarcodeLabelPrint";
 import { statusTr } from "../utils/labels";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 const lineCode = (it, products) => {
   const p = (products || []).find((x) => x.id === it.product_id || x._id === it.product_id);

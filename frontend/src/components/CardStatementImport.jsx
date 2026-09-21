@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { Sparkles, Loader2, X, CreditCard } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 const KIND_OPTIONS = [
   { value: "masraf", label: "Masraf" },

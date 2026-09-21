@@ -19,7 +19,7 @@ import InvoiceActionPanel from "../components/InvoiceActionPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { FxPicker } from "../components/FxPicker";
-import { fmtMoney } from "../utils/money";
+import { fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -84,7 +84,7 @@ const quoteAsInvoiceRow = (q) => ({
   project_id: q.project_id,
 });
 
-const moneyTry = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moneyTry = (n) => formatTrAmount((Number(n) || 0));
 const buyPrice = (p, invoiceType) => (invoiceType === "sales" ? p.sale_price : (p.last_purchase_price || p.purchase_price));
 const purchaseCostText = (p) => {
   const hist = p?.purchase_costs || [];
