@@ -76,9 +76,8 @@ export function setCartLineQty(cart: B2BCart | null | undefined, key: string, qt
   return next;
 }
 
-/** Single-line cart sheet label: name, qty × price, optional note. */
-export function formatCartSheetLine(
-  name: string,
+/** Second line of a cart sheet row: qty × price, optional note. */
+export function formatCartSheetMeta(
   qty: number,
   priceText?: string | null,
   note?: string | null
@@ -86,7 +85,17 @@ export function formatCartSheetLine(
   const price = String(priceText || "").trim();
   const qtyBit = price ? `${qty} × ${price}` : `${qty} adet`;
   const extra = normalizeNote(note);
-  return extra ? `${name}  ${qtyBit} · ${extra}` : `${name}  ${qtyBit}`;
+  return extra ? `${qtyBit} · ${extra}` : qtyBit;
+}
+
+/** Full cart sheet label (name + meta). */
+export function formatCartSheetLine(
+  name: string,
+  qty: number,
+  priceText?: string | null,
+  note?: string | null
+): string {
+  return `${name}  ${formatCartSheetMeta(qty, priceText, note)}`;
 }
 
 export function formatOrderItemLabel(item: { quantity?: number; qty?: number; product_name?: string; name?: string; note?: string } | null | undefined): string {
