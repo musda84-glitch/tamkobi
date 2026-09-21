@@ -106,7 +106,7 @@ export function groupStagePhotos(
     .sort((a, b) => (rank[a] ?? 9_000) - (rank[b] ?? 9_000) || seen.indexOf(a) - seen.indexOf(b))
     .map((key) => ({
       stage: key,
-      label: key === "other" ? "Diğer" : (labelBy[key] || key),
+      label: key === "other" ? "Keşif fotoğrafı" : (labelBy[key] || key),
       images: groups[key],
     }));
 }
@@ -140,15 +140,13 @@ export function stagePhotoRows(
       items: by[key],
     });
   }
-  if (loose.length || by.other?.length) {
-    rows.push({
-      key: "other",
-      label: "Diğer",
-      current: false,
-      done: false,
-      items: [...(by.other || []), ...loose],
-    });
-  }
+  rows.push({
+    key: "other",
+    label: "Keşif fotoğrafı",
+    current: false,
+    done: false,
+    items: [...(by.other || []), ...loose],
+  });
   return rows;
 }
 
