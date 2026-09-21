@@ -378,9 +378,19 @@ async def get_company(company_id: str):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     return clean_doc(c)
 
+def clamp_price_decimals(value, default=2):
+    """Display precision for prices. 0–4; default 2 matches kuruş / e-invoice amounts."""
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(4, n))
+
 @api_router.put("/companies/{company_id}")
 async def update_company(company_id: str, req: Dict[str, Any]):
-    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals"}}
+    if "price_decimals" in allowed:
+        allowed["price_decimals"] = clamp_price_decimals(allowed["price_decimals"])
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
@@ -3323,7 +3333,7 @@ async def b2b_portal(token: str):
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city"), "has_password": bool(c.get("b2b_password_hash"))},
-            "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name")},
+            "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name"), "price_decimals": clamp_price_decimals(company.get("price_decimals", 2))},
             "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
             "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart},
             "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}

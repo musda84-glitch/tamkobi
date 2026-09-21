@@ -9,8 +9,9 @@ import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { useAiStatus } from "../hooks/useAiStatus";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
 const TYPES = { ticari: "Ticari Kredi", tasit: "Taşıt Kredisi", konut: "Konut / İşyeri", ihtiyac: "İhtiyaç Kredisi", kmh: "KMH / Rotatif", diger: "Diğer" };
 const Stat = ({ label, value, cls = "", testid }) => <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className={`text-lg font-bold ${cls}`} data-testid={testid}>{value}</div></div>;

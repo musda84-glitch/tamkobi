@@ -5,9 +5,10 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const COLS = [["date", "Tarih"], ["partner_name", "Ortak"], ["type", "İşlem"], ["account_name", "Hesap / Açıklama"], ["amount", "Tutar", "text-right"]];
 const inputCls = "bg-white border border-slate-200 rounded-md p-1 text-xs";
 

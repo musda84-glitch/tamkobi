@@ -29,11 +29,12 @@ import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { formatTrAmount } from "../utils/money";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
 
 function money(n) {
-  return Number(n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatTrAmount(Number(n || 0));
 }
 
 function newLineId() {

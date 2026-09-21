@@ -7,12 +7,13 @@ import { statusTr } from "../utils/labels";
 import { lineFromProduct } from "../utils/documentLines";
 import { ScanButton } from "../components/CameraScanner";
 
+import { formatTrAmount } from "../utils/money";
 import {
   Smartphone, Search, Plus, Minus, Trash2, UserPlus, Maximize2, Minimize2,
   RefreshCw, Package, ShoppingCart, CheckCircle2, MapPin, Phone, X,
 } from "lucide-react";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const pid = (p) => p?.id || p?._id || "";
 
 export default function FieldSalesPage() {

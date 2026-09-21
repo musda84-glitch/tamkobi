@@ -6,8 +6,9 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { notifyDataChanged } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
 
 export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, initialMode }) => {

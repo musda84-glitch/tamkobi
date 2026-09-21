@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ShoppingCart, RefreshCw, Trash2, FileText, Send, PackageCheck, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 const STATUS = {
   draft: ["Taslak", "bg-slate-100 text-slate-700"],

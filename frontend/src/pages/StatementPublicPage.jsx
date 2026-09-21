@@ -4,8 +4,9 @@ import { useParams } from "react-router-dom";
 import { Loader2, Building2, AlertTriangle, FileDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 export default function StatementPublicPage() {
   const { token } = useParams();

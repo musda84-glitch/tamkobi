@@ -5,8 +5,9 @@ import { useNavigate } from "react-router-dom";
 import { CalendarCheck, ArrowDownCircle, ArrowUpCircle, FileText, Percent, AlertTriangle, ChevronRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 const Ring = ({ value, total, color, label, amount, testid }) => {
   const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;

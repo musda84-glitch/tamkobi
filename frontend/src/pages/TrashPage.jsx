@@ -5,9 +5,10 @@ import { toast } from "sonner";
 import { Trash2, RotateCcw, Search, X, Eye, AlertTriangle, Clock } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { formatTrAmount } from "../utils/money";
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
-const fmtVal = (v) => (typeof v === "number" ? v.toLocaleString("tr-TR", { minimumFractionDigits: 2 }) : Array.isArray(v) ? `${v.length} kalem` : String(v));
+const fmtVal = (v) => (typeof v === "number" ? formatTrAmount(v) : Array.isArray(v) ? `${v.length} kalem` : String(v));
 
 const DetailModal = ({ id, onClose }) => {
   useEscape(onClose);

@@ -6,8 +6,9 @@ import { X, CalendarClock, CheckCircle2, Trash2, Wallet, Printer, ScrollText } f
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { PromissoryPrint } from "./PromissoryPrint";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const INTERVALS = [["month", "Aylık"], ["week", "Haftalık"], ["days", "Gün aralığı"]];
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
 const cls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";

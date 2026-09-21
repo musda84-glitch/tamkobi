@@ -1,6 +1,7 @@
 import React from "react";
 import { Search, ArrowUpDown, X, CalendarDays } from "lucide-react";
 import { ExportButtons } from "./ExportButtons";
+import { formatTrAmount } from "../utils/money";
 
 const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi" }, { key: "gib_status", label: "GİB" }];
 
@@ -107,7 +108,7 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         <input type="number" value={f.min} onChange={(e) => set("min", e.target.value)} placeholder="Min ₺" className={`${sel} w-24`} data-testid="inv-min" />
         <input type="number" value={f.max} onChange={(e) => set("max", e.target.value)} placeholder="Max ₺" className={`${sel} w-24`} data-testid="inv-max" />
         {active > 0 && <button onClick={() => setF({ ...DEFAULT_FILTERS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
-        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} /><div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div></div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} /><div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div></div>
       </div>
     </div>
   );

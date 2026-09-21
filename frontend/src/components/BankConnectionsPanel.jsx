@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2, Pencil } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
+import { formatTrAmount } from "../utils/money";
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
 const PROVIDER_BANK_HINTS = {
@@ -39,7 +40,7 @@ function accountOptionLabel(a) {
   return `${a.bank_name || "—"} — ${a.account_name || "—"} (${typeLabel})`;
 }
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const FIELD_LABELS = {
   client_id: "Client ID",

@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Megaphone, Send, Loader2, Users } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
@@ -33,7 +34,7 @@ export const BulkCampaign = ({ companyId, contacts }) => {
           const c = contacts.find((x) => x.id === id);
           const fd = new FormData();
           fd.append("company_id", companyId); fd.append("to", c.email); fd.append("subject", subject);
-          fd.append("body", message.replace("{ad}", c.name).replace("{bakiye}", `${(c.balance || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺`));
+          fd.append("body", message.replace("{ad}", c.name).replace("{bakiye}", `${formatTrAmount((c.balance || 0))} ₺`));
           fd.append("context", "campaign"); fd.append("contact_id", c.id); fd.append("contact_name", c.name);
           try { await axios.post(`${API_URL}/comm/mail/send`, fd, { withCredentials: true }); ok++; } catch { fail++; }
         }

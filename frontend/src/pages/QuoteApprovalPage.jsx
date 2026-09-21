@@ -6,8 +6,9 @@ import { CheckCircle2, XCircle, Loader2, FileSignature, Building2, CalendarClock
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 
 export default function QuoteApprovalPage() {
   const { token } = useParams();

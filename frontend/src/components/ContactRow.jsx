@@ -5,8 +5,9 @@ import { mapsLink } from "./ContactLocationModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { downloadStatementPdf, shareStatementLink } from "../utils/statementShare";
 import { toast } from "sonner";
+import { formatTrAmount } from "../utils/money";
 
-const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const money = (n) => formatTrAmount((Number(n) || 0));
 
 export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStatement, onLocation }) => {
   const tid = contact.tax_number_or_id;

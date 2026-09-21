@@ -6,8 +6,9 @@ import { X, Navigation, Ruler, Calendar, User, MapPin, ImagePlus } from "lucide-
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const STATUSES = [["planned", "Planlandı"], ["done", "Yapıldı"], ["quoted", "Teklif Verildi"], ["cancelled", "İptal"]];
 
 export const SurveyDetailModal = ({ survey, onClose, onChanged }) => {

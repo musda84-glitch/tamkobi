@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { CalendarDays, Plus, Check, X, Calculator, Gift, Trash2, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const LEAVE_TYPES = { annual: "Yıllık İzin", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
 

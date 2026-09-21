@@ -25,8 +25,9 @@ import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 const MAIL_KIND = {

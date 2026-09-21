@@ -7,8 +7,9 @@ import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2, Link2, FileDown }
 import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, shareStatementLink } from "../utils/statementShare";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 
 export const buildStatementRows = (data) => {
   const rows = [];

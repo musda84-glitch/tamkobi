@@ -1,7 +1,8 @@
 
 import { toast } from "sonner";
+import { formatTrAmount } from "./money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
 /* Tek personel için yazdırılabilir maaş bordrosu (yeni pencere → PDF olarak kaydet) */

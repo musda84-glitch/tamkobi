@@ -1,3 +1,4 @@
+import { formatTrAmount } from "./money";
 /** Order and quote print forms share one line table (shelf, barcode, discount, VAT-incl.). */
 
 export const isOrderQuotePrint = (docType) => docType === "order" || docType === "quote";
@@ -76,6 +77,6 @@ export const printNetAmount = (doc = {}, items = []) => {
 
 export const balanceSentence = (amount) => {
   if (amount == null || amount === "" || Number.isNaN(Number(amount))) return "";
-  const formatted = Number(amount).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatted = formatTrAmount(Number(amount));
   return `Güncel bakiyeniz: ${formatted} TL`;
 };

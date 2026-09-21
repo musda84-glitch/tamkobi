@@ -5,7 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { passwordChangePayload, validatePasswordChange } from "../utils/account";
-import { idOf } from "../utils/money";
+import { getPriceDecimals, idOf } from "../utils/money";
 import { getStoredPushToken, registerDevicePush, type PushStatus } from "../utils/pushRegister";
 
 export function SettingsScreen() {
@@ -87,6 +87,13 @@ export function SettingsScreen() {
             color={colors.indigo}
           />
         ) : null}
+      </Card>
+
+      <Card testID="settings-price-decimals">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Fiyat hassasiyeti</Text>
+        <Muted>
+          {getPriceDecimals()} hane. Web paneldeki şirket ayarıdır; ürün fiyatı, sipariş, fatura ve B2B tutarları bu hassasiyetle gösterilir.
+        </Muted>
       </Card>
 
       <Card>

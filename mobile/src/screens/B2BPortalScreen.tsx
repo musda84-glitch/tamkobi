@@ -36,7 +36,7 @@ import {
 import { b2bGross, b2bNet, b2bOrderGross } from "../utils/b2bPricing";
 import { statusTr } from "../utils/labels";
 import { resolveMediaUrl } from "../utils/media";
-import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { fmtDate, fmtMoney, idOf, setPriceDecimals } from "../utils/money";
 
 type TabId = "catalog" | "orders" | "statement" | "installments";
 
@@ -274,6 +274,7 @@ export function B2BPortalScreen() {
     setRefreshing(true);
     try {
       const portal = await get<B2BPortal>({ ...client, token: null }, `/public/b2b/${b2bToken}`);
+      setPriceDecimals(portal?.company?.price_decimals);
       setData(portal);
       setError(null);
     } catch (err) {

@@ -3,9 +3,10 @@ import { Scale, X } from "lucide-react";
 import { toast } from "sonner";
 import { readScaleOnce, scaleSupported } from "../utils/scaleBridge";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { formatTrAmount } from "../utils/money";
 
 function money(n) {
-  return Number(n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatTrAmount(Number(n || 0));
 }
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"];

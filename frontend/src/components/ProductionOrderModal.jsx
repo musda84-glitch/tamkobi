@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { X, Factory, Loader2, AlertTriangle, CheckCircle2, ClipboardList } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 
 export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp, onClose, onCreated }) => {
   useEscape(onClose);

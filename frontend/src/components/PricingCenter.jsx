@@ -4,8 +4,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Calculator, Upload, Save, Loader2, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 
 export const PricingCenter = ({ companyId }) => {

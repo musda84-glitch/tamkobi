@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
 export const FX_CODES = ["TRY", "USD", "EUR", "GBP", "CHF", "JPY"];
-export const fmtMoney = (n, ccy = "TRY") => `${(Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${ccy === "TRY" ? "₺" : ccy}`;
+export const fmtMoney = (n, ccy = "TRY") => `${formatTrAmount((Number(n) || 0))} ${ccy === "TRY" ? "₺" : ccy}`;
 
 export function useFxRates(companyId, onDate) {
   const [pack, setPack] = useState({ rates: {}, currencies: FX_CODES, date: onDate });

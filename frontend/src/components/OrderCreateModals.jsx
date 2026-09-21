@@ -8,9 +8,10 @@ import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
 import { computeLine, documentLineTotals, emptyLine } from "../utils/documentLines";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
+import { formatTrAmount } from "../utils/money";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const CHANNELS = [["manual", "Manuel / Telefon"], ["b2b", "B2B Bayi"], ["trendyol", "Trendyol"], ["hepsiburada", "Hepsiburada"], ["amazon", "Amazon"], ["n11", "n11"], ["shopify", "Shopify"], ["woocommerce", "WooCommerce"]];
 
 export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved }) => {

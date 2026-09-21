@@ -1,7 +1,8 @@
+import { formatTrAmount } from "./money";
 export const VAT_OPTIONS = [20, 10, 1, 0];
 
 export const fmtMoney = (n) =>
-  (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  formatTrAmount((Number(n) || 0));
 
 export function emptyLine(overrides = {}) {
   return {

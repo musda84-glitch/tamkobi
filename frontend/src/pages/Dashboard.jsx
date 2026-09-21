@@ -24,6 +24,7 @@ import {
   Layers,
   ArrowRight
 } from "lucide-react";
+import { formatTrAmount } from "../utils/money";
 import {
   AreaChart,
   Area,
@@ -75,7 +76,7 @@ export default function Dashboard() {
   const kpis = [
     {
       title: "Toplam Kasa & Banka",
-      value: `${stats.total_bank_balance?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
+      value: `${formatTrAmount(stats.total_bank_balance)} ₺`,
       sub: "Nakit, banka ve POS bakiyeleri",
       icon: Wallet,
       color: "text-emerald-600 bg-emerald-50 border-emerald-100",
@@ -83,7 +84,7 @@ export default function Dashboard() {
     },
     {
       title: "Müşteri Alacakları",
-      value: `${stats.total_receivables?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
+      value: `${formatTrAmount(stats.total_receivables)} ₺`,
       sub: "Tahsil edilecek vadeli cari bakiye",
       icon: ArrowDownRight,
       color: "text-blue-600 bg-blue-50 border-blue-100",
@@ -91,7 +92,7 @@ export default function Dashboard() {
     },
     {
       title: "Tedarikçi Borçları",
-      value: `${stats.total_payables?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
+      value: `${formatTrAmount(stats.total_payables)} ₺`,
       sub: "Ödenecek hammadde ve hizmet borcu",
       icon: ArrowUpRight,
       color: "text-amber-600 bg-amber-50 border-amber-100",
@@ -99,7 +100,7 @@ export default function Dashboard() {
     },
     {
       title: "Net Aylık Kâr",
-      value: `${stats.net_profit?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺`,
+      value: `${formatTrAmount(stats.net_profit)} ₺`,
       sub: "Ciro: " + (stats.monthly_sales?.toLocaleString('tr-TR') || 0) + " ₺",
       icon: TrendingUp,
       color: "text-indigo-600 bg-indigo-50 border-indigo-100",
@@ -289,7 +290,7 @@ export default function Dashboard() {
                   <div className="text-slate-400 text-[11px] font-mono">{inv.invoice_number} • {inv.issue_date}</div>
                 </div>
                 <div className="text-right">
-                  <div className="font-bold text-slate-900">{inv.grand_total?.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</div>
+                  <div className="font-bold text-slate-900">{formatTrAmount(inv.grand_total)} ₺</div>
                   <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded font-medium ${
                     inv.status === 'approved' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
                   }`}>

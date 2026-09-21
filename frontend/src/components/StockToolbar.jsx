@@ -2,6 +2,7 @@
 import React from "react";
 import { Search, Tag, PackageCheck, ArrowUpDown, X, Globe, ShoppingCart } from "lucide-react";
 import { ExportButtons } from "./ExportButtons";
+import { formatTrAmount } from "../utils/money";
 
 const STOCK_COLS = [{ key: "sku", label: "SKU" }, { key: "barcode", label: "Barkod" }, { key: "name", label: "Ürün" }, { key: "category", label: "Kategori" }, { key: "unit", label: "Birim" }, { key: "stock_quantity", label: "Stok", num: true }, { key: "min_stock_alert", label: "Min. Stok", num: true }, { key: "purchase_price", label: "Alış Fiyatı", num: true }, { key: "sale_price", label: "Satış Fiyatı", num: true }, { key: "vat_rate", label: "KDV %" }, { label: "Stok Değeri", value: (r) => (r.stock_quantity || 0) * (r.purchase_price || 0), num: true }];
 
@@ -84,7 +85,7 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
             <ShoppingCart className="w-3.5 h-3.5" /> Kritik stok siparişi ({criticalCount})
           </button>
         )}
-        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{stockValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div></div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{formatTrAmount(stockValue)} ₺</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div></div>
       </div>
     </div>
   );

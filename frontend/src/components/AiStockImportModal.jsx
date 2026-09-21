@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 export const AiStockImportModal = ({ companyId, onClose, onSaved }) => {
   useEscape(onClose);

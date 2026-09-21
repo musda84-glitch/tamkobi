@@ -7,8 +7,9 @@ import {
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
   pending: ["Bekliyor", "bg-amber-50 text-amber-700"],
   approved: ["İçeri alındı", "bg-emerald-50 text-emerald-700"],

@@ -5,8 +5,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Plus, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const STATUSES = [["draft", "Taslak"], ["sent", "Gönderildi"], ["accepted", "Kabul Edildi"], ["rejected", "Reddedildi"]];
 
 export const QuoteEditModal = ({ quote, onClose, onSaved }) => {

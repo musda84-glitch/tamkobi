@@ -34,6 +34,7 @@ import {
   Filter
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -232,9 +233,9 @@ export default function ContactsPage() {
                     <tr key={idx} className={r.kind === "payment" ? "bg-emerald-50/50" : ""} data-testid={`statement-row-${r.kind}-${idx}`}>
                       <td className="py-2 px-3 text-slate-500 font-mono">{r.date}</td>
                       <td className="py-2 px-3 font-semibold text-slate-800"><span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${r.kind === "payment" ? "bg-emerald-500" : "bg-rose-500"}`} />{r.doc}</td>
-                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? `${r.debit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}` : '-'}</td>
-                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? `${r.credit.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}` : '-'}</td>
-                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{r.balance.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}</td>
+                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? `${formatTrAmount(r.debit)}` : '-'}</td>
+                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? `${formatTrAmount(r.credit)}` : '-'}</td>
+                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatTrAmount(r.balance)}</td>
                     </tr>
                   ))}
                 </tbody>

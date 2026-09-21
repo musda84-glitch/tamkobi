@@ -5,8 +5,9 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, CalendarClock, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { formatTrAmount } from "../utils/money";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+const fmt = (n) => formatTrAmount((n || 0));
 const QUICK = [0, 7, 15, 30, 45, 60, 90];
 
 export const ContactTermsModal = ({ contact, onClose, onSaved }) => {

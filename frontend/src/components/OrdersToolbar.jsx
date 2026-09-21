@@ -5,6 +5,7 @@ import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
 import { OrdersBulkMenu } from "./OrdersBulkMenu";
 import { orderGross } from "../utils/orderMoney";
+import { formatTrAmount } from "../utils/money";
 
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
@@ -82,7 +83,7 @@ export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [], select
         <div className="ml-auto flex items-center gap-3 text-slate-500">
           {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
           <ExportButtons rows={rows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" />
-          <div data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{total.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</b></div>
+          <div data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
         </div>
       </div>
     </div>
