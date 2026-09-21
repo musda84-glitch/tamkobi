@@ -1,7 +1,9 @@
 import { router, type Href } from "expo-router";
+import { hrefNav } from "./utils/quickMenu";
 
 export function goHref(href: string) {
-  return router.push(href as Href);
+  const { method, target } = hrefNav(href);
+  return method === "navigate" ? router.navigate(target as Href) : router.push(target as Href);
 }
 
 export function go(name: string, params?: Record<string, unknown>) {
@@ -46,17 +48,17 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "Settings":
       return router.push("/settings");
     case "Mesai":
-      return router.push("/mesai");
+      return goHref("/mesai");
     case "Personelim":
-      return router.push("/personelim");
+      return goHref("/personelim");
     case "Personnel":
       return router.push("/personnel");
     case "Stock":
-      return router.push("/stok");
+      return goHref("/stok");
     case "Field":
       return params?.contact_id
-        ? router.push({ pathname: "/saha", params: { contact_id: String(params.contact_id), contact_name: String(params.contact_name || "") } })
-        : router.push("/saha");
+        ? router.navigate({ pathname: "/saha", params: { contact_id: String(params.contact_id), contact_name: String(params.contact_name || "") } })
+        : goHref("/saha");
     case "Sevk":
       return router.push("/sevk");
     case "Atolye":

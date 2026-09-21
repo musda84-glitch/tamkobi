@@ -1,4 +1,5 @@
 import type { Product } from "../types";
+import { listRowText } from "./listRow";
 
 /** String, {url} / {image_url} galeri öğesi veya boş. */
 export function mediaRef(value: unknown): string {
@@ -83,18 +84,37 @@ export function stockRowSubtitle(
 
 export type ProductCategory = { name?: string; count?: number };
 
+export function asList<T>(raw: unknown): T[] {
+  return Array.isArray(raw) ? raw as T[] : [];
+}
+
+/** Liste için ağır galeri/base64 alanlarını at; ad her zaman string olsun. */
+export function slimListProducts<T extends Pick<Product, "name" | "images" | "thumbnail_url" | "image_url">>(
+  raw: unknown,
+): T[] {
+  return asList<T>(raw).filter((p) => p && typeof p === "object").map((p) => {
+    const thumb = productImage(p);
+    return {
+      ...p,
+      name: listRowText(p.name),
+      thumbnail_url: thumb || p.thumbnail_url,
+      images: undefined,
+    };
+  });
+}
+
 /** API kategorileri varsa onları, yoksa listedeki benzersiz kategorileri kullan. */
 export function productCategoryGroups(
   saved?: ProductCategory[] | null,
   products?: Array<{ category?: string }> | null,
 ): { label: string; options: { value: string; label: string }[] }[] {
   const names = new Map<string, number>();
-  for (const c of saved || []) {
+  for (const c of asList<ProductCategory>(saved)) {
     const name = String(c.name || "").trim();
     if (name) names.set(name, Number(c.count) || 0);
   }
   if (!names.size) {
-    for (const p of products || []) {
+    for (const p of asList<{ category?: string }>(products)) {
       const name = String(p.category || "").trim();
       if (name) names.set(name, (names.get(name) || 0) + 1);
     }
@@ -128,7 +148,7 @@ export function filterProducts<T extends Pick<Product, "name" | "sku" | "barcode
   category = "all",
   limit = 100,
 ): T[] {
-  return (rows || [])
+  return asList<T>(rows)
     .filter((p) => matchesProductCategory(p.category, category) && matchesProductSearch(p, query))
     .slice(0, limit);
 }
