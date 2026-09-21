@@ -17,7 +17,8 @@ import {
   Zap,
   X,
   Layers,
-  ArrowDown
+  ArrowDown,
+  Trash2
 } from "lucide-react";
 
 export default function EcommercePage() {
@@ -71,6 +72,20 @@ export default function EcommercePage() {
       toast.error("Senkronizasyon sırasında hata oluştu.");
     } finally {
       setSyncingId(null);
+    }
+  };
+
+  const handleDeleteChannel = async (ch) => {
+    const name = ch.channel_name || ch.channel;
+    if (!window.confirm(`${name} kanalı silinsin mi?`)) return;
+    const id = ch.id || ch._id;
+    try {
+      const res = await axios.delete(`${API_URL}/integrations/ecommerce/${id}`);
+      toast.success(res.data?.message || "Kanal kaldırıldı.");
+      if ((selectedConfig?.id || selectedConfig?._id) === id) setSelectedConfig(null);
+      loadIntegrations();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kanal silinemedi.");
     }
   };
 
@@ -167,15 +182,27 @@ export default function EcommercePage() {
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                <button
-                  onClick={() => setSelectedConfig(ch)}
-                  className="p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
-                  data-testid={`config-btn-${ch.channel}`}
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Ayarlar</span>
-                </button>
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedConfig(ch)}
+                    className="p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                    data-testid={`config-btn-${ch.channel}`}
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Ayarlar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteChannel(ch)}
+                    className="p-2 text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                    title="Kanalı sil"
+                    data-testid={`delete-channel-btn-${ch.channel}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Sil</span>
+                  </button>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <button
