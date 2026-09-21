@@ -383,6 +383,24 @@ export function isGibIssued(inv?: Invoice | null): boolean {
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
 }
 
+export function canEditInvoiceItems(inv?: Invoice | null): boolean {
+  return String(inv?.status || "") === "draft";
+}
+
+export function invoiceItemsPayload(items: InvoiceLine[]) {
+  return {
+    items: items.map((it) => {
+      const line = computeLine(it);
+      return {
+        ...line,
+        unit_price: Number(Number(line.unit_price).toFixed(4)),
+        product_id: it.is_service ? "" : it.product_id,
+        name: line.name || line.product_name,
+      };
+    }),
+  };
+}
+
 export function canDeleteInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
   if (inv.status === "draft") return true;

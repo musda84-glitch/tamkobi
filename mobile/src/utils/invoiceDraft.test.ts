@@ -1,7 +1,9 @@
 import {
   applyTradeKind,
   canDeleteInvoice,
+  canEditInvoiceItems,
   createInvoiceButtonLabel,
+  invoiceItemsPayload,
   invoiceListSubtitle,
   draftFromInvoice,
   eTypeForContact,
@@ -125,6 +127,16 @@ describe("invoiceDraft", () => {
       issue_date: "2026-09-20",
     })).toBe("Acme Mobilya · Satış · E-Arşiv · Taslak · 20 Eyl 2026");
     expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Cari yok · Satış/);
+  });
+
+  it("allows item edits only on drafts and maps lines for PUT", () => {
+    expect(canEditInvoiceItems({ status: "draft" })).toBe(true);
+    expect(canEditInvoiceItems({ status: "approved" })).toBe(false);
+    const body = invoiceItemsPayload([
+      { product_id: "p1", name: "Raf", product_name: "Raf", sku: "", quantity: 2, unit: "Adet", unit_price: 10, unit_price_incl: 12, vat_rate: 20, discount_rate: 0, total: 20, total_incl: 24, vat_amount: 4, is_service: false },
+    ]);
+    expect(body.items[0].name).toBe("Raf");
+    expect(body.items[0].quantity).toBe(2);
   });
 
   it("deletes drafts and unpaid paper, not issued e-docs", () => {
