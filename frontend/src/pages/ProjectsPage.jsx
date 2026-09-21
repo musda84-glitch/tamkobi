@@ -13,6 +13,12 @@ import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTracki
 import { ProjectStagePhotos } from "../components/ProjectStagePhotos";
 import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/ProjectExpenseTeamModals";
 import { MapPin, LocateFixed, Link2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
@@ -279,11 +285,16 @@ export default function ProjectsPage({ section } = {}) {
 
   const openPrintQuote = async (q) => {
     try {
-      const r = await axios.get(`${API_URL}/quotes/${q.id}`);
+      const r = await axios.get(`${API_URL}/quotes/${q.id || q._id}`);
       setPrintDoc({ type: "quote", doc: r.data });
     } catch {
       setPrintDoc({ type: "quote", doc: q });
     }
+  };
+  const quotesForProject = (project) => {
+    const pid = project?.id || project?._id;
+    const qid = project?.quote_id;
+    return quotes.filter((q) => (pid && q.project_id === pid) || (qid && (q.id === qid || q._id === qid)));
   };
   const openApproval = async (q) => { await ensureContacts(); setApprovalQuote(q); };
   const openTracking = async (p) => { await ensureContacts(); setTrackingProject(p); };
@@ -593,9 +604,36 @@ export default function ProjectsPage({ section } = {}) {
                 );
               })()}
               <div className="grid grid-cols-2 gap-1.5" data-testid={`project-quick-actions-${p.project_number}`}>
-                <button type="button" onClick={() => openQuoteForProject(p)} className="col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-2 border border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl font-bold" data-testid={`project-add-quote-${p.project_number}`} title="Bu projeye yeni teklif ekle">
+                <button type="button" onClick={() => openQuoteForProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl font-bold" data-testid={`project-add-quote-${p.project_number}`} title="Bu projeye yeni teklif ekle">
                   <FileSignature className="w-3.5 h-3.5" /> Teklif Ekle
                 </button>
+                {(() => {
+                  const linked = quotesForProject(p);
+                  const printCls = "flex items-center justify-center gap-1.5 px-2.5 py-2 border border-sky-200 text-sky-800 bg-sky-50 hover:bg-sky-100 rounded-xl font-bold disabled:opacity-40 disabled:hover:bg-sky-50 w-full";
+                  if (linked.length > 1) {
+                    return (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button type="button" className={printCls} data-testid={`project-print-quote-${p.project_number}`} title={`${linked.length} teklif — yazdırılacak olanı seçin`}>
+                            <Printer className="w-3.5 h-3.5" /> Teklif Yazdır
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="z-[80] w-56 rounded-xl p-1" data-testid={`project-print-quote-menu-${p.project_number}`}>
+                          {linked.map((q) => (
+                            <DropdownMenuItem key={q.id || q.quote_number} onSelect={() => openPrintQuote(q)} className="text-xs font-semibold" data-testid={`project-print-quote-item-${q.quote_number}`}>
+                              {q.quote_number}{q.title ? ` · ${q.title}` : ""}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    );
+                  }
+                  return (
+                    <button type="button" disabled={!linked.length} onClick={() => openPrintQuote(linked[0])} className={printCls} data-testid={`project-print-quote-${p.project_number}`} title={linked.length ? `${linked[0].quote_number} teklifini yazdır` : "Bu projede yazdırılacak teklif yok"}>
+                      <Printer className="w-3.5 h-3.5" /> Teklif Yazdır
+                    </button>
+                  );
+                })()}
                 <button type="button" onClick={() => setExpenseProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-rose-200 text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-xl font-bold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle">
                   <Receipt className="w-3.5 h-3.5" /> Masraf Ekle
                 </button>
