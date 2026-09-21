@@ -51,7 +51,7 @@ export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStateme
           <button onClick={onLocation} className="text-[10px] text-slate-500 hover:text-rose-600 font-semibold" data-testid={`location-btn-${tid}`}>{mapsLink(contact) ? "Düzenle" : "+ Konum Ekle"}</button>
         </div>
       </div>
-      <div className="col-span-6 md:col-span-2 text-right md:text-left">
+      <div className="col-span-12 md:col-span-2 text-right md:text-left">
         <span className="text-[10px] text-slate-400 uppercase font-semibold">Cari Bakiye</span>
         <div className={`text-sm font-bold whitespace-nowrap ${bal > 0 ? "text-emerald-600" : bal < 0 ? "text-rose-600" : "text-slate-700"}`} data-testid={`contact-balance-${tid}`}>
           {bal > 0 ? `+${money(bal)} ₺` : `${money(bal)} ₺`}<span className="text-[10px] font-semibold text-slate-400 ml-1">{bal > 0 ? "Alacak" : bal < 0 ? "Borç" : ""}</span>
