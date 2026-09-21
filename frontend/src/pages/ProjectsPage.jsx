@@ -293,6 +293,27 @@ export default function ProjectsPage({ section } = {}) {
     setItems([computeLine(emptyLine())]);
     ensureFormRefs();
   };
+  const openQuoteForProject = async (project) => {
+    await ensureFormRefs();
+    setForm({
+      kind: "quote",
+      contact_id: project.contact_id || "",
+      contact_name: project.contact_name || "",
+      title: project.name ? `${project.name} teklifi` : "Fiyat Teklifi",
+      name: "",
+      valid_until: "",
+      notes: "",
+      address: project.address || "",
+      budget: "",
+      start_date: "",
+      end_date: "",
+      survey_date: "",
+      measurements: [],
+      project_id: project.id || project._id,
+      project_number: project.project_number || "",
+    });
+    setItems([computeLine(emptyLine())]);
+  };
   const openEditQuote = async (q) => {
     await ensureFormRefs();
     try {
@@ -351,7 +372,7 @@ export default function ProjectsPage({ section } = {}) {
             items: lineItems,
           });
         } else {
-          await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, items: lineItems });
+          await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, project_id: form.project_id || undefined, items: lineItems });
         }
       } else if (form.kind === "project") await axios.post(`${API_URL}/projects`, { company_id: companyId, ...form, budget: Number(form.budget || 0) });
       else await axios.post(`${API_URL}/surveys`, {
@@ -367,7 +388,7 @@ export default function ProjectsPage({ section } = {}) {
           product_id: i.product_id || undefined,
         })),
       });
-      toast.success(form.id ? "Güncellendi." : "Kaydedildi."); setForm(null); load();
+      toast.success(form.id ? "Güncellendi." : form.project_id && form.kind === "quote" ? "Teklif projeye eklendi." : "Kaydedildi."); setForm(null); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
 
@@ -572,6 +593,9 @@ export default function ProjectsPage({ section } = {}) {
                 );
               })()}
               <div className="grid grid-cols-2 gap-1.5" data-testid={`project-quick-actions-${p.project_number}`}>
+                <button type="button" onClick={() => openQuoteForProject(p)} className="col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-2 border border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl font-bold" data-testid={`project-add-quote-${p.project_number}`} title="Bu projeye yeni teklif ekle">
+                  <FileSignature className="w-3.5 h-3.5" /> Teklif Ekle
+                </button>
                 <button type="button" onClick={() => setExpenseProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-rose-200 text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-xl font-bold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle">
                   <Receipt className="w-3.5 h-3.5" /> Masraf Ekle
                 </button>
@@ -655,6 +679,7 @@ export default function ProjectsPage({ section } = {}) {
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <form onSubmit={save} className={`bg-white rounded-t-2xl sm:rounded-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto ${form.kind === "project" ? "max-w-2xl" : "max-w-6xl"}`} data-testid={`${form.kind}-form`}>
             <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+            {form.kind === "quote" && form.project_number && <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1.5" data-testid="pf-project-link">Bu teklif {form.project_number} projesine bağlanacak. Cari ve adres projeden geldi.</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
               {form.kind === "quote" && <div><label className="block font-semibold mb-1">Başlık</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Fiyat Teklifi" data-testid="pf-title" /></div>}
