@@ -171,6 +171,7 @@ export function ListRow({
   titleLines = 1,
   compactRight,
   onPress,
+  showChevron,
   testID,
 }: {
   title: React.ReactNode;
@@ -186,10 +187,12 @@ export function ListRow({
   titleLines?: number;
   compactRight?: boolean;
   onPress?: () => void;
+  showChevron?: boolean;
   testID?: string;
 }) {
+  const Row = onPress ? Pressable : View;
   return (
-    <Pressable testID={testID} onPress={onPress} style={styles.listRow} disabled={!onPress}>
+    <Row testID={testID} onPress={onPress} style={styles.listRow}>
       {leading || image != null ? (
         <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
       ) : null}
@@ -206,8 +209,8 @@ export function ListRow({
           {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{listRowText(rightSub)}</Text> : null}
         </View>
       ) : null}
-      {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
-    </Pressable>
+      {onPress || showChevron ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
+    </Row>
   );
 }
 

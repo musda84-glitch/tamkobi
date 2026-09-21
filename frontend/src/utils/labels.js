@@ -10,7 +10,7 @@ export const STATUS_TR = {
 export const CHANNEL_TR = { manual: "Manuel", b2b: "B2B", saha: "Saha", trendyol: "Trendyol", hepsiburada: "Hepsiburada", amazon: "Amazon", shopify: "Shopify", n11: "N11", woocommerce: "WooCommerce", ciceksepeti: "Çiçeksepeti", pazarama: "Pazarama", sms: "SMS", email: "E-posta", whatsapp: "WhatsApp" };
 export const CONTEXT_TR = { manual: "Manuel", invoice: "Fatura", order: "Sipariş", contact: "Cari", campaign: "Kampanya", statement: "Ekstre", installment: "Taksit", quote_approval: "Teklif Onayı", whatsapp_api: "WhatsApp", reminder: "Hatırlatma", cargo: "Kargo" };
 export const DIRECTION_TR = { inbound: "Gelen", outbound: "Giden", receivable: "Alacak", payable: "Borç" };
-export const E_TYPE_TR = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat" };
+export const E_TYPE_TR = { e_invoice: "E-Fatura", e_archive: "E-Arşiv", paper: "Kağıt Fatura", e_dispatch: "E-İrsaliye", e_export: "e-İhracat", expense_slip: "Gider Pusulası" };
 export const INVOICE_TYPE_TR = { sales: "Satış", purchase: "Alış", proforma: "Proforma", return: "İade", dispatch: "İrsaliye", export: "İhracat", import: "İthalat" };
 
 export const tr = (map, value) => (value == null || value === "" ? "—" : map[value] || map[String(value).toLowerCase()] || String(value));
