@@ -333,6 +333,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       toast.error(err.response?.data?.detail || "İptal edilemedi.");
     }
   };
+  const issueExpenseSlip = async (inv) => {
+    if (!window.confirm(`${inv.invoice_number} için gider pusulası kesilsin mi?\nAynı cari ve kalemlerle alış pusulası oluşur.`)) return;
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/expense-slip`);
+      toast.success(r.data.message || "Gider pusulası kesildi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Gider pusulası kesilemedi.");
+    }
+  };
 
   if (!data) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
   const { contact: c, summary: s } = data;
@@ -664,7 +674,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onDelete={deleteInvoice} onCancel={cancelInvoice} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} />
         {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
         {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}
