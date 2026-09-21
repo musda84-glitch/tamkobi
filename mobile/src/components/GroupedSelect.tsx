@@ -5,7 +5,7 @@ import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
 
-export type SelectOption = { value: string; label: string };
+export type SelectOption = { value: string; label: string; disabled?: boolean };
 export type SelectGroup = { label: string; options: SelectOption[] };
 
 function triggerBox(dense?: boolean) {
@@ -88,10 +88,10 @@ function NativeGroupedSelect({
                 <Pressable
                   key={o.value}
                   testID={testID ? `${testID}-opt-${o.value}` : undefined}
-                  onPress={() => { onChange(o.value); setOpen(false); }}
-                  style={{ paddingHorizontal: 12, paddingVertical: 10, backgroundColor: o.value === value ? colors.emerald50 : "#fff" }}
+                  onPress={() => { if (o.disabled) return; onChange(o.value); setOpen(false); }}
+                  style={{ paddingHorizontal: 12, paddingVertical: 10, backgroundColor: o.value === value ? colors.emerald50 : "#fff", opacity: o.disabled ? 0.5 : 1 }}
                 >
-                  <Text style={{ fontWeight: "700", color: colors.text }}>{o.label}</Text>
+                  <Text style={{ fontWeight: "700", color: o.disabled ? colors.muted : colors.text }}>{o.label}</Text>
                 </Pressable>
               ))}
             </View>
@@ -140,7 +140,7 @@ export function GroupedSelect({
                   createElement(
                     "optgroup",
                     { key: g.label, label: g.label },
-                    g.options.map((o) => createElement("option", { key: o.value, value: o.value }, o.label))
+                    g.options.map((o) => createElement("option", { key: o.value, value: o.value, disabled: !!o.disabled }, o.label))
                   )
                 ),
               ]

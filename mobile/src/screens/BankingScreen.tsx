@@ -12,9 +12,11 @@ import {
   accountBalance,
   accountTypeTr,
   groupedAccounts,
+  isBankingBankAccount,
   totalLiquidity,
   virmanAccounts,
   type BankAccount,
+  type Partner,
   type PartnerSummary,
 } from "../utils/finance";
 import { fmtMoney, idOf } from "../utils/money";
@@ -66,8 +68,9 @@ function Approvals({
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
-  const [tab, setTab] = useState<"accounts" | "partners" | "match">("accounts");
+  const [tab, setTab] = useState<"accounts" | "banks" | "partners" | "match">("accounts");
   const [rows, setRows] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
   const [approvals, setApprovals] = useState<CashApproval[]>([]);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
@@ -79,13 +82,15 @@ export function BankingScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [accs, ps, appr, unmatched] = await Promise.all([
+      const [accs, pts, ps, appr, unmatched] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
+        get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
         get<PartnerSummary>(client, "/banking/partners/summary", { company_id: companyId }).catch(() => null),
         get<CashApproval[]>(client, "/banking/cash-approvals", { company_id: companyId, status: "pending" }).catch(() => []),
         get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
       ]);
       setRows(accs || []);
+      setPartners(pts || []);
       setPartnerSummary(ps);
       setApprovals(appr || []);
       setUnmatchedCount((unmatched || []).length);
@@ -99,16 +104,22 @@ export function BankingScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const pool = useMemo(
+    () => (tab === "banks" ? rows.filter(isBankingBankAccount) : rows),
+    [rows, tab]
+  );
   const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter((a) => [a.account_name, a.bank_name, a.iban, a.account_number, a.type, a.integration_provider].some((v) => String(v || "").toLowerCase().includes(s)));
-  }, [q, rows]);
+    if (!s) return pool;
+    return pool.filter((a) => [a.account_name, a.bank_name, a.iban, a.account_number, a.type, a.integration_provider].some((v) => String(v || "").toLowerCase().includes(s)));
+  }, [q, pool]);
 
   const groups = useMemo(() => groupedAccounts(searched), [searched]);
-  const visibleGroups = groupF === "all" ? groups : groups.filter((g) => g.key === groupF);
+  const visibleGroups = groupF === "all" ? groups : groupF === "partners" ? [] : groups.filter((g) => g.key === groupF);
   const liquidity = totalLiquidity(rows);
-  const virmanOk = virmanAccounts(rows).length > 1;
+  const activePartners = useMemo(() => (partners || []).filter((p) => p.is_active !== false), [partners]);
+  const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
+  const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
   const actions: ActionTile[] = [
     canEdit && { key: "new", label: "Yeni hesap", icon: "add-circle" as const, tone: "emerald" as const, testID: "bank-new", onPress: () => go("BankingNew") },
@@ -132,7 +143,8 @@ export function BankingScreen() {
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
       <Row style={{ flexWrap: "wrap" }}>
-        <Chip label="Hesaplar" active={tab === "accounts"} testID="banking-tab-accounts" onPress={() => setTab("accounts")} />
+        <Chip label="Hesaplar" active={tab === "accounts"} testID="banking-tab-accounts" onPress={() => { setTab("accounts"); setGroupF("all"); }} />
+        <Chip label={`Bankalar${bankCount ? ` (${bankCount})` : ""}`} active={tab === "banks"} testID="banking-tab-banks" onPress={() => { setTab("banks"); setGroupF("all"); }} />
         <Chip label={`Ortaklar${partnerSummary?.partner_count ? ` (${partnerSummary.partner_count})` : ""}`} active={tab === "partners"} testID="banking-tab-partners" color="#B45309" onPress={() => setTab("partners")} />
         <Chip label={`Eşleşme${unmatchedCount ? ` (${unmatchedCount})` : ""}`} active={tab === "match"} testID="banking-tab-match" color="#7C3AED" onPress={() => setTab("match")} />
       </Row>
@@ -186,6 +198,26 @@ export function BankingScreen() {
                 </Pressable>
               );
             })}
+            {activePartners.length ? (
+              <Pressable
+                onPress={() => setGroupF(groupF === "partners" ? "all" : "partners")}
+                testID="account-group-partners"
+                style={{
+                  flexGrow: 1,
+                  flexBasis: "30%",
+                  paddingVertical: 8,
+                  paddingHorizontal: 10,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: groupF === "partners" ? "#B45309" : colors.border,
+                  backgroundColor: groupF === "partners" ? colors.amber50 : colors.surface,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" }}>Ortaklar</Text>
+                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{fmtMoney(partnerSummary?.total_balance)}</Text>
+                <Text style={{ fontSize: 11, color: colors.muted }}>{activePartners.length} ortak</Text>
+              </Pressable>
+            ) : null}
           </Row>
           <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" />
           <Row style={{ flexWrap: "wrap" }}>
@@ -193,9 +225,30 @@ export function BankingScreen() {
             {groups.map((g) => (
               <Chip key={g.key} label={g.label} active={groupF === g.key} testID={`bank-filter-${g.key}`} onPress={() => setGroupF(g.key)} />
             ))}
+            {activePartners.length ? (
+              <Chip label="Ortaklar" active={groupF === "partners"} testID="bank-filter-partners" color="#B45309" onPress={() => setGroupF(groupF === "partners" ? "all" : "partners")} />
+            ) : null}
           </Row>
           <ErrorBanner message={error} />
-          {!visibleGroups.length ? (
+          {groupF === "partners" ? (
+            !activePartners.length ? (
+              <Empty icon="people-outline" title="Ortak yok" />
+            ) : (
+              <>
+                <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }} testID="bank-group-label-partners">Ortaklar Hesabı</Text>
+                {activePartners.map((p) => (
+                  <ListRow
+                    key={idOf(p)}
+                    testID={`bank-partner-row-${idOf(p)}`}
+                    title={p.name || "Ortak"}
+                    subtitle={[`%${p.share_percent ?? 0}`, p.phone, p.email].filter(Boolean).join(" · ")}
+                    right={fmtMoney(p.balance)}
+                    onPress={() => setTab("partners")}
+                  />
+                ))}
+              </>
+            )
+          ) : !visibleGroups.length ? (
             <Empty icon="wallet-outline" title="Hesap yok" hint={canEdit ? "Banka, kasa, POS veya kart ekleyin." : undefined} />
           ) : visibleGroups.map((g) => (
             <React.Fragment key={g.key}>

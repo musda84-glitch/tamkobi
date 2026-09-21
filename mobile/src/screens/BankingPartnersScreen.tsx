@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { del, get, post } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Chip, confirmAction, n } from "../components/chips";
+import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
 import { colors } from "../theme";
@@ -144,18 +144,6 @@ export function BankingPartnersPanel({
     }
   };
 
-  const remove = (p: Partner) => {
-    confirmAction("Ortağı sil", `${p.name} silinsin mi?`, async () => {
-      try {
-        await del(client, `/banking/partners/${idOf(p)}`);
-        await load();
-        onChanged();
-      } catch (err) {
-        setError(apiErrorMessage(err, "Ortak silinemedi."));
-      }
-    });
-  };
-
   const txPool = paymentTargetGroups(accounts, [], { collectableOnly: txType === "capital_in" });
   const profitPool = paymentTargetGroups(accounts, [], { collectableOnly: true });
 
@@ -261,9 +249,6 @@ export function BankingPartnersPanel({
           <Muted>{[p.email, p.phone, `%${p.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
           <Text style={{ fontSize: 20, fontWeight: "800", color: colors.text }}>{fmtMoney(p.balance)}</Text>
           <Muted>Giriş {fmtMoney(p.total_capital_in)} · çekiş {fmtMoney(p.total_withdrawn)} · kâr {fmtMoney(p.total_profit_share)}</Muted>
-          {canEdit ? (
-            <PrimaryButton title="Sil" onPress={() => remove(p)} color={colors.danger} testID={`delete-partner-${p.name}`} />
-          ) : null}
         </Card>
       ))}
 

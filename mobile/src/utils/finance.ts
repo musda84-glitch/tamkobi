@@ -215,7 +215,15 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
   return (accounts || []).filter((a) => !a.is_integrated);
 }
 
-export type PaymentTargetGroup = { label: string; options: { value: string; label: string }[] };
+const BANK_TAB_TYPES = new Set(["bank", "pos", "okc_pos"]);
+
+/** Kasa & Banka üst sekmesindeki Bankalar: banka + POS + ÖKC. */
+export function isBankingBankAccount(a?: { type?: string } | null): boolean {
+  return BANK_TAB_TYPES.has(normalizeAccountType(a?.type));
+}
+
+export type PaymentTargetOption = { value: string; label: string; disabled?: boolean };
+export type PaymentTargetGroup = { label: string; options: PaymentTargetOption[] };
 
 /** Web PaymentTargetSelect karşılığı: tür bazlı gruplar + opsiyonel ortaklar. */
 function partnerTargetGroup(partners: Partner[]): PaymentTargetGroup {
@@ -246,6 +254,23 @@ export function paymentTargetGroups(
     const ortaklar = partnerTargetGroup(active);
     if (opts.partnersFirst) groups.unshift(ortaklar);
     else groups.push(ortaklar);
+  }
+  return groups;
+}
+
+/** Virman kaynak/hedef: kasa + banka + POS + ortaklar; entegre bankalar görünür ama kapalı. */
+export function virmanSelectGroups(accounts: BankAccount[], partners: Partner[] = []): PaymentTargetGroup[] {
+  const groups = paymentTargetGroups(virmanAccounts(accounts), partners);
+  const integrated = (accounts || []).filter((a) => a.is_integrated);
+  if (integrated.length) {
+    groups.push({
+      label: "Entegre banka",
+      options: integrated.map((a) => ({
+        value: `integrated:${idOf(a)}`,
+        label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)} (entegre)`,
+        disabled: true,
+      })),
+    });
   }
   return groups;
 }
@@ -502,6 +527,9 @@ export function emptyProjectExpenseDraft(today: string): ExpenseDraft {
 
 export function validateVirman(sourceId: string, targetId: string, amount: string): string | null {
   if (!sourceId || !targetId) return "Kaynak ve hedef hesap seçin.";
+  if (sourceId.startsWith("integrated:") || targetId.startsWith("integrated:")) {
+    return "Entegre banka hesaplar virmana kapalı.";
+  }
   if (sourceId === targetId) return "Kaynak ve hedef hesap aynı olamaz.";
   if (!(num(amount) > 0)) return "Geçerli bir tutar giriniz.";
   return null;
