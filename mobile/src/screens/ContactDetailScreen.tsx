@@ -182,18 +182,17 @@ export function ContactDetailScreen() {
   );
   const tabGroups = contactTabSelectGroups(TABS, counts);
 
-  const openPaper = (instrument: "cheque" | "promissory") => {
-    if (!payForm) return;
+  const openPaper = (instrument: "cheque" | "promissory", type?: PayForm["type"]) => {
     if (!canPaper) { setError("Çek / senet kaydı yetkiniz yok."); return; }
     const isCheque = instrument === "cheque";
-    const inflow = payForm.type === "inflow";
+    const inflow = (type || payForm?.type || "inflow") === "inflow";
     setPayForm(null);
     go("ChequeNew", {
       contact_id: id,
       contact_name: c.name || name,
       instrument,
       direction: inflow ? "received" : "issued",
-      amount: payForm.amount,
+      amount: payForm?.amount,
       notes: inflow
         ? (isCheque ? "Çek tahsilatı" : "Senet tahsilatı")
         : (isCheque ? "Çek ödemesi" : "Senet ödemesi"),
@@ -672,6 +671,8 @@ export function ContactDetailScreen() {
           <Row style={{ flexWrap: "wrap" }}>
             <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow", description: payForm.method === "cash" ? "Cari tahsilat" : payForm.description })} />
             <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow", description: payForm.method === "cash" ? "Cari ödeme" : payForm.description })} />
+            <Chip label="Çek tahsilatı" active={false} testID="collect-type-cheque" onPress={() => openPaper("cheque", "inflow")} />
+            <Chip label="Senet tahsilatı" active={false} testID="collect-type-promissory" onPress={() => openPaper("promissory", "inflow")} />
           </Row>
           <Muted>Tahsil şekli</Muted>
           <Row style={{ flexWrap: "wrap" }}>
