@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import React, { createElement, useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
@@ -7,20 +8,34 @@ import { Muted } from "./kit";
 export type SelectOption = { value: string; label: string };
 export type SelectGroup = { label: string; options: SelectOption[] };
 
+function triggerBox(dense?: boolean) {
+  return {
+    minHeight: dense ? 40 : 48,
+    borderWidth: 1.5,
+    borderColor: "#C7D2FE",
+    borderRadius: radius.md,
+    paddingHorizontal: dense ? 10 : 12,
+    backgroundColor: colors.indigo50,
+  } as const;
+}
+
 const selectStyle = (dense?: boolean): React.CSSProperties => ({
+  ...triggerBox(dense),
   width: "100%",
-  minHeight: dense ? 30 : 48,
-  borderWidth: 1,
   borderStyle: "solid",
-  borderColor: colors.border,
-  borderRadius: radius.md,
-  paddingLeft: dense ? 8 : 12,
-  paddingRight: dense ? 8 : 12,
-  fontSize: dense ? 13 : 16,
+  paddingRight: 36,
+  fontSize: dense ? 14 : 16,
   fontWeight: 700,
   color: colors.text,
-  backgroundColor: "#fff",
+  cursor: "pointer",
+  appearance: "none",
+  WebkitAppearance: "none",
+  MozAppearance: "none",
 });
+
+function Chevron({ dense }: { dense?: boolean }) {
+  return <Ionicons name="chevron-down" size={dense ? 18 : 20} color={colors.indigo} />;
+}
 
 function NativeGroupedSelect({
   value,
@@ -45,18 +60,19 @@ function NativeGroupedSelect({
     <View>
       <Pressable
         testID={testID}
+        accessibilityRole="button"
+        accessibilityHint="Açılır menü"
         onPress={() => setOpen((v) => !v)}
         style={{
-          minHeight: dense ? 30 : 48,
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: radius.md,
-          paddingHorizontal: dense ? 8 : 12,
-          justifyContent: "center",
-          backgroundColor: "#fff",
+          ...triggerBox(dense),
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
         }}
       >
-        <Text style={{ fontWeight: "700", color: colors.text, fontSize: dense ? 13 : 15 }}>{title}</Text>
+        <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: dense ? 14 : 15 }}>{title}</Text>
+        <Chevron dense={dense} />
       </Pressable>
       {open ? (
         <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginTop: 6, backgroundColor: "#fff" }}>
@@ -107,25 +123,33 @@ export function GroupedSelect({
     <View style={{ marginBottom: dense ? 4 : spacing.md }} testID={testID ? `${testID}-wrap` : undefined}>
       {label ? <Muted>{label}</Muted> : null}
       {Platform.OS === "web"
-        ? createElement(
-            "select",
-            {
-              value,
-              onChange: (e: { target: { value: string } }) => onChange(e.target.value),
-              "data-testid": testID,
-              style: selectStyle(dense),
-            },
-            [
-              emptyLabel != null ? createElement("option", { key: "__empty", value: "" }, emptyLabel) : null,
-              ...groups.map((g) =>
-                createElement(
-                  "optgroup",
-                  { key: g.label, label: g.label },
-                  g.options.map((o) => createElement("option", { key: o.value, value: o.value }, o.label))
-                )
-              ),
-            ]
-          )
+        ? (
+          <View style={{ position: "relative", justifyContent: "center" }}>
+            {createElement(
+              "select",
+              {
+                value,
+                onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+                "data-testid": testID,
+                "aria-label": label || "Açılır menü",
+                style: selectStyle(dense),
+              },
+              [
+                emptyLabel != null ? createElement("option", { key: "__empty", value: "" }, emptyLabel) : null,
+                ...groups.map((g) =>
+                  createElement(
+                    "optgroup",
+                    { key: g.label, label: g.label },
+                    g.options.map((o) => createElement("option", { key: o.value, value: o.value }, o.label))
+                  )
+                ),
+              ]
+            )}
+            <View pointerEvents="none" style={{ position: "absolute", right: 10, top: 0, bottom: 0, justifyContent: "center" }}>
+              <Chevron dense={dense} />
+            </View>
+          </View>
+        )
         : (
           <NativeGroupedSelect value={value} onChange={onChange} groups={groups} emptyLabel={emptyLabel} testID={testID} dense={dense} />
         )}
