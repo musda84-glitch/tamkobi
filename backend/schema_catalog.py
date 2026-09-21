@@ -520,8 +520,8 @@ COLLECTIONS = {
     },
     "mail_logs": {
         "scope": SCOPE_TENANT,
-        "description": "Giden e-posta logu.",
-        "keys": ("_id", "company_id", "to", "subject", "contact_id", "context", "ref_id"),
+        "description": "Giden e-posta logu ve okundu takibi (son 90 gün cari kartında).",
+        "keys": ("_id", "company_id", "to", "subject", "contact_id", "context", "ref_id", "status", "opened_at"),
         "refs": ("contacts._id",),
     },
     "whatsapp_settings": {

@@ -405,6 +405,9 @@ class MailLog(BaseDocument):
     attachments: List[str] = []
     status: str = "sent"  # sent, failed
     error: Optional[str] = None
+    opened_at: Optional[str] = None
+    last_opened_at: Optional[str] = None
+    open_count: int = 0
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
     context: str = "manual"
