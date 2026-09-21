@@ -18,6 +18,8 @@ import {
   validatePartner,
   validateVirman,
   virmanAccounts,
+  virmanSelectGroups,
+  isBankingBankAccount,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -137,6 +139,28 @@ describe("finance drafts", () => {
     expect(validateVirman("a", "a", "10")).toBe("Kaynak ve hedef hesap aynı olamaz.");
     expect(validateVirman("a", "b", "0")).toBe("Geçerli bir tutar giriniz.");
     expect(validateVirman("a", "b", "25")).toBeNull();
+    expect(validateVirman("integrated:b1", "a2", "10")).toBe("Entegre banka hesaplar virmana kapalı.");
+    expect(validateVirman("partner:p1", "a2", "10")).toBeNull();
+  });
+
+  it("puts partner cash and integrated banks on the virman list", () => {
+    expect(isBankingBankAccount({ type: "bank" })).toBe(true);
+    expect(isBankingBankAccount({ type: "pos" })).toBe(true);
+    expect(isBankingBankAccount({ type: "cash_box" })).toBe(false);
+    const groups = virmanSelectGroups(
+      [
+        { id: "k1", type: "cash_box", account_name: "Kasa", current_balance: 10 },
+        { id: "b1", type: "bank", bank_name: "Vakıf", account_name: "Vadesiz", is_integrated: true, current_balance: 5 },
+        { id: "p0", type: "pos", account_name: "PayTR", current_balance: 3 },
+      ],
+      [{ id: "p1", name: "Ali BAL", share_percent: 50, balance: 2880, is_active: true }]
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Kasa", "POS", "Ortaklar Hesabı", "Entegre banka"]);
+    expect(groups.find((g) => g.label === "Ortaklar Hesabı")?.options[0].value).toBe("partner:p1");
+    expect(groups.find((g) => g.label === "Entegre banka")?.options[0]).toMatchObject({
+      value: "integrated:b1",
+      disabled: true,
+    });
   });
 
   it("groups kasas even when type is a cash alias", () => {
