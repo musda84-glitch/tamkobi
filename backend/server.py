@@ -5089,6 +5089,76 @@ async def create_dispatch_from_invoice(invoice_id: str):
     await db.invoices.update_one({"_id": invoice_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} irsaliyesi oluşturuldu."}
 
+
+def _expense_slip_block_reason(inv: dict) -> Optional[str]:
+    """None = bu belgeden gider pusulası kesilebilir."""
+    if not inv:
+        return "Fatura bulunamadı."
+    if inv.get("status") == "cancelled":
+        return "İptal edilmiş faturadan gider pusulası kesilemez."
+    if inv.get("status") == "draft":
+        return "Taslak faturadan gider pusulası kesilmez."
+    if inv.get("invoice_type") == "dispatch" or inv.get("e_type") == "expense_slip":
+        return "Bu belgeden gider pusulası kesilemez."
+    if _is_incoming_purchase_invoice(inv):
+        return "Gelen e-faturadan gider pusulası kesilmez."
+    if not inv.get("contact_id"):
+        return "Faturada cari yok."
+    if not inv.get("items"):
+        return "Faturada kalem yok."
+    return None
+
+
+@api_router.post("/invoices/{invoice_id}/expense-slip")
+async def create_expense_slip_from_invoice(invoice_id: str):
+    """Kesilmiş belgeden aynı cari ve kalemlerle alış gider pusulası düzenler."""
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("expense_slip_id"):
+        existing = await db.invoices.find_one({"_id": inv["expense_slip_id"]})
+        if existing and existing.get("status") != "cancelled":
+            return {"status": "exists", "invoice": clean_doc(existing), "message": f"Gider pusulası zaten var: {existing.get('invoice_number')}"}
+    reason = _expense_slip_block_reason(inv)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    number = await _next_number("GP", None, inv.get("company_id"))
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": inv["company_id"],
+        "invoice_number": number,
+        "invoice_type": "purchase",
+        "e_type": "expense_slip",
+        "contact_id": inv.get("contact_id"),
+        "contact_name": inv.get("contact_name"),
+        "contact_tax_id": inv.get("contact_tax_id"),
+        "items": [dict(it) for it in inv.get("items") or []],
+        "subtotal": inv.get("subtotal", 0),
+        "vat_total": inv.get("vat_total", 0),
+        "discount_total": inv.get("discount_total", 0),
+        "grand_total": inv.get("grand_total", 0),
+        "currency": inv.get("currency") or "TRY",
+        "fx_rate": inv.get("fx_rate") or 1,
+        "local_total": inv.get("local_total") or inv.get("grand_total") or 0,
+        "status": "approved",
+        "gib_status": "Gider Pusulası",
+        "payment_status": "unpaid",
+        "paid_amount": 0,
+        "effects_applied": True,
+        "source_invoice_id": invoice_id,
+        "source_invoice_number": inv.get("invoice_number"),
+        "notes": f"Gider pusulası · kaynak fatura {inv.get('invoice_number')}",
+        "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "created_at": now,
+        "approved_at": now,
+    }
+    await db.invoices.insert_one(doc)
+    await _apply_invoice_effects(doc)
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"expense_slip_id": doc["_id"], "expense_slip_number": number}})
+    return {"status": "success", "invoice": clean_doc(doc), "message": f"{number} gider pusulası kesildi."}
+
+
 @api_router.post("/invoices/{dispatch_id}/convert-to-invoice")
 async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, Any]] = None):
     d = await db.invoices.find_one({"_id": dispatch_id})

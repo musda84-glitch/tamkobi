@@ -49,6 +49,7 @@ import {
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
+  if (inv.e_type === "expense_slip") return ["Gider Pusulası", "bg-rose-50 text-rose-800"];
   if (inv._is_quote) return ["Teklif", "bg-indigo-50 text-indigo-700"];
   if (inv.trade_kind === "export" || inv.e_type === "e_export") return ["İhracat", "bg-sky-50 text-sky-800"];
   if (inv.trade_kind === "import") return ["İthalat", "bg-teal-50 text-teal-800"];
@@ -372,6 +373,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "İptal edilemedi.");
+    }
+  };
+  const handleExpenseSlip = async (inv) => {
+    if (!window.confirm(`${inv.invoice_number} için gider pusulası kesilsin mi?\nAynı cari ve kalemlerle alış pusulası oluşur.`)) return;
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/expense-slip`);
+      toast.success(r.data.message || "Gider pusulası kesildi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Gider pusulası kesilemedi.");
     }
   };
   const handleCreateInvoice = async (e) => {
@@ -745,7 +756,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
