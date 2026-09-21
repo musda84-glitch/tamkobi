@@ -1738,6 +1738,20 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any], request: R
     return {"status": "success" if any_ok else "failed", "link": link, "token": token, "results": results, "message": msg}
 
 
+async def _project_statement(p: Dict[str, Any], company: Dict[str, Any]):
+    """Herkese açık proje sayfası için cari ekstre. Cari yoksa None."""
+    contact_id = p.get("contact_id")
+    if not contact_id:
+        return None
+    contact = await db.contacts.find_one({"_id": contact_id}) or {"name": p.get("contact_name"), "balance": 0}
+    invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).to_list(100)
+    payments = await db.bank_transactions.find({"contact_id": contact_id, "type": {"$ne": "transfer"}}).to_list(100)
+    rows = statement_share.statement_rows(invoices, payments)
+    if not contact.get("name"):
+        contact = {**contact, "name": p.get("contact_name") or ""}
+    return statement_share.public_statement_view(contact, company, rows)
+
+
 @api_router.get("/public/projects/{token}")
 async def public_project(token: str):
     token = (token or "").strip()
@@ -1751,17 +1765,27 @@ async def public_project(token: str):
     surveys = await db.surveys.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
     await db.projects.update_one({"_id": p["_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
     view = _public_project_view(p, company, quotes, surveys)
-    contact_id = p.get("contact_id")
-    if contact_id:
-        contact = await db.contacts.find_one({"_id": contact_id}) or {"name": p.get("contact_name"), "balance": 0}
-        invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).to_list(100)
-        payments = await db.bank_transactions.find({"contact_id": contact_id, "type": {"$ne": "transfer"}}).to_list(100)
-        rows = statement_share.statement_rows(invoices, payments)
-        bal = rows[-1]["balance"] if rows else round(float(contact.get("balance") or 0), 2)
-        view["statement"] = {"rows": rows, "balance": bal}
+    statement = await _project_statement(p, company)
+    if statement:
+        view["statement"] = {"rows": statement["rows"], "balance": statement["balance"]}
     else:
         view["statement"] = None
     return view
+
+
+@api_router.get("/public/projects/{token}/statement.pdf")
+async def public_project_statement_pdf(token: str):
+    token = (token or "").strip()
+    if not token or len(token) < 16:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    p = await db.projects.find_one({"tracking.token": token})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    company = await db.companies.find_one({"_id": p["company_id"]}) or {}
+    statement = await _project_statement(p, company)
+    if not statement:
+        raise HTTPException(status_code=404, detail="Bu projeye bağlı cari ekstre yok.")
+    return _statement_pdf_response(statement)
 
 
 @api_router.delete("/projects/{project_id}")
