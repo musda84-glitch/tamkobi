@@ -1,18 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { B2BSheet } from "../components/b2b/B2BSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { Empty, ErrorBanner, Field, ListRow, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { ProductThumb } from "../components/ProductThumb";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
-import { fmtMoney, idOf } from "../utils/money";
-import { filterProducts, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
+import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { filterProducts, lastPurchaseLabel, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
+
+type StockMove = { id?: string; _id?: string; change?: number; reason?: string; date?: string };
 
 export function StockScreen() {
   const { client, companyId, can } = useAuth();
@@ -26,6 +30,9 @@ export function StockScreen() {
   const [hit, setHit] = useState<Product | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [movesFor, setMovesFor] = useState<Product | null>(null);
+  const [moves, setMoves] = useState<StockMove[]>([]);
+  const [movesBusy, setMovesBusy] = useState(false);
 
   useEffect(() => {
     const flag = Array.isArray(params.scan) ? params.scan[0] : params.scan;
@@ -36,7 +43,7 @@ export function StockScreen() {
     setRefreshing(true);
     try {
       const [data, catRows] = await Promise.all([
-        get<Product[]>(client, "/products", { company_id: companyId }),
+        get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         get<ProductCategory[]>(client, "/products/categories", { company_id: companyId }).catch(() => []),
       ]);
       setRows(data || []);
@@ -61,6 +68,21 @@ export function StockScreen() {
     } catch (err) {
       setHit(null);
       setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+    }
+  };
+
+  const openMoves = async (p: Product) => {
+    setMovesFor(p);
+    setMoves([]);
+    setMovesBusy(true);
+    try {
+      const data = await get<{ movements?: StockMove[] }>(client, `/products/${idOf(p)}/movements`);
+      setMoves(data?.movements || []);
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Stok hareketleri yüklenemedi."));
+    } finally {
+      setMovesBusy(false);
     }
   };
 
@@ -96,23 +118,44 @@ export function StockScreen() {
         const badge = stockBadge(p);
         const qty = stockQtyLabel(p);
         const qtyTone = badge?.tone === "danger" ? "red" : badge?.tone === "warning" ? "amber" : "green";
+        const lastBuy = lastPurchaseLabel(p, fmtMoney);
         return (
-          <ListRow
-            key={idOf(p)}
-            testID={`stock-row-${idOf(p)}`}
-            leading={<ProductThumb uri={productImage(p)} />}
-            title={p.name}
-            titleLines={2}
-            compactRight
-            subtitle={`${qty} · ${stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))}`}
-            right={stockRightLabel(p)}
-            rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
-            rightTestID={`stock-qty-${idOf(p)}`}
-            onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name: p.name }) : undefined}
-          />
+          <View key={idOf(p)} style={{ gap: 4 }}>
+            <ListRow
+              testID={`stock-row-${idOf(p)}`}
+              leading={<ProductThumb uri={productImage(p)} />}
+              title={p.name}
+              titleLines={2}
+              compactRight
+              subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price)), lastBuy].filter(Boolean).join(" · ")}
+              right={stockRightLabel(p)}
+              rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
+              rightTestID={`stock-qty-${idOf(p)}`}
+              onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name: p.name }) : undefined}
+            />
+            <PrimaryButton title="Hareketler" onPress={() => openMoves(p)} color={colors.secondary} testID={`stock-moves-${idOf(p)}`} />
+          </View>
         );
       })}
       <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookup} />
+      <B2BSheet
+        visible={!!movesFor}
+        title="Stok hareketleri"
+        subtitle={movesFor ? [movesFor.name, lastPurchaseLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") : undefined}
+        onClose={() => setMovesFor(null)}
+        testID="stock-moves-sheet"
+      >
+        {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
+        {!movesBusy && !moves.length ? <Muted>Hareket yok.</Muted> : null}
+        {moves.map((m, i) => (
+          <ListRow
+            key={idOf(m) || i}
+            testID={`stock-move-${idOf(m) || i}`}
+            title={`${Number(m.change) > 0 ? "+" : ""}${m.change ?? 0}`}
+            subtitle={[m.reason, fmtDate(m.date)].filter(Boolean).join(" · ")}
+          />
+        ))}
+      </B2BSheet>
     </Screen>
   );
 }

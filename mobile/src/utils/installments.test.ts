@@ -2,6 +2,8 @@ import {
   emptyPlanDraft,
   groupInstallments,
   installmentSummary,
+  chequeIdOfPayment,
+  isChequePayment,
   isLockedPayment,
   lockedPaymentLabel,
   paymentEditFrom,
@@ -54,6 +56,10 @@ describe("installments", () => {
     expect(lockedPaymentLabel({ source: "partner" })).toBe("Ortak");
     expect(lockedPaymentLabel({ virtual: true })).toBe("Çek");
     expect(lockedPaymentLabel({ source: "bank_sync" })).toBe("Banka");
+    expect(isChequePayment({ source: "cheque", cheque_id: "c1" })).toBe(true);
+    expect(isChequePayment({ source: "manual" })).toBe(false);
+    expect(chequeIdOfPayment({ cheque_id: "abc" })).toBe("abc");
+    expect(chequeIdOfPayment({ id: "cheque-virt-xyz" })).toBe("xyz");
   });
 
   it("validates and maps a payment edit", () => {

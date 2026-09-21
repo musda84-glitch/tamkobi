@@ -24,6 +24,8 @@ import {
   emptyPlanDraft,
   groupInstallments,
   installmentSummary,
+  chequeIdOfPayment,
+  isChequePayment,
   isLockedPayment,
   lockedPaymentLabel,
   paymentEditFrom,
@@ -41,11 +43,12 @@ import {
   type PlanDraft,
   type TermsDraft,
 } from "../utils/installments";
-import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import type { BankAccount } from "../utils/finance";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
-type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string };
+type PayMethod = "cash" | "cheque" | "promissory";
+type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string; method: PayMethod; due_date: string; serial_no: string };
 type MsgChannel = "sms" | "email" | "whatsapp";
 type TabKey = "invoices" | "payments" | "installments" | "orders" | "quotes" | "projects" | "surveys" | "comm" | "cheques";
 type Aging = { total_remaining?: number; total_overdue?: number; total_late_fee?: number; rows?: { invoice_id?: string; invoice_number?: string; due_date?: string; remaining?: number; overdue_days?: number; late_fee?: number }[] };
@@ -80,6 +83,7 @@ export function ContactDetailScreen() {
   const canQuote = can("/quotes", "edit");
   const canSurvey = can("/surveys", "edit");
   const canOrder = can("/orders", "edit") || can("/saha", "edit");
+  const canCheque = can("/cheques", "edit");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -107,6 +111,7 @@ export function ContactDetailScreen() {
   const [aging, setAging] = useState<Aging | null>(null);
   const [termsBusy, setTermsBusy] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [moreActions, setMoreActions] = useState(false);
 
   const loadCash = useCallback(async () => {
     const [accs, pars] = await Promise.all([
@@ -187,6 +192,9 @@ export function ContactDetailScreen() {
         amount: Math.max(0, bal).toFixed(2),
         account_id: firstAcc || (firstPartner ? `partner:${idOf(firstPartner)}` : ""),
         description: isIn ? "Cari tahsilat" : "Cari ödeme",
+        method: "cash",
+        due_date: todayIso(),
+        serial_no: "",
       });
       setError(null);
     } catch (err) {
@@ -198,35 +206,55 @@ export function ContactDetailScreen() {
     if (!payForm) return;
     const amt = n(payForm.amount);
     if (!(amt > 0)) { setError("Geçerli bir tutar girin."); return; }
-    if (!payForm.account_id) { setError("Kasa / banka / ortak seçin."); return; }
+    const paper = payForm.method === "cheque" || payForm.method === "promissory";
+    if (paper && !canCheque) { setError("Çek / senet kaydı yetkiniz yok."); return; }
+    if (!paper && !payForm.account_id) { setError("Kasa / banka / ortak seçin."); return; }
     setPayBusy(true);
     try {
-      const target = splitPaymentTarget(payForm.account_id);
-      if (target.partner_id) {
-        await post(client, `/contacts/${id}/record-payment`, {
-          partner_id: target.partner_id,
-          type: payForm.type,
+      if (paper) {
+        await post(client, "/cheques", {
+          company_id: companyId,
+          contact_id: id,
+          direction: payForm.type === "inflow" ? "received" : "issued",
+          instrument: payForm.method === "promissory" ? "promissory" : "cheque",
           amount: amt,
-          description: payForm.description,
+          due_date: payForm.due_date || todayIso(),
+          issue_date: todayIso(),
+          serial_no: payForm.serial_no,
+          notes: payForm.description,
         });
       } else {
-        const acc = accounts.find((a) => idOf(a) === target.account_id);
-        await post(client, "/banking/transactions", {
-          company_id: companyId,
-          account_id: target.account_id,
-          account_name: acc?.account_name,
-          type: payForm.type,
-          category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme",
-          amount: amt,
-          currency: "TRY",
-          description: `${c.name || name}: ${payForm.description}`,
-          contact_id: id,
-          contact_name: c.name || name,
-          source: "manual",
-        });
+        const target = splitPaymentTarget(payForm.account_id);
+        if (target.partner_id) {
+          await post(client, `/contacts/${id}/record-payment`, {
+            partner_id: target.partner_id,
+            type: payForm.type,
+            amount: amt,
+            description: payForm.description,
+          });
+        } else {
+          const acc = accounts.find((a) => idOf(a) === target.account_id);
+          await post(client, "/banking/transactions", {
+            company_id: companyId,
+            account_id: target.account_id,
+            account_name: acc?.account_name,
+            type: payForm.type,
+            category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme",
+            amount: amt,
+            currency: "TRY",
+            description: `${c.name || name}: ${payForm.description}`,
+            contact_id: id,
+            contact_name: c.name || name,
+            source: "manual",
+          });
+        }
       }
       setPayForm(null);
-      setMessage(payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi.");
+      setMessage(
+        paper
+          ? (payForm.method === "promissory" ? "Senet kaydedildi." : "Çek kaydedildi.")
+          : (payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi."),
+      );
       setError(null);
       await load();
     } catch (err) {
@@ -331,6 +359,25 @@ export function ContactDetailScreen() {
     } finally {
       setPayBusy(false);
     }
+  };
+
+  const removeChequePayment = (p: ContactPayment) => {
+    const cid = chequeIdOfPayment(p);
+    if (!canCheque || !cid) { setError("Çek / senet silme yetkiniz yok."); return; }
+    confirmAction(
+      "Çek / seneti sil",
+      `${fmtMoney(p.amount)} tutarındaki çek / senet çöp kutusuna taşınsın mı?`,
+      async () => {
+        try {
+          await del(client, `/cheques/${cid}`);
+          setMessage("Çek / senet silindi.");
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "Silinemedi."));
+        }
+      },
+    );
   };
 
   const removePayment = (p: ContactPayment) => {
@@ -517,7 +564,22 @@ export function ContactDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
-      <ActionTiles items={actionTiles} size="xs" />
+      <ActionTiles
+        items={[
+          ...(moreActions ? actionTiles : actionTiles.slice(0, 4)),
+          ...(actionTiles.length > 4
+            ? [{
+                key: "more",
+                label: moreActions ? "Gizle" : "Diğerleri",
+                icon: (moreActions ? "chevron-up" : "chevron-down") as const,
+                tone: "slate" as const,
+                testID: "detail-more-actions",
+                onPress: () => setMoreActions((v) => !v),
+              }]
+            : []),
+        ]}
+        size="xs"
+      />
 
       {termsOpen ? (
         <Card testID="contact-terms-form">
@@ -570,14 +632,30 @@ export function ContactDetailScreen() {
             <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow" })} />
             <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow" })} />
           </Row>
-          <GroupedSelect
-            label={payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
-            testID="collect-account-select"
-            value={payForm.account_id}
-            onChange={(id) => setPayForm({ ...payForm, account_id: id })}
-            emptyLabel="Hesap seçin"
-            groups={payPool}
-          />
+          <Row style={{ flexWrap: "wrap" }}>
+            <Chip label="Nakit / banka" active={payForm.method === "cash"} testID="collect-method-cash" onPress={() => setPayForm({ ...payForm, method: "cash" })} />
+            {canCheque ? (
+              <>
+                <Chip label="Çek" active={payForm.method === "cheque"} testID="collect-method-cheque" onPress={() => setPayForm({ ...payForm, method: "cheque" })} />
+                <Chip label="Senet" active={payForm.method === "promissory"} testID="collect-method-promissory" onPress={() => setPayForm({ ...payForm, method: "promissory" })} />
+              </>
+            ) : null}
+          </Row>
+          {payForm.method === "cash" ? (
+            <GroupedSelect
+              label={payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
+              testID="collect-account-select"
+              value={payForm.account_id}
+              onChange={(id) => setPayForm({ ...payForm, account_id: id })}
+              emptyLabel="Hesap seçin"
+              groups={payPool}
+            />
+          ) : (
+            <>
+              <Field label="Vade" testID="collect-cheque-due" value={payForm.due_date} onChangeText={(v) => setPayForm({ ...payForm, due_date: v })} placeholder="YYYY-AA-GG" />
+              <Field label="Seri / çek no" testID="collect-cheque-serial" value={payForm.serial_no} onChangeText={(v) => setPayForm({ ...payForm, serial_no: v })} />
+            </>
+          )}
           <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="collect-desc" value={payForm.description} onChangeText={(v) => setPayForm({ ...payForm, description: v })} />
           <PrimaryButton title="Kaydet" onPress={savePay} loading={payBusy} color={colors.primary} testID="collect-save" />
@@ -669,7 +747,12 @@ export function ContactDetailScreen() {
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
                   right={`${p.type === "inflow" ? "+" : "-"}${fmtMoney(p.amount)}`}
                 />
-                {canBank && !locked ? (
+                {canCheque && isChequePayment(p) && chequeIdOfPayment(p) ? (
+                  <Row>
+                    <PrimaryButton title="Düzenle" onPress={() => go("ChequeDetail", { id: chequeIdOfPayment(p) })} color={colors.secondary} testID={`pay-cheque-edit-${chequeIdOfPayment(p)}`} />
+                    <PrimaryButton title="Sil" onPress={() => removeChequePayment(p)} color={colors.danger} testID={`pay-cheque-delete-${chequeIdOfPayment(p)}`} />
+                  </Row>
+                ) : canBank && !locked ? (
                   <Row>
                     <PrimaryButton title="Düzenle" onPress={() => openPaymentEdit(p)} color={colors.secondary} testID={`pay-edit-btn-${idOf(p)}`} />
                     <PrimaryButton title="Sil" onPress={() => removePayment(p)} color={colors.danger} testID={`pay-delete-btn-${idOf(p)}`} />

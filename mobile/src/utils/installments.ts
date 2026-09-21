@@ -119,11 +119,22 @@ export type ContactPayment = {
   account_name?: string;
   source?: string;
   virtual?: boolean;
+  cheque_id?: string;
 };
 
 /** Banka entegrasyonu, ortak ve çek kaynaklı hareketler kendi modülünden yönetilir. */
 export function isLockedPayment(p: ContactPayment): boolean {
   return p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || !!p.virtual;
+}
+
+export function isChequePayment(p: ContactPayment): boolean {
+  return p.source === "cheque" || !!p.virtual || !!p.cheque_id;
+}
+
+export function chequeIdOfPayment(p: ContactPayment): string {
+  if (p.cheque_id) return String(p.cheque_id);
+  const raw = String(p.id || p._id || "");
+  return raw.startsWith("cheque-virt-") ? raw.slice("cheque-virt-".length) : "";
 }
 
 export function lockedPaymentLabel(p: ContactPayment): string {

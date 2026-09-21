@@ -3525,6 +3525,7 @@ async def list_products(
         "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
         # üretim / stok uyarıları (maliyet geçmişi yok — hızlı liste)
         "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
+        "purchase_price": 1, "category": 1,
     } if lite else None
     limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
     if id_list and limit < 1:
@@ -4444,6 +4445,20 @@ async def product_purchase_costs(product_id: str, company_id: Optional[str] = No
         "last_purchase_price": hist[0]["unit_price"] if hist else None,
         "avg_purchase_price": round(sum(x["unit_price"] for x in hist) / len(hist), 4) if hist else None,
         "costs": hist,
+    }
+
+
+@api_router.get("/products/{product_id}/movements")
+async def list_product_movements(product_id: str, limit: int = 80):
+    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "purchase_price": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(max(1, min(int(limit or 80), 200)))
+    return {
+        "product_id": product_id,
+        "product_name": product.get("name"),
+        "purchase_price": product.get("purchase_price"),
+        "movements": clean_docs(rows),
     }
 
 

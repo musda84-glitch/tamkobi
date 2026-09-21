@@ -7,8 +7,8 @@ import { Chip } from "../components/chips";
 import { Badge, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import type { Contact, Invoice } from "../types";
-import { contactBalanceLabel, contactDisplayBalance, invoiceOpenByContact, type ContactBalanceFlag } from "../utils/contactDisplay";
+import type { Contact } from "../types";
+import { contactBalanceLabel, contactDisplayBalance, type ContactBalanceFlag } from "../utils/contactDisplay";
 import { CONTACT_LIST_CHIPS, filterContacts, type ContactBalanceFilter, type ContactTypeFilter } from "../utils/contactFilters";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -16,7 +16,6 @@ export function ContactsScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/contacts", "edit");
   const [rows, setRows] = useState<Contact[]>([]);
-  const [openById, setOpenById] = useState<Record<string, number>>({});
   const [flags, setFlags] = useState<Record<string, ContactBalanceFlag>>({});
   const [q, setQ] = useState("");
   const [typeF, setTypeF] = useState<ContactTypeFilter>("all");
@@ -30,30 +29,25 @@ export function ContactsScreen() {
       const data = await get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true });
       setRows(data || []);
       setError(null);
+      setRefreshing(false);
     } catch (err) {
       setError(apiErrorMessage(err, "Cariler yüklenemedi."));
       setRefreshing(false);
       return;
     }
     try {
-      const [invoiceRows, flagRows] = await Promise.all([
-        get<Invoice[]>(client, "/invoices", { company_id: companyId }).catch(() => []),
-        get<Record<string, ContactBalanceFlag>>(client, "/contacts/flags", { company_id: companyId }).catch(() => ({})),
-      ]);
-      setOpenById(invoiceOpenByContact(invoiceRows || []));
+      const flagRows = await get<Record<string, ContactBalanceFlag>>(client, "/contacts/flags", { company_id: companyId }).catch(() => ({}));
       setFlags(flagRows || {});
     } catch {
-      /* Kayıtlı bakiye listedeyse fatura/flag hatası cariyi gizlemesin. */
-    } finally {
-      setRefreshing(false);
+      /* Kayıtlı bakiye listedeyse flag hatası cariyi gizlemesin. */
     }
   }, [client, companyId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const amountOf = useCallback(
-    (c: Contact) => contactDisplayBalance(c, { open_amount: openById[idOf(c)] }, flags[idOf(c)]),
-    [flags, openById],
+    (c: Contact) => contactDisplayBalance(c, null, flags[idOf(c)]),
+    [flags],
   );
 
   const filtered = useMemo(

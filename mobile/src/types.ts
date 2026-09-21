@@ -226,6 +226,9 @@ export type Product = {
   images?: string[];
   category?: string;
   purchase_price?: number;
+  last_purchase_price?: number | null;
+  last_purchase_date?: string | null;
+  last_purchase_supplier?: string | null;
   purchase_vat_rate?: number;
   min_stock_alert?: number;
   show_in_b2b?: boolean;

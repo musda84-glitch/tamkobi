@@ -1,4 +1,4 @@
-import { filterProducts, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { filterProducts, lastPurchaseLabel, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -65,5 +65,11 @@ describe("productDisplay", () => {
     expect(filterProducts(rows, "", "Raf").map((p) => p.name)).toEqual(["A"]);
     expect(filterProducts(rows, "99", "all").map((p) => p.name)).toEqual(["B"]);
     expect(filterProducts(rows, "masa", "Masa").map((p) => p.name)).toEqual(["B"]);
+  });
+
+  it("shows last purchase from invoice then card cost", () => {
+    expect(lastPurchaseLabel({ last_purchase_price: 80, last_purchase_supplier: "Ahmet" }, (n) => `${n} ₺`)).toBe("Son alış 80 ₺ · Ahmet");
+    expect(lastPurchaseLabel({ purchase_price: 60 }, (n) => `${n} ₺`)).toBe("Son alış 60 ₺");
+    expect(lastPurchaseLabel({}, (n) => `${n} ₺`)).toBe("");
   });
 });

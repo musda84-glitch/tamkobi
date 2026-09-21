@@ -70,6 +70,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -130,7 +131,8 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       }));
     }
     if (kind === "project") {
-      const list = s ? projects.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : projects;
+      const pool = showCompleted ? projects : projects.filter((r) => r.status !== "completed");
+      const list = s ? pool.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : pool;
       return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, survey: undefined as SurveyDoc | undefined, project: r }));
     }
     const open = surveys.filter((r) => !isSurveyConverted(r));
@@ -144,7 +146,12 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       survey: r,
       project: undefined as ProjectDoc | undefined,
     }));
-  }, [kind, q, quotes, projects, surveys]);
+  }, [kind, q, quotes, projects, surveys, showCompleted]);
+
+  const completedProjectCount = useMemo(
+    () => (kind === "project" ? projects.filter((p) => p.status === "completed").length : 0),
+    [kind, projects],
+  );
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -152,9 +159,30 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
       ) : null}
       <Field label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />
+      {kind === "project" && completedProjectCount ? (
+        <>
+          <PrimaryButton
+            title={showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${completedProjectCount})`}
+            onPress={() => setShowCompleted((v) => !v)}
+            color={colors.secondary}
+            testID="toggle-completed-projects"
+          />
+          {!showCompleted ? (
+            <Muted testID="completed-projects-hint">{completedProjectCount} tamamlanan proje gizlendi.</Muted>
+          ) : null}
+        </>
+      ) : null}
       <ErrorBanner message={error} />
       {!filtered.length ? (
-        <Empty icon={meta.icon} title={meta.empty} hint={canEdit ? `${newButtonLabel(kind)} ile başlayın.` : undefined} />
+        <Empty
+          icon={meta.icon}
+          title={meta.empty}
+          hint={
+            kind === "project" && completedProjectCount && !showCompleted
+              ? "Açık proje yok — tamamlananları göstermek için üstteki düğmeyi kullanın."
+              : canEdit ? `${newButtonLabel(kind)} ile başlayın.` : undefined
+          }
+        />
       ) : kind === "project" ? filtered.map((r) => (
         <ProjectCard
           key={r.id}
