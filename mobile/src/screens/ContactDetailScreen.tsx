@@ -43,6 +43,7 @@ import {
 } from "../utils/installments";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import type { BankAccount } from "../utils/finance";
+import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
 type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string };
@@ -331,6 +332,25 @@ export function ContactDetailScreen() {
     } finally {
       setPayBusy(false);
     }
+  };
+
+  const removeOrder = (o: { order_number?: string; is_invoiced?: boolean; invoice_id?: string }) => {
+    if (!canOrder) { setError("Sipariş silme yetkiniz yok."); return; }
+    if (!canStaffDeleteOrder(o)) { setError("Faturalanmış sipariş silinemez."); return; }
+    confirmAction(
+      "Siparişi sil",
+      `${orderNumberLabel(o)} çöp kutusuna taşınsın mı?`,
+      async () => {
+        try {
+          await del(client, `/orders/${idOf(o)}`);
+          setMessage("Sipariş silindi.");
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "Silinemedi."));
+        }
+      },
+    );
   };
 
   const removePayment = (p: ContactPayment) => {
@@ -761,17 +781,33 @@ export function ContactDetailScreen() {
       ) : null}
 
       {tab === "orders" ? (
-        !orders.length ? <Muted>Sipariş yok.</Muted> : orders.map((o: any, idx: number) => (
-          <ListRow
-            key={idOf(o) || idx}
-            testID={`detail-ord-${idOf(o) || idx}`}
-            title={orderNumberLabel(o)}
-            leading={<ChannelLogo channel={o.channel} />}
-            subtitle={[statusTr(o.status), fmtDate(o.order_date || o.created_at)].filter(Boolean).join(" · ")}
-            right={fmtMoney(o.grand_total || o.total)}
-            onPress={() => go("OrderDetail", { id: idOf(o) })}
-          />
-        ))
+        !orders.length ? <Muted>Sipariş yok.</Muted> : orders.map((o: any, idx: number) => {
+          const oid = idOf(o) || String(idx);
+          const editable = canOrder && canStaffEditOrder(o);
+          const deletable = canOrder && canStaffDeleteOrder(o);
+          return (
+            <View key={oid} style={{ gap: 4 }}>
+              <ListRow
+                testID={`detail-ord-${oid}`}
+                title={orderNumberLabel(o)}
+                leading={<ChannelLogo channel={o.channel} />}
+                subtitle={[statusTr(orderStatusOf(o)), fmtDate(o.order_date || o.created_at)].filter(Boolean).join(" · ")}
+                right={fmtMoney(o.grand_total || o.total)}
+                onPress={() => go("OrderDetail", { id: idOf(o) })}
+              />
+              {editable || deletable ? (
+                <Row>
+                  {editable ? (
+                    <PrimaryButton title="Düzenle" onPress={() => go("OrderEdit", { id: idOf(o) })} color={colors.secondary} testID={`ord-edit-btn-${idOf(o)}`} />
+                  ) : null}
+                  {deletable ? (
+                    <PrimaryButton title="Sil" onPress={() => removeOrder(o)} color={colors.danger} testID={`ord-delete-btn-${idOf(o)}`} />
+                  ) : null}
+                </Row>
+              ) : null}
+            </View>
+          );
+        })
       ) : null}
 
       {tab === "quotes" ? (

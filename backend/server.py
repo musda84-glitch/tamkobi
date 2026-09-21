@@ -7382,6 +7382,84 @@ async def get_order(order_id: str):
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     return clean_doc(o)
 
+_MARKETPLACE_EDIT_BLOCK = {
+    "trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama",
+    "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek",
+}
+_ORDER_EDIT_LOCKED = {"cancelled", "returned", "delivered", "completed"}
+
+
+async def _staff_rebuild_order_items(company_id: str, raw_items: list) -> list:
+    rows = []
+    for it in raw_items or []:
+        d = _as_item_dict(it)
+        q = float(d.get("quantity") or 0)
+        if q <= 0:
+            continue
+        pid = d.get("product_id")
+        p = await db.products.find_one({"_id": pid, "company_id": company_id}) if pid else None
+        if p:
+            if not d.get("product_name"):
+                d["product_name"] = p.get("name")
+            if not d.get("sku"):
+                d["sku"] = p.get("sku") or ""
+            if not d.get("barcode"):
+                d["barcode"] = p.get("barcode") or ""
+            if not d.get("unit"):
+                d["unit"] = p.get("unit") or "Adet"
+            has_price = float(d.get("unit_price") or 0) or float(d.get("unit_price_incl") or 0)
+            if not has_price:
+                d["unit_price"] = float(p.get("sale_price") or 0)
+                if d.get("vat_rate") in (None, ""):
+                    d["vat_rate"] = p.get("vat_rate", 20)
+                d["price_includes_vat"] = bool(p.get("price_includes_vat"))
+            if "is_service" not in d:
+                d["is_service"] = p.get("type") == "service"
+        if not d.get("product_name"):
+            d["product_name"] = d.get("name") or "Kalem"
+        includes = bool(d.get("price_includes_vat"))
+        enrich_line(d, price_mode="incl" if includes else "excl", default_vat=float(d.get("vat_rate") or 0))
+        rows.append(d)
+    await _fill_stock_codes(company_id, rows)
+    return rows
+
+
+@api_router.put("/orders/{order_id}")
+async def update_order(order_id: str, req: Dict[str, Any]):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("is_invoiced") or o.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
+    status = str(o.get("order_status") or o.get("status") or "")
+    if status in _ORDER_EDIT_LOCKED:
+        raise HTTPException(status_code=400, detail="Bu sipariş düzenlenemez.")
+    marketplace = str(o.get("channel") or "").lower() in _MARKETPLACE_EDIT_BLOCK
+    if marketplace and "items" in req:
+        raise HTTPException(status_code=400, detail="Pazaryeri sipariş kalemleri düzenlenemez.")
+
+    update: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if "notes" in req:
+        update["notes"] = req.get("notes") or ""
+    if "customer_order_number" in req or "po_number" in req:
+        update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    if "items" in req:
+        rows = await _staff_rebuild_order_items(o.get("company_id"), req.get("items") or [])
+        if not rows:
+            raise HTTPException(status_code=400, detail="Siparişte en az bir ürün olmalı.")
+        subtotal, vat_total, discount_total, grand_total = order_document_totals(rows)
+        update.update({
+            "items": [it.model_dump() for it in _order_item_models(rows)],
+            "subtotal": subtotal,
+            "vat_total": vat_total,
+            "discount_total": discount_total,
+            "grand_total": grand_total,
+            "total_amount": grand_total if vat_total else subtotal,
+        })
+    await db.orders.update_one({"_id": order_id}, {"$set": update})
+    updated = await db.orders.find_one({"_id": order_id})
+    return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
+
 # 2026 yaklaşık parametreler (kullanıcı ayarlardan değiştirebilir)
 SALARY_PARAMS = {"sgk_employee": 0.14, "unemployment_employee": 0.01, "stamp_tax": 0.00759, "sgk_employer": 0.155, "unemployment_employer": 0.02,
                  "min_wage_gross": 26005.50, "tax_brackets": [(158000, 0.15), (330000, 0.20), (1200000, 0.27), (4300000, 0.35), (float("inf"), 0.40)]}

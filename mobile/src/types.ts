@@ -193,6 +193,9 @@ export type Order = {
   shipment_package_id?: string | number;
   external_id?: string | number;
   source?: string;
+  is_invoiced?: boolean;
+  invoice_id?: string;
+  status?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
     carrier?: string;

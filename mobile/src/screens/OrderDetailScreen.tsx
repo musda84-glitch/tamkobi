@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { get } from "../api/client";
@@ -42,7 +42,7 @@ export function OrderDetailScreen() {
       <Muted>{order.customer_name} · {fmtDate(order.order_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} />
+      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={statusTr(order.order_status)} tone="amber" />
