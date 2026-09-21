@@ -76,6 +76,13 @@ describe("pickerFileMeta and upload target", () => {
     });
     expect(imageUploadRequest("quote", "q1", "c1").query?.entity).toBe("quote");
     expect(imageUploadRequest("project", "p1", "c1").query?.entity).toBe("project");
+    expect(imageUploadRequest("project", "p1", "c1", { stage: "active", stage_label: "Devam Ediyor" }).query).toEqual({
+      entity: "project",
+      entity_id: "p1",
+      company_id: "c1",
+      stage: "active",
+      stage_label: "Devam Ediyor",
+    });
   });
 
   it("reads url from files/upload and product image responses", () => {

@@ -12,6 +12,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { DateField } from "../components/DateField";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
+import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
@@ -21,6 +22,8 @@ import type { Contact, Product } from "../types";
 import { VAT_OPTIONS } from "../utils/documentLines";
 import { go } from "../nav";
 import { coordText, mapsLink } from "../utils/geo";
+import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
+import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
@@ -135,6 +138,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
   const [project, setProject] = useState<ProjectDoc | null>(null);
+  const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
+  const [workPreview, setWorkPreview] = useState(false);
   const [survey, setSurvey] = useState<SurveyDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -203,6 +208,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
         setPhotos(p.images || []);
         setStatus(p.status || "planning");
+        const stages = await get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] }));
+        setProjectStages(normalizeProjectStages(stages?.stages));
         const expList = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] }));
         setProjectExpenses(expList.expenses || []);
       } else {
@@ -637,14 +644,28 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "quote" ? (
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
       ) : null}
-      <ImageUploader
-        entity={kind}
-        entityId={docId}
-        images={photos}
-        onUploaded={(url) => setPhotos((prev) => [...prev, url])}
-        editable={canEdit}
-        testID="work-photos"
-      />
+      {kind === "project" && project ? (
+        <ProjectStagePhotos
+          project={project}
+          stages={projectStages}
+          editable={canEdit}
+          onChanged={(patch: { stage_photos: StagePhoto[]; images: string[] }) => {
+            setProject((cur) => (cur ? { ...cur, ...patch } : cur));
+            setPhotos(patch.images);
+          }}
+          onPreview={() => setWorkPreview(true)}
+          testID="project-stage-photos"
+        />
+      ) : (
+        <ImageUploader
+          entity={kind}
+          entityId={docId}
+          images={photos}
+          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          editable={canEdit}
+          testID="work-photos"
+        />
+      )}
 
       <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       {isNew || kind !== "quote" ? (
@@ -735,6 +756,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           onPress={saveProjectExpense}
           testID="proj-exp-save"
         />
+      </B2BSheet>
+      <B2BSheet
+        visible={workPreview && !!project}
+        title="Yapılan işler"
+        subtitle={project ? `${project.contact_name || "Müşteri"} · takip linkinde böyle görünür` : undefined}
+        onClose={() => setWorkPreview(false)}
+        testID="project-work-preview-sheet"
+      >
+        {project ? <ProjectWorkPreview project={project} stages={projectStages} /> : null}
       </B2BSheet>
     </Screen>
   );

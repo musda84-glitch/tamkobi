@@ -4,6 +4,7 @@ import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
 import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
+import type { StagePhoto } from "./stagePhotos";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -78,6 +79,7 @@ export type ProjectDoc = {
   latitude?: number | null;
   longitude?: number | null;
   images?: string[];
+  stage_photos?: StagePhoto[];
   tasks?: ProjectTask[];
   tracking?: ProjectTracking;
 };
