@@ -59,19 +59,22 @@ def _ids_of(user: Dict[str, Any]) -> set[str]:
 
 
 def notification_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
-    """Admin sees everything. Others see notes for their role or addressed to them."""
+    """Şirket yöneticisi (personel kartı yok) her şeyi görür.
+    Personel kartı bağlıysa yalnız kendisine atanan veya rolüne düşen kayıt."""
     if not user:
         return True
-    if user.get("is_super_admin") or (user.get("role") or "").lower() == "admin":
-        return True
     role = (user.get("role") or "").lower()
+    staff = bool(user.get("employee_id"))
+    if user.get("is_super_admin") or (role == "admin" and not staff):
+        return True
     mine = _ids_of(user)
     target_user = str(note.get("user_id") or "")
     target_emp = str(note.get("employee_id") or "")
-    if target_user and target_user in mine:
-        return True
-    if target_emp and target_emp in mine:
-        return True
+    targeted = bool(target_user or target_emp)
+    if targeted:
+        return bool((target_user and target_user in mine) or (target_emp and target_emp in mine))
+    if role == "admin" and staff:
+        return False
     stored = note.get("roles")
     roles = list(stored) if stored is not None else roles_for_type(note.get("type") or "")
     if role and role in roles:

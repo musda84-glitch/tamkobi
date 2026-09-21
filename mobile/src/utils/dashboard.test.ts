@@ -1,4 +1,4 @@
-import { monthlySalesRow, netProfitRow, salesChangeText } from "./dashboard";
+import { monthlySalesRow, netProfitRow, salesChangeText, visibleHomeTasks } from "./dashboard";
 import { fmtMoney } from "./money";
 
 const overview = {
@@ -33,5 +33,15 @@ describe("dashboard", () => {
       value: fmtMoney(-250),
       hint: `Gider ${fmtMoney(900)}`,
     });
+  });
+
+  it("keeps company tasks for office admin and personal jobs for staff", () => {
+    const tasks = [
+      { key: "pick_missing", label: "Depo", count: 10, path: "/sevk" },
+      { key: "drafts", label: "Taslak", count: 3, path: "/invoices" },
+    ];
+    expect(visibleHomeTasks(tasks, { id: "a", email: "a", name: "A", role: "admin" }).map((t) => t.key)).toEqual(["pick_missing", "drafts"]);
+    expect(visibleHomeTasks(tasks, { id: "a", email: "a", name: "A", role: "admin", employee_id: "e1" }, { openTasks: 2, openWorkOrders: 1 }).map((t) => t.key)).toEqual(["my_tasks", "my_work_orders"]);
+    expect(visibleHomeTasks(tasks, { id: "w", email: "w", name: "W", role: "warehouse", employee_id: "e2" }).map((t) => t.key)).toEqual(["pick_missing"]);
   });
 });

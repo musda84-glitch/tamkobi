@@ -83,6 +83,7 @@ describe("visibleNotifications", () => {
     const user = { id: "u1", email: "w@x", name: "Ali", role: "warehouse" };
     expect(visibleNotifications(rows, user).map((n) => n.title)).toEqual(["depo", "görev", "rol"]);
     expect(visibleNotifications(rows, { ...user, role: "admin" })).toHaveLength(4);
+    expect(visibleNotifications(rows, { ...user, role: "admin", employee_id: "e1" }).map((n) => n.title)).toEqual(["görev", "rol"]);
   });
 });
 

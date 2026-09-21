@@ -26,6 +26,16 @@ def test_admin_sees_all():
     assert notification_visible(note, {"is_super_admin": True, "role": "sales"})
 
 
+def test_staff_admin_sees_only_assigned():
+    mine = {"type": "task_assigned", "title": "bana", "employee_id": "emp_1", "roles": []}
+    other = {"type": "task_assigned", "title": "başkasına", "employee_id": "emp_9", "roles": []}
+    broadcast = {"type": "order_pick_production", "title": "üretim"}
+    staff_admin = {"role": "admin", "id": "u1", "employee_id": "emp_1"}
+    assert notification_visible(mine, staff_admin)
+    assert not notification_visible(other, staff_admin)
+    assert not notification_visible(broadcast, staff_admin)
+
+
 def test_warehouse_sees_pick_missing_not_late():
     warehouse = {"role": "warehouse", "id": "u1"}
     assert notification_visible({"type": "order_pick_missing"}, warehouse)

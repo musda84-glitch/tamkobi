@@ -15,6 +15,8 @@ const TYPE_ROLES: Record<string, string[]> = {
   intraday_leave_request: ["admin", "manager", "accountant"],
   intraday_leave_decision: [],
   role_assigned: ["admin", "manager"],
+  task_assigned: [],
+  overtime_assigned: [],
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
   cash_approval: ["admin", "manager", "accountant"],
@@ -37,12 +39,17 @@ export function rolesForType(type?: string | null): string[] {
 export function visibleNotifications(rows: Notification[] | null | undefined, user?: User | null): Notification[] {
   const list = rows || [];
   if (!user) return list;
-  if (user.is_super_admin || user.role === "admin") return list;
-  const mine = new Set([user.id, user.employee_id].filter(Boolean).map(String));
   const role = (user.role || "").toLowerCase();
+  const staff = Boolean(user.employee_id);
+  if (user.is_super_admin || (role === "admin" && !staff)) return list;
+  const mine = new Set([user.id, user.employee_id].filter(Boolean).map(String));
   return list.filter((n) => {
-    if (n.user_id && mine.has(String(n.user_id))) return true;
-    if (n.employee_id && mine.has(String(n.employee_id))) return true;
+    const targetUser = n.user_id ? String(n.user_id) : "";
+    const targetEmp = n.employee_id ? String(n.employee_id) : "";
+    if (targetUser || targetEmp) {
+      return Boolean((targetUser && mine.has(targetUser)) || (targetEmp && mine.has(targetEmp)));
+    }
+    if (role === "admin" && staff) return false;
     const roles = n.roles != null ? n.roles : rolesForType(n.type);
     return !!role && roles.includes(role);
   });
