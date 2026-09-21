@@ -356,7 +356,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
-      <div className="bg-white w-full max-w-6xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
+      <div className="bg-white w-full max-w-[min(1680px,calc(100vw-2rem))] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
         <div className="px-6 py-4 border-b flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
             {c.logo_url ? <div className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden shrink-0" data-testid="detail-contact-logo"><img src={resolveImageUrl(c.logo_url)} alt="" className="w-full h-full object-contain" /></div> : null}
@@ -407,7 +407,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           )}
         </div>
 
-        <div className="flex items-center gap-1 px-6 border-b">
+        <div className="flex items-center gap-0.5 px-4 border-b overflow-x-auto shrink-0" data-testid="contact-detail-tabs">
           {TABS.map(([k, l, Icon]) => {
             const count = k === "invoices" ? data.invoices.length
               : k === "payments" ? data.payments.length
@@ -422,7 +422,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               : k === "comm" ? data.communications.length
               : 0;
             return (
-            <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
+            <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-2.5 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap shrink-0 ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
               <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({count})</span>
             </button>
             );
