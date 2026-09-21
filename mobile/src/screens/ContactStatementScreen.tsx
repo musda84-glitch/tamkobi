@@ -112,6 +112,7 @@ export function ContactStatementScreen() {
       <ActionTiles
         items={[
           { key: "share", label: "Paylaş", icon: "share-social", tone: "emerald", testID: "statement-share", onPress: share },
+          { key: "print", label: "Yazdır", icon: "print", tone: "indigo", testID: "statement-print", onPress: print },
           { key: "whatsapp", label: "WhatsApp", icon: "logo-whatsapp", tone: "emerald", testID: "statement-whatsapp", onPress: sendWhatsApp },
           {
             key: "email",
@@ -137,7 +138,6 @@ export function ContactStatementScreen() {
             },
           },
           { key: "copy", label: "Kopyala", icon: "copy", tone: "slate", testID: "statement-copy", onPress: copy },
-          { key: "print", label: "Yazdır", icon: "print", tone: "slate", testID: "statement-print", onPress: print },
         ]}
       />
       <Card testID="statement-table">
