@@ -13,6 +13,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import { statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { isCompletedProjectStatus, normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import type { Employee, ProjectTask } from "../utils/personnel";
 import {
   approvalChannels,
@@ -71,6 +72,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -79,8 +81,12 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         const rows = await get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, summary: 1 });
         setQuotes(rows || []);
       } else if (kind === "project") {
-        const rows = await get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 });
+        const [rows, stages] = await Promise.all([
+          get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 }),
+          get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] })),
+        ]);
         setProjects(rows || []);
+        setProjectStages(normalizeProjectStages(stages?.stages));
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
         setSurveys(rows || []);
@@ -131,7 +137,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       }));
     }
     if (kind === "project") {
-      const pool = showCompleted ? projects : projects.filter((r) => r.status !== "completed");
+      const pool = showCompleted ? projects : projects.filter((r) => !isCompletedProjectStatus(r.status, projectStages));
       const list = s ? pool.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : pool;
       return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, survey: undefined as SurveyDoc | undefined, project: r }));
     }
@@ -146,11 +152,11 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       survey: r,
       project: undefined as ProjectDoc | undefined,
     }));
-  }, [kind, q, quotes, projects, surveys, showCompleted]);
+  }, [kind, q, quotes, projects, surveys, showCompleted, projectStages]);
 
   const completedProjectCount = useMemo(
-    () => (kind === "project" ? projects.filter((p) => p.status === "completed").length : 0),
-    [kind, projects],
+    () => (kind === "project" ? projects.filter((p) => isCompletedProjectStatus(p.status, projectStages)).length : 0),
+    [kind, projects, projectStages],
   );
 
   return (
