@@ -1,4 +1,4 @@
-import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "./documentLines";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "./documentLines";
 
 test("computeLine fills dual unit prices and net/gross totals with discount", () => {
   const row = computeLine({
@@ -71,6 +71,28 @@ test("lineFromProduct treats sale_price as gross when price_includes_vat", () =>
   expect(sale.total_incl).toBeCloseTo(240);
   const buy = lineFromProduct(prod, { invoiceType: "purchase", quantity: 1 });
   expect(buy.unit_price).toBe(80);
+});
+
+test("two KDV dahil 260 lines at 10% total 520.00 not 519.99", () => {
+  const line = computeLine({ ...emptyLine(), quantity: 1, vat_rate: 10, unit_price_incl: 260 }, "unit_price_incl");
+  expect(line.unit_price).toBeCloseTo(236.3636, 4);
+  expect(line.total).toBe(236.36);
+  expect(line.vat_amount).toBe(23.64);
+  expect(line.total_incl).toBe(260);
+  const t = invoiceMoneyTotals([line, { ...line, name: "B" }]);
+  expect(t.subtotal).toBe(472.72);
+  expect(t.vat).toBe(47.28);
+  expect(t.grandTotal).toBe(520);
+});
+
+test("general discount still scales each line VAT to kuruş", () => {
+  const t = invoiceMoneyTotals([
+    { name: "A", quantity: 1, unit_price: 100, vat_rate: 20 },
+    { name: "B", quantity: 1, unit_price: 100, vat_rate: 10 },
+  ], { discountMode: "percent", generalDiscountRate: 10 });
+  expect(t.subtotal).toBe(180);
+  expect(t.vat).toBe(27);
+  expect(t.grandTotal).toBe(207);
 });
 
 test("documentLineTotals grandTotal equals subtotal + vat (rounded)", () => {

@@ -138,6 +138,12 @@ def enrich_items(
     return out
 
 
+def _line_vat_after_factor(item: Mapping[str, Any], factor: float) -> float:
+    """Genel iskonto oranını satır matrahına uygula, KDV'yi kuruşa yuvarla."""
+    base = round(_f(item.get("total")) * factor, 2)
+    return round(base * _f(item.get("vat_rate")) / 100.0, 2)
+
+
 def invoice_document_totals(
     items: Iterable[Mapping[str, Any]],
     general_discount_rate: Any = 0,
@@ -152,7 +158,9 @@ def invoice_document_totals(
     gd = round(min(max(gd, 0.0), items_sum), 2)
     factor = (items_sum - gd) / items_sum if items_sum else 1.0
     subtotal = round(items_sum - gd, 2)
-    vat_total = round(sum(_f(i.get("total")) * factor * _f(i.get("vat_rate")) / 100.0 for i in rows), 2)
+    # KDV'yi satır satır kuruşa yuvarla, sonra topla. Aksi halde
+    # 260 KDV dahil × 2 (%10) belgede 519,99 görünür (47,272 → 47,27).
+    vat_total = round(sum(_line_vat_after_factor(i, factor) for i in rows), 2)
     withholding = round(vat_total * _f(withholding_rate), 2)
     grand = round(subtotal + vat_total - withholding, 2)
     line_discount = round(
