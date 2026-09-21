@@ -227,11 +227,23 @@ async def tokens_for_users(db, user_ids: Iterable[str]) -> List[str]:
 
 
 async def tokens_for_company(db, company_id: Optional[str]) -> List[str]:
+    """Şirket cihazları: company_id eşleşen + o şirketteki kullanıcıların token'ları."""
     cid = str(company_id or "").strip()
     if not cid:
         return []
-    rows = await db.push_tokens.find({"company_id": cid}).to_list(400)
-    return [str(r.get("token") or "") for r in rows if is_expo_push_token(r.get("token"))]
+    users = await db.users.find({
+        "is_active": {"$ne": False},
+        "is_super_admin": {"$ne": True},
+        "$or": [{"active_company_id": cid}, {"company_ids": cid}],
+    }).to_list(300)
+    uids: List[str] = []
+    for user in users:
+        uids.extend(user_ids_of(user))
+    query: Dict[str, Any] = {"$or": [{"company_id": cid}]}
+    if uids:
+        query["$or"].append({"user_id": {"$in": uids}})
+    rows = await db.push_tokens.find(query).to_list(400)
+    return merge_push_tokens(r.get("token") for r in rows)
 
 
 def is_targeted_note(note: Optional[Dict[str, Any]]) -> bool:
@@ -260,6 +272,19 @@ def collect_dispatch_tokens(user_tokens: Iterable[str], company_tokens: Iterable
     return merge_push_tokens(user_tokens, company_tokens)
 
 
+UNREAD_PUSH_LIMIT = 12
+
+
+def pick_unread_for_push(
+    rows: Iterable[Dict[str, Any]],
+    user: Optional[Dict[str, Any]],
+    limit: int = UNREAD_PUSH_LIMIT,
+) -> List[Dict[str, Any]]:
+    """Ana ekranda görünen okunmamış kayıtlar — telefona bir kez iletilir."""
+    visible = [n for n in filter_notifications(rows or [], user) if not n.get("is_read")]
+    return visible[: max(0, int(limit or 0))]
+
+
 async def upsert_push_token(
     db,
     *,
@@ -274,22 +299,27 @@ async def upsert_push_token(
         raise ValueError("Geçerli bir Expo push token gerekli.")
     now = datetime.now(timezone.utc).isoformat()
     user_id = str(user_id or "").strip()
+    existing = await db.push_tokens.find_one({"token": token})
+    should_replay = not (existing or {}).get("replayed_at")
+    sets: Dict[str, Any] = {
+        "user_id": user_id,
+        "company_id": company_id,
+        "token": token,
+        "platform": (platform or "")[:20],
+        "device_id": (device_id or "")[:80],
+        "updated_at": now,
+    }
+    if should_replay:
+        sets["replayed_at"] = now
     await db.push_tokens.update_one(
         {"token": token},
         {
-            "$set": {
-                "user_id": user_id,
-                "company_id": company_id,
-                "token": token,
-                "platform": (platform or "")[:20],
-                "device_id": (device_id or "")[:80],
-                "updated_at": now,
-            },
+            "$set": sets,
             "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": now},
         },
         upsert=True,
     )
-    return {"status": "ok", "token": token}
+    return {"status": "ok", "token": token, "replay": should_replay}
 
 
 async def remove_push_token(db, token: str, user_id: Optional[str] = None) -> int:
@@ -340,6 +370,35 @@ async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[
         return 0
     r = await db.push_tokens.delete_many({"token": {"$in": doomed}})
     return int(getattr(r, "deleted_count", 0) or 0)
+
+
+async def replay_unread_to_token(
+    db,
+    *,
+    user: Optional[Dict[str, Any]],
+    company_id: str,
+    token: str,
+    limit: int = UNREAD_PUSH_LIMIT,
+) -> Dict[str, Any]:
+    """Kayıtlı telefon ilk kez bağlanınca, paneldeki okunmamışları da push et."""
+    if not is_expo_push_token(token) or not company_id:
+        return {"sent": 0}
+    rows = await db.notifications.find({
+        "company_id": company_id,
+        "is_read": {"$ne": True},
+    }).sort("created_at", -1).to_list(80)
+    notes = pick_unread_for_push(rows, user, limit=limit)
+    messages: List[Dict[str, Any]] = []
+    for note in notes:
+        messages.extend(expo_push_messages([token], note))
+    if not messages:
+        return {"sent": 0, "count": 0}
+    result = await send_expo_push(messages)
+    try:
+        await drop_invalid_push_tokens(db, [m["to"] for m in messages], result.get("tickets") or [])
+    except Exception:
+        logger.exception("invalid push token cleanup failed")
+    return {"sent": int(result.get("sent") or 0), "count": len(notes)}
 
 
 async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:

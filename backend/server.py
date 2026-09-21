@@ -1358,14 +1358,21 @@ async def register_push_token(req: Dict[str, Any], request: Request, user: dict 
     import notify as _notify
     token = str(req.get("token") or "").strip()
     try:
-        return await _notify.upsert_push_token(
+        company_id = str(user.get("active_company_id") or req.get("company_id") or "")
+        out = await _notify.upsert_push_token(
             db,
             user_id=str(user.get("id") or user.get("_id") or ""),
-            company_id=str(user.get("active_company_id") or req.get("company_id") or ""),
+            company_id=company_id,
             token=token,
             platform=str(req.get("platform") or ""),
             device_id=str(req.get("device_id") or ""),
         )
+        if out.get("replay"):
+            replay = await _notify.replay_unread_to_token(
+                db, user=user, company_id=company_id, token=token,
+            )
+            out["replayed"] = replay.get("sent") or 0
+        return out
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
 
