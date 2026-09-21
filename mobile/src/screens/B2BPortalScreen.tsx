@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, Linking, Platform, Pressable, Share, Text, TextInput, View } from "react-native";
+import { Image, Platform, Pressable, Share, Text, TextInput, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
@@ -499,11 +499,6 @@ export function B2BPortalScreen() {
             onCart={() => setCartOpen(true)}
             onMenu={() => setMenuOpen(true)}
           />
-          {data?.company?.phone ? (
-            <Pressable onPress={() => Linking.openURL(`tel:${data.company.phone}`)}>
-              <Muted>{data.company.phone}</Muted>
-            </Pressable>
-          ) : null}
           {message ? (
             <View
               testID="b2b-flash-message"
