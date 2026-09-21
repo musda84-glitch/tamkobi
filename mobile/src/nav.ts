@@ -41,6 +41,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/orders");
     case "OrderDetail":
       return router.push({ pathname: "/orders/[id]", params: { id: String(params?.id || "") } });
+    case "OrderEdit":
+      return router.push({ pathname: "/orders/edit/[id]", params: { id: String(params?.id || "") } });
     case "Settings":
       return router.push("/settings");
     case "Mesai":
