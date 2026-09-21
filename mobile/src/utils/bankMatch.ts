@@ -25,6 +25,7 @@ export type BankConnection = {
   last_synced_at?: string;
   synced_count?: number;
   last_error?: string;
+  auto_sync?: boolean;
   auto_match?: boolean;
   auto_matched_count?: number;
 };

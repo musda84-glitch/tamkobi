@@ -117,6 +117,14 @@ export function BankingMatchPanel({
     setMessage(`${(r?.results || []).length} bağlantı senkronize edildi.`);
   });
 
+  const toggleAutoSync = (c: BankConnection) => run(`sync-toggle-${idOf(c)}`, async () => {
+    const turningOn = c.auto_sync === false;
+    await put(client, `/banking/connections/${idOf(c)}`, { auto_sync: turningOn });
+    setMessage(turningOn
+      ? "Arka plan senkronu açık: sunucu her 10 dakikada hareketleri çeker."
+      : "Arka plan senkronu kapalı: yalnızca manuel çekim çalışır.");
+  });
+
   const toggleAuto = (c: BankConnection) => run(`auto-${idOf(c)}`, async () => {
     const r = await put<{ message?: string }>(client, `/banking/connections/${idOf(c)}`, { auto_match: !c.auto_match });
     setMessage(!c.auto_match
@@ -209,7 +217,7 @@ export function BankingMatchPanel({
       <Card>
         <Muted>Bağlı bankalar</Muted>
         <Text style={{ fontWeight: "800", color: colors.text }}>Hareketleri çekip cari / fatura / kasa ile eşleştirin</Text>
-        <Muted>Banka bağlama ve API anahtarları web’den yönetilir. Burada senkron ve eşleşme yapılır.</Muted>
+        <Muted>Kimlik bilgisi olan bağlantılar sunucuda her 10 dakikada arka planda çekilir. Banka bağlama ve API anahtarları web’den yönetilir.</Muted>
       </Card>
 
       {tiles.length ? <ActionTiles items={tiles as never} /> : null}
@@ -229,6 +237,25 @@ export function BankingMatchPanel({
             </Row>
             <Muted>Son senk: {c.last_synced_at ? fmtDate(c.last_synced_at) : "—"} · çekilen {c.synced_count || 0}</Muted>
             {c.last_error ? <Text style={{ color: colors.danger, fontSize: 12 }}>{c.last_error}</Text> : null}
+            {canEdit ? (
+              <Pressable
+                testID={`auto-sync-toggle-${id}`}
+                onPress={() => toggleAutoSync(c)}
+                style={{
+                  marginTop: 4,
+                  padding: 10,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: c.auto_sync === false ? colors.border : "#7DD3FC",
+                  backgroundColor: c.auto_sync === false ? colors.slate50 : "#F0F9FF",
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: c.auto_sync === false ? colors.text : "#075985" }}>
+                  Arka plan senkron {c.auto_sync === false ? "kapalı" : "açık"}
+                </Text>
+                <Muted>Kimlik bilgisi varsa her 10 dakikada otomatik çekilir</Muted>
+              </Pressable>
+            ) : null}
             {canEdit ? (
               <Pressable
                 testID={`auto-match-toggle-${id}`}
