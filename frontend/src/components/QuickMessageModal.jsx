@@ -49,7 +49,15 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
     } finally { setSending(false); }
   };
 
-  useEffect(() => { const esc = (e) => e.key === "Escape" && onClose(); document.addEventListener("keydown", esc); return () => document.removeEventListener("keydown", esc); }, [onClose]);
+  useEffect(() => {
+    const esc = (e) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", esc, true);
+    return () => document.removeEventListener("keydown", esc, true);
+  }, [onClose]);
   const smsCount = Math.ceil(message.length / (/[çğıöşüÇĞİÖŞÜ]/.test(message) ? 70 : 160)) || 1;
 
   return (
