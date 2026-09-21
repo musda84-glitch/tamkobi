@@ -13,6 +13,7 @@ import {
   CHEQUE_INSTRUMENTS,
   applyChequePrefill,
   chequeAction,
+  chequeReturnContact,
   chequeLedgerLocked,
   chequePayload,
   chequeReceiptLabel,
@@ -91,7 +92,12 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
     try {
       if (isNew) {
         await post(client, "/cheques", chequePayload(draft, companyId));
-        router.back();
+        const back = chequeReturnContact(prefill);
+        if (back) {
+          router.replace({ pathname: "/contacts/[id]", params: { id: back.id, name: back.name } });
+        } else {
+          router.back();
+        }
         return;
       }
       const saved = await put<Cheque>(client, `/cheques/${chequeId}`, chequePayload(draft, companyId));
