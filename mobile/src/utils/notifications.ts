@@ -92,16 +92,34 @@ export function tileBadgeLabel(...counts: Array<number | null | undefined>): str
   return n > 99 ? "99+" : String(n);
 }
 
-/** Canlı bekleyen iş + okunmamış bildirim; çift saymamak için max alınır. */
+export const LIVE_TILE_KEYS = ["orders", "sevk", "personnel", "banking", "atolye", "edoc"] as const;
+
+/** GET /dashboard/tile-badges gövdesinden kutucuk sayıları. */
+export function liveBadgeCounts(data?: Record<string, unknown> | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of LIVE_TILE_KEYS) {
+    out[key] = Math.max(0, Math.floor(Number(data?.[key]) || 0));
+  }
+  return out;
+}
+
+export function unreadFromBadges(data?: Record<string, unknown> | null): number {
+  return Math.max(0, Math.floor(Number(data?.unread) || 0));
+}
+
+/** Canlı sayı varsa o kullanılır (0 rozeti gizler). Yoksa okunmamış bildirime düşülür. */
 export function tileBadges(
   notes: Notification[] | null | undefined,
   live?: Partial<Record<string, number>> | null,
 ): Record<string, string> {
   const unread = unreadByTile(notes);
+  const liveMap = live || {};
   const badges: Record<string, string> = {};
-  const keys = new Set([...Object.keys(TILE_NOTIFICATION_TYPES), ...Object.keys(live || {})]);
+  const keys = new Set([...Object.keys(TILE_NOTIFICATION_TYPES), ...Object.keys(liveMap)]);
   for (const tile of keys) {
-    const label = tileBadgeLabel(unread[tile], live?.[tile]);
+    const hasLive = Object.prototype.hasOwnProperty.call(liveMap, tile);
+    const count = hasLive ? Number(liveMap[tile]) || 0 : unread[tile];
+    const label = tileBadgeLabel(count);
     if (label) badges[tile] = label;
   }
   return badges;

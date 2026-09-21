@@ -80,3 +80,4 @@ def test_expo_push_token_and_payload():
     assert msgs[0]["title"] == "Yeni sipariş"
     assert msgs[0]["data"]["link"] == "/orders"
     assert msgs[0]["channelId"] == "tamkobi"
+    assert msgs[0]["badge"] == 1

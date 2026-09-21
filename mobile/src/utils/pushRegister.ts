@@ -28,6 +28,16 @@ async function nativeNotifications() {
   }
 }
 
+export async function setAppIconBadge(count: number): Promise<void> {
+  const Notifications = await nativeNotifications();
+  if (!Notifications?.setBadgeCountAsync) return;
+  try {
+    await Notifications.setBadgeCountAsync(Math.max(0, Math.floor(Number(count) || 0)));
+  } catch {
+    /* web / izin yok */
+  }
+}
+
 export async function enablePushHandler(): Promise<void> {
   const Notifications = await nativeNotifications();
   if (!Notifications?.setNotificationHandler) return;

@@ -119,9 +119,11 @@ describe("leave helpers", () => {
 
 describe("overtime assign", () => {
   it("requires a positive hour amount and ISO date", () => {
-    expect(validateOvertime("")).toBe("Mesai saati girin.");
+    expect(validateOvertime("")).toBe("Mesai saati veya saat aralığı girin.");
     expect(validateOvertime("0")).toBe("Mesai saati 0'dan büyük olmalı.");
     expect(validateOvertime("2,5")).toBeNull();
+    expect(validateOvertime("", "18:00", "20:30")).toBeNull();
+    expect(validateOvertime("", "18:00", "")).toBe("Saat aralığını başlangıç ve bitiş olarak girin.");
     expect(validateIsoDate("19.09.2026")).toBe("Tarih YYYY-AA-GG formatında olmalı.");
     expect(validateIsoDate("2026-09-19")).toBeNull();
     expect(overtimePayload("e1", "2026-09-19", "2,5", " keşif ")).toEqual({
@@ -129,6 +131,14 @@ describe("overtime assign", () => {
       date: "2026-09-19",
       hours: 2.5,
       note: "keşif",
+    });
+    expect(overtimePayload("e1", "2026-09-19", "", "", "18:00", "20:30")).toEqual({
+      employee_id: "e1",
+      date: "2026-09-19",
+      hours: 2.5,
+      note: "",
+      start_time: "18:00",
+      end_time: "20:30",
     });
   });
 });

@@ -61,7 +61,7 @@ export function SettingsScreen() {
         <Text style={{ fontWeight: "800", color: colors.text }}>Telefon bildirimleri</Text>
         <Muted>
           {pushStatus === "ok"
-            ? "Bu cihazda açık. Sipariş, izin, kasa onayı ve benzeri olaylar bildirim olarak gelir."
+            ? "Bu cihazda açık. Sipariş, izin, kasa onayı gibi olaylar anında gelir; uygulama ikonu ve ana ekran rozetleri canlı bekleyen işi gösterir."
             : pushStatus === "web"
               ? "Tarayıcıda uzak bildirim yok; Android / iOS uygulamasında açılır."
               : pushStatus === "denied"

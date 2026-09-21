@@ -5,7 +5,9 @@ import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip } from "../components/chips";
+import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { TimeField } from "../components/TimeField";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
@@ -46,6 +48,7 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { hoursFromTimeRange, hoursToHm } from "../utils/overtimeRange";
 
 type Tab = "payroll" | "attendance" | "leaves" | "salary";
 
@@ -76,6 +79,8 @@ export function PersonnelScreen() {
   const [calc, setCalc] = useState<SalaryCalc | null>(null);
   const [otEmp, setOtEmp] = useState<Employee | null>(null);
   const [otHours, setOtHours] = useState("");
+  const [otStart, setOtStart] = useState("");
+  const [otEnd, setOtEnd] = useState("");
   const [otDate, setOtDate] = useState(todayIso());
   const [otNote, setOtNote] = useState("");
   const [taskEmp, setTaskEmp] = useState<Employee | null>(null);
@@ -179,17 +184,19 @@ export function PersonnelScreen() {
   const openOvertime = (emp: Employee) => {
     setOtEmp(emp);
     setOtHours("");
+    setOtStart("");
+    setOtEnd("");
     setOtDate(todayIso());
     setOtNote("");
   };
 
   const saveOvertime = async () => {
     if (!otEmp) return;
-    const invalid = validateOvertime(otHours) || validateIsoDate(otDate);
+    const invalid = validateOvertime(otHours, otStart, otEnd) || validateIsoDate(otDate);
     if (invalid) { setError(invalid); return; }
     setBusy(true);
     try {
-      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote));
+      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote, otStart, otEnd));
       setOtEmp(null);
       setMessage(r?.message || `${otEmp.full_name} için fazla mesai yazıldı.`);
       await load();
@@ -585,8 +592,31 @@ export function PersonnelScreen() {
         onClose={() => setOtEmp(null)}
         testID="overtime-assign-sheet"
       >
-        <Field label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} placeholder="YYYY-MM-DD" />
-        <Field label="Saat" testID="ot-hours-input" value={otHours} onChangeText={setOtHours} keyboardType="numeric" placeholder="Örn: 2" />
+        <DateField label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} />
+        <TimeField label="Başlangıç" testID="ot-start-input" value={otStart} onChangeText={(v) => {
+          setOtStart(v);
+          const hrs = hoursFromTimeRange(v, otEnd);
+          if (hrs != null) setOtHours(String(hrs));
+        }} />
+        <TimeField label="Bitiş" testID="ot-end-input" value={otEnd} onChangeText={(v) => {
+          setOtEnd(v);
+          const hrs = hoursFromTimeRange(otStart, v);
+          if (hrs != null) setOtHours(String(hrs));
+        }} />
+        <TimeField
+          label="Toplam saat"
+          testID="ot-hours-input"
+          value={hoursToHm(otHours)}
+          onChangeText={(v) => {
+            const hrs = hoursFromTimeRange("00:00", v);
+            setOtHours(hrs != null ? String(hrs) : v);
+          }}
+        />
+        <Muted>
+          {hoursFromTimeRange(otStart, otEnd) != null
+            ? `Aralık ${otStart} – ${otEnd} · ${hoursFromTimeRange(otStart, otEnd)} sa`
+            : "Saat aralığı seçin veya toplam saati saat seçiciden girin."}
+        </Muted>
         <Field label="Not" testID="ot-note-input" value={otNote} onChangeText={setOtNote} placeholder="Opsiyonel" />
         <PrimaryButton title="Mesaiyi kaydet" testID="ot-save-btn" color={colors.indigo} loading={busy} onPress={saveOvertime} />
       </B2BSheet>

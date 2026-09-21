@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { useAuth } from "../auth/AuthContext";
+import { useBadges } from "../auth/BadgeContext";
 import { goHref } from "../nav";
 import { notificationHref } from "../utils/push";
 import { enablePushHandler, registerDevicePush } from "../utils/pushRegister";
@@ -8,6 +9,7 @@ import { enablePushHandler, registerDevicePush } from "../utils/pushRegister";
 /** Girişli oturumda Expo token kaydı + bildirime dokununca ilgili ekranı açar. */
 export function PushBridge() {
   const { client, user, token, sessionKind } = useAuth();
+  const { refresh } = useBadges();
   const lastId = useRef("");
 
   useEffect(() => {
@@ -30,16 +32,22 @@ export function PushBridge() {
           if (id) lastId.current = id;
           goHref(notificationHref(data));
         };
-        const sub = Notifications.addNotificationResponseReceivedListener(open);
+        const tap = Notifications.addNotificationResponseReceivedListener(open);
+        const received = Notifications.addNotificationReceivedListener(() => {
+          refresh();
+        });
         const last = await Notifications.getLastNotificationResponseAsync();
         open(last);
-        remove = () => sub.remove();
+        remove = () => {
+          tap.remove();
+          received.remove();
+        };
       } catch {
         /* web / tests */
       }
     })();
     return () => remove();
-  }, [client, sessionKind, token, user]);
+  }, [client, refresh, sessionKind, token, user]);
 
   return null;
 }

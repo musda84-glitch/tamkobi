@@ -1,4 +1,5 @@
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
+import { BadgeProvider } from "@/auth/BadgeContext";
 import { PushBridge } from "@/components/PushBridge";
 import { colors } from "@/theme";
 import { Stack } from "expo-router";
@@ -85,9 +86,11 @@ function RootStack() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <StatusBar style="auto" />
-      <PushBridge />
-      <RootStack />
+      <BadgeProvider>
+        <StatusBar style="auto" />
+        <PushBridge />
+        <RootStack />
+      </BadgeProvider>
     </AuthProvider>
   );
 }
