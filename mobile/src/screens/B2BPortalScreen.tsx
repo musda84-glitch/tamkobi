@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Linking, Platform, Pressable, Share, Text, TextInput, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -14,7 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, cartCount, formatOrderItemLabel, parseStoredCart, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { addCartLine, cartCount, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
 import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
 import {
   addEditProduct,
@@ -54,6 +54,8 @@ function CatalogTile({
   allowOrders,
   qty,
   note,
+  inCart,
+  added,
   onQty,
   onNote,
   onAdd,
@@ -65,6 +67,8 @@ function CatalogTile({
   allowOrders: boolean;
   qty: string;
   note: string;
+  inCart: number;
+  added: boolean;
   onQty: (v: string) => void;
   onNote: (v: string) => void;
   onAdd: () => void;
@@ -90,6 +94,26 @@ function CatalogTile({
         ) : (
           <Ionicons name="cube-outline" size={28} color={colors.muted} />
         )}
+        {inCart > 0 ? (
+          <View
+            testID={`b2b-in-cart-${p.id}`}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 3,
+              minHeight: 22,
+              paddingHorizontal: 6,
+              borderRadius: 999,
+              backgroundColor: added ? colors.primaryHover : colors.primary,
+            }}
+          >
+            <Ionicons name="checkmark" size={12} color="#fff" />
+            <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{inCart}</Text>
+          </View>
+        ) : null}
       </View>
       <View style={{ minWidth: 0, flex: 1 }}>
         <Text numberOfLines={2} style={{ fontWeight: "800", fontSize: 12, lineHeight: 16, color: colors.text }}>{p.name}</Text>
@@ -152,9 +176,25 @@ function CatalogTile({
                 style={{ textAlign: "center", fontWeight: "900", fontSize: 14, color: colors.text, paddingVertical: 2 }}
               />
             </View>
-            <View style={{ flex: 1 }}>
-              <PrimaryButton title="Ekle" onPress={onAdd} disabled={!addOk} color={colors.primary} testID={`b2b-add-${p.id}`} />
-            </View>
+            <Pressable
+              testID={`b2b-add-${p.id}`}
+              onPress={onAdd}
+              disabled={!addOk}
+              style={{
+                flex: 1,
+                minHeight: 44,
+                borderRadius: 12,
+                backgroundColor: added ? colors.primaryHover : colors.primary,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
+                opacity: addOk ? 1 : 0.5,
+              }}
+            >
+              <Ionicons name={added ? "checkmark-circle" : "cart-outline"} size={16} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{added ? "Eklendi" : "Ekle"}</Text>
+            </Pressable>
           </Row>
         </View>
       ) : null}
@@ -224,6 +264,8 @@ export function B2BPortalScreen() {
   const [legal, setLegal] = useState<{ title: string; text: string } | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [addedId, setAddedId] = useState<string | null>(null);
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     if (!b2bToken) return;
@@ -284,8 +326,15 @@ export function B2BPortalScreen() {
     if (!canAddProduct(p, showStock, allowOrders)) return;
     const qty = parseDraftQty(draftQty[p.id]);
     setCart((c) => addCartLine(c, p.id, qty, draftNotes[p.id] || ""));
+    setAddedId(p.id);
+    if (addedTimer.current) clearTimeout(addedTimer.current);
+    addedTimer.current = setTimeout(() => setAddedId(null), 1600);
     setMessage(`${p.name} sepete eklendi (${qty})`);
   };
+
+  useEffect(() => () => {
+    if (addedTimer.current) clearTimeout(addedTimer.current);
+  }, []);
 
   const submitOrder = async () => {
     if (!allowOrders || !b2bToken) return;
@@ -435,6 +484,7 @@ export function B2BPortalScreen() {
           company={data?.company?.name}
           contact={data?.contact?.name || b2bName}
           count={count}
+          ping={!!addedId}
           allowOrders={allowOrders}
           onCart={() => setCartOpen(true)}
           onMenu={() => setMenuOpen(true)}
@@ -544,6 +594,8 @@ export function B2BPortalScreen() {
                       allowOrders={allowOrders}
                       qty={draftQty[p.id] ?? "1"}
                       note={draftNotes[p.id] || ""}
+                      inCart={productCartQty(cart, p.id)}
+                      added={addedId === p.id}
                       onQty={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v }))}
                       onNote={(v) => setDraftNotes((n) => ({ ...n, [p.id]: v }))}
                       onAdd={() => addProduct(p)}
