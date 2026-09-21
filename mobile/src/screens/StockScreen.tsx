@@ -164,7 +164,6 @@ export function StockScreen() {
           const badge = stockBadge(p);
           const qty = stockQtyLabel(p);
           const qtyTone = badge?.tone === "danger" ? "red" : badge?.tone === "warning" ? "amber" : "green";
-          const lastBuy = lastPurchaseLabel(p, fmtMoney);
           const name = listRowText(p.name);
           return (
             <View key={idOf(p) || name} style={{ gap: 4 }}>
@@ -175,8 +174,6 @@ export function StockScreen() {
                 titleLines={2}
                 subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))].filter(Boolean).join(" · ")}
                 right={stockRightLabel(p)}
-                rightSub={lastBuy || undefined}
-                rightSubColor={colors.muted}
                 rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
                 rightTestID={`stock-qty-${idOf(p)}`}
                 onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name }) : undefined}
