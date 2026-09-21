@@ -3532,18 +3532,8 @@ async def list_products(
         return []
     products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
     if lite:
-        last = await _last_buys_by_product(company_id) if products else {}
-        out = []
-        for p in products:
-            d = clean_doc(p)
-            buy = last.get(p.get("_id") or d.get("id")) or {}
-            price = buy.get("unit_price")
-            if price:
-                d["last_purchase_price"] = price
-                d["last_purchase_supplier"] = buy.get("contact_name") or None
-                d["last_purchase_date"] = buy.get("issue_date") or None
-            out.append(d)
-        return out
+        # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
+        return [clean_doc(p) for p in products]
     cost_map = await _purchase_costs_by_product(company_id) if products else {}
     return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
 

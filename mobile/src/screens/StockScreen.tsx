@@ -13,6 +13,8 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import type { Product } from "../types";
 import { productTypeTr } from "../utils/labels";
+import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from "../utils/listCache";
+import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { filterProducts, lastPurchaseLabel, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
 
@@ -33,30 +35,45 @@ export function StockScreen() {
   const [movesFor, setMovesFor] = useState<Product | null>(null);
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [movesBusy, setMovesBusy] = useState(false);
+  const [shown, setShown] = useState(LIST_INITIAL_ROWS);
 
   useEffect(() => {
     const flag = Array.isArray(params.scan) ? params.scan[0] : params.scan;
     if (flag === "1" || flag === "true") setScan(true);
   }, [params.scan]);
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
+  useEffect(() => {
+    const mem = peekCachedRows<Product>("products", companyId);
+    if (mem?.rows?.length) setRows(mem.rows);
+    readCachedRows<Product>("products", companyId).then((cached) => {
+      if (cached?.rows?.length) setRows(cached.rows);
+    });
+  }, [companyId]);
+
+  const load = useCallback(async (force = false) => {
+    const cached = peekCachedRows<Product>("products", companyId) || await readCachedRows<Product>("products", companyId);
+    if (cached?.rows?.length) setRows(cached.rows);
+    if (!force && cacheIsFresh(cached?.savedAt) && cached?.rows?.length) return;
+    const waitForFirst = !cached?.rows?.length;
+    if (force || waitForFirst) setRefreshing(true);
     try {
       const [data, catRows] = await Promise.all([
         get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         get<ProductCategory[]>(client, "/products/categories", { company_id: companyId }).catch(() => []),
       ]);
-      setRows(data || []);
+      const next = data || [];
+      setRows(next);
       setCats(catRows || []);
+      await writeCachedRows("products", companyId, next);
       setError(null);
     } catch (err) {
-      setError(apiErrorMessage(err, "Stok yüklenemedi."));
+      if (!cached?.rows?.length) setError(apiErrorMessage(err, "Stok yüklenemedi."));
     } finally {
       setRefreshing(false);
     }
   }, [client, companyId]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { load(false); }, [load]));
 
   const lookup = async (code: string) => {
     try {
@@ -99,18 +116,25 @@ export function StockScreen() {
 
   const catGroups = useMemo(() => productCategoryGroups(cats, rows), [cats, rows]);
 
-  const filtered = useMemo(() => {
+  const matched = useMemo(() => {
     if (hit) return [hit];
-    return filterProducts(rows, q, cat, 100);
+    return filterProducts(rows, q, cat, 5000);
   }, [cat, hit, q, rows]);
 
+  const filtered = useMemo(() => visibleRows(matched, shown), [matched, shown]);
+  const hasMore = !hit && shown < matched.length;
+
+  useEffect(() => {
+    setShown(LIST_INITIAL_ROWS);
+  }, [cat, q, hit]);
+
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
       <ActionTiles
         items={[
           ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
           { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
-          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: load },
+          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
         ]}
         columns={3}
       />
@@ -149,6 +173,16 @@ export function StockScreen() {
           </View>
         );
       })}
+      {hasMore ? (
+        <PrimaryButton
+          title={`Daha fazla göster (${filtered.length} / ${matched.length})`}
+          onPress={() => setShown((n) => nextRowLimit(n, matched.length))}
+          color={colors.secondary}
+          testID="stock-load-more"
+        />
+      ) : matched.length > LIST_INITIAL_ROWS ? (
+        <Muted testID="stock-list-count">{matched.length} ürün</Muted>
+      ) : null}
       <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookup} />
       <B2BSheet
         visible={!!movesFor}
