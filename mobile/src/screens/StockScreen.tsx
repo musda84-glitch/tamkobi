@@ -170,7 +170,7 @@ export function StockScreen() {
             <View key={idOf(p) || name} style={{ gap: 4 }}>
               <ListRow
                 testID={`stock-row-${idOf(p)}`}
-                leading={<ProductThumb uri={productImage(p)} />}
+                leading={<ProductThumb uri={p.thumbnail_url || productImage(p)} />}
                 title={name}
                 titleLines={2}
                 subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))].filter(Boolean).join(" · ")}

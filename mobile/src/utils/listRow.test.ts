@@ -10,6 +10,7 @@ describe("listRowText", () => {
 
   it("does not dump objects into a raw RN text node", () => {
     expect(listRowText({ name: "Masa" })).toBe("Masa");
-    expect(listRowText({ tr: "Raf" })).toBe("");
+    expect(listRowText({ tr: "Raf" })).toBe("Raf");
+    expect(listRowText({ title: "Koli" })).toBe("Koli");
   });
 });
