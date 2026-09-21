@@ -91,8 +91,9 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
           ? [...(byStage.other || []), ...loose.map((url) => ({ url, loose: true }))]
           : (byStage[stage.key] || []);
         return (
-          <div key={stage.key} className="flex items-center gap-1.5 flex-wrap" data-testid={`project-stage-row-${number}-${stage.key}`}>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${stage.key === project.status ? "bg-emerald-100 text-emerald-800" : "bg-white text-slate-500 border border-slate-200"}`}>{stage.label}</span>
+          <div key={stage.key} className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-1.5" data-testid={`project-stage-row-${number}-${stage.key}`}>
+            <span title={stage.label} className={`h-10 flex items-center whitespace-nowrap text-[10px] font-semibold px-1.5 rounded ${stage.key === project.status ? "bg-emerald-100 text-emerald-800" : "bg-white text-slate-500 border border-slate-200"}`}>{stage.label}</span>
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             {items.map((item) => (
               <span key={item.url} className="relative inline-flex">
                 <HoverImageThumb src={item.url} className="w-10 h-10 rounded-lg object-cover border bg-white" testId={`project-stage-thumb-${number}`} />
@@ -105,6 +106,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
               {busy === stage.key ? <span className="text-[9px]">…</span> : <ImagePlus className="w-4 h-4" />}
               <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={!!busy} onChange={(e) => upload(stage, e)} data-testid={`project-stage-upload-${number}-${stage.key}`} />
             </label>
+            </div>
           </div>
         );
       })}
