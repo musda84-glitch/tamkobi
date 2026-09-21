@@ -3369,6 +3369,43 @@ async def record_contact_payment(contact_id: str, req: Dict[str, Any]):
     await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount if tx_type == "inflow" else amount}})
     return {"status": "success", "via": "partner", "account_name": name}
 
+@api_router.post("/contacts/{contact_id}/ledger-slip")
+async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
+    """Borç / alacak fişi — kasa veya banka hareketi olmadan cari bakiyesini düzeltir."""
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    amount = round(float(req.get("amount") or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    kind = str(req.get("kind") or req.get("slip") or "debit").strip().lower()
+    if kind not in ("debit", "credit", "borc", "alacak"):
+        raise HTTPException(status_code=400, detail="Fiş türü borç veya alacak olmalı.")
+    is_debit = kind in ("debit", "borc")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    description = (req.get("description") or ("Borç fişi" if is_debit else "Alacak fişi")).strip()
+    # Borç fişi cari borcunu artırır (bakiye +); alacak fişi düşürür (bakiye −). Kasa etkilenmez.
+    tx_type = "outflow" if is_debit else "inflow"
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": contact["company_id"],
+        "account_id": None,
+        "account_name": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "type": tx_type,
+        "category": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "amount": amount,
+        "currency": "TRY",
+        "description": f"{contact.get('name')}: {description}",
+        "contact_id": contact_id,
+        "contact_name": contact.get("name"),
+        "source": "ledger",
+        "date": req.get("date") or today,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.bank_transactions.insert_one(doc)
+    await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": amount if is_debit else -amount}})
+    return {"status": "success", "id": doc["_id"], "kind": "debit" if is_debit else "credit"}
+
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]
 
@@ -4570,6 +4607,14 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest):
     updated = await db.products.find_one({"_id": product_id})
     return clean_doc(updated)
 
+@api_router.get("/products/{product_id}/movements")
+async def list_product_movements(product_id: str):
+    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "sku": 1, "unit": 1, "stock_quantity": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(300)
+    return {"product": clean_doc(product), "movements": clean_docs(rows)}
+
 @api_router.post("/products/quick-stock-adjust")
 async def quick_stock_adjust(req: Dict[str, Any]):
     product_id = req.get("product_id")
@@ -5672,7 +5717,8 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             await db.bank_accounts.update_one({"_id": tx["target_account_id"]}, {"$inc": {"current_balance": amt}})
         return
     change = amt if tx.get("type") == "inflow" else -amt
-    await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+    if tx.get("account_id") and tx.get("source") != "ledger":
+        await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
     if tx.get("contact_id"):
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -change}})
     if tx.get("related_invoice_id"):
@@ -5730,14 +5776,14 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
         allowed["amount"] = float(allowed["amount"])
         if allowed["amount"] <= 0:
             raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
-    if "account_id" in allowed and allowed["account_id"] != tx.get("account_id"):
+    if "account_id" in allowed and allowed["account_id"] and allowed["account_id"] != tx.get("account_id"):
         acc = await db.bank_accounts.find_one({"_id": allowed["account_id"]})
         if not acc:
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         allowed["account_name"] = acc.get("account_name")
     new_type = allowed.get("type", tx.get("type"))
     new_acc = allowed.get("account_id", tx.get("account_id"))
-    if new_type == "inflow":
+    if new_type == "inflow" and new_acc and tx.get("source") != "ledger":
         await bank_guard.assert_collection_allowed(db, new_acc)
     await _reverse_tx_effects(tx, -1)
     new_tx = {**tx, **allowed}
