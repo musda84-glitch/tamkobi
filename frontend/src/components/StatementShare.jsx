@@ -3,9 +3,10 @@ import React, { useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
-import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2 } from "lucide-react";
+import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2, Link2, FileDown } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
+import { downloadStatementPdf, shareStatementLink } from "../utils/statementShare";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
 
@@ -29,26 +30,56 @@ export const StatementShareBar = ({ contact, rows, companyId }) => {
   const { activeCompany } = useAuth();
   const [msg, setMsg] = useState(null);
   const [printOpen, setPrintOpen] = useState(false);
+  const [shareLink, setShareLink] = useState("");
+  const [busy, setBusy] = useState("");
   const text = statementText(contact, rows, activeCompany);
-  const copy = async () => { try { await navigator.clipboard.writeText(text); toast.success("Ekstre metni kopyalandı."); } catch { toast.error("Kopyalanamadı."); } };
+  const sharedText = shareLink ? `${text}\n\nEkstre linki: ${shareLink}` : text;
+  const copy = async () => { try { await navigator.clipboard.writeText(sharedText); toast.success("Ekstre metni kopyalandı."); } catch { toast.error("Kopyalanamadı."); } };
   const whatsapp = async () => {
     const phone = (contact.phone || "").replace(/\D/g, "").replace(/^0/, "90");
     if (!phone) { toast.error("Carinin telefon numarası yok."); return; }
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
-    try { await axios.post(`${API_URL}/comm/whatsapp/logs`, { company_id: companyId, contact_id: contact.id, contact_name: contact.name, phone: contact.phone, message: text, direction: "outbound" }); } catch { /* log optional */ }
+    let link = shareLink;
+    if (!link) {
+      try { link = await shareStatementLink(contact, { silent: true }); setShareLink(link); } catch { /* metin yine gider */ }
+    }
+    const body = link ? `${text}\n\nEkstre linki: ${link}` : text;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(body)}`, "_blank");
+    try { await axios.post(`${API_URL}/comm/whatsapp/logs`, { company_id: companyId, contact_id: contact.id, contact_name: contact.name, phone: contact.phone, message: body, direction: "outbound" }); } catch { /* log optional */ }
   };
-  const B = ({ icon: Icon, label, onClick, cls = "", testId }) => <button type="button" onClick={onClick} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition hover:shadow-sm ${cls}`} data-testid={testId}><Icon className="w-3.5 h-3.5" /> {label}</button>;
+  const mint = async () => {
+    setBusy("link");
+    try { setShareLink(await shareStatementLink(contact)); }
+    catch (err) { toast.error(err.response?.data?.detail || "Link oluşturulamadı."); }
+    finally { setBusy(""); }
+  };
+  const pdf = async () => {
+    setBusy("pdf");
+    try { await downloadStatementPdf(contact); }
+    catch { toast.error("PDF indirilemedi."); }
+    finally { setBusy(""); }
+  };
+  const B = ({ icon: Icon, label, onClick, cls = "", testId, disabled }) => <button type="button" onClick={onClick} disabled={disabled} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition hover:shadow-sm disabled:opacity-50 ${cls}`} data-testid={testId}><Icon className="w-3.5 h-3.5" /> {label}</button>;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2" data-testid="statement-share-bar">
-        <span className="flex items-center gap-1 text-[11px] font-bold text-slate-500 mr-1"><Share2 className="w-3.5 h-3.5" /> Ekstreyi Paylaş:</span>
-        <B icon={Printer} label="Yazdır / PDF" onClick={() => setPrintOpen(true)} cls="bg-slate-900 text-white border-slate-900" testId="statement-print-btn" />
-        <B icon={Mail} label="E-posta" onClick={() => setMsg("email")} cls="bg-white text-emerald-700 border-emerald-200" testId="statement-email-btn" />
-        <B icon={MessageSquare} label="SMS" onClick={() => setMsg("sms")} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-sms-btn" />
-        <B icon={Phone} label="WhatsApp" onClick={whatsapp} cls="bg-white text-green-700 border-green-200" testId="statement-whatsapp-btn" />
-        <B icon={Copy} label="Kopyala" onClick={copy} cls="bg-white text-slate-700 border-slate-200" testId="statement-copy-btn" />
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 space-y-2" data-testid="statement-share-bar">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="flex items-center gap-1 text-[11px] font-bold text-slate-500 mr-1"><Share2 className="w-3.5 h-3.5" /> Ekstreyi Paylaş:</span>
+          <B icon={Link2} label={busy === "link" ? "…" : "Link"} onClick={mint} disabled={!!busy} cls="bg-indigo-600 text-white border-indigo-600" testId="statement-link-btn" />
+          <B icon={FileDown} label={busy === "pdf" ? "…" : "PDF"} onClick={pdf} disabled={!!busy} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-pdf-btn" />
+          <B icon={Printer} label="Yazdır / PDF" onClick={() => setPrintOpen(true)} cls="bg-slate-900 text-white border-slate-900" testId="statement-print-btn" />
+          <B icon={Mail} label="E-posta" onClick={() => setMsg("email")} cls="bg-white text-emerald-700 border-emerald-200" testId="statement-email-btn" />
+          <B icon={MessageSquare} label="SMS" onClick={() => setMsg("sms")} cls="bg-white text-indigo-700 border-indigo-200" testId="statement-sms-btn" />
+          <B icon={Phone} label="WhatsApp" onClick={whatsapp} cls="bg-white text-green-700 border-green-200" testId="statement-whatsapp-btn" />
+          <B icon={Copy} label="Kopyala" onClick={copy} cls="bg-white text-slate-700 border-slate-200" testId="statement-copy-btn" />
+        </div>
+        {shareLink && (
+          <div className="flex items-center gap-1.5" data-testid="statement-share-link">
+            <input readOnly value={shareLink} className="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-mono text-slate-700" data-testid="statement-share-link-input" />
+            <button type="button" onClick={() => navigator.clipboard.writeText(shareLink).then(() => toast.success("Link kopyalandı.")).catch(() => toast.error("Kopyalanamadı."))} className="px-2 py-1 text-[11px] font-semibold border rounded-lg bg-white" data-testid="statement-share-link-copy">Kopyala</button>
+          </div>
+        )}
       </div>
-      {msg && <QuickMessageModal companyId={companyId} channel={msg} recipient={{ contact_id: contact.id, name: contact.name, phone: contact.phone, email: contact.email }} defaultSubject={`Cari Hesap Ekstresi - ${contact.name}`} defaultMessage={msg === "sms" ? `Sayın ${contact.name}, ${new Date().toLocaleDateString("tr-TR")} itibarıyla cari bakiyeniz ${fmt(Math.abs(contact.balance || 0))} ₺ ${contact.balance > 0 ? "borç" : "alacak"} olarak görünmektedir. Detaylı ekstre için bize ulaşın.` : text} context="statement" refId={contact.id} onClose={() => setMsg(null)} />}
+      {msg && <QuickMessageModal companyId={companyId} channel={msg} recipient={{ contact_id: contact.id, name: contact.name, phone: contact.phone, email: contact.email }} defaultSubject={`Cari Hesap Ekstresi - ${contact.name}`} defaultMessage={msg === "sms" ? `Sayın ${contact.name}, ${new Date().toLocaleDateString("tr-TR")} itibarıyla cari bakiyeniz ${fmt(Math.abs(contact.balance || 0))} ₺ ${contact.balance > 0 ? "borç" : "alacak"} olarak görünmektedir.${shareLink ? ` Ekstre: ${shareLink}` : " Detaylı ekstre için bize ulaşın."}` : sharedText} context="statement" refId={contact.id} onClose={() => setMsg(null)} />}
       {printOpen && <StatementPrint contact={contact} rows={rows} company={activeCompany} onClose={() => setPrintOpen(false)} />}
     </>
   );

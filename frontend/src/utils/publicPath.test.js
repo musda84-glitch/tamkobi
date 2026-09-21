@@ -13,6 +13,7 @@ test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/b2b/giris")).toBe(true);
   expect(isPublicPath("/teklif/abc")).toBe(true);
   expect(isPublicPath("/proje/abc")).toBe(true);
+  expect(isPublicPath("/ekstre/abc")).toBe(true);
   expect(isPublicPath("/yasal/kvkk")).toBe(true);
 });
 

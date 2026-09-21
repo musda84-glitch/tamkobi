@@ -97,6 +97,8 @@ import platform_mail
 import applog
 import mail_tracking
 import stock_moves
+import statement_share
+import project_photos
 
 applog.setup_logging()
 import addons
@@ -988,7 +990,14 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 @api_router.post("/files/upload")
-async def upload_generic_file(file: UploadFile = File(...), entity: str = Query("misc"), entity_id: str = Query(""), company_id: str = Query("comp_nexus_main_01")):
+async def upload_generic_file(
+    file: UploadFile = File(...),
+    entity: str = Query("misc"),
+    entity_id: str = Query(""),
+    company_id: str = Query("comp_nexus_main_01"),
+    stage: str = Query(""),
+    stage_label: str = Query(""),
+):
     entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
@@ -1029,9 +1038,18 @@ async def upload_generic_file(file: UploadFile = File(...), entity: str = Query(
         elif entity == "employee_photo":
             await coll.update_one(q, {"$set": {"photo_url": url}})
         else:
-            upd = await coll.update_one(q, {"$push": {"images": url}})
+            stage_key = project_photos.clean_stage_key(stage) if entity == "project" else ""
+            push = {"images": url}
+            if stage_key:
+                push["stage_photos"] = {
+                    "url": url,
+                    "stage": stage_key,
+                    "stage_label": str(stage_label or "")[:60],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            upd = await coll.update_one(q, {"$push": push})
             if upd.matched_count == 0:
-                await coll.update_one({"_id": entity_id}, {"$push": {"images": url}})
+                await coll.update_one({"_id": entity_id}, {"$push": push})
     return {"url": url, "filename": file.filename, "content_type": content_type, "size": len(data), "entity_id": entity_id, **opt.as_meta()}
 
 # ----------------- TEKLİF / PROJE / KEŞİF -----------------
@@ -1492,7 +1510,7 @@ async def create_project(req: Dict[str, Any]):
            "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
            "start_date": req.get("start_date"), "end_date": req.get("end_date"), "description": req.get("description", ""), "address": req.get("address", ""),
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
-           "images": [], "tasks": req.get("tasks", []),
+           "images": [], "stage_photos": [], "tasks": req.get("tasks", []),
            "tracking": {"token": track_token, "link": f"/proje/{track_token}", "sent_count": 0, "view_count": 0},
            "created_at": datetime.now(timezone.utc).isoformat()}
     if not doc["name"]:
@@ -1505,7 +1523,9 @@ async def update_project(project_id: str, req: Dict[str, Any]):
     prev = await db.projects.find_one({"_id": project_id})
     if not prev:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
-    allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "tasks", "latitude", "longitude", "location_url"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "stage_photos", "tasks", "latitude", "longitude", "location_url"}}
+    if "stage_photos" in allowed:
+        allowed["stage_photos"] = project_photos.sanitize_stage_photos(allowed["stage_photos"])
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
     p = await db.projects.find_one({"_id": project_id})
     if not p:
@@ -1620,6 +1640,10 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
             if steps:
                 steps[-1]["current"] = work_done
 
+    import project_stages as ps
+    stage_groups = project_photos.group_stage_photos(
+        p.get("stage_photos"), p.get("images"), ps.normalize_project_stages((company or {}).get("project_stages")),
+    )
     return {
         "project_number": p.get("project_number"),
         "name": p.get("name"),
@@ -1632,6 +1656,7 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
         "location_url": p.get("location_url") or "",
         "description": p.get("description") or p.get("notes") or "",
         "images": p.get("images") or [],
+        "stage_photos": stage_groups,
         "steps": steps,
         "quotes": quotes_pub,
         "surveys": surveys_pub,
@@ -1725,7 +1750,18 @@ async def public_project(token: str):
     quotes = await db.quotes.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
     surveys = await db.surveys.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
     await db.projects.update_one({"_id": p["_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
-    return _public_project_view(p, company, quotes, surveys)
+    view = _public_project_view(p, company, quotes, surveys)
+    contact_id = p.get("contact_id")
+    if contact_id:
+        contact = await db.contacts.find_one({"_id": contact_id}) or {"name": p.get("contact_name"), "balance": 0}
+        invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).to_list(100)
+        payments = await db.bank_transactions.find({"contact_id": contact_id, "type": {"$ne": "transfer"}}).to_list(100)
+        rows = statement_share.statement_rows(invoices, payments)
+        bal = rows[-1]["balance"] if rows else round(float(contact.get("balance") or 0), 2)
+        view["statement"] = {"rows": rows, "balance": bal}
+    else:
+        view["statement"] = None
+    return view
 
 
 @api_router.delete("/projects/{project_id}")
@@ -2369,6 +2405,78 @@ async def get_contact_statement(contact_id: str):
         "invoices": clean_docs(invoices),
         "payments": clean_docs(payments)
     }
+
+
+async def _statement_bundle(contact_id: str):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    invoices = await db.invoices.find({"contact_id": contact_id}).to_list(200)
+    payments = await db.bank_transactions.find({"contact_id": contact_id}).to_list(200)
+    company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
+    rows = statement_share.statement_rows(invoices, payments)
+    return contact, statement_share.public_statement_view(contact, company, rows)
+
+
+def _statement_pdf_response(view: dict):
+    filename = statement_share.pdf_filename((view.get("contact") or {}).get("name"))
+    return Response(
+        content=statement_share.statement_pdf_bytes(view),
+        media_type="application/pdf",
+        headers={"Content-Disposition": statement_share.pdf_disposition(filename)},
+    )
+
+
+@api_router.post("/contacts/{contact_id}/statement-link")
+async def create_statement_link(contact_id: str, req: Dict[str, Any], request: Request):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    share = contact.get("statement_share") or {}
+    token = share.get("token") or uuid.uuid4().hex
+    if not share.get("token"):
+        await db.contacts.update_one(
+            {"_id": contact_id},
+            {"$set": {"statement_share": {"token": token, "created_at": datetime.now(timezone.utc).isoformat()}}},
+        )
+    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
+    link = f"{base}/ekstre/{token}"
+    return {
+        "status": "success",
+        "token": token,
+        "link": link,
+        "pdf_url": f"{base}/api/public/statements/{token}/pdf",
+    }
+
+
+@api_router.get("/contacts/{contact_id}/statement.pdf")
+async def download_contact_statement_pdf(contact_id: str):
+    _contact, view = await _statement_bundle(contact_id)
+    return _statement_pdf_response(view)
+
+
+@api_router.get("/public/statements/{token}")
+async def public_statement(token: str):
+    token = (token or "").strip()
+    if not token or len(token) < 16:
+        raise HTTPException(status_code=404, detail="Ekstre bulunamadı veya link geçersiz.")
+    contact = await db.contacts.find_one({"statement_share.token": token})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Ekstre bulunamadı veya link geçersiz.")
+    _contact, view = await _statement_bundle(contact["_id"])
+    return view
+
+
+@api_router.get("/public/statements/{token}/pdf")
+async def public_statement_pdf(token: str):
+    token = (token or "").strip()
+    if not token or len(token) < 16:
+        raise HTTPException(status_code=404, detail="Ekstre bulunamadı veya link geçersiz.")
+    contact = await db.contacts.find_one({"statement_share.token": token})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Ekstre bulunamadı veya link geçersiz.")
+    _contact, view = await _statement_bundle(contact["_id"])
+    return _statement_pdf_response(view)
 
 # ---- B2B Müşteri Portalı
 PUBLIC_TRACKING_URLS = {
