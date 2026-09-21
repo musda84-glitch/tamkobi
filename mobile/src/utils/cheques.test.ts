@@ -1,6 +1,7 @@
 import {
   applyChequePrefill,
   chequeAction,
+  chequeReturnContact,
   chequeLedgerLocked,
   chequePayload,
   chequeReceiptKind,
@@ -125,5 +126,7 @@ describe("cheques", () => {
       amount: "250",
       notes: "Senet ödemesi",
     });
+    expect(chequeReturnContact({ contact_id: "c9", contact_name: "Acme" })).toEqual({ id: "c9", name: "Acme" });
+    expect(chequeReturnContact({})).toBeNull();
   });
 });

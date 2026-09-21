@@ -127,6 +127,10 @@ export function emptyChequeDraft(today: string): ChequeDraft {
   };
 }
 
+function paramOne(v?: string | string[]): string {
+  return String(Array.isArray(v) ? v[0] : v || "").trim();
+}
+
 export function applyChequePrefill(
   draft: ChequeDraft,
   params?: {
@@ -138,18 +142,27 @@ export function applyChequePrefill(
     notes?: string | string[];
   } | null,
 ): ChequeDraft {
-  const one = (v?: string | string[]) => String(Array.isArray(v) ? v[0] : v || "").trim();
-  const instrument = one(params?.instrument);
-  const direction = one(params?.direction);
+  const instrument = paramOne(params?.instrument);
+  const direction = paramOne(params?.direction);
   return {
     ...draft,
-    contact_id: one(params?.contact_id) || draft.contact_id,
-    contact_name: one(params?.contact_name) || draft.contact_name,
+    contact_id: paramOne(params?.contact_id) || draft.contact_id,
+    contact_name: paramOne(params?.contact_name) || draft.contact_name,
     instrument: instrument === "promissory" ? "promissory" : instrument === "cheque" ? "cheque" : draft.instrument,
     direction: direction === "issued" ? "issued" : direction === "received" ? "received" : draft.direction,
-    amount: one(params?.amount) || draft.amount,
-    notes: one(params?.notes) || draft.notes,
+    amount: paramOne(params?.amount) || draft.amount,
+    notes: paramOne(params?.notes) || draft.notes,
   };
+}
+
+/** Cari tahsilattan açılan çek/senet kaydı sonrası aynı karta dön. */
+export function chequeReturnContact(params?: {
+  contact_id?: string | string[];
+  contact_name?: string | string[];
+} | null): { id: string; name: string } | null {
+  const id = paramOne(params?.contact_id);
+  if (!id) return null;
+  return { id, name: paramOne(params?.contact_name) };
 }
 
 function num(v: string): number {
