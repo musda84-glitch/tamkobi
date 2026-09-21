@@ -631,6 +631,16 @@ export default function OrdersB2BPage() {
                           </button>
                         )}
                         {["pending", "new"].includes(ord.order_status) ? <button type="button" onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
+                        <button
+                          type="button"
+                          onClick={() => setPrintOrder(ord)}
+                          className="p-1.5 text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg"
+                          title="Sipariş Formu Yazdır"
+                          aria-label="Sipariş Formu Yazdır"
+                          data-testid={`print-order-btn-${ord.order_number}`}
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
@@ -640,7 +650,7 @@ export default function OrdersB2BPage() {
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
-                              [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-btn-${ord.order_number}`, true],
+                              [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-menu-${ord.order_number}`, true],
                               [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, true],
                             ].filter((it) => it[4]).map(([Ico, label, fn, tid]) => (
                               <DropdownMenuItem key={tid} onSelect={fn} className="gap-2 text-xs font-medium" data-testid={tid}><Ico className="w-4 h-4 shrink-0 text-slate-500" /><span className="truncate">{label}</span></DropdownMenuItem>
