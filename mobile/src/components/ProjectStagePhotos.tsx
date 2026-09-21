@@ -121,26 +121,31 @@ export function ProjectStagePhotos({
       </Row>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
       {rows.map((row) => (
-        <View key={row.key} testID={`${tid}-row-${row.key}`} style={{ gap: 6 }}>
-          <Row style={{ alignItems: "center", flexWrap: "wrap" }}>
-            <View style={{
-              backgroundColor: row.current ? colors.emerald100 : "#fff",
-              borderWidth: 1,
-              borderColor: row.current ? "#A7F3D0" : colors.border,
-              borderRadius: 8,
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-            }}>
-              <Text style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}>
-                {row.label}{row.current ? " · şu an" : row.done ? " · bitti" : ""}
-              </Text>
-            </View>
+        <View key={row.key} testID={`${tid}-row-${row.key}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 }}>
+          <View style={{
+            width: 108,
+            backgroundColor: row.current ? colors.emerald100 : "#fff",
+            borderWidth: 1,
+            borderColor: row.current ? "#A7F3D0" : colors.border,
+            borderRadius: 8,
+            paddingHorizontal: 6,
+            paddingVertical: 8,
+            justifyContent: "center",
+          }}>
+            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}>
+              {row.label}
+            </Text>
+            <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "700", color: row.current ? "#047857" : row.done ? "#64748B" : "#94A3B8" }}>
+              {row.current ? "şu an" : row.done ? "bitti" : row.items.length ? `${row.items.length} foto` : " "}
+            </Text>
+          </View>
+          <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             {row.items.map((item) => (
               <View key={item.url} style={{ position: "relative" }}>
                 <Pressable
                   testID={`${tid}-thumb`}
                   onPress={() => Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null)}
-                  style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
+                  style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
                 >
                   <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
                 </Pressable>
@@ -155,27 +160,29 @@ export function ProjectStagePhotos({
                 ) : null}
               </View>
             ))}
-            {editable && row.key !== "other" ? (
-              <>
-                <Pressable
-                  testID={`${tid}-camera-${row.key}`}
-                  onPress={() => pick(row, true)}
-                  disabled={!!busyKey}
-                  style={{ width: 44, height: 44, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-                >
-                  <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={18} color={colors.indigo} />
-                </Pressable>
-                <Pressable
-                  testID={`${tid}-gallery-${row.key}`}
-                  onPress={() => pick(row, false)}
-                  disabled={!!busyKey}
-                  style={{ width: 44, height: 44, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-                >
-                  <Ionicons name="image-outline" size={18} color={colors.primary} />
-                </Pressable>
-              </>
-            ) : null}
-          </Row>
+          </View>
+          {editable && row.key !== "other" ? (
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <Pressable
+                testID={`${tid}-camera-${row.key}`}
+                onPress={() => pick(row, true)}
+                disabled={!!busyKey}
+                style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={18} color={colors.indigo} />
+              </Pressable>
+              <Pressable
+                testID={`${tid}-gallery-${row.key}`}
+                onPress={() => pick(row, false)}
+                disabled={!!busyKey}
+                style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name="image-outline" size={18} color={colors.primary} />
+              </Pressable>
+            </View>
+          ) : (
+            <View style={{ width: 86 }} />
+          )}
         </View>
       ))}
     </View>

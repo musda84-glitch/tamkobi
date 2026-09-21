@@ -38,9 +38,6 @@ import {
   type ExpenseDraft,
 } from "../utils/finance";
 import {
-  PROJECT_STATUSES,
-  QUOTE_STATUSES,
-  SURVEY_STATUSES,
   emptyItem,
   hydrateWorkItem,
   namedItems,
@@ -48,6 +45,7 @@ import {
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   projectQuoteNavParams,
+  workStatusSelectGroups,
   removeWorkItem,
   projectPayload,
   quotePayload,
@@ -127,7 +125,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [notes, setNotes] = useState("");
   const [address, setAddress] = useState("");
   const [budget, setBudget] = useState("");
-  const [startDate, setStartDate] = useState("");
+  const [startDate, setStartDate] = useState(kind === "project" ? todayIso() : "");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
   const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
@@ -201,7 +199,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setContactId(p.contact_id || "");
         setContactName(p.contact_name || "");
         setBudget(String(p.budget ?? ""));
-        setStartDate(String(p.start_date || "").slice(0, 10));
+        setStartDate(String(p.start_date || todayIso()).slice(0, 10));
         setEndDate(String(p.end_date || "").slice(0, 10));
         setNotes(p.description || "");
         setAddress(p.address || "");
@@ -258,7 +256,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const totals = workItemTotals(pricedItems);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
   const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
-  const statuses = kind === "quote" ? QUOTE_STATUSES : kind === "project" ? PROJECT_STATUSES : SURVEY_STATUSES;
+  const statusGroups = workStatusSelectGroups(kind, status, projectStages);
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
     setItems((rows) => rows.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
@@ -536,14 +534,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
 
       {!isNew ? (
-        <>
-          <Muted>Durum · {statusTr(status)}</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {statuses.map((s) => (
-              <Chip key={s.key} label={s.label} active={status === s.key} onPress={() => canEdit && setStatus(s.key)} />
-            ))}
-          </Row>
-        </>
+        <GroupedSelect
+          dense
+          label="Durum"
+          testID={`${kind}-status`}
+          value={status}
+          onChange={(v) => canEdit && setStatus(v)}
+          groups={statusGroups}
+          emptyLabel="Durum seçin"
+        />
       ) : null}
 
       {kind !== "project" ? (
@@ -693,9 +692,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               onPress={() => router.push({ pathname: "/expenses/[id]", params: { id: idOf(e) } })}
             />
           ))}
-          {!isNew && (canExp || canEdit) ? (
-            <PrimaryButton title="Masraf ekle" color={colors.danger} testID="project-expense-card-btn" onPress={openProjectExpense} />
-          ) : null}
         </Card>
       ) : null}
       {!isNew && kind === "quote" && quote ? (

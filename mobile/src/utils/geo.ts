@@ -43,6 +43,13 @@ export function mapsLink(row: {
   return addr ? mapsSearchUrl(addr) : null;
 }
 
+export function locationPickerSummary(value: { url?: string; lat?: string; lng?: string } | null | undefined): string {
+  if (!value) return "Kapalı";
+  if (value.lat && value.lng) return `${value.lat}, ${value.lng}`;
+  if (String(value.url || "").trim()) return "Konum linki var";
+  return "Kapalı";
+}
+
 export function coordText(v: unknown): string {
   if (v == null || v === "") return "";
   return String(v);
