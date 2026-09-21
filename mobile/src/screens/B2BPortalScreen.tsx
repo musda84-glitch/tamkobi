@@ -46,6 +46,122 @@ const TABS: { id: TabId; label: string; flag?: keyof B2BPortal["settings"] }[] =
   { id: "installments", label: "Taksitlerim", flag: "show_installments" },
 ];
 
+function CatalogTile({
+  product: p,
+  img,
+  showPrices,
+  showStock,
+  allowOrders,
+  qty,
+  note,
+  onQty,
+  onNote,
+  onAdd,
+}: {
+  product: B2BProduct;
+  img?: string | null;
+  showPrices: boolean;
+  showStock: boolean;
+  allowOrders: boolean;
+  qty: string;
+  note: string;
+  onQty: (v: string) => void;
+  onNote: (v: string) => void;
+  onAdd: () => void;
+}) {
+  const listCut = showPrices && hasListDiscount(p);
+  const addOk = canAddProduct(p, showStock, allowOrders);
+  const stockOut = p.in_stock === false;
+  return (
+    <Card testID={`b2b-product-${p.id}`} style={{ flex: 1, padding: 10, gap: 8 }}>
+      <View
+        testID={`b2b-image-${p.id}`}
+        style={{
+          aspectRatio: 1.5,
+          borderRadius: 12,
+          backgroundColor: colors.slate50,
+          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {img ? (
+          <Image source={{ uri: img }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+        ) : (
+          <Ionicons name="cube-outline" size={28} color={colors.muted} />
+        )}
+      </View>
+      <View style={{ minWidth: 0, flex: 1 }}>
+        <Text numberOfLines={2} style={{ fontWeight: "800", fontSize: 12, lineHeight: 16, color: colors.text }}>{p.name}</Text>
+        <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 10, fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace, monospace" }) }}>
+          {[p.sku, p.barcode].filter(Boolean).join(" · ")}
+        </Text>
+        {p.tags?.length ? (
+          <Row style={{ flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+            {p.tags.slice(0, 3).map((t) => <Badge key={t} label={t} />)}
+          </Row>
+        ) : null}
+      </View>
+      <Row style={{ alignItems: "flex-end", justifyContent: "space-between" }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {showPrices ? (
+            <>
+              <Text numberOfLines={1} style={{ fontWeight: "900", fontSize: 15, color: colors.text }}>{fmtMoney(b2bGross(p))}</Text>
+              {listCut ? <Text style={{ color: colors.muted, textDecorationLine: "line-through", fontSize: 10 }}>{fmtMoney(b2bGross(p, "list_price"))}</Text> : null}
+              <Text style={{ color: colors.muted, fontSize: 10 }}>{Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz"} · {p.unit || "Adet"}</Text>
+            </>
+          ) : <Muted>Fiyat gizli</Muted>}
+        </View>
+        {showStock ? (
+          <Text style={{ color: stockOut ? colors.danger : colors.primaryHover, fontWeight: "700", fontSize: 10 }}>
+            {stockOut ? "Yok" : p.stock_quantity == null ? "Stokta" : `Stok ${p.stock_quantity}`}
+          </Text>
+        ) : null}
+      </Row>
+      {allowOrders ? (
+        <View style={{ gap: 6 }}>
+          <View>
+            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 2 }}>SİPARİŞ STOK NOTU</Text>
+            <TextInput
+              testID={`b2b-item-note-${p.id}`}
+              value={note}
+              onChangeText={onNote}
+              placeholder="Fişte stok açıklamasının altında basılır"
+              placeholderTextColor={colors.muted}
+              style={{
+                minHeight: 32,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 8,
+                paddingHorizontal: 8,
+                paddingVertical: 6,
+                fontSize: 10,
+                color: colors.text,
+                backgroundColor: colors.slate50,
+              }}
+            />
+          </View>
+          <Row>
+            <View style={{ width: 48, borderWidth: 2, borderColor: colors.slate200, borderRadius: 12, backgroundColor: colors.slate50, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 8, fontWeight: "700", color: colors.muted, textAlign: "center" }}>Adet</Text>
+              <TextInput
+                testID={`b2b-add-qty-${p.id}`}
+                value={qty}
+                keyboardType="number-pad"
+                onChangeText={(v) => onQty(v.replace(/\D/g, ""))}
+                style={{ textAlign: "center", fontWeight: "900", fontSize: 14, color: colors.text, paddingVertical: 2 }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <PrimaryButton title="Ekle" onPress={onAdd} disabled={!addOk} color={colors.primary} testID={`b2b-add-${p.id}`} />
+            </View>
+          </Row>
+        </View>
+      ) : null}
+    </Card>
+  );
+}
+
 function Chip({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID?: string }) {
   return (
     <Pressable
@@ -416,62 +532,26 @@ export function B2BPortalScreen() {
                 <Text style={{ color: colors.indigo, fontSize: 10, fontWeight: "800" }}>Okut</Text>
               </Pressable>
             </Row>
-            {!prods.length ? <Empty icon="cube-outline" title="Ürün yok" hint={q ? "Aramayı daraltın." : "Katalog boş."} /> : prods.slice(0, 200).map((p) => {
-              const img = resolveMediaUrl(baseUrl, p.image_url);
-              const listCut = showPrices && hasListDiscount(p);
-              const addOk = canAddProduct(p, showStock, allowOrders);
-              return (
-                <Card key={p.id} testID={`b2b-product-${p.id}`}>
-                  <Row>
-                    {img ? <Image source={{ uri: img }} style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: colors.slate100 }} /> : <Ionicons name="cube-outline" size={28} color={colors.muted} />}
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={{ fontWeight: "800", color: colors.text }}>{p.name}</Text>
-                      <Muted>{[p.sku, p.barcode].filter(Boolean).join(" · ")}</Muted>
-                      {p.tags?.length ? (
-                        <Row style={{ flexWrap: "wrap", gap: 4 }}>
-                          {p.tags.slice(0, 3).map((t) => <Badge key={t} label={t} />)}
-                        </Row>
-                      ) : null}
-                      {showStock ? (
-                        <Text style={{ color: p.in_stock === false ? colors.danger : colors.primaryHover, fontWeight: "700", fontSize: 12 }}>
-                          {p.in_stock === false ? "Stok yok" : p.stock_quantity == null ? "Stokta" : `Stok ${p.stock_quantity} ${p.unit || "Adet"}`}
-                        </Text>
-                      ) : null}
-                    </View>
-                    {showPrices ? (
-                      <View style={{ alignItems: "flex-end" }}>
-                        <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(b2bGross(p))}</Text>
-                        {listCut ? <Text style={{ color: colors.muted, textDecorationLine: "line-through", fontSize: 11 }}>{fmtMoney(b2bGross(p, "list_price"))}</Text> : null}
-                        <Muted>{Number(p.vat_rate) ? `KDV %${p.vat_rate} dahil` : "KDV'siz"} · {p.unit || "Adet"}</Muted>
-                      </View>
-                    ) : <Muted>Fiyat gizli</Muted>}
-                  </Row>
-                  {allowOrders ? (
-                    <View>
-                      <Field
-                        label="Sipariş stok notu"
-                        testID={`b2b-item-note-${p.id}`}
-                        value={draftNotes[p.id] || ""}
-                        onChangeText={(v) => setDraftNotes((n) => ({ ...n, [p.id]: v }))}
-                        placeholder="Fişte stok açıklamasının altında basılır"
-                      />
-                      <Row>
-                        <TextInput
-                          testID={`b2b-add-qty-${p.id}`}
-                          value={draftQty[p.id] ?? "1"}
-                          keyboardType="number-pad"
-                          onChangeText={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v.replace(/\D/g, "") }))}
-                          style={{ width: 56, borderWidth: 1, borderColor: colors.border, borderRadius: 12, textAlign: "center", fontWeight: "800", paddingVertical: 10 }}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <PrimaryButton title="Sepete ekle" onPress={() => addProduct(p)} disabled={!addOk} color={colors.primary} testID={`b2b-add-${p.id}`} />
-                        </View>
-                      </Row>
-                    </View>
-                  ) : null}
-                </Card>
-              );
-            })}
+            {!prods.length ? <Empty icon="cube-outline" title="Ürün yok" hint={q ? "Aramayı daraltın." : "Katalog boş."} /> : (
+              <View testID="b2b-catalog-grid" style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 }}>
+                {prods.slice(0, 200).map((p) => (
+                  <View key={p.id} style={{ width: "50%", paddingHorizontal: 4, paddingBottom: 8 }}>
+                    <CatalogTile
+                      product={p}
+                      img={resolveMediaUrl(baseUrl, p.image_url)}
+                      showPrices={showPrices}
+                      showStock={showStock}
+                      allowOrders={allowOrders}
+                      qty={draftQty[p.id] ?? "1"}
+                      note={draftNotes[p.id] || ""}
+                      onQty={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v }))}
+                      onNote={(v) => setDraftNotes((n) => ({ ...n, [p.id]: v }))}
+                      onAdd={() => addProduct(p)}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         ) : null}
 
