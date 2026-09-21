@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -11,6 +11,7 @@ import { printChequeReceipt } from "../utils/chequeShare";
 import {
   CHEQUE_DIRECTIONS,
   CHEQUE_INSTRUMENTS,
+  applyChequePrefill,
   chequeAction,
   chequeLedgerLocked,
   chequePayload,
@@ -31,9 +32,17 @@ type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; 
 
 export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
   const { client, companyId, can, activeCompany } = useAuth();
+  const prefill = useLocalSearchParams<{
+    contact_id?: string;
+    contact_name?: string;
+    instrument?: string;
+    direction?: string;
+    amount?: string;
+    notes?: string;
+  }>();
   const canEdit = can("/cheques", "edit");
   const isNew = !chequeId;
-  const [draft, setDraft] = useState<ChequeDraft>(emptyChequeDraft(todayIso()));
+  const [draft, setDraft] = useState<ChequeDraft>(() => applyChequePrefill(emptyChequeDraft(todayIso()), prefill));
   const [loaded, setLoaded] = useState<Cheque | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -155,7 +164,7 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
 
   return (
     <Screen>
-      <H1>{isNew ? "Yeni çek / senet" : "Çek / senet düzenle"}</H1>
+      <H1>{isNew ? (draft.instrument === "promissory" ? "Yeni senet" : "Yeni çek") : "Çek / senet düzenle"}</H1>
       <Muted>
         {isNew
           ? "Kayıt cari bakiyesine işlenir; portföyde “açık” olarak başlar."

@@ -32,6 +32,7 @@ import {
   INCOTERMS,
   INVOICE_TYPES,
   invoicePayload,
+  invoiceProjectSelectGroups,
   invoiceTotals,
   invoiceUpdateBody,
   parseWithholding,
@@ -116,7 +117,6 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [payAccount, setPayAccount] = useState("");
   const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
-  const [projQ, setProjQ] = useState("");
   const [quickName, setQuickName] = useState("");
   const [quickTax, setQuickTax] = useState("");
   const [quickPhone, setQuickPhone] = useState("");
@@ -217,14 +217,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       .slice(0, 8);
   }, [prodQ, products]);
 
-  const projHits = useMemo(() => {
-    const q = projQ.trim().toLowerCase();
-    if (!q) return projects.slice(0, 6);
-    return projects
-      .filter((p) => [p.name, p.project_number].some((v) => String(v || "").toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [projQ, projects]);
-
+  const projectGroups = useMemo(() => invoiceProjectSelectGroups(projects), [projects]);
   const totals = invoiceTotals(draft);
   const defaultVat = draft.trade_kind === "export" || draft.e_type === "e_export" ? 0 : 20;
   const withholdingGroups = useMemo(() => withholdingSelectGroups(), []);
@@ -532,24 +525,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         )}
       </Card>
 
-      <View
-        style={{
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: 12,
-          backgroundColor: "#fff",
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          gap: 4,
+      <GroupedSelect
+        dense
+        label="Proje (opsiyonel)"
+        testID="inv-project-search"
+        value={draft.project_id}
+        emptyLabel="Projesiz"
+        onChange={(v) => {
+          const p = projects.find((row) => idOf(row) === v);
+          setDraft((d) => ({ ...d, project_id: v, project_number: p?.project_number || "" }));
         }}
-      >
-        <Field dense label="Proje (opsiyonel)" testID="inv-project-search" value={projQ} onChangeText={setProjQ} placeholder="Proje ara" />
-        {draft.project_id ? (
-          <ListRow title={draft.project_number || draft.project_id} subtitle="Projesiz yapmak için dokunun" onPress={() => { set("project_id", ""); set("project_number", ""); }} />
-        ) : projHits.map((p) => (
-          <ListRow key={idOf(p)} title={`${p.project_number || ""} · ${p.name || ""}`.trim()} onPress={() => { set("project_id", idOf(p)); set("project_number", p.project_number || ""); setProjQ(""); }} />
-        ))}
-      </View>
+        groups={projectGroups}
+      />
 
       <View
         style={{

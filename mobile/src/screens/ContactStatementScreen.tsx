@@ -7,7 +7,9 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { buildStatementRows, smsBalanceText, statementText, waDigits } from "../utils/contactStatement";
+import { A4_PRINT_PX, printHtmlNative } from "../utils/nativePrint";
+import { openPrintHtml, printDocumentHtml } from "../utils/orderPrint";
+import { buildStatementRows, smsBalanceText, statementPrintHtml, statementText, waDigits } from "../utils/contactStatement";
 import { fmtMoney } from "../utils/money";
 
 export function ContactStatementScreen() {
@@ -55,6 +57,33 @@ export function ContactStatementScreen() {
       await Share.share({ message: text });
     } catch {
       setError("Kopyalanamadı.");
+    }
+  };
+
+  const print = async () => {
+    const title = `Cari Hesap Ekstresi - ${contact.name || name || "Cari"}`;
+    const body = statementPrintHtml(
+      { name: contact.name || name, tax_number_or_id: contact.tax_number_or_id, balance: contact.balance },
+      rows,
+      activeCompany?.name,
+    );
+    try {
+      if (Platform.OS === "web" && openPrintHtml(title, body, { page: "a4" })) {
+        setMessage("Ekstre yazdırmaya gönderildi.");
+        setError(null);
+        return;
+      }
+      const document = printDocumentHtml(title, body, "a4");
+      if (await printHtmlNative(document, A4_PRINT_PX)) {
+        setMessage("Ekstre yazdırmaya gönderildi.");
+        setError(null);
+        return;
+      }
+      await Share.share({ message: text, title });
+      setMessage("Yazdırma yok; ekstre metni paylaşıldı.");
+      setError(null);
+    } catch {
+      setError("Yazdırılamadı.");
     }
   };
 
@@ -108,6 +137,7 @@ export function ContactStatementScreen() {
             },
           },
           { key: "copy", label: "Kopyala", icon: "copy", tone: "slate", testID: "statement-copy", onPress: copy },
+          { key: "print", label: "Yazdır", icon: "print", tone: "slate", testID: "statement-print", onPress: print },
         ]}
       />
       <Card testID="statement-table">

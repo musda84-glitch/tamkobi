@@ -1,4 +1,5 @@
 import {
+  applyChequePrefill,
   chequeAction,
   chequeLedgerLocked,
   chequePayload,
@@ -105,5 +106,24 @@ describe("cheques", () => {
     expect(filterCheques(rows, "overdue", "").map((r) => r.id)).toEqual(["1"]);
     expect(filterCheques(rows, "all", "vakıf").map((r) => r.id)).toEqual(["1"]);
     expect(filterCheques(rows, "all", "beta").map((r) => r.id)).toEqual(["2"]);
+  });
+
+  it("prefills a new cheque from the cari collect form", () => {
+    const d = applyChequePrefill(emptyChequeDraft("2026-09-21"), {
+      contact_id: "c9",
+      contact_name: "Acme",
+      instrument: "promissory",
+      direction: "issued",
+      amount: "250",
+      notes: "Senet ödemesi",
+    });
+    expect(d).toMatchObject({
+      contact_id: "c9",
+      contact_name: "Acme",
+      instrument: "promissory",
+      direction: "issued",
+      amount: "250",
+      notes: "Senet ödemesi",
+    });
   });
 });

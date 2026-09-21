@@ -127,6 +127,31 @@ export function emptyChequeDraft(today: string): ChequeDraft {
   };
 }
 
+export function applyChequePrefill(
+  draft: ChequeDraft,
+  params?: {
+    contact_id?: string | string[];
+    contact_name?: string | string[];
+    instrument?: string | string[];
+    direction?: string | string[];
+    amount?: string | string[];
+    notes?: string | string[];
+  } | null,
+): ChequeDraft {
+  const one = (v?: string | string[]) => String(Array.isArray(v) ? v[0] : v || "").trim();
+  const instrument = one(params?.instrument);
+  const direction = one(params?.direction);
+  return {
+    ...draft,
+    contact_id: one(params?.contact_id) || draft.contact_id,
+    contact_name: one(params?.contact_name) || draft.contact_name,
+    instrument: instrument === "promissory" ? "promissory" : instrument === "cheque" ? "cheque" : draft.instrument,
+    direction: direction === "issued" ? "issued" : direction === "received" ? "received" : draft.direction,
+    amount: one(params?.amount) || draft.amount,
+    notes: one(params?.notes) || draft.notes,
+  };
+}
+
 function num(v: string): number {
   const n = Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : 0;

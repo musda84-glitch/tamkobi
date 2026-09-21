@@ -7,7 +7,7 @@ import {
   type InvoiceLine,
 } from "./documentLines";
 import { eTypeTr, invoiceTypeTr, statusTr } from "./labels";
-import { fmtDate, todayIso } from "./money";
+import { fmtDate, idOf, todayIso } from "./money";
 
 export type GdMode = "percent" | "amount";
 
@@ -427,5 +427,17 @@ export function parseWithholding(value: string): { withholding_rate: number; wit
   if (!value) return { withholding_rate: 0, withholding_code: "" };
   const [r, c] = value.split("|");
   return { withholding_rate: num(r), withholding_code: c || "" };
+}
+
+export function invoiceProjectSelectGroups(
+  projects: { id?: string; _id?: string; name?: string; project_number?: string }[],
+) {
+  return [{
+    label: "Projeler",
+    options: (projects || []).map((p) => ({
+      value: idOf(p),
+      label: [p.project_number, p.name].filter(Boolean).join(" · ") || "Proje",
+    })),
+  }];
 }
 

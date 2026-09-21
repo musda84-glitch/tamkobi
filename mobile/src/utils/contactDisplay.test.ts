@@ -1,4 +1,4 @@
-import { balanceHint, contactBalanceLabel, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
+import { balanceHint, contactBalanceLabel, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
 import { fmtMoney } from "./money";
 
 describe("contactDisplay", () => {
@@ -114,5 +114,18 @@ describe("contactDisplay", () => {
     });
     expect(rows.map((r) => r.key)).toEqual(["invoice_count", "order_count", "total_invoiced", "open_amount"]);
     expect(rows.find((r) => r.key === "open_amount")?.value).toBe(fmtMoney(100));
+  });
+
+  it("turns contact tabs into a dropdown with counts", () => {
+    expect(contactTabSelectGroups(
+      [{ key: "invoices", label: "Fatura" }, { key: "cheques", label: "Çek" }],
+      { invoices: 1, cheques: 0 },
+    )).toEqual([{
+      label: "Kayıtlar",
+      options: [
+        { value: "invoices", label: "Fatura (1)" },
+        { value: "cheques", label: "Çek" },
+      ],
+    }]);
   });
 });

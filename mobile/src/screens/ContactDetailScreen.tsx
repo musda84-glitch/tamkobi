@@ -8,16 +8,15 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { TabStrip, type TabStripItem } from "../components/TabStrip";
+import { type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
-import { DateField } from "../components/DateField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
-import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTypeLabel } from "../utils/contactDisplay";
+import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
 import { smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
 import { mapsLink } from "../utils/geo";
@@ -181,6 +180,25 @@ export function ContactDetailScreen() {
     () => paymentTargetGroups(accounts, partners, { collectableOnly: payForm?.type === "inflow" }),
     [accounts, partners, payForm?.type]
   );
+  const tabGroups = contactTabSelectGroups(TABS, counts);
+
+  const openPaper = (instrument: "cheque" | "promissory") => {
+    if (!payForm) return;
+    if (!canPaper) { setError("Çek / senet kaydı yetkiniz yok."); return; }
+    const isCheque = instrument === "cheque";
+    const inflow = payForm.type === "inflow";
+    setPayForm(null);
+    go("ChequeNew", {
+      contact_id: id,
+      contact_name: c.name || name,
+      instrument,
+      direction: inflow ? "received" : "issued",
+      amount: payForm.amount,
+      notes: inflow
+        ? (isCheque ? "Çek tahsilatı" : "Senet tahsilatı")
+        : (isCheque ? "Çek ödemesi" : "Senet ödemesi"),
+    });
+  };
 
   const openPay = async () => {
     if (!canBank) { setError("Tahsilat yetkiniz yok."); return; }
@@ -669,53 +687,25 @@ export function ContactDetailScreen() {
             />
             <Chip
               label="Çek"
-              active={payForm.method === "cheque"}
+              active={false}
               testID="collect-method-cheque"
-              onPress={() => setPayForm({
-                ...payForm,
-                method: "cheque",
-                description: payForm.type === "inflow" ? "Çek tahsilatı" : "Çek ödemesi",
-              })}
+              onPress={() => openPaper("cheque")}
             />
             <Chip
               label="Senet"
-              active={payForm.method === "promissory"}
+              active={false}
               testID="collect-method-promissory"
-              onPress={() => setPayForm({
-                ...payForm,
-                method: "promissory",
-                description: payForm.type === "inflow" ? "Senet tahsilatı" : "Senet ödemesi",
-              })}
+              onPress={() => openPaper("promissory")}
             />
           </Row>
-          {payForm.method === "cash" ? (
-            <GroupedSelect
-              label={payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
-              testID="collect-account-select"
-              value={payForm.account_id}
-              onChange={(id) => setPayForm({ ...payForm, account_id: id })}
-              emptyLabel="Hesap seçin"
-              groups={payPool}
-            />
-          ) : (
-            <>
-              <Muted>
-                {payForm.method === "promissory" ? "Senet" : "Çek"} portföye alınır ve cari bakiyeye işlenir. Vade günü kasa tahsilatı Çekler ekranından yapılır.
-              </Muted>
-              <DateField
-                label="Vade"
-                testID="collect-cheque-due"
-                value={payForm.due_date}
-                onChangeText={(v) => setPayForm({ ...payForm, due_date: v })}
-              />
-              <Field
-                label={payForm.method === "promissory" ? "Seri / senet no" : "Seri / çek no"}
-                testID="collect-cheque-serial"
-                value={payForm.serial_no}
-                onChangeText={(v) => setPayForm({ ...payForm, serial_no: v })}
-              />
-            </>
-          )}
+          <GroupedSelect
+            label={payForm.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
+            testID="collect-account-select"
+            value={payForm.account_id}
+            onChange={(id) => setPayForm({ ...payForm, account_id: id })}
+            emptyLabel="Hesap seçin"
+            groups={payPool}
+          />
           <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="collect-desc" value={payForm.description} onChangeText={(v) => setPayForm({ ...payForm, description: v })} />
           <PrimaryButton title="Kaydet" onPress={savePay} loading={payBusy} color={colors.primary} testID="collect-save" />
@@ -757,11 +747,13 @@ export function ContactDetailScreen() {
         ]}
       />
 
-      <TabStrip
+      <GroupedSelect
+        dense
+        label="Kayıtlar"
         testID="detail-tab"
-        items={TABS.map((t) => ({ ...t, count: counts[t.key] }))}
         value={tab}
-        onChange={setTab}
+        onChange={(v) => setTab(v as TabKey)}
+        groups={tabGroups}
       />
 
       {tab === "invoices" ? (

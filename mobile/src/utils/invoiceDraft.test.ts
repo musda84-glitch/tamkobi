@@ -7,6 +7,7 @@ import {
   eTypeForContact,
   emptyInvoiceDraft,
   invoicePayload,
+  invoiceProjectSelectGroups,
   invoiceTotals,
   invoiceUpdateBody,
   isIncomingPurchasePending,
@@ -174,5 +175,18 @@ describe("invoiceDraft", () => {
     expect(t.vat).toBeCloseTo(18);
     expect(t.withholding).toBeCloseTo(9);
     expect(t.grandTotal).toBeCloseTo(99);
+  });
+
+  it("groups invoice projects as a collapsible select", () => {
+    expect(invoiceProjectSelectGroups([
+      { id: "p1", project_number: "PRJ-2026-0014", name: "Fiyat Teklifi" },
+      { _id: "p2", name: "Villa" },
+    ])).toEqual([{
+      label: "Projeler",
+      options: [
+        { value: "p1", label: "PRJ-2026-0014 · Fiyat Teklifi" },
+        { value: "p2", label: "Villa" },
+      ],
+    }]);
   });
 });
