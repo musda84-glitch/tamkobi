@@ -27,7 +27,19 @@ import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+
+const MAIL_KIND = {
+  manual: "Mesaj", contact: "Cari", invoice: "Fatura", order: "Sipariş", cargo: "Kargo", quote: "Teklif", quote_approval: "Teklif",
+  statement: "Hesap ekstresi", dispatch: "İrsaliye", project: "Proje", project_tracking: "Proje takibi", survey: "Keşif",
+  campaign: "Kampanya", installment: "Taksit", b2b_reset: "B2B şifre",
+};
+
+function mailDeliveryBadge(m) {
+  if (m.status === "failed") return { text: "Ulaşmadı", cls: "text-rose-700 bg-rose-50" };
+  if (m.opened_at) return { text: "Okundu", cls: "text-sky-700 bg-sky-50" };
+  return { text: "Gönderildi", cls: "text-emerald-700 bg-emerald-50" };
+}
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
@@ -320,11 +332,25 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         </div>
 
         <div className="flex items-center gap-1 px-6 border-b">
-          {TABS.map(([k, l, Icon]) => (
+          {TABS.map(([k, l, Icon]) => {
+            const count = k === "invoices" ? data.invoices.length
+              : k === "payments" ? data.payments.length
+              : k === "orders" ? data.orders.length
+              : k === "quotes" ? (data.quotes || []).length
+              : k === "projects" ? (data.projects || []).length
+              : k === "surveys" ? (data.surveys || []).length
+              : k === "installments" ? insts.filter((i) => i.status !== "paid").length
+              : k === "cheques" ? (data.cheques || []).length
+              : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length
+              : k === "mail_status" ? (data.email_deliveries || []).length
+              : k === "comm" ? data.communications.length
+              : 0;
+            return (
             <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
-              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({k === "invoices" ? data.invoices.length : k === "payments" ? data.payments.length : k === "orders" ? data.orders.length : k === "quotes" ? (data.quotes || []).length : k === "projects" ? (data.projects || []).length : k === "surveys" ? (data.surveys || []).length : k === "installments" ? insts.filter((i) => i.status !== "paid").length : k === "cheques" ? (data.cheques || []).length : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length : data.communications.length})</span>
+              <Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({count})</span>
             </button>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 text-xs">
@@ -466,6 +492,46 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               </div>
               {data.communications.filter((m) => m.channel === "whatsapp").length === 0 && <div className="py-4 text-center text-slate-400">WhatsApp görüşmesi yok.</div>}
               {data.communications.filter((m) => m.channel === "whatsapp").map((m) => <div key={m.id} className={`max-w-[80%] rounded-2xl px-3 py-2 ${m.direction === "inbound" ? "bg-slate-100 mr-auto" : "bg-green-100 ml-auto"}`} data-testid={`detail-wa-msg-${m.id}`}><p className="text-slate-800">{m.message}</p><div className="text-[10px] text-slate-400 text-right">{new Date(m.created_at).toLocaleString("tr-TR")} • {statusTr(m.status)}</div></div>)}
+            </div>
+          )}
+          {tab === "mail_status" && (
+            <div className="space-y-2" data-testid="email-delivery-list">
+              <p className="text-[11px] text-slate-500">Son 90 gündeki fatura, sipariş, teklif, ekstre ve diğer e-posta gönderileri. Okundu bilgisi, alıcı iletiyi görseller açıkken açınca kaydedilir.</p>
+              {(data.email_deliveries || []).length === 0 && <div className="py-6 text-center text-slate-400">Son 90 günde e-posta gönderimi yok.</div>}
+              {(data.email_deliveries || []).length > 0 && (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="text-left font-semibold px-3 py-2">Tarih</th>
+                        <th className="text-left font-semibold px-3 py-2">Tür</th>
+                        <th className="text-left font-semibold px-3 py-2">Konu</th>
+                        <th className="text-left font-semibold px-3 py-2">Alıcı</th>
+                        <th className="text-left font-semibold px-3 py-2">Durum</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(data.email_deliveries || []).map((m) => {
+                        const badge = mailDeliveryBadge(m);
+                        const to = Array.isArray(m.to) ? m.to.join(", ") : (m.to || "");
+                        return (
+                          <tr key={m.id} data-testid={`email-delivery-${m.id}`}>
+                            <td className="px-3 py-2 whitespace-nowrap text-slate-500">{m.created_at ? new Date(m.created_at).toLocaleString("tr-TR") : ""}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{MAIL_KIND[m.context] || m.context || "Mesaj"}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-800 max-w-[220px] truncate" title={m.subject}>{m.subject || "(Konu yok)"}</td>
+                            <td className="px-3 py-2 text-slate-600 max-w-[180px] truncate" title={to}>{to}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <span className={`inline-flex px-2 py-0.5 rounded-md font-bold ${badge.cls}`} data-testid={`email-delivery-status-${m.id}`}>{badge.text}</span>
+                              {m.opened_at && <div className="text-[10px] text-slate-400 mt-0.5">{new Date(m.opened_at).toLocaleString("tr-TR")}{m.open_count > 1 ? ` · ${m.open_count} kez` : ""}</div>}
+                              {m.status === "failed" && m.error && <div className="text-[10px] text-rose-500 mt-0.5 max-w-[200px] truncate" title={m.error}>{m.error}</div>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
           {tab === "comm" && (

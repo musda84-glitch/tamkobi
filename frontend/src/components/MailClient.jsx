@@ -165,7 +165,7 @@ export const MailClient = ({ companyId }) => {
             )))}
             {view === "sent" && sentLogs.map((l) => (
               <button key={l.id} onClick={() => setSelected({ ...l, uid: l.id, from_name: account.email, from_email: account.email, to: l.to.join(", "), date: l.created_at, text: l.body, attachments: [], is_log: true })} className={`w-full text-left px-4 py-3 hover:bg-slate-50 ${selected?.uid === l.id ? "bg-emerald-50/60" : ""}`} data-testid={`sent-item-${l.id}`}>
-                <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-slate-700 truncate">→ {l.to.join(", ")}</span><span className={`text-[10px] font-bold ${l.status === "sent" ? "text-emerald-600" : "text-rose-600"}`}>{l.status === "sent" ? "İletildi" : "Hata"}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-slate-700 truncate">→ {(l.to || []).join(", ")}</span><span className={`text-[10px] font-bold ${l.status === "failed" ? "text-rose-600" : l.opened_at ? "text-sky-700" : "text-emerald-600"}`}>{l.status === "failed" ? "Ulaşmadı" : l.opened_at ? "Okundu" : "Gönderildi"}</span></div>
                 <div className="text-xs text-slate-600 truncate">{l.subject || "(Konu yok)"}</div>
               </button>
             ))}
@@ -179,7 +179,7 @@ export const MailClient = ({ companyId }) => {
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">{selected.subject}</h3>
                   <div className="text-xs text-slate-600 mt-1"><b>{selected.from_name}</b> {selected.from_email && selected.from_email !== selected.from_name && <span className="text-slate-400">&lt;{selected.from_email}&gt;</span>}</div>
-                  <div className="text-[11px] text-slate-400">Kime: {selected.to} • {selected.date ? new Date(selected.date).toLocaleString("tr-TR") : ""}</div>
+                  <div className="text-[11px] text-slate-400">Kime: {selected.to} • {selected.date ? new Date(selected.date).toLocaleString("tr-TR") : ""}{selected.is_log && selected.opened_at ? ` • Okundu: ${new Date(selected.opened_at).toLocaleString("tr-TR")}` : ""}</div>
                 </div>
                 {!selected.is_log && (
                   <div className="flex items-center gap-1">

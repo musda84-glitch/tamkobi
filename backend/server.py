@@ -95,6 +95,7 @@ import gib_credits
 import order_pick
 import platform_mail
 import applog
+import mail_tracking
 
 applog.setup_logging()
 import addons
@@ -1172,7 +1173,7 @@ async def create_quote(req: Dict[str, Any]):
     return clean_doc(doc)
 
 @api_router.post("/quotes/{quote_id}/send-approval")
-async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
+async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Request):
     q = await db.quotes.find_one({"_id": quote_id})
     if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
@@ -1189,7 +1190,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
     email = req.get("email") or (contact or {}).get("email")
     approval = q.get("approval") or {}
     token = approval.get("token") or uuid.uuid4().hex
-    base = (req.get("base_url") or "").rstrip("/")
+    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
     link = f"{base}/teklif/{token}"
     total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
@@ -1213,8 +1214,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any]):
                 a = await _mail_account(q["company_id"])
                 subject = f"{q.get('quote_number')} - {q.get('title') or 'Fiyat Teklifi'} onayınızı bekliyor"
                 html = f"<p>{message.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Teklifi Görüntüle & Onayla</a></p>"
-                await comm_service.smtp_send(a, [email], subject, message, html=html)
-                await db.mail_logs.insert_one(MailLog(company_id=q["company_id"], from_email=a["email"], to=[email], subject=subject, body=message, contact_id=q.get("contact_id"), contact_name=q.get("contact_name"), context="quote_approval", ref_id=quote_id).to_mongo())
+                await _send_tracked_mail(company_id=q["company_id"], to=[email], subject=subject, body=message, html=html, account=a, contact_id=q.get("contact_id"), contact_name=q.get("contact_name"), context="quote_approval", ref_id=quote_id, base_url=base)
                 results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
             except HTTPException as e:
                 results["email"] = {"status": "failed", "detail": e.detail}
@@ -1643,7 +1643,7 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
 
 async def _send_customer_link(company_id: str, channels: List[str], phone: Optional[str], email: Optional[str],
                               contact_id: Optional[str], contact_name: Optional[str], message: str,
-                              subject: str, html: str, context: str, ref_id: str) -> Dict[str, Any]:
+                              subject: str, html: str, context: str, ref_id: str, base_url: str = "") -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     if "sms" in channels:
         if not phone:
@@ -1660,8 +1660,7 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
         else:
             try:
                 a = await _mail_account(company_id)
-                await comm_service.smtp_send(a, [email], subject, message, html=html)
-                await db.mail_logs.insert_one(MailLog(company_id=company_id, from_email=a["email"], to=[email], subject=subject, body=message, contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id).to_mongo())
+                await _send_tracked_mail(company_id=company_id, to=[email], subject=subject, body=message, html=html, account=a, contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id, base_url=base_url)
                 results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
             except HTTPException as e:
                 results["email"] = {"status": "failed", "detail": e.detail}
@@ -1680,7 +1679,7 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
 
 
 @api_router.post("/projects/{project_id}/send-tracking")
-async def send_project_tracking(project_id: str, req: Dict[str, Any]):
+async def send_project_tracking(project_id: str, req: Dict[str, Any], request: Request):
     p = await db.projects.find_one({"_id": project_id})
     if not p:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
@@ -1691,7 +1690,7 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any]):
     email = req.get("email") or (contact or {}).get("email")
     tracking = p.get("tracking") or {}
     token = tracking.get("token") or uuid.uuid4().hex
-    base = (req.get("base_url") or "").rstrip("/")
+    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
     link = f"{base}/proje/{token}"
     message = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
     if link not in message:
@@ -1700,7 +1699,7 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any]):
     results: Dict[str, Any] = {}
     if channels:
         results = await _send_customer_link(p["company_id"], channels, phone, email, p.get("contact_id"), p.get("contact_name"),
-                                           message, f"{p.get('project_number')} proje durum takibi", html, "project_tracking", project_id)
+                                           message, f"{p.get('project_number')} proje durum takibi", html, "project_tracking", project_id, base_url=base)
     now = datetime.now(timezone.utc).isoformat()
     tracking.update({"token": token, "link": link, "sent_at": now if channels else tracking.get("sent_at"), "channels": channels or tracking.get("channels") or [],
                      "results": results, "sent_count": tracking.get("sent_count", 0) + (1 if channels else 0)})
@@ -2447,10 +2446,13 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
         subject = f"{company.get('name') or 'Tedarikçiniz'} B2B şifre sıfırlama"
         body = f"Merhaba {c.get('name') or ''},\nB2B portal şifrenizi sıfırlamak için bu bağlantıyı 1 saat içinde kullanın:\n{link}\nBu isteği siz yapmadıysanız bu e-postayı yok sayın."
         html = f"<p>Merhaba {c.get('name') or ''},</p><p>B2B portal şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
-        await comm_service.smtp_send(a, [to], subject, body, html=html)
+        await _send_tracked_mail(company_id=c["company_id"], to=[to], subject=subject, body=body, html=html, account=a, contact_id=c.get("_id"), contact_name=c.get("name"), context="b2b_reset", ref_id=token, base_url=base)
         mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
     except HTTPException as e:
-        mail_status, mail_detail = "skipped", str(e.detail)
+        if getattr(e, "status_code", None) == 424:
+            mail_status, mail_detail = "failed", str(e.detail)[:140]
+        else:
+            mail_status, mail_detail = "skipped", str(e.detail)
     except Exception as e:
         mail_status, mail_detail = "failed", str(e)[:140]
     out["mail_status"] = mail_status
@@ -3379,13 +3381,14 @@ async def get_contact_overview(contact_id: str):
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
-    mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
+    mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
+    email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]
     wa = await db.whatsapp_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"contact_id": contact_id}).sort("due_date", 1).to_list(200)]
     projects = await db.projects.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
+    comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails[:50]] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
     total_invoiced = sum(i.get("grand_total", 0) or 0 for i in sales)
     total_paid = sum(i.get("paid_amount", 0) or 0 for i in sales)
@@ -3394,7 +3397,8 @@ async def get_contact_overview(contact_id: str):
         "summary": {"invoice_count": len(invoices), "draft_count": sum(1 for i in invoices if i.get("status") == "draft"), "total_invoiced": total_invoiced,
                     "total_paid": total_paid, "open_amount": total_invoiced - total_paid, "order_count": len(orders), "overdue_count": sum(1 for i in invoices if i.get("payment_status") != "paid" and i.get("invoice_type") == "sales")},
         "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm,
-        "quotes": clean_docs(quotes), "surveys": clean_docs(surveys), "cheques": clean_docs(cheques_rows), "projects": clean_docs(projects)
+        "quotes": clean_docs(quotes), "surveys": clean_docs(surveys), "cheques": clean_docs(cheques_rows), "projects": clean_docs(projects),
+        "email_deliveries": clean_docs(email_deliveries),
     }
 
 @api_router.post("/contacts/{contact_id}/record-payment")
@@ -7089,6 +7093,45 @@ async def mail_flag(uid: str, req: Dict[str, Any]):
     except Exception as e:
         raise _mail_error(e)
 
+async def _send_tracked_mail(*, company_id: str, to: List[str], subject: str, body: str, html: Optional[str] = None,
+                            account: Optional[dict] = None, contact_id: Optional[str] = None, contact_name: Optional[str] = None,
+                            context: str = "manual", ref_id: Optional[str] = None, base_url: str = "",
+                            cc: Optional[List[str]] = None, attachments: Optional[List[Dict[str, Any]]] = None) -> dict:
+    """Send mail, store a delivery log, and embed an open-tracking pixel when a public base URL exists."""
+    a = account or await _mail_account(company_id)
+    log = MailLog(
+        company_id=company_id, from_email=a["email"], to=list(to), cc=list(cc or []), subject=subject or "", body=body or "",
+        attachments=[x.get("filename") for x in (attachments or []) if x.get("filename")],
+        contact_id=contact_id or None, contact_name=contact_name or None, context=context or "manual", ref_id=ref_id or None,
+        open_count=0,
+    )
+    doc = log.to_mongo()
+    html_body = mail_tracking.append_pixel(html or mail_tracking.text_to_html(body or ""), base_url, doc["_id"])
+    try:
+        await comm_service.smtp_send(a, list(to), subject or "", body or "", html=html_body, cc=cc or None, attachments=attachments)
+    except Exception as e:
+        doc["status"] = "failed"
+        doc["error"] = f"SMTP hatası: {_err_text(e)}"
+        await db.mail_logs.insert_one(doc)
+        raise HTTPException(status_code=424, detail=doc["error"])
+    await db.mail_logs.insert_one(doc)
+    return doc
+
+
+@api_router.get("/public/mail/open/{log_id}.gif")
+async def mail_open_pixel(log_id: str):
+    """1×1 gif. First load marks the outbound mail as opened."""
+    doc = await db.mail_logs.find_one({"_id": log_id})
+    if doc and doc.get("status") != "failed":
+        now = datetime.now(timezone.utc).isoformat()
+        await db.mail_logs.update_one({"_id": log_id}, {"$set": mail_tracking.mark_opened(doc, now)})
+    return Response(
+        content=mail_tracking.TRANSPARENT_GIF,
+        media_type="image/gif",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
+    )
+
+
 @api_router.post("/comm/mail/send")
 async def mail_send(request: Request, company_id: str = Form("comp_nexus_main_01"), to: str = Form(...), cc: str = Form(""),
                     subject: str = Form(""), body: str = Form(""), context: str = Form("manual"), ref_id: str = Form(""),
@@ -7106,16 +7149,17 @@ async def mail_send(request: Request, company_id: str = Form("comp_nexus_main_01
             raise HTTPException(status_code=413, detail="Ekler toplam 25 MB'ı aşamaz.")
         attachments.append({"filename": f.filename, "content_type": f.content_type, "data": data})
     full_body = body + (f"\n\n--\n{a.get('signature')}" if a.get("signature") else "")
-    log = MailLog(company_id=company_id, from_email=a["email"], to=to_list, cc=cc_list, subject=subject, body=body,
-                  attachments=[x["filename"] for x in attachments], contact_id=contact_id or None, contact_name=contact_name or None,
-                  context=context, ref_id=ref_id or None)
+    base = await _public_base_url(request)
+    if not base:
+        base = str(request.base_url).rstrip("/")
     try:
-        await comm_service.smtp_send(a, to_list, subject, full_body, cc=cc_list, attachments=attachments)
-    except Exception as e:
-        log.status, log.error = "failed", f"SMTP hatası: {_err_text(e)}"
-        await db.mail_logs.insert_one(log.to_mongo())
-        raise HTTPException(status_code=424, detail=log.error)
-    await db.mail_logs.insert_one(log.to_mongo())
+        await _send_tracked_mail(
+            company_id=company_id, to=to_list, subject=subject, body=full_body, account=a,
+            contact_id=contact_id or None, contact_name=contact_name or None, context=context or "manual",
+            ref_id=ref_id or None, base_url=base, cc=cc_list, attachments=attachments,
+        )
+    except HTTPException:
+        raise
     return {"status": "success", "message": f"E-posta {', '.join(to_list)} adresine gönderildi."}
 
 @api_router.get("/comm/mail/logs")
