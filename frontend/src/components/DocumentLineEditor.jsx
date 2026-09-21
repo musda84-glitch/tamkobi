@@ -5,7 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { SearchSelect } from "./SearchSelect";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
-import { priceInputStep } from "../utils/money";
+import { inputStepForPrice } from "../utils/money";
 
 const inp = "w-full bg-white border border-slate-200 rounded p-1.5 text-xs";
 const FALLBACK_UNITS = ["Adet", "Metre", "Kg", "Mt", "Paket", "Koli"];
@@ -190,7 +190,7 @@ export function DocumentLineEditor({
                   <input
                     disabled={disabled}
                     type="number"
-                    step={priceInputStep()}
+                    step={inputStepForPrice(item.unit_price)}
                     min="0"
                     value={item.unit_price}
                     onChange={(e) => patch(idx, "unit_price", e.target.value)}
@@ -202,7 +202,7 @@ export function DocumentLineEditor({
                   <input
                     disabled={disabled}
                     type="number"
-                    step={priceInputStep()}
+                    step={inputStepForPrice(item.unit_price_incl)}
                     min="0"
                     value={Math.round((Number(item.unit_price_incl) || 0) * 10000) / 10000}
                     onChange={(e) => patch(idx, "unit_price_incl", e.target.value)}

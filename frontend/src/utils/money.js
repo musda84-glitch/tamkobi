@@ -40,3 +40,18 @@ export function priceInputStep() {
   if (d <= 0) return "1";
   return (1 / 10 ** d).toFixed(d);
 }
+
+/**
+ * Manuel giriş firma adımını kullanır. KDV dahil fiyattan gelen net birim
+ * (ör. 260 / 1,10 = 236,3636) bu adıma oturmuyorsa step=any; aksi halde
+ * tarayıcı kaydı "236 veya 237 girin" diye keser.
+ */
+export function inputStepForPrice(value) {
+  const step = priceInputStep();
+  const n = Number(value);
+  const stepNum = Number(step);
+  if (!Number.isFinite(n) || !Number.isFinite(stepNum) || stepNum <= 0) return step;
+  const q = n / stepNum;
+  if (Math.abs(q - Math.round(q)) < 1e-8) return step;
+  return "any";
+}
