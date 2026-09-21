@@ -202,7 +202,7 @@ export default function ContactsPage() {
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-[min(1280px,calc(100vw-2rem))] w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="statement-modal">
+          <div className="bg-white rounded-2xl max-w-[min(1680px,calc(100vw-2rem))] w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="statement-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900">{selectedContactStatement.name} - Cari Ekstresi</h3>
