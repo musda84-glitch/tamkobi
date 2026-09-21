@@ -38,6 +38,7 @@ import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
+import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import {
   DropdownMenu,
