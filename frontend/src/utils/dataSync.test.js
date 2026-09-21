@@ -41,3 +41,29 @@ test("applyStockFilters b2b yes/no matches toggle semantics (undefined = open)",
   expect(applyStockFilters([open, closed, legacy], { ...base, b2b: "no" }).map((p) => p.id)).toEqual(["2"]);
   expect(applyStockFilters([open, closed, legacy], { ...base, b2b: "all" }).map((p) => p.id)).toEqual(["1", "2", "3"]);
 });
+
+test("critical stock uses default min 5 when alert is unset", () => {
+  const { applyStockFilters, isCriticalStock } = require("../components/StockToolbar");
+  const unset = { id: "1", name: "A", track_stock: true, stock_quantity: 3 };
+  const explicitZero = { id: "2", name: "B", track_stock: true, stock_quantity: 3, min_stock_alert: 0 };
+  const below = { id: "3", name: "C", track_stock: true, stock_quantity: 2, min_stock_alert: 5 };
+  const base = { status: "critical", b2b: "all", sort: "name_asc" };
+  expect(isCriticalStock(unset)).toBe(true);
+  expect(isCriticalStock(explicitZero)).toBe(false);
+  expect(applyStockFilters([unset, explicitZero, below], base).map((p) => p.id)).toEqual(["1", "3"]);
+});
+
+test("order filters incoming and dispatched groups", () => {
+  const { applyOrderFilters } = require("../components/OrdersToolbar");
+  const rows = [
+    { order_number: "N1", order_status: "approved" },
+    { order_number: "N2", order_status: "pending" },
+    { order_number: "S1", order_status: "shipped" },
+    { order_number: "S2", order_status: "completed", cargo_tracking_number: "YK1" },
+    { order_number: "S3", order_status: "approved", cargo_tracking_number: "YK2" },
+    { order_number: "X", order_status: "cancelled", cargo_tracking_number: "YK3" },
+  ];
+  const base = { q: "", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "number" };
+  expect(applyOrderFilters(rows, { ...base, status: "incoming" }).map((o) => o.order_number)).toEqual(["N2", "N1"]);
+  expect(applyOrderFilters(rows, { ...base, status: "dispatched" }).map((o) => o.order_number).sort()).toEqual(["S1", "S2", "S3"]);
+});

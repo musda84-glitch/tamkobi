@@ -8,14 +8,37 @@ import { orderGross } from "../utils/orderMoney";
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = { q: "", status: "all", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "date_desc" };
-const STATUS = [["all", "Tüm Durumlar"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
+const STATUS = [["all", "Tüm Durumlar"], ["incoming", "Yeni gelen"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["dispatched", "Sevk edilmiş"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
+const INCOMING_STATUSES = new Set(["pending", "new", "approved"]);
+const DISPATCHED_STATUSES = new Set(["shipped", "delivered", "completed"]);
+const CLOSED_STATUSES = new Set(["cancelled", "returned", "partially_returned"]);
+
+export function isIncomingOrder(o) {
+  return INCOMING_STATUSES.has(o?.order_status) && !o?.cargo_tracking_number;
+}
+
+export function isDispatchedOrder(o) {
+  if (DISPATCHED_STATUSES.has(o?.order_status)) return true;
+  return !!o?.cargo_tracking_number && !CLOSED_STATUSES.has(o?.order_status);
+}
+
+export function orderFiltersFromSearch(params) {
+  const status = params?.get?.("status") || "";
+  const q = params?.get?.("q") || "";
+  const next = { ...ORDER_FILTER_DEFAULTS };
+  if (STATUS.some(([k]) => k === status)) next.status = status;
+  if (q) next.q = q;
+  return next;
+}
 const SORT = [["date_desc", "Tarih (yeni)"], ["date_asc", "Tarih (eski)"], ["amount_desc", "Tutar (yüksek)"], ["amount_asc", "Tutar (düşük)"], ["customer", "Müşteri (A→Z)"], ["number", "Sipariş No"]];
 
 export const applyOrderFilters = (orders, f) => {
   const q = f.q.trim().toLowerCase();
   const list = orders.filter((o) => {
     if (q && !`${o.order_number} ${o.customer_name} ${o.customer_phone || ""} ${o.cargo_tracking_number || ""} ${o.marketplace_order_id || ""} ${(o.items || []).map((i) => `${i.product_name} ${i.note || ""}`).join(" ")}`.toLowerCase().includes(q)) return false;
-    if (f.status !== "all" && o.order_status !== f.status) return false;
+    if (f.status === "incoming" && !isIncomingOrder(o)) return false;
+    if (f.status === "dispatched" && !isDispatchedOrder(o)) return false;
+    if (f.status !== "all" && f.status !== "incoming" && f.status !== "dispatched" && o.order_status !== f.status) return false;
     if (f.channel !== "all" && (o.channel || "b2b") !== f.channel) return false;
     if (f.invoiced === "yes" && !o.invoice_id) return false;
     if (f.invoiced === "no" && o.invoice_id) return false;
@@ -36,7 +59,12 @@ export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [] }) => {
   const channels = [...new Set(orders.map((o) => o.channel || "b2b"))];
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
   const active = Object.keys(ORDER_FILTER_DEFAULTS).filter((k) => k !== "sort" && f[k] !== ORDER_FILTER_DEFAULTS[k]).length;
-  const counts = orders.reduce((m, o) => { m[o.order_status] = (m[o.order_status] || 0) + 1; return m; }, {});
+  const counts = orders.reduce((m, o) => {
+    m[o.order_status] = (m[o.order_status] || 0) + 1;
+    if (isIncomingOrder(o)) m.incoming = (m.incoming || 0) + 1;
+    if (isDispatchedOrder(o)) m.dispatched = (m.dispatched || 0) + 1;
+    return m;
+  }, {});
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3 space-y-2" data-testid="orders-toolbar">
       <div className="flex flex-wrap items-center gap-2">
