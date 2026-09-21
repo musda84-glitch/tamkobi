@@ -29,13 +29,14 @@ export function isPdfContentType(type: string | null | undefined): boolean {
   return /pdf/i.test(String(type || ""));
 }
 
-export function quotePrintDocument(title: string, bodyHtml: string): string {
+export function quotePrintDocument(title: string, bodyHtml: string, paper: "A4" | "A5" | string = "A4"): string {
+  const size = paper === "A5" ? "A5" : "A4";
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${String(title || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")}</title>
-<style>@page{size:A4;margin:8mm}html,body{margin:0;padding:0;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}</style>
+<style>@page{size:${size};margin:10mm}html,body{margin:0;padding:0;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}</style>
 </head><body>${bodyHtml}</body></html>`;
 }
 
@@ -43,6 +44,7 @@ function quoteAsPrintOrder(quote: QuoteDoc): Order {
   const totals = workItemTotals(quote.items || []);
   return {
     order_number: quote.quote_number,
+    contact_id: quote.contact_id,
     contact_name: quote.contact_name,
     customer_name: quote.contact_name,
     order_date: quote.issue_date,

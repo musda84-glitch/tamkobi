@@ -46,6 +46,7 @@ import {
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import type { BankAccount } from "../utils/finance";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
+import { printPaymentReceipt } from "../utils/chequeShare";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
 type PayMethod = "cash" | "cheque" | "promissory";
@@ -76,7 +77,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 }
 
 export function ContactDetailScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const canEditContact = can("/contacts", "edit");
   const canInvoice = can("/invoices", "edit");
@@ -418,6 +419,31 @@ export function ContactDetailScreen() {
         }
       },
     );
+  };
+
+  const printPayment = async (p: ContactPayment) => {
+    try {
+      await printPaymentReceipt(
+        {
+          id: idOf(p),
+          type: p.type === "outflow" ? "outflow" : p.type === "transfer" ? "transfer" : "inflow",
+          date: p.date,
+          account_name: p.account_name,
+          category: p.category,
+          description: p.description,
+          amount: p.amount,
+          contact_name: c.name,
+        },
+        activeCompany,
+        client,
+        { name: c.name, tax_number_or_id: c.tax_number_or_id, address: c.address, city: c.city, balance: bal },
+        id,
+      );
+      setMessage("Makbuz yazdırmaya gönderildi.");
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Makbuz yazdırılamadı."));
+    }
   };
 
   const removePayment = (p: ContactPayment) => {
@@ -802,6 +828,14 @@ export function ContactDetailScreen() {
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
                   right={`${p.type === "inflow" ? "+" : "-"}${fmtMoney(p.amount)}`}
                 />
+                <Row>
+                  <PrimaryButton
+                    title="Makbuz"
+                    onPress={() => printPayment(p)}
+                    color={colors.slate800}
+                    testID={`pay-print-${idOf(p) || idx}`}
+                  />
+                </Row>
                 {showChequeBtns ? (
                   <Row>
                     <PrimaryButton

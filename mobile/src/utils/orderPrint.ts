@@ -1,6 +1,17 @@
 import type { Company, Order, Product } from "../types";
 import { code128Svg } from "./code128";
 import { fmtDate, fmtMoney } from "./money";
+import {
+  balanceSentence,
+  isOrderQuotePrint,
+  lineTotalIncl,
+  printDiscountLabel,
+  printNetAmount,
+  printQtyLabel,
+  printShelfLabel,
+  printVatLines,
+  vatRateLabel,
+} from "./printFormLayout";
 
 export type PrintCompany = Pick<Company, "name"> & {
   id?: string;
@@ -42,14 +53,44 @@ export type PrintProduct = Pick<Product, "barcode" | "sku" | "thumbnail_url" | "
   _id?: string;
 };
 
-export type PrintDocType = "order" | "quote";
+export type PrintDocType = "order" | "quote" | "invoice" | "dispatch";
+
+export type PrintPaymentRow = {
+  no?: number | string;
+  label?: string;
+  due_date?: string;
+  amount?: number;
+  status?: string;
+};
 
 export type OrderFormOptions = {
   template?: Partial<PrintTemplate> | null;
   products?: Record<string, PrintProduct>;
   mediaBase?: string;
   docType?: PrintDocType;
+  contactBalance?: number | null;
+  paymentPlan?: PrintPaymentRow[] | null;
 };
+
+const DOC_TITLES: Record<PrintDocType, string> = {
+  invoice: "FATURA",
+  order: "SİPARİŞ FORMU",
+  quote: "FİYAT TEKLİFİ",
+  dispatch: "İRSALİYE",
+};
+
+export function printDocTitle(docType: PrintDocType, doc: Record<string, unknown> = {}, override?: string): string {
+  if (override) return override;
+  if (doc.e_type === "e_export" || doc.trade_kind === "export") return "e-İHRACAT FATURASI";
+  if (doc.trade_kind === "import") return "İTHALAT FATURASI";
+  return DOC_TITLES[docType] || "BELGE";
+}
+
+export function printDocNumber(docType: PrintDocType, doc: Record<string, unknown> = {}): string {
+  if (docType === "quote") return String(doc.quote_number || doc.order_number || "");
+  if (docType === "order") return String(doc.order_number || "");
+  return String(doc.invoice_number || doc.quote_number || doc.order_number || "");
+}
 
 export const DEFAULT_PRINT_TEMPLATE: PrintTemplate = {
   show_logo: true,
@@ -109,6 +150,8 @@ type PrintLine = {
   discount?: number;
   gtip?: string;
   origin?: string;
+  shelf?: string;
+  raw?: Record<string, unknown>;
 };
 
 function pickItemImage(it: Record<string, unknown>, prod?: PrintProduct): string {
@@ -164,6 +207,8 @@ function itemsOf(order: Order, products: Record<string, PrintProduct> = {}, medi
       discount: num(it.discount_rate),
       gtip: it.gtip ? String(it.gtip) : undefined,
       origin: it.origin_country ? String(it.origin_country) : undefined,
+      shelf: printShelfLabel(it, prod as Record<string, unknown>),
+      raw: it,
     };
   });
 }
@@ -202,6 +247,7 @@ function quoteExtras(order: Order): { validUntil?: string; dueDate?: string; sub
 export function orderFormHtml(order: Order, company?: PrintCompany | null, options?: OrderFormOptions): string {
   const tpl = mergePrintTemplate(options?.template);
   const lines = itemsOf(order, options?.products || {}, options?.mediaBase);
+  const rawItems = (order.items || []) as Record<string, unknown>[];
   const layout = tpl.layout || "classic";
   const color = layout === "minimal" ? "#0f172a" : tpl.primary_color || "#059669";
   const hideAll = !!tpl.hide_all_prices;
@@ -212,9 +258,12 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const isMinimal = layout === "minimal";
   const isBold = layout === "bold";
   const docType = options?.docType || "order";
-  const title = tpl.title_override || (docType === "quote" ? "FİYAT TEKLİFİ" : "SİPARİŞ FORMU");
+  const compact = isOrderQuotePrint(docType);
+  const doc = order as Order & Record<string, unknown>;
+  const title = printDocTitle(docType, doc, tpl.title_override);
+  const number = printDocNumber(docType, { ...doc, quote_number: doc.quote_number || (docType === "quote" ? order.order_number : "") });
   const extras = quoteExtras(order);
-  const currency = (order as Order & { currency?: string }).currency;
+  const currency = doc.currency as string | undefined;
   const thBg = isMinimal ? "transparent" : isBold ? "#0f172a" : color;
   const thColor = isMinimal ? "#0f172a" : "#fff";
   const thBorder = isMinimal ? "border-bottom:2px solid #0f172a;" : "";
@@ -222,6 +271,12 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const total = order.grand_total ?? order.total_amount ?? 0;
   const custNo = customerOrderNo(order);
   const orderNotes = [order.customer_note, order.order_note, order.customer_notes].filter(Boolean);
+  const showImages = tpl.show_images !== false;
+  const showBarcode = tpl.show_barcode !== false;
+  const vatLines = printVatLines(doc, rawItems);
+  const netAmount = printNetAmount(doc, rawItems);
+  const balanceText = !hideAll ? balanceSentence(options?.contactBalance) : "";
+  const shipAddr = order.shipping_address || String(doc.address || "");
   const logo = tpl.show_logo && company?.logo_url
     ? `<img src="${esc(printThumbUrl(company.logo_url, options?.mediaBase))}" alt="logo" style="height:56px;object-fit:contain;${isModern ? "background:#fff;border-radius:8px;padding:4px;" : ""}"/>`
     : "";
@@ -238,7 +293,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const headerRight = `
     <div style="text-align:right">
       <div style="font-size:${isBold ? "28px" : "24px"};font-weight:900;letter-spacing:-0.3px;color:${isModern ? "#fff" : isBold ? "#0f172a" : color}">${esc(title)}</div>
-      <div style="font-family:ui-monospace,monospace;font-weight:600;color:${isModern ? "#fff" : "#0f172a"}">${esc(order.order_number || "")}</div>
+      <div style="font-family:ui-monospace,monospace;font-weight:600;color:${isModern ? "#fff" : "#0f172a"}">${esc(number)}</div>
       <div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Tarih: ${esc(orderDate(order))}</div>
       ${extras.validUntil ? `<div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Geçerlilik: ${esc(extras.validUntil)}</div>` : ""}
       ${extras.dueDate ? `<div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Vade: ${esc(extras.dueDate)}</div>` : ""}
@@ -251,7 +306,60 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
         <div style="display:flex;align-items:center;gap:12px">${logo}${companyMeta}</div>${headerRight}
       </div>`;
 
-  const priceHeads = hideLine
+  const tradeMeta = [doc.incoterm, doc.country, doc.customs_office, doc.regime_code && `Rejim ${doc.regime_code}`, doc.declaration_no && `Bey. ${doc.declaration_no}`, doc.bl_awb && `BL ${doc.bl_awb}`, doc.dab_no && `DAB ${doc.dab_no}`, doc.certificate, doc.trade_file_number]
+    .filter(Boolean)
+    .map((v) => esc(v))
+    .join(" · ");
+
+  const compactRows = lines.map((it, i) => {
+    const code = showBarcode ? it.barcode || it.sku || "" : "";
+    const img = showImages ? it.image : "";
+    const note = tpl.show_item_notes !== false && it.note
+      ? `<div style="font-size:10px;color:#64748b;font-style:italic;white-space:pre-wrap">${esc(it.note)}</div>`
+      : "";
+    const gtip = it.gtip
+      ? `<div style="font-size:10px;font-family:monospace;color:#94a3b8">GTIP ${esc(it.gtip)}${it.origin ? ` · ${esc(it.origin)}` : ""}</div>`
+      : "";
+    const barcodeCell = !showBarcode
+      ? ""
+      : `<td style="padding:8px 4px;vertical-align:middle;text-align:center">${code
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">${code128Svg(code, { height: 28, moduleWidth: 1.1, margin: 4, displayValue: false })}<span style="font-family:monospace;font-size:10px;color:#334155">${esc(code)}</span></div>`
+        : ""}</td>`;
+    const priceCells = hideLine
+      ? ""
+      : `<td style="padding:12px 8px;text-align:right;white-space:nowrap">${esc(money(it.price, currency))}</td>
+         <td style="padding:12px 8px;text-align:right;white-space:nowrap">${esc(printDiscountLabel(it.discount))}</td>
+         ${hideVat ? "" : `<td style="padding:12px 8px;text-align:right;white-space:nowrap">%${esc(it.vat)}</td>`}
+         <td style="padding:12px 8px 12px 8px;text-align:right;white-space:nowrap">${esc(money(hideVat ? it.total : lineTotalIncl(it.raw || { total: it.total, total_incl: it.totalIncl, vat_rate: it.vat }), currency))}</td>`;
+    return `<tr style="border-bottom:1px solid #e2e8f0" data-print-item="${i}">
+      <td style="padding:12px 8px 12px 0;vertical-align:middle">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+          <span style="width:16px;flex-shrink:0;font-size:12px;color:#64748b">${i + 1}</span>
+          ${showImages ? (img
+            ? `<img src="${esc(img)}" alt="" width="44" height="44" style="width:44px;height:44px;object-fit:contain;background:#fff;flex-shrink:0"/>`
+            : `<span style="display:block;width:44px;height:44px;background:#f8fafc;flex-shrink:0"></span>`) : ""}
+          <div style="min-width:0"><div style="font-weight:700;color:#0f172a">${esc(it.name)}</div>${gtip}${note}</div>
+        </div>
+      </td>
+      <td style="padding:12px 8px;vertical-align:middle;white-space:nowrap;color:#334155">${esc(it.shelf || "")}</td>
+      ${barcodeCell}
+      <td style="padding:12px 8px;text-align:right;vertical-align:middle;white-space:nowrap">${esc(printQtyLabel(it.qty, it.unit))}</td>
+      ${priceCells}
+    </tr>`;
+  }).join("");
+
+  const compactHead = `<tr style="color:#0f172a;border-bottom:1px solid #94a3b8">
+      <th style="text-align:left;padding:8px 8px 8px 0;font-weight:600">Açıklama</th>
+      <th style="text-align:left;padding:8px;font-weight:600;white-space:nowrap">Raf Yeri</th>
+      ${showBarcode ? `<th style="text-align:center;padding:8px;font-weight:600;white-space:nowrap">Barkod</th>` : ""}
+      <th style="text-align:right;padding:8px;font-weight:600;white-space:nowrap">Miktar</th>
+      ${hideLine ? "" : `<th style="text-align:right;padding:8px;font-weight:600">Fiyat</th>
+        <th style="text-align:right;padding:8px;font-weight:600;white-space:nowrap">İndirim (%)</th>
+        ${hideVat ? "" : `<th style="text-align:right;padding:8px;font-weight:600;white-space:nowrap">KDV (%)</th>`}
+        <th style="text-align:right;padding:8px 0 8px 8px;font-weight:600;white-space:nowrap">${hideVat ? "Tutar" : "Tutar (KDV Dahil)"}</th>`}
+    </tr>`;
+
+  const widePriceHeads = hideLine
     ? ""
     : `<th style="text-align:right;padding:8px">Birim (KDV'siz)</th>${
         hideVat ? "" : `<th style="text-align:right;padding:8px">Birim (KDV'li)</th><th style="text-align:right;padding:8px">KDV</th>`
@@ -259,9 +367,9 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
         hideVat ? "" : `<th style="text-align:right;padding:8px">Tutar Dahil</th>`
       }`;
 
-  const rows = lines.map((it, i) => {
-    const code = tpl.show_barcode === false ? "" : it.barcode || it.sku || "";
-    const img = tpl.show_images === false ? "" : it.image;
+  const wideRows = lines.map((it, i) => {
+    const code = showBarcode ? it.barcode || it.sku || "" : "";
+    const img = showImages ? it.image : "";
     const zebra = isBold && i % 2 ? "background:#f8fafc;" : "";
     const note = tpl.show_item_notes !== false && it.note
       ? `<div style="font-size:10px;color:#64748b;font-style:italic;white-space:pre-wrap">${esc(it.note)}</div>`
@@ -282,7 +390,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
         }<td style="padding:8px;text-align:right;font-weight:600">${esc(money(it.total, currency))}</td>${
           hideVat ? "" : `<td style="padding:8px;text-align:right;font-weight:700">${esc(money(it.totalIncl, currency))}</td>`
         }`;
-    return `<tr style="border-bottom:1px solid #f1f5f9;${zebra}">
+    return `<tr style="border-bottom:1px solid #f1f5f9;${zebra}" data-print-item="${i}">
       <td style="padding:8px;vertical-align:middle">${img ? `<img src="${esc(img)}" alt="" width="64" height="64" style="width:64px;height:64px;object-fit:contain;border:1px solid #e2e8f0;border-radius:6px;background:#fff"/>` : `<div style="width:64px;height:64px;border:1px dashed #e2e8f0;border-radius:6px;background:#f8fafc"></div>`}</td>
       <td style="padding:8px;vertical-align:middle"><div style="font-weight:600;color:#0f172a">${esc(it.name)}${disc}</div>${gtip}${note}</td>
       <td style="padding:8px;vertical-align:middle">${barcodeCell}</td>
@@ -291,14 +399,51 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
     </tr>`;
   }).join("");
 
-  const totals = hideAll
+  const itemsTable = compact
+    ? `<table data-print-items="compact" style="width:100%;border-collapse:collapse;margin-top:24px">
+        <thead>${compactHead}</thead>
+        <tbody>${compactRows || `<tr><td colspan="8" style="padding:8px">Kalem yok</td></tr>`}</tbody>
+      </table>`
+    : `<table data-print-items="wide" style="width:100%;border-collapse:collapse;margin-top:24px${isModern ? ";overflow:hidden;border-radius:12px" : ""}">
+        <thead><tr style="background:${thBg};color:${thColor};${thBorder}">
+          <th style="padding:8px;width:80px;text-align:left">Resim</th>
+          <th style="padding:8px;text-align:left">Açıklama</th>
+          <th style="padding:8px;width:200px;text-align:left">Barkod</th>
+          <th style="padding:8px;text-align:right">Miktar</th>
+          ${widePriceHeads}
+        </tr></thead>
+        <tbody>${wideRows || `<tr><td colspan="8" style="padding:8px">Kalem yok</td></tr>`}</tbody>
+      </table>`;
+
+  const compactVat = !hideVat
+    ? vatLines.map((line) => `<div style="display:flex;justify-content:space-between;gap:32px"><span>${esc(vatRateLabel(line.rate))}</span><span>${esc(money(line.amount, currency))}</span></div>`).join("")
+    : "";
+  const withhold = num(doc.withholding_amount) > 0
+    ? `<div style="display:flex;justify-content:space-between;gap:32px;color:#4338ca"><span>Tevkifat</span><span>-${esc(money(doc.withholding_amount, currency))}</span></div>`
+    : "";
+  const totalsInner = hideAll
     ? ""
-    : `<div style="display:flex;justify-content:flex-end;margin-top:16px"><div style="width:260px;${isModern ? `background:${color}14;border-radius:12px;padding:12px;` : ""}">
-        ${num(order.discount_total) > 0 ? `<div style="display:flex;justify-content:space-between;color:#e11d48"><span>İskonto</span><span>-${esc(money(order.discount_total, currency))}</span></div>` : ""}
-        ${!hideVat && order.subtotal !== undefined ? `<div style="display:flex;justify-content:space-between"><span style="color:#64748b">Ara Toplam (KDV Hariç)</span><span>${esc(money(order.subtotal, currency))}</span></div>` : ""}
-        ${!hideVat && order.vat_total !== undefined ? `<div style="display:flex;justify-content:space-between"><span style="color:#64748b">KDV</span><span>${esc(money(order.vat_total, currency))}</span></div>` : ""}
-        <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:900;border-top:2px solid ${color};padding-top:4px;margin-top:4px"><span>${hideVat ? "TOPLAM" : "GENEL TOPLAM (KDV Dahil)"}</span><span style="color:${color}">${esc(money(total, currency))}</span></div>
-      </div></div>`;
+    : compact
+      ? `<div style="min-width:16rem;font-size:14px">
+          ${num(order.discount_total) > 0 ? `<div style="display:flex;justify-content:space-between;gap:32px;color:#e11d48"><span>İskonto</span><span>-${esc(money(order.discount_total, currency))}</span></div>` : ""}
+          ${!hideVat ? `<div data-print-net style="display:flex;justify-content:space-between;gap:32px"><span>Net</span><span>${esc(money(netAmount, currency))}</span></div>` : ""}
+          ${compactVat}
+          ${withhold}
+          <div data-print-grand-total style="display:flex;justify-content:space-between;gap:32px;font-size:18px;font-weight:900;border-top:1px solid #cbd5e1;padding-top:4px;margin-top:4px"><span>Toplam</span><span>${esc(money(total, currency))}</span></div>
+        </div>`
+      : `<div style="width:260px;${isModern ? `background:${color}14;border-radius:12px;padding:12px;` : ""}">
+          ${num(order.discount_total) > 0 ? `<div style="display:flex;justify-content:space-between;color:#e11d48"><span>İskonto</span><span>-${esc(money(order.discount_total, currency))}</span></div>` : ""}
+          ${!hideVat && order.subtotal !== undefined ? `<div data-print-net style="display:flex;justify-content:space-between"><span style="color:#64748b">Ara Toplam (KDV Hariç)</span><span>${esc(money(order.subtotal, currency))}</span></div>` : ""}
+          ${!hideVat && order.vat_total !== undefined ? `<div style="display:flex;justify-content:space-between"><span style="color:#64748b">KDV</span><span>${esc(money(order.vat_total, currency))}</span></div>` : ""}
+          ${withhold}
+          <div data-print-grand-total style="display:flex;justify-content:space-between;font-size:16px;font-weight:900;border-top:2px solid ${color};padding-top:4px;margin-top:4px"><span>${hideVat ? "TOPLAM" : "GENEL TOPLAM (KDV Dahil)"}</span><span style="color:${color}">${esc(money(total, currency))}</span></div>
+        </div>`;
+  const totals = (compact ? (balanceText || !hideAll) : !hideAll)
+    ? `<div data-print-totals style="margin-top:16px;display:flex;align-items:flex-start;justify-content:${compact ? "space-between" : "flex-end"};gap:24px">
+        ${compact ? `<div data-print-balance style="padding-top:4px;font-size:14px;color:#1e293b">${esc(balanceText)}</div>` : ""}
+        ${totalsInner}
+      </div>`
+    : "";
 
   const notesBox = tpl.show_order_notes !== false && orderNotes.length
     ? `<div style="margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;color:#334155;white-space:pre-wrap"><b>Sipariş Notu:</b> ${esc(orderNotes.join(" • "))}</div>`
@@ -309,6 +454,16 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const bank = tpl.show_bank_info && company?.iban
     ? `<div style="margin-top:24px;color:#475569"><b>Banka:</b> ${esc(company.bank_name || "")} • <b>IBAN:</b> <span style="font-family:monospace">${esc(company.iban)}</span></div>`
     : "";
+  const plan = (options?.paymentPlan || []).length
+    ? `<div data-print-payment-plan style="margin-top:24px">
+        <div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Ödeme Planı (${options!.paymentPlan!.length} taksit)</div>
+        <table style="width:100%;border-collapse:collapse">${options!.paymentPlan!.map((r) => `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:4px 0;font-weight:600">${esc(r.label || "")}</td><td style="padding:4px 0;color:#64748b;font-family:ui-monospace,monospace">${esc(r.due_date || "")}</td><td style="padding:4px 0;text-align:right;font-weight:600">${esc(money(r.amount, "TRY"))}</td><td style="padding:4px 0;text-align:right;width:80px">${r.status === "paid" ? `<span style="color:#047857;font-weight:700">Ödendi</span>` : r.status ? `<span style="color:#94a3b8">Bekliyor</span>` : ""}</td></tr>`).join("")}</table>
+      </div>`
+    : "";
+  const docImages = Array.isArray(doc.images) ? (doc.images as unknown[]).slice(0, 8) : [];
+  const gallery = docImages.length
+    ? `<div style="margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${docImages.map((img) => `<img src="${esc(printThumbUrl(String(img), options?.mediaBase))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0"/>`).join("")}</div>`
+    : "";
   const footer = `<div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end">
     <div style="color:#94a3b8;font-style:italic">${esc(tpl.footer_note || "")}</div>
     ${tpl.show_signature ? `<div style="text-align:center"><div style="width:160px;border-bottom:1px solid #cbd5e1;margin-bottom:4px"></div><div style="color:#64748b">Kaşe / İmza</div></div>` : ""}
@@ -318,7 +473,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
     ? `<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Konu</div><div style="font-weight:600">${esc(extras.subject)}</div></div>`
     : "";
 
-  return `<div data-print="${docType}" style="font-size:${fontSize};color:#1e293b;display:flex;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif">
+  return `<div data-print="${docType}" data-print-paper="${esc(tpl.paper || "A4")}" style="font-size:${fontSize};color:#1e293b;display:flex;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif">
     ${isBold ? `<div style="width:12px;align-self:stretch;background:${color}"></div>` : ""}
     <div style="flex:1;${isModern ? "" : "padding:40px"}">
       ${header}
@@ -328,25 +483,19 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
           <div>
             <div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Sayın</div>
             <div style="font-weight:700;font-size:16px">${esc(customer || "—")}</div>
-            ${order.shipping_address || order.city ? `<div style="color:#64748b">${esc(order.shipping_address || "")} ${esc(order.city || "")}</div>` : ""}
+            ${shipAddr || order.city ? `<div style="color:#64748b">${esc(shipAddr)} ${esc(order.city || "")}</div>` : ""}
             ${order.customer_phone ? `<div style="color:#64748b">${esc(order.customer_phone)}</div>` : ""}
             ${custNo ? `<div style="margin-top:8px;display:inline-block;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;padding:4px 8px;font-size:12px;font-weight:600;color:#064e3b">Müşteri sipariş no: <span style="font-family:monospace">${esc(custNo)}</span></div>` : ""}
+            ${tradeMeta ? `<div style="color:#64748b;margin-top:4px">${tradeMeta}</div>` : ""}
           </div>
           ${subjectBox}
         </div>
-        <table style="width:100%;border-collapse:collapse;margin-top:24px${isModern ? ";overflow:hidden;border-radius:12px" : ""}">
-          <thead><tr style="background:${thBg};color:${thColor};${thBorder}">
-            <th style="padding:8px;width:80px;text-align:left">Resim</th>
-            <th style="padding:8px;text-align:left">Açıklama</th>
-            <th style="padding:8px;width:200px;text-align:left">Barkod</th>
-            <th style="padding:8px;text-align:right">Miktar</th>
-            ${priceHeads}
-          </tr></thead>
-          <tbody>${rows || `<tr><td colspan="8" style="padding:8px">Kalem yok</td></tr>`}</tbody>
-        </table>
+        ${itemsTable}
         ${notesBox}
         ${totals}
+        ${plan}
         ${extraNotes}
+        ${gallery}
         ${bank}
         ${footer}
       </div>
@@ -409,6 +558,11 @@ export function cargoLabelText(order: Order, company?: PrintCompany | null): str
 }
 
 export type PrintPageKind = "default" | "a4" | "thermal";
+export type PrintPaper = "A4" | "A5" | string;
+
+export function printPageSize(paper?: PrintPaper | null): PrintPaper {
+  return paper === "A5" ? "A5" : "A4";
+}
 
 export function thermalLabelCss(size = "100x150"): string {
   const [w, h] = size.split("x").map(Number);
@@ -455,16 +609,22 @@ export function officialLabelFileMeta(type?: string | null, bytes?: Uint8Array |
 }
 
 /** Native expo-print belgesi — window.print scripti yok. */
-export function printDocumentHtml(title: string, bodyHtml: string, page: PrintPageKind = "a4"): string {
+export function printDocumentHtml(
+  title: string,
+  bodyHtml: string,
+  page: PrintPageKind = "a4",
+  paper?: PrintPaper | null,
+): string {
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>${documentCss(page)}</style>
+    <style>${documentCss(page, paper)}</style>
     </head><body>${bodyHtml}</body></html>`;
 }
 
-function documentCss(page: PrintPageKind): string {
+function documentCss(page: PrintPageKind, paper?: PrintPaper | null): string {
   if (page === "thermal") return thermalLabelCss();
   if (page === "a4") {
-    return `@page{size:A4;margin:8mm}html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}@media print{body{padding:0}}`;
+    const size = printPageSize(paper);
+    return `@page{size:${size};margin:10mm}html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}@media print{body{padding:0}}`;
   }
   return `body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;padding:16px;margin:0}@media print{body{padding:8px}}`;
 }
@@ -497,11 +657,11 @@ function printHtmlIframe(html: string): boolean {
   return true;
 }
 
-export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind }): boolean {
+export function openPrintHtml(title: string, bodyHtml: string, opts?: { page?: PrintPageKind; paper?: PrintPaper | null }): boolean {
   if (typeof document === "undefined") return false;
   const page = opts?.page || "default";
   const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>${documentCss(page)}</style>
+    <style>${documentCss(page, opts?.paper)}</style>
     </head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print()},${page === "thermal" ? 300 : 250})}</script></body></html>`;
   if (typeof window !== "undefined" && typeof window.open === "function") {
     try {

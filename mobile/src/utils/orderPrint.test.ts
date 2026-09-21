@@ -40,9 +40,13 @@ describe("orderPrint", () => {
     expect(html).toContain("11573451170");
     expect(html).toContain("Hatice YILDIRIM");
     expect(html).toContain("Koltuk");
-    expect(html).toContain("Resim");
+    expect(html).toContain("Raf Yeri");
     expect(html).toContain("Barkod");
-    expect(html).toContain("GENEL TOPLAM");
+    expect(html).toContain("Tutar (KDV Dahil)");
+    expect(html).toContain("İndirim (%)");
+    expect(html).toContain("data-print-items=\"compact\"");
+    expect(html).toContain("Toplam");
+    expect(html).toContain("Net");
     expect(html).toContain("Sayın");
     expect(html).toContain("VKN");
     expect(html).toContain("TY-88");
@@ -69,9 +73,44 @@ describe("orderPrint", () => {
       template: mergePrintTemplate({ layout: "modern", hide_all_prices: true, title_override: "SEVK LİSTESİ", show_signature: false }),
     });
     expect(html).toContain("SEVK LİSTESİ");
-    expect(html).not.toContain("GENEL TOPLAM");
+    expect(html).not.toContain("data-print-grand-total");
     expect(html).not.toContain("Kaşe / İmza");
     expect(html).toContain("background:#059669");
+  });
+
+  it("prints invoices with the wide web form and invoice title", () => {
+    const html = orderFormHtml(
+      { ...order, invoice_number: "SF-1", e_type: "e_archive", contact_name: "Hatice YILDIRIM" } as typeof order,
+      { name: "Matek", tax_office: "Kadıköy", tax_number: "123", iban: "TR00" },
+      { docType: "invoice" },
+    );
+    expect(html).toContain("FATURA");
+    expect(html).toContain("SF-1");
+    expect(html).toContain("Resim");
+    expect(html).toContain("Birim (KDV'siz)");
+    expect(html).toContain("GENEL TOPLAM (KDV Dahil)");
+    expect(html).toContain("data-print-items=\"wide\"");
+    expect(html).toContain("data-print=\"invoice\"");
+  });
+
+  it("prints dispatch forms and honors A5 paper + contact balance", () => {
+    const html = orderFormHtml(order, { name: "Matek" }, {
+      docType: "dispatch",
+      contactBalance: 1240,
+      template: mergePrintTemplate({ paper: "A5", title_override: "" }),
+    });
+    expect(html).toContain("İRSALİYE");
+    expect(html).toContain("data-print-paper=\"A5\"");
+    expect(html).toContain("Resim");
+    const a5 = printDocumentHtml("İrsaliye", html, "a4", "A5");
+    expect(a5).toContain("size:A5");
+    expect(a5).toContain("margin:10mm");
+  });
+
+  it("shows the web current-balance sentence on compact forms", () => {
+    const html = orderFormHtml(order, { name: "Matek" }, { contactBalance: 1240 });
+    expect(html).toContain("Güncel bakiyeniz: 1.240,00 TL");
+    expect(html).toContain("data-print-balance");
   });
 
   it("builds a 100×150 thermal kargo etiketi with CODE128", () => {

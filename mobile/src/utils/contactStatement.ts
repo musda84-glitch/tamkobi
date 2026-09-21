@@ -103,32 +103,77 @@ function esc(value: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
+export type StatementCompany = {
+  name?: string;
+  address?: string;
+  city?: string;
+  phone?: string;
+  email?: string;
+  tax_office?: string;
+  tax_number?: string;
+};
+
 export function statementPrintHtml(
-  contact: { name?: string; tax_number_or_id?: string; balance?: number },
+  contact: { name?: string; tax_number_or_id?: string; tax_office?: string; address?: string; city?: string; balance?: number },
   rows: StatementRow[],
-  companyName?: string,
+  company?: StatementCompany | string | null,
 ): string {
+  const co = typeof company === "string" ? { name: company } : (company || {});
   const last = rows.length ? rows[rows.length - 1].balance : Number(contact.balance) || 0;
   const side = last > 0 ? "Borçlu" : last < 0 ? "Alacaklı" : "";
-  const trs = rows.map((r) => (
-    `<tr><td>${esc(r.date)}</td><td>${esc(r.doc)}</td>`
-    + `<td style="text-align:right">${r.debit ? esc(fmtMoney(r.debit)) : ""}</td>`
-    + `<td style="text-align:right">${r.credit ? esc(fmtMoney(r.credit)) : ""}</td>`
-    + `<td style="text-align:right">${esc(fmtMoney(r.balance))}</td></tr>`
+  const totD = rows.reduce((s, r) => s + (r.debit || 0), 0);
+  const totC = rows.reduce((s, r) => s + (r.credit || 0), 0);
+  const trs = rows.map((r, i) => (
+    `<tr style="border-bottom:1px solid #f1f5f9;${i % 2 ? "background:#f8fafc;" : ""}">`
+    + `<td style="padding:8px;font-family:ui-monospace,monospace;color:#64748b">${esc(r.date)}</td>`
+    + `<td style="padding:8px">${esc(r.doc)}</td>`
+    + `<td style="padding:8px;text-align:right">${r.debit ? `${esc(fmtMoney(r.debit))}` : ""}</td>`
+    + `<td style="padding:8px;text-align:right">${r.credit ? `${esc(fmtMoney(r.credit))}` : ""}</td>`
+    + `<td style="padding:8px;text-align:right;font-weight:600">${esc(fmtMoney(r.balance))}</td></tr>`
   )).join("");
-  return `<div>
-    <h1 style="font-size:18px;margin:0 0 8px">${esc(companyName || "Firmamız")} — Cari Hesap Ekstresi</h1>
-    <p style="margin:0 0 12px">Sayın ${esc(contact.name || "Cari")}${contact.tax_number_or_id ? ` · VKN ${esc(contact.tax_number_or_id)}` : ""}<br/>Tarih: ${esc(new Date().toLocaleDateString("tr-TR"))}</p>
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr>
-        <th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:6px 4px">Tarih</th>
-        <th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:6px 4px">Belge</th>
-        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Borç</th>
-        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Alacak</th>
-        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Bakiye</th>
+  const balBox = last > 0 ? "background:#fff1f2;color:#be123c" : "background:#ecfdf5;color:#047857";
+  const created = new Date().toLocaleString("tr-TR");
+  return `<div data-print="statement" style="padding:40px;font-size:12px;color:#1e293b;font-family:-apple-system,Roboto,'Segoe UI',Arial,Helvetica,sans-serif">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:4px solid #0f172a;padding-bottom:16px">
+      <div>
+        <div style="font-size:16px;font-weight:700">${esc(co.name || "Firmamız")}</div>
+        <div style="color:#64748b">${esc(co.address || "")} ${esc(co.city || "")}</div>
+        <div style="color:#64748b">VD: ${esc(co.tax_office || "")} • VKN: ${esc(co.tax_number || "")}</div>
+        <div style="color:#64748b">${[co.phone, co.email].filter(Boolean).map(esc).join(" • ")}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:24px;font-weight:900;letter-spacing:-0.3px">CARİ HESAP EKSTRESİ</div>
+        <div style="color:#64748b">Tarih: ${esc(new Date().toLocaleDateString("tr-TR"))}</div>
+      </div>
+    </div>
+    <div style="margin-top:20px">
+      <div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Sayın</div>
+      <div style="font-weight:700;font-size:16px">${esc(contact.name || "Cari")}</div>
+      <div style="color:#64748b">VKN/TCKN: ${esc(contact.tax_number_or_id || "")}${contact.tax_office ? ` • ${esc(contact.tax_office)}` : ""}</div>
+      ${contact.address ? `<div style="color:#64748b">${esc(contact.address)} ${esc(contact.city || "")}</div>` : ""}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-top:24px">
+      <thead><tr style="background:#0f172a;color:#fff">
+        <th style="text-align:left;padding:8px;border-radius:6px 0 0 0">Tarih</th>
+        <th style="text-align:left;padding:8px">Belge / Açıklama</th>
+        <th style="text-align:right;padding:8px">Borç</th>
+        <th style="text-align:right;padding:8px">Alacak</th>
+        <th style="text-align:right;padding:8px;border-radius:0 6px 0 0">Bakiye</th>
       </tr></thead>
-      <tbody>${trs || `<tr><td colspan="5">Hareket yok.</td></tr>`}</tbody>
+      <tbody>${trs || `<tr><td colspan="5" style="padding:8px">Hareket yok.</td></tr>`}</tbody>
+      <tfoot><tr style="border-top:2px solid #0f172a;font-weight:700">
+        <td style="padding:8px" colspan="2">TOPLAM</td>
+        <td style="padding:8px;text-align:right">${esc(fmtMoney(totD))}</td>
+        <td style="padding:8px;text-align:right">${esc(fmtMoney(totC))}</td>
+        <td style="padding:8px;text-align:right">${esc(fmtMoney(last))}</td>
+      </tr></tfoot>
     </table>
-    <p style="margin-top:12px;font-weight:700">Güncel bakiye ${esc(fmtMoney(Math.abs(last)))} ${esc(side)}</p>
+    <div style="margin-top:24px;display:flex;justify-content:flex-end">
+      <div style="border-radius:12px;padding:12px 16px;text-align:right;${balBox}">
+        <div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8">Güncel Bakiye</div>
+        <div style="font-size:20px;font-weight:900">${esc(fmtMoney(Math.abs(last)))} <span style="font-size:12px;font-weight:600">${esc(side)}</span></div>
+      </div>
+    </div>
+    <div style="margin-top:40px;color:#94a3b8;font-style:italic">Bu ekstre ${esc(co.name || "Firmamız")} tarafından ${esc(created)} tarihinde oluşturulmuştur. Mutabakat için lütfen 7 gün içinde geri dönüş yapınız.</div>
   </div>`;
 }
