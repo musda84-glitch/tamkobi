@@ -4883,6 +4883,9 @@ async def serve_file(path: str):
         logger.error(f"File fetch failed: {e}")
         raise HTTPException(status_code=502, detail="Dosya alınamadı.")
     media = (record or {}).get("content_type") or content_type or "application/octet-stream"
+    head = data[:240].lstrip().lower()
+    if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 
 class VariantsUpdateRequest(BaseModel):

@@ -75,6 +75,17 @@ def test_stage_photos_group_by_stage_and_keep_loose_images():
     assert groups[2]["label"] == "Keşif fotoğrafı"
 
 
+def test_stage_photos_drop_error_pages():
+    groups = pp.group_stage_photos(
+        [{"url": "<html><h1>413 Request Entity Too Large</h1></html>", "stage": "planning"}],
+        ["<!DOCTYPE html><title>413</title>"],
+        [{"key": "planning", "label": "Planlama"}],
+    )
+    assert groups == []
+    assert pp.is_photo_url("/api/files/tamkobi/project/a.jpg")
+    assert not pp.is_photo_url("<html>413 Request Entity Too Large</html>")
+
+
 def test_sanitize_stage_photos_drops_foreign_urls():
     clean = pp.sanitize_stage_photos([
         {"url": "/api/files/ok.jpg", "stage": "active!", "stage_label": "Devam"},
