@@ -173,12 +173,12 @@ export function ChequesScreen() {
               r.bank_name,
             ].filter(Boolean).join(" · ")}
             right={fmtMoney(r.amount, r.currency)}
-            onPress={action && canEdit ? () => openSettle(r) : undefined}
+            onPress={idOf(r) ? () => go("ChequeDetail", { id: idOf(r) }) : action && canEdit ? () => openSettle(r) : undefined}
           />
         );
       })}
-      {canEdit && filtered.some((r) => r.status === "open") ? (
-        <Muted>Açık bir kayda dokunarak tahsil veya ödeme yapabilirsiniz.</Muted>
+      {filtered.length ? (
+        <Muted>Kayıta dokunarak düzenleyin, tahsilat / tediye makbuzu yazdırın veya tahsil / ödeme yapın.</Muted>
       ) : null}
     </Screen>
   );

@@ -1,9 +1,13 @@
 import {
   chequeAction,
+  chequeLedgerLocked,
   chequePayload,
+  chequeReceiptKind,
+  chequeReceiptLabel,
   chequeStatusTr,
   chequeTitle,
   chequeTone,
+  draftFromCheque,
   emptyChequeDraft,
   filterCheques,
   validateChequeDraft,
@@ -71,6 +75,27 @@ describe("cheques", () => {
       serial_no: "snt-9",
     });
     expect(body.drawer_name).toBe("");
+  });
+
+  it("builds an edit draft from a saved cheque", () => {
+    const d = draftFromCheque({
+      ...rows[0],
+      contact_id: "c1",
+      serial_no: "123456",
+      issue_date: "2026-09-21",
+      due_date: "2026-10-21",
+      notes: "portföy",
+    }, "2026-09-21");
+    expect(d.serial_no).toBe("123456");
+    expect(d.amount).toBe("1000");
+    expect(d.contact_id).toBe("c1");
+    expect(d.due_date).toBe("2026-10-21");
+    expect(chequeLedgerLocked(rows[0])).toBe(false);
+    expect(chequeLedgerLocked(rows[2])).toBe(true);
+    expect(chequeReceiptKind(rows[0])).toBe("collection");
+    expect(chequeReceiptKind(rows[1])).toBe("payment");
+    expect(chequeReceiptLabel(rows[0])).toBe("Tahsilat makbuzu");
+    expect(chequeReceiptLabel(rows[1])).toBe("Tediye makbuzu");
   });
 
   it("filters by direction, open state, overdue and free text", () => {

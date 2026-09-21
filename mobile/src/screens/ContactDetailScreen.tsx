@@ -843,9 +843,15 @@ export function ContactDetailScreen() {
           <ListRow
             key={idOf(ch) || idx}
             testID={`detail-cheque-${idx}`}
-            title={ch.serial_no || ch.cheque_number || "Çek"}
-            subtitle={[ch.type, statusTr(ch.status), fmtDate(ch.due_date)].filter(Boolean).join(" · ")}
+            title={ch.serial_no || ch.number || ch.cheque_number || "Çek"}
+            subtitle={[
+              ch.direction === "issued" ? "Verilen" : ch.direction === "received" ? "Alınan" : "",
+              ch.instrument === "promissory" ? "senet" : ch.instrument === "cheque" ? "çek" : "",
+              ch.status_label || statusTr(ch.status),
+              fmtDate(ch.due_date),
+            ].filter(Boolean).join(" · ")}
             right={fmtMoney(ch.amount)}
+            onPress={idOf(ch) ? () => go("ChequeDetail", { id: idOf(ch) }) : undefined}
           />
         ))
       ) : null}
