@@ -419,51 +419,51 @@ function ProjectCard({
             color="#9F1239"
           />
         </Row>
-          {canExp || canEdit ? (
-            <Row style={{ flexWrap: "wrap" }}>
-              {canExp ? (
-                <ActionBtn
-                  title="Masraf Ekle"
-                  testID={`project-expense-${id}`}
-                  onPress={() => go("ProjectDetail", { id, open_expense: "1" })}
-                  bg={colors.rose50}
-                  border="#FECDD3"
-                  color="#9F1239"
-                />
-              ) : null}
-              {canEdit ? (
-                <ActionBtn
-                  title="Görev Ata"
-                  testID={`project-team-${id}`}
-                  onPress={onTeam}
-                  bg={colors.indigo50}
-                  border="#C7D2FE"
-                  color="#3730A3"
-                />
-              ) : null}
-            </Row>
-          ) : null}
-          {canEdit ? (
-            <Row style={{ flexWrap: "wrap" }}>
+        {canExp || canEdit ? (
+          <Row style={{ flexWrap: "wrap" }}>
+            {canExp ? (
               <ActionBtn
-                title="Takip Linki"
-                testID={`project-track-${id}`}
-                onPress={onTrack}
-                bg={colors.emerald50}
-                border="#A7F3D0"
-                color="#047857"
+                title="Masraf Ekle"
+                testID={`project-expense-${id}`}
+                onPress={() => go("ProjectDetail", { id, open_expense: "1" })}
+                bg={colors.rose50}
+                border="#FECDD3"
+                color="#9F1239"
               />
-              {canCompleteProject(project.status) ? (
-                <ActionBtn
-                  title={PROJECT_QUOTE_ACTION}
-                  testID={`project-quote-${id}`}
-                  onPress={() => !statusBusy && onStatus("completed")}
-                  bg={colors.primary}
-                  color="#fff"
-                />
-              ) : null}
-            </Row>
-          ) : null}
+            ) : null}
+            {canEdit ? (
+              <ActionBtn
+                title="Görev Ata"
+                testID={`project-team-${id}`}
+                onPress={onTeam}
+                bg={colors.indigo50}
+                border="#C7D2FE"
+                color="#3730A3"
+              />
+            ) : null}
+          </Row>
+        ) : null}
+        {canEdit ? (
+          <Row style={{ flexWrap: "wrap" }}>
+            <ActionBtn
+              title="Takip Linki"
+              testID={`project-track-${id}`}
+              onPress={onTrack}
+              bg={colors.emerald50}
+              border="#A7F3D0"
+              color="#047857"
+            />
+            {canCompleteProject(project.status) ? (
+              <ActionBtn
+                title={PROJECT_QUOTE_ACTION}
+                testID={`project-quote-${id}`}
+                onPress={() => !statusBusy && onStatus("completed")}
+                bg={colors.primary}
+                color="#fff"
+              />
+            ) : null}
+          </Row>
+        ) : null}
       </View>
     </Card>
   );
