@@ -5,9 +5,8 @@ import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip } from "../components/chips";
-import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { TimeField } from "../components/TimeField";
+import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
@@ -48,7 +47,6 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
-import { hoursFromTimeRange, hoursToHm } from "../utils/overtimeRange";
 
 type Tab = "payroll" | "attendance" | "leaves" | "salary";
 
@@ -588,36 +586,20 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!otEmp}
         title="+ Mesai yaz"
-        subtitle={otEmp ? `${otEmp.full_name} · beklenen çıkış mesai bitişi + atanan saat` : undefined}
+        subtitle={otEmp ? `${otEmp.full_name} · saat aralığı (örn. 18:00–20:30)` : undefined}
         onClose={() => setOtEmp(null)}
         testID="overtime-assign-sheet"
       >
-        <DateField label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} />
-        <TimeField label="Başlangıç" testID="ot-start-input" value={otStart} onChangeText={(v) => {
-          setOtStart(v);
-          const hrs = hoursFromTimeRange(v, otEnd);
-          if (hrs != null) setOtHours(String(hrs));
-        }} />
-        <TimeField label="Bitiş" testID="ot-end-input" value={otEnd} onChangeText={(v) => {
-          setOtEnd(v);
-          const hrs = hoursFromTimeRange(otStart, v);
-          if (hrs != null) setOtHours(String(hrs));
-        }} />
-        <TimeField
-          label="Toplam saat"
-          testID="ot-hours-input"
-          value={hoursToHm(otHours)}
-          onChangeText={(v) => {
-            const hrs = hoursFromTimeRange("00:00", v);
-            setOtHours(hrs != null ? String(hrs) : v);
+        <OvertimeAssignFields
+          value={{ date: otDate, start: otStart, end: otEnd, hours: otHours, note: otNote }}
+          onChange={(next) => {
+            setOtDate(next.date);
+            setOtStart(next.start);
+            setOtEnd(next.end);
+            setOtHours(next.hours);
+            setOtNote(next.note);
           }}
         />
-        <Muted>
-          {hoursFromTimeRange(otStart, otEnd) != null
-            ? `Aralık ${otStart} – ${otEnd} · ${hoursFromTimeRange(otStart, otEnd)} sa`
-            : "Saat aralığı seçin veya toplam saati saat seçiciden girin."}
-        </Muted>
-        <Field label="Not" testID="ot-note-input" value={otNote} onChangeText={setOtNote} placeholder="Opsiyonel" />
         <PrimaryButton title="Mesaiyi kaydet" testID="ot-save-btn" color={colors.indigo} loading={busy} onPress={saveOvertime} />
       </B2BSheet>
 
