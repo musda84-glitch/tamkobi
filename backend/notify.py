@@ -226,6 +226,40 @@ async def tokens_for_users(db, user_ids: Iterable[str]) -> List[str]:
     return [str(r.get("token") or "") for r in rows if is_expo_push_token(r.get("token"))]
 
 
+async def tokens_for_company(db, company_id: Optional[str]) -> List[str]:
+    cid = str(company_id or "").strip()
+    if not cid:
+        return []
+    rows = await db.push_tokens.find({"company_id": cid}).to_list(400)
+    return [str(r.get("token") or "") for r in rows if is_expo_push_token(r.get("token"))]
+
+
+def is_targeted_note(note: Optional[Dict[str, Any]]) -> bool:
+    if not note:
+        return False
+    return bool(str(note.get("user_id") or "").strip() or str(note.get("employee_id") or "").strip())
+
+
+def merge_push_tokens(*groups: Iterable[str]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group or []:
+            token = str(raw or "").strip()
+            if not is_expo_push_token(token) or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+    return out
+
+
+def collect_dispatch_tokens(user_tokens: Iterable[str], company_tokens: Iterable[str], targeted: bool) -> List[str]:
+    """Kişisel bildirimde yalnız alıcı token'ı; şirket yayınında tüm kayıtlı cihazlar."""
+    if targeted:
+        return merge_push_tokens(user_tokens)
+    return merge_push_tokens(user_tokens, company_tokens)
+
+
 async def upsert_push_token(
     db,
     *,
@@ -310,7 +344,9 @@ async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[
 
 async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
     recipients = await recipient_user_ids(db, note)
-    tokens = await tokens_for_users(db, recipients)
+    user_tokens = await tokens_for_users(db, recipients)
+    company_tokens = [] if is_targeted_note(note) else await tokens_for_company(db, note.get("company_id"))
+    tokens = collect_dispatch_tokens(user_tokens, company_tokens, is_targeted_note(note))
     messages = expo_push_messages(tokens, note)
     if not messages:
         return {"sent": 0}

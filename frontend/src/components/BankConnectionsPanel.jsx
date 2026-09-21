@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2, Pencil } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
@@ -326,7 +327,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
               <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
-              <select value={newRule.target_account_id} onChange={(e) => setNewRule({ ...newRule, target_account_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-target-select"><option value="">Kasa/Hesap virman (ops.)</option>{accounts.filter((a) => !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
+              <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} testId="rule-target-select" excludeIntegrated includePartners emptyLabel="Kasa/Hesap virman (ops.)" className="w-44" />
               <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>
             <div className="flex flex-wrap gap-1.5">
@@ -347,7 +348,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </thead>
             <tbody className="divide-y divide-slate-100">
               {unmatched.length === 0 && <tr><td colSpan={6} className="px-4 py-5 text-center text-slate-400">Eşleştirme bekleyen hareket yok.</td></tr>}
-              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} onDone={() => { load(); onSynced?.(); }} />)}
+              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} companyId={companyId} onDone={() => { load(); onSynced?.(); }} />)}
             </tbody>
           </table>
         </div>

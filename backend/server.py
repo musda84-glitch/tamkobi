@@ -6952,23 +6952,36 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     if target_account_id:
         if target_account_id == tx.get("account_id"):
             raise HTTPException(status_code=400, detail="Hedef hesap, hareketin kendi hesabı olamaz.")
-        tacc = await db.bank_accounts.find_one({"_id": target_account_id})
-        if not tacc:
-            raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
-        if await bank_guard.get_connection_for_account(db, target_account_id):
-            raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
-        target_name = tacc.get("account_name")
-        counter_amount = amount if not is_inflow else -amount
-        await db.bank_accounts.update_one({"_id": target_account_id}, {"$inc": {"current_balance": counter_amount}})
-        await db.bank_transactions.insert_one({
-            "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": target_account_id, "account_name": target_name,
-            "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
-            "description": f"{tx.get('account_name')} {'→' if not is_inflow else '←'} {target_name}: {tx.get('description')}", "source": "bank_match",
-            "related_bank_tx_id": tx["_id"], "date": tx.get("date"), "created_at": datetime.now(timezone.utc).isoformat()})
-        update["target_account_id"] = target_account_id
-        update["target_account_name"] = target_name
-        if not category:
-            update["category"] = "Hesaplar Arası Virman"
+        t_kind, t_id = _virman_endpoint(target_account_id)
+        if t_kind == "partner":
+            if not t_id:
+                raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+            from bank_match_target import apply_partner_match, stored_match_target
+            target_name = await apply_partner_match(db, tx, t_id, amount, is_inflow)
+            target_account_id = stored_match_target("partner", t_id)
+            update["target_account_id"] = target_account_id
+            update["target_account_name"] = target_name
+            if not category:
+                update["category"] = "Ortaklar Hesabı"
+        else:
+            tacc = await db.bank_accounts.find_one({"_id": t_id})
+            if not tacc:
+                raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+            if await bank_guard.get_connection_for_account(db, t_id):
+                raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
+            target_name = tacc.get("account_name")
+            counter_amount = amount if not is_inflow else -amount
+            await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": counter_amount}})
+            await db.bank_transactions.insert_one({
+                "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": t_id, "account_name": target_name,
+                "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
+                "description": f"{tx.get('account_name')} {'→' if not is_inflow else '←'} {target_name}: {tx.get('description')}", "source": "bank_match",
+                "related_bank_tx_id": tx["_id"], "date": tx.get("date"), "created_at": datetime.now(timezone.utc).isoformat()})
+            update["target_account_id"] = t_id
+            update["target_account_name"] = target_name
+            if not category:
+                update["category"] = "Hesaplar Arası Virman"
+            target_account_id = t_id
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
         await _learn_rule(tx["company_id"], tx.get("description", ""), contact_id, contact_name, category, target_account_id, target_name)
@@ -6986,10 +6999,15 @@ async def _unmatch(tx: dict) -> dict:
             ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
     if tx.get("target_account_id"):
-        counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
-        if counter:
-            await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
-            await db.bank_transactions.delete_one({"_id": counter["_id"]})
+        t_kind, _t_id = _virman_endpoint(tx.get("target_account_id"))
+        if t_kind == "partner":
+            from bank_match_target import reverse_partner_match
+            await reverse_partner_match(db, tx)
+        else:
+            counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
+            if counter:
+                await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
+                await db.bank_transactions.delete_one({"_id": counter["_id"]})
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
         "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
         "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": ""}})

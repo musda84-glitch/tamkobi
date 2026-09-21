@@ -1,7 +1,10 @@
 from notify import (
+    collect_dispatch_tokens,
     expo_push_messages,
     filter_notifications,
     is_expo_push_token,
+    is_targeted_note,
+    merge_push_tokens,
     notification_doc,
     notification_visible,
     role_label,
@@ -91,3 +94,18 @@ def test_expo_push_token_and_payload():
     assert msgs[0]["data"]["link"] == "/orders"
     assert msgs[0]["channelId"] == "tamkobi"
     assert msgs[0]["badge"] == 1
+
+
+def test_broadcast_notes_also_use_company_push_tokens():
+    note = notification_doc("c1", "bank_sync", "1 yeni banka hareketi", "Vadesiz")
+    targeted = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_1", employee_id="emp_1")
+    assert not is_targeted_note(note)
+    assert is_targeted_note(targeted)
+    user_tok = ["ExponentPushToken[admin]"]
+    company_tok = ["ExponentPushToken[admin]", "ExponentPushToken[phone]", "bad"]
+    assert collect_dispatch_tokens(user_tok, company_tok, targeted=False) == [
+        "ExponentPushToken[admin]",
+        "ExponentPushToken[phone]",
+    ]
+    assert collect_dispatch_tokens(user_tok, company_tok, targeted=True) == ["ExponentPushToken[admin]"]
+    assert merge_push_tokens([], ["ExpoPushToken[x]"]) == ["ExpoPushToken[x]"]
