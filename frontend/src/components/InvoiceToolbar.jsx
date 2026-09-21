@@ -12,7 +12,7 @@ export const SORT_OPTIONS = [
   ["contact_asc", "Cari (A → Z)"], ["contact_desc", "Cari (Z → A)"],
   ["number_desc", "Fatura No (yeni)"], ["number_asc", "Fatura No (eski)"],
   ["gib_asc", "GİB (A → Z)"], ["gib_desc", "GİB (Z → A)"],
-  ["pay_asc", "Ödeme (ödenmedi önce)"], ["pay_desc", "Ödeme (ödendi önce)"],
+  ["pay_asc", "Ödeme (cariye işlenen önce)"], ["pay_desc", "Ödeme (ödendi önce)"],
 ];
 /** Kolon başlığı ↔ sıralama anahtarları (ilk tık = [0], tekrar = [1]). */
 export const SORT_COL_KEYS = {
