@@ -65,6 +65,14 @@ export function canDeleteInvoice(inv) {
   return true;
 }
 
+/** Taslak ve kağıt kayıtlar henüz GİB e-belgesi değildir; menüden kesilebilir. */
+export function canIssueInvoice(inv) {
+  if (!inv || isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.status === "cancelled" || inv.invoice_type === "dispatch") return false;
+  if (inv.status === "draft" || inv.e_type === "paper") return true;
+  return !isGibIssued(inv);
+}
+
 /** Onaylı faturalar iptal edilebilir (silinmez); taslaklar silinir, ödemeliler engellenir. */
 export function canCancelInvoice(inv) {
   if (!inv) return false;
@@ -94,11 +102,12 @@ export const InvoiceContextMenu = (props) => {
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
     const esc = (e) => e.key === "Escape" && onClose();
     document.addEventListener("mousedown", close);
-    document.addEventListener("scroll", onClose, true);
+    const onScroll = (e) => { if (ref.current && ref.current.contains(e.target)) return; onClose(); };
+    document.addEventListener("scroll", onScroll, true);
     document.addEventListener("keydown", esc);
     return () => {
       document.removeEventListener("mousedown", close);
-      document.removeEventListener("scroll", onClose, true);
+      document.removeEventListener("scroll", onScroll, true);
       document.removeEventListener("keydown", esc);
     };
   }, [menu, onClose]);
@@ -108,6 +117,7 @@ export const InvoiceContextMenu = (props) => {
   const incoming = isIncomingPurchaseInvoice(inv);
   const pending = isIncomingPurchasePending(inv);
   const issued = isGibIssued(inv);
+  const canIssue = canIssueInvoice(inv);
   const deletable = canDeleteInvoice(inv);
   const cancellable = canCancelInvoice(inv);
   const left = Math.min(menu.x, window.innerWidth - 280);
@@ -123,7 +133,7 @@ export const InvoiceContextMenu = (props) => {
   );
 
   return (
-    <div ref={ref} style={{ left, top }} className="fixed z-[70] w-64 bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={ref} style={{ left, top }} className="fixed z-[70] w-64 max-h-[min(520px,calc(100vh-1rem))] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
       <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 truncate">{inv.invoice_number} • {inv.contact_name}</div>
       {incoming ? (
         pending ? (
@@ -138,22 +148,24 @@ export const InvoiceContextMenu = (props) => {
             Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{inv.gib_status || incomingPurchaseResponse(inv)}</span>
           </div>
         )
-      ) : issued && inv.e_type !== "paper" ? (
-        <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-issued-info">
-          Kesildi: <span className="font-semibold text-slate-700">{E_TYPE_LABELS[inv.e_type] || inv.e_type}</span> — belge türü artık değiştirilemez.
-        </div>
-      ) : !issued ? (
+      ) : canIssue ? (
         <div className="border-b border-slate-100 pb-1">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">FATURAYI KES</div>
+          {inv.status === "draft" && (
+            <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-issue-note">Taslak olarak kayıtlı. Kesildiğinde cariye işlenir.</p>
+          )}
+          {inv.e_type === "paper" && inv.status !== "draft" && (
+            <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-paper-info">Kağıt fatura (matbu) — GİB e-belgesi değildir; buradan kesilebilir.</p>
+          )}
           {ISSUE_OPTIONS.map((o) => (
             <Item key={o.key} icon={o.icon} color={o.color} label={o.label} sub={inv.e_type === o.key ? `${o.sub} • seçili tür` : o.sub} onClick={() => onIssue(inv, o.key)} testId={`ctx-issue-${o.key}`} />
           ))}
         </div>
-      ) : (
-        <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-paper-info">
-          Kağıt fatura (matbu) — GİB e-belgesi değildir; silinebilir.
+      ) : issued ? (
+        <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-issued-info">
+          Kesildi: <span className="font-semibold text-slate-700">{E_TYPE_LABELS[inv.e_type] || inv.e_type}</span> — belge türü artık değiştirilemez.
         </div>
-      )}
+      ) : null}
       {issued && inv.e_type !== "paper" && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
