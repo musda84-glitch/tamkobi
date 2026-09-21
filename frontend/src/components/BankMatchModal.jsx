@@ -30,7 +30,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
 
   useEffect(() => {
     if (!companyId) return;
-    axios.get(`${API_URL}/invoices?company_id=${companyId}`).then((r) => setInvoices(r.data || [])).catch(() => setInvoices([]));
+    axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).then((r) => setInvoices(r.data || [])).catch(() => setInvoices([]));
   }, [companyId]);
 
   const openInvoices = useMemo(() => invoices
