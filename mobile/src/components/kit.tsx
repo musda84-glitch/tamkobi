@@ -20,6 +20,7 @@ import { colors, radius, spacing } from "../theme";
 import { fieldUsesDatePicker, fieldUsesTimePicker } from "../utils/fieldKind";
 import { contentBottomPad, SCREEN_BASE_PAD } from "../utils/keyboardPad";
 import { trUpper } from "../utils/labels";
+import { listRowText, isListRowNode } from "../utils/listRow";
 import { DateField } from "./DateField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
@@ -202,18 +203,16 @@ export function ListRow({
         <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
       ) : null}
       <View style={{ flex: 1, minWidth: 80 }}>
-        {typeof title === "string" ? (
-          <Text style={styles.listTitle} numberOfLines={titleLines}>{title}</Text>
-        ) : (
-          title
+        {isListRowNode(title) ? title : (
+          <Text style={styles.listTitle} numberOfLines={titleLines}>{listRowText(title)}</Text>
         )}
-        {subtitle ? <Text style={styles.muted} numberOfLines={2}>{subtitle}</Text> : null}
+        {subtitle ? <Text style={styles.muted} numberOfLines={2}>{listRowText(subtitle)}</Text> : null}
       </View>
       {badge}
       {right || rightSub ? (
         <View style={{ alignItems: "flex-end", marginLeft: 6, flexShrink: 0, maxWidth: compactRight ? 96 : 120 }}>
-          {right ? <Text testID={rightTestID} style={[styles.listRight, rightColor ? { color: rightColor } : null]} numberOfLines={1}>{right}</Text> : null}
-          {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{rightSub}</Text> : null}
+          {right ? <Text testID={rightTestID} style={[styles.listRight, rightColor ? { color: rightColor } : null]} numberOfLines={1}>{listRowText(right)}</Text> : null}
+          {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{listRowText(rightSub)}</Text> : null}
         </View>
       ) : null}
       {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}

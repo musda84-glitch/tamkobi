@@ -117,3 +117,12 @@ export function splitHref(href: string): { pathname: string; params?: Record<str
   }
   return { pathname, params };
 }
+
+const TAB_HREFS = new Set(["/", "/stok", "/saha", "/mesai", "/personelim", "/kasa", "/cariler", "/daha"]);
+
+/** Tab ekranına push yeni stack açıp APK’da çökertmesin; navigate ile sekmeyi değiştir. */
+export function hrefNav(href: string): { method: "navigate" | "push"; target: string | { pathname: string; params: Record<string, string> } } {
+  const { pathname, params } = splitHref(href || "/");
+  const target = params ? { pathname, params } : pathname;
+  return { method: TAB_HREFS.has(pathname) ? "navigate" : "push", target };
+}

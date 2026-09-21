@@ -1,4 +1,4 @@
-import { QUICK_TILES, QUICK_TONE_COLORS, resolveMobilePath, splitHref, splitNotificationsTile, visibleQuickTiles } from "./quickMenu";
+import { hrefNav, QUICK_TILES, QUICK_TONE_COLORS, resolveMobilePath, splitHref, splitNotificationsTile, visibleQuickTiles } from "./quickMenu";
 
 describe("QUICK_TONE_COLORS", () => {
   it("gives every tile tone a full palette", () => {
@@ -164,5 +164,17 @@ describe("splitHref", () => {
   it("parses scan query for barcode tile", () => {
     expect(splitHref("/stok?scan=1")).toEqual({ pathname: "/stok", params: { scan: "1" } });
     expect(splitHref("/invoices")).toEqual({ pathname: "/invoices" });
+  });
+});
+
+describe("hrefNav", () => {
+  it("switches the Stok tab instead of pushing a new stack screen", () => {
+    expect(hrefNav("/stok")).toEqual({ method: "navigate", target: "/stok" });
+    expect(hrefNav("/stok?scan=1")).toEqual({ method: "navigate", target: { pathname: "/stok", params: { scan: "1" } } });
+  });
+
+  it("still pushes stack modules", () => {
+    expect(hrefNav("/invoices")).toEqual({ method: "push", target: "/invoices" });
+    expect(hrefNav("/stock/new")).toEqual({ method: "push", target: "/stock/new" });
   });
 });
