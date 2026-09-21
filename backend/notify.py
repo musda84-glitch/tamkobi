@@ -205,6 +205,16 @@ async def recipient_user_ids(db, note: Dict[str, Any]) -> List[str]:
         for user in await users_with_roles(db, company_id, roles):
             for uid in user_ids_of(user):
                 add(uid)
+    if company_id:
+        company_users = await db.users.find({
+            "is_active": {"$ne": False},
+            "is_super_admin": {"$ne": True},
+            "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
+        }).to_list(300)
+        for user in company_users:
+            if notification_visible(note, user):
+                for uid in user_ids_of(user):
+                    add(uid)
     return ids
 
 
