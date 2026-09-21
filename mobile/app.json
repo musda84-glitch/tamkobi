@@ -72,7 +72,8 @@
         "expo-notifications",
         {
           "color": "#059669",
-          "defaultChannel": "tamkobi"
+          "defaultChannel": "tamkobi",
+          "enableBackgroundRemoteNotifications": true
         }
       ],
       "expo-secure-store",

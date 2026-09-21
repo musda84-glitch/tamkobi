@@ -66,7 +66,7 @@ export function SettingsScreen() {
               ? "Tarayıcıda uzak bildirim yok; Android / iOS uygulamasında açılır."
               : pushStatus === "denied"
                 ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
-                : "Girişte otomatik açılır. İzin istenmediyse aşağıdan açın."}
+                : "Uygulama açılışında bildirim izni istenir. İzin verirseniz sipariş, onay ve kasa olayları telefona da gelir."}
         </Muted>
         {Platform.OS !== "web" ? (
           <PrimaryButton
