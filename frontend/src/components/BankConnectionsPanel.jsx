@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2, Pencil } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
@@ -185,10 +186,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       const turningOn = !c.auto_match;
       const r = await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: turningOn });
       if (turningOn) {
-        const n = r.data?.auto_matched_now || 0;
-        toast.success(r.data?.auto_match_message || (n
+        const n = r.data?.auto_matched_now ?? r.data?.auto_matched ?? 0;
+        toast.success(r.data?.auto_match_message || r.data?.message || (n
           ? `Otomatik işleme AKTİF: ${n} bekleyen hareket işlendi.`
-          : "Otomatik işleme AKTİF: yeni hareketler önceki eşleşme ve cari karşılığıyla anında işlenecek."));
+          : "Otomatik işleme AKTİF: önceki eşleşme veya cari adı varsa hareket işlenir."));
       } else {
         toast.success("Otomatik işleme PASİF: hareketler manuel eşleştirme bekleyecek.");
       }
@@ -263,8 +264,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </div>
             {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
             <button type="button" onClick={() => toggleAutoMatch(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_match ? "bg-violet-50 border-violet-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-match-toggle-${c.id}`} aria-pressed={!!c.auto_match}>
-              <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— önceki eşleşme ve cari karşılığıyla yeni hareketleri anında işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>
-              <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
+              <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— önceki eşleşme veya cari adı varsa otomatik işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>              <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
             </button>
             <div className="text-[10px] text-slate-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Bu hesaba manuel gelir/gider/virman girişi kapalıdır; hareketler bankadan gelir.</div>
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
@@ -333,7 +333,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
               <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
-              <select value={newRule.target_account_id} onChange={(e) => setNewRule({ ...newRule, target_account_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-target-select"><option value="">Kasa/Hesap virman (ops.)</option>{accounts.filter((a) => !a.is_integrated).map((a) => <option key={a.id} value={a.id}>{a.bank_name} — {a.account_name}</option>)}</select>
+              <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} testId="rule-target-select" excludeIntegrated includePartners emptyLabel="Kasa/Hesap virman (ops.)" className="w-44" />
               <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>
             <div className="flex flex-wrap gap-1.5">
@@ -354,7 +354,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </thead>
             <tbody className="divide-y divide-slate-100">
               {unmatched.length === 0 && <tr><td colSpan={6} className="px-4 py-5 text-center text-slate-400">Eşleştirme bekleyen hareket yok.</td></tr>}
-              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} onDone={() => { load(); onSynced?.(); }} />)}
+              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} companyId={companyId} onDone={() => { load(); onSynced?.(); }} />)}
             </tbody>
           </table>
         </div>

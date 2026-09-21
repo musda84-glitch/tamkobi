@@ -6717,11 +6717,14 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
     out = _enrich_connection(doc, linked_acc)
     if just_enabled:
         out["auto_matched_now"] = auto_matched
+        out["auto_matched"] = auto_matched
         out["auto_match_message"] = (
             f"Otomatik işleme açıldı; {auto_matched} bekleyen hareket önceki eşleşme/cari ile işlendi."
             if auto_matched else
             "Otomatik işleme açıldı; yeni hareketler senkron sırasında işlenecek."
         )
+        if auto_matched:
+            out["message"] = f"{auto_matched} bekleyen hareket otomatik işlendi (önceki eşleşme veya cari adı)."
     return out
 
 @api_router.delete("/banking/connections/{conn_id}")
@@ -6758,11 +6761,10 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
             return c
     if not counterparty and not description:
         return None
+    from bank_auto_match import contact_matches_text
     contacts = await db.contacts.find({"company_id": company_id}).to_list(10000)
-    hay = f"{counterparty} {description}".lower()
     for c in contacts:
-        tokens = [t for t in (c.get("name") or "").lower().split() if len(t) > 3]
-        if tokens and all(t in hay for t in tokens[:2]):
+        if contact_matches_text(c.get("name") or "", counterparty, description):
             return c
     return None
 
@@ -6829,8 +6831,14 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$set": acc_patch})
 
     auto_matched = 0
-    if doc.get("auto_match") and new_txs:
-        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], new_txs, via="auto", use_cari=True)
+    if doc.get("auto_match"):
+        pending = await db.bank_transactions.find({
+            "company_id": doc["company_id"],
+            "account_id": acc["_id"],
+            "source": "bank_sync",
+            "match_status": "unmatched",
+        }).to_list(1000)
+        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True)
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -6896,10 +6904,8 @@ async def list_unmatched_transactions(company_id: Optional[str] = "comp_nexus_ma
     return clean_docs(txs)
 
 def _match_pattern(text: str) -> str:
-    import re as _re
-    t = _re.sub(r"[\d\.,:/\-]+", " ", (text or "").lower())
-    tokens = [w for w in t.split() if len(w) > 2 and w not in {"eft", "havale", "ödeme", "odeme", "fatura", "tahsilat", "gelen", "giden", "ltd", "şti", "sti", "a.ş", "tl", "try"}]
-    return " ".join(tokens[:4])
+    from bank_auto_match import match_pattern
+    return match_pattern(text)
 
 async def _find_rule(company_id: str, description: str):
     pattern = _match_pattern(description)
@@ -6953,23 +6959,36 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     if target_account_id:
         if target_account_id == tx.get("account_id"):
             raise HTTPException(status_code=400, detail="Hedef hesap, hareketin kendi hesabı olamaz.")
-        tacc = await db.bank_accounts.find_one({"_id": target_account_id})
-        if not tacc:
-            raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
-        if await bank_guard.get_connection_for_account(db, target_account_id):
-            raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
-        target_name = tacc.get("account_name")
-        counter_amount = amount if not is_inflow else -amount
-        await db.bank_accounts.update_one({"_id": target_account_id}, {"$inc": {"current_balance": counter_amount}})
-        await db.bank_transactions.insert_one({
-            "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": target_account_id, "account_name": target_name,
-            "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
-            "description": f"{tx.get('account_name')} {'→' if not is_inflow else '←'} {target_name}: {tx.get('description')}", "source": "bank_match",
-            "related_bank_tx_id": tx["_id"], "date": tx.get("date"), "created_at": datetime.now(timezone.utc).isoformat()})
-        update["target_account_id"] = target_account_id
-        update["target_account_name"] = target_name
-        if not category:
-            update["category"] = "Hesaplar Arası Virman"
+        t_kind, t_id = _virman_endpoint(target_account_id)
+        if t_kind == "partner":
+            if not t_id:
+                raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+            from bank_match_target import apply_partner_match, stored_match_target
+            target_name = await apply_partner_match(db, tx, t_id, amount, is_inflow)
+            target_account_id = stored_match_target("partner", t_id)
+            update["target_account_id"] = target_account_id
+            update["target_account_name"] = target_name
+            if not category:
+                update["category"] = "Ortaklar Hesabı"
+        else:
+            tacc = await db.bank_accounts.find_one({"_id": t_id})
+            if not tacc:
+                raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+            if await bank_guard.get_connection_for_account(db, t_id):
+                raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
+            target_name = tacc.get("account_name")
+            counter_amount = amount if not is_inflow else -amount
+            await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": counter_amount}})
+            await db.bank_transactions.insert_one({
+                "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": t_id, "account_name": target_name,
+                "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
+                "description": f"{tx.get('account_name')} {'→' if not is_inflow else '←'} {target_name}: {tx.get('description')}", "source": "bank_match",
+                "related_bank_tx_id": tx["_id"], "date": tx.get("date"), "created_at": datetime.now(timezone.utc).isoformat()})
+            update["target_account_id"] = t_id
+            update["target_account_name"] = target_name
+            if not category:
+                update["category"] = "Hesaplar Arası Virman"
+            target_account_id = t_id
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
         await _learn_rule(tx["company_id"], tx.get("description", ""), contact_id, contact_name, category, target_account_id, target_name)
@@ -6987,28 +7006,79 @@ async def _unmatch(tx: dict) -> dict:
             ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
     if tx.get("target_account_id"):
-        counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
-        if counter:
-            await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
-            await db.bank_transactions.delete_one({"_id": counter["_id"]})
+        t_kind, _t_id = _virman_endpoint(tx.get("target_account_id"))
+        if t_kind == "partner":
+            from bank_match_target import reverse_partner_match
+            await reverse_partner_match(db, tx)
+        else:
+            counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
+            if counter:
+                await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
+                await db.bank_transactions.delete_one({"_id": counter["_id"]})
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
         "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
         "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": ""}})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
+async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
+    """Aynı açıklama kalıbıyla daha önce işlenmiş hareketin cari / kasa / kategorisi."""
+    pattern = _match_pattern(description)
+    if not pattern:
+        return None
+    prev = await db.bank_transactions.find({
+        "company_id": company_id,
+        "source": "bank_sync",
+        "match_status": "matched",
+    }).sort("matched_at", -1).to_list(800)
+    for t in prev:
+        if skip_id and t.get("_id") == skip_id:
+            continue
+        if _match_pattern(t.get("description", "")) != pattern:
+            continue
+        if t.get("contact_id") or t.get("target_account_id") or t.get("category"):
+            return t
+    return None
+
+
 async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule"):
+    from bank_auto_match import pick_auto_match_source
     matched, details = 0, []
     for tx in txs:
-        rule = await _find_rule(company_id, tx.get("description", ""))
-        if not rule:
+        if tx.get("match_status") == "matched":
             continue
+        rule = await _find_rule(company_id, tx.get("description", ""))
+        prior = None if rule else await _prior_match_from_history(company_id, tx.get("description", ""), tx.get("_id"))
+        suggestion = None
+        if not rule and not prior:
+            cid = tx.get("suggested_contact_id")
+            if cid:
+                suggestion = {"_id": cid, "name": tx.get("suggested_contact_name"), "contact_id": cid}
+            else:
+                found = await _suggest_contact(company_id, tx.get("counterparty") or "", tx.get("description") or "")
+                if found:
+                    suggestion = {**found, "contact_id": found.get("_id")}
+        source, payload = pick_auto_match_source(rule, prior, suggestion)
+        if not source or not payload:
+            continue
+        contact_id = payload.get("contact_id")
+        category = payload.get("category") if source != "cari" else None
+        target_id = payload.get("target_account_id") if source != "cari" else None
+        learn = source != "rule"
+        applied_via = via if source == "rule" else source
         try:
-            await _apply_match(tx, rule.get("contact_id"), None, rule.get("category"), learn=False, target_account_id=rule.get("target_account_id"), via=via)
+            await _apply_match(tx, contact_id, None, category, learn=learn, target_account_id=target_id, via=applied_via)
         except HTTPException:
             continue
-        await db.bank_match_rules.update_one({"_id": rule["_id"]}, {"$inc": {"hits": 1}})
+        if source == "rule" and payload.get("_id"):
+            await db.bank_match_rules.update_one({"_id": payload["_id"]}, {"$inc": {"hits": 1}})
         matched += 1
-        details.append({"tx_id": tx["_id"], "description": tx.get("description"), "contact_name": rule.get("contact_name"), "target_account_name": rule.get("target_account_name"), "via": via})
+        details.append({
+            "tx_id": tx["_id"],
+            "description": tx.get("description"),
+            "contact_name": payload.get("contact_name") or payload.get("name"),
+            "target_account_name": payload.get("target_account_name"),
+            "via": applied_via,
+        })
     return matched, details
 
 
@@ -7149,8 +7219,7 @@ async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_0
     matched, details = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions))
     skipped = max(0, len(txs) - matched)
     return {"status": "success", "matched": matched, "skipped": skipped, "details": details,
-            "message": f"{matched} hareket önceki eşleşme/cari ile otomatik işlendi, {skipped} hareket manuel bekliyor."}
-
+            "message": f"{matched} hareket önceki eşleşme veya cari adına göre otomatik işlendi, {skipped} hareket manuel bekliyor."}
 @api_router.get("/banking/match-rules")
 async def list_match_rules(company_id: Optional[str] = "comp_nexus_main_01"):
     rules = await db.bank_match_rules.find({"company_id": company_id}).sort("hits", -1).to_list(500)
