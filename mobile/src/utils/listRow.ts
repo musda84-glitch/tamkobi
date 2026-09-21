@@ -5,8 +5,11 @@ export function listRowText(value: unknown): string {
   if (value == null || value === false) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "object" && "name" in (value as object)) {
-    return listRowText((value as { name?: unknown }).name);
+  if (typeof value === "object") {
+    if (React.isValidElement(value)) return "";
+    const o = value as Record<string, unknown>;
+    const next = o.name ?? o.tr ?? o.title ?? o.label ?? o.value;
+    if (next != null && next !== value) return listRowText(next);
   }
   return "";
 }

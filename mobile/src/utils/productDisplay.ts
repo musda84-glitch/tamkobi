@@ -96,18 +96,44 @@ export function asList<T>(raw: unknown): T[] {
   return [];
 }
 
-/** Liste için ağır galeri/base64 alanlarını at; ad her zaman string olsun. */
+const MAX_LIST_THUMB = 2048;
+
+/** Liste küçük resmi: data/blob ve aşırı uzun URI bellek patlatır. */
+export function listSafeThumb(uri: unknown): string {
+  const s = mediaRef(uri);
+  if (!s || s.length > MAX_LIST_THUMB) return "";
+  if (/^(data|blob):/i.test(s)) return "";
+  return s;
+}
+
+/** Liste için yalnız satır alanları; galeri / base64 / açıklama taşınmaz. */
 export function slimListProducts<T extends Pick<Product, "name" | "images" | "thumbnail_url" | "image_url">>(
   raw: unknown,
 ): T[] {
   return asList<T>(raw).filter((p) => p && typeof p === "object").map((p) => {
-    const thumb = productImage(p);
+    const row = p as T & Product & { id?: string; _id?: string };
+    const thumb = listSafeThumb(productImage(row));
     return {
-      ...p,
-      name: listRowText(p.name),
-      thumbnail_url: thumb || p.thumbnail_url,
+      id: row.id,
+      _id: row._id,
+      name: listRowText(row.name),
+      sku: row.sku,
+      barcode: row.barcode,
+      category: typeof row.category === "string" ? row.category : listRowText(row.category),
+      type: row.type,
+      unit: row.unit,
+      stock_quantity: row.stock_quantity,
+      min_stock_alert: row.min_stock_alert,
+      track_stock: row.track_stock,
+      sale_price: row.sale_price,
+      purchase_price: row.purchase_price,
+      last_purchase_price: row.last_purchase_price,
+      last_purchase_supplier: row.last_purchase_supplier,
+      is_active: row.is_active,
+      thumbnail_url: thumb || undefined,
+      image_url: thumb || undefined,
       images: undefined,
-    };
+    } as unknown as T;
   });
 }
 

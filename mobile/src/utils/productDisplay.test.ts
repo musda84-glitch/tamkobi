@@ -1,4 +1,4 @@
-import { asList, filterProducts, lastPurchaseLabel, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { asList, filterProducts, lastPurchaseLabel, listSafeThumb, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -73,14 +73,17 @@ describe("productDisplay", () => {
 
   it("drops gallery payloads and stringifies odd names so the list cannot crash", () => {
     const slim = slimListProducts([
-      { name: { tr: "Raf" }, images: ["data:image/jpeg;base64,AAAA"], image_url: "/api/files/a.jpg" },
+      { name: { tr: "Raf" }, images: ["data:image/jpeg;base64,AAAA"], image_url: "/api/files/a.jpg", description: "x".repeat(8000) },
       null,
       { name: "Masa", thumbnail_url: "t.jpg", images: ["g1.jpg", "g2.jpg"] },
     ]);
-    expect(slim[0].name).toBe("");
+    expect(slim[0].name).toBe("Raf");
     expect(slim[0].images).toBeUndefined();
     expect(slim[0].thumbnail_url).toBe("/api/files/a.jpg");
+    expect((slim[0] as { description?: string }).description).toBeUndefined();
     expect(slim[1]).toMatchObject({ name: "Masa", thumbnail_url: "t.jpg", images: undefined });
+    expect(listSafeThumb("data:image/jpeg;base64,AAAA")).toBe("");
+    expect(listSafeThumb("/api/files/a.jpg")).toBe("/api/files/a.jpg");
   });
 
   it("shows last purchase from invoice then card cost", () => {

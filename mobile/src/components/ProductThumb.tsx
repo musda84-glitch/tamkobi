@@ -4,6 +4,7 @@ import { Image, Platform, View } from "react-native";
 import { displayFileUrl } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
+import { listSafeThumb } from "../utils/productDisplay";
 
 export function ProductThumb({
   uri,
@@ -15,7 +16,7 @@ export function ProductThumb({
   testID?: string;
 }) {
   const { client } = useAuth();
-  const src = displayFileUrl(client.baseUrl, uri, Platform.OS === "web");
+  const src = displayFileUrl(client.baseUrl, listSafeThumb(uri), Platform.OS === "web");
   const [failed, setFailed] = useState(false);
   const box = {
     width: size,
