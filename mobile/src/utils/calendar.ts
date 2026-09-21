@@ -27,6 +27,11 @@ export function normalizeYmd(value: string): string {
   return parseYmd(isoDay) ? isoDay : "";
 }
 
+/** Boş veya geçersiz tarih → yerel bugün (UTC kayması olmasın). */
+export function ymdOrToday(value?: string | null): string {
+  return normalizeYmd(String(value || "")) || toYmd(new Date());
+}
+
 export function monthTitle(year: number, month0: number): string {
   return new Date(year, month0, 1).toLocaleDateString("tr-TR", { month: "long", year: "numeric" });
 }

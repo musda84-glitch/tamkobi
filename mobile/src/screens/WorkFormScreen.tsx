@@ -25,6 +25,7 @@ import { coordText, mapsLink } from "../utils/geo";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr } from "../utils/labels";
+import { ymdOrToday } from "../utils/calendar";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
 import {
@@ -125,7 +126,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [notes, setNotes] = useState("");
   const [address, setAddress] = useState("");
   const [budget, setBudget] = useState("");
-  const [startDate, setStartDate] = useState(kind === "project" ? todayIso() : "");
+  const [startDate, setStartDate] = useState(kind === "project" ? ymdOrToday() : "");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
   const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
@@ -199,7 +200,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setContactId(p.contact_id || "");
         setContactName(p.contact_name || "");
         setBudget(String(p.budget ?? ""));
-        setStartDate(String(p.start_date || todayIso()).slice(0, 10));
+        setStartDate(p.start_date ? ymdOrToday(p.start_date) : ymdOrToday());
         setEndDate(String(p.end_date || "").slice(0, 10));
         setNotes(p.description || "");
         setAddress(p.address || "");
@@ -527,7 +528,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "project" ? (
         <>
           <Field label="Bütçe" testID="p-budget" value={budget} onChangeText={setBudget} keyboardType="decimal-pad" editable={canEdit} />
-          <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} />
+          <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} defaultToday />
           <DateField label="Bitiş" testID="p-end" value={endDate} onChangeText={setEndDate} min={startDate} editable={canEdit} />
         </>
       ) : null}

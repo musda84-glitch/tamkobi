@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
@@ -20,6 +20,16 @@ import {
 import type { ProjectStage } from "../utils/projectStages";
 import type { ProjectDoc } from "../utils/workDocs";
 import { Muted, Row } from "./kit";
+
+const stageRowGrid = {
+  flexDirection: "row" as const,
+  alignItems: "center" as const,
+  gap: 8,
+  minHeight: 44,
+  ...(Platform.OS === "web"
+    ? ({ display: "grid", gridTemplateColumns: "7.5rem minmax(0,1fr) 5.5rem", columnGap: 8, alignItems: "center" } as object)
+    : { justifyContent: "flex-start" }),
+};
 
 export function ProjectStagePhotos({
   project,
@@ -120,71 +130,80 @@ export function ProjectStagePhotos({
         ) : null}
       </Row>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
-      {rows.map((row) => (
-        <View key={row.key} testID={`${tid}-row-${row.key}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 }}>
-          <View style={{
-            width: 108,
-            backgroundColor: row.current ? colors.emerald100 : "#fff",
-            borderWidth: 1,
-            borderColor: row.current ? "#A7F3D0" : colors.border,
-            borderRadius: 8,
-            paddingHorizontal: 6,
-            paddingVertical: 8,
-            justifyContent: "center",
-          }}>
-            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}>
-              {row.label}
-            </Text>
-            <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "700", color: row.current ? "#047857" : row.done ? "#64748B" : "#94A3B8" }}>
-              {row.current ? "şu an" : row.done ? "bitti" : row.items.length ? `${row.items.length} foto` : " "}
-            </Text>
-          </View>
-          <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-            {row.items.map((item) => (
-              <View key={item.url} style={{ position: "relative" }}>
-                <Pressable
-                  testID={`${tid}-thumb`}
-                  onPress={() => Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null)}
-                  style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
-                >
-                  <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
-                </Pressable>
+      <View testID={`${tid}-grid`} style={{ gap: 6 }}>
+        <View style={stageRowGrid}>
+          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted }}>Aşama</Text>
+          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted }}>Fotoğraf</Text>
+          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted, textAlign: "right" }}>Ekle</Text>
+        </View>
+        {rows.map((row) => {
+          const chip = row.key === "other" ? "Keşif" : row.label;
+          return (
+            <View key={row.key} testID={`${tid}-row-${row.key}`} style={stageRowGrid}>
+              <View style={{
+                minHeight: 40,
+                backgroundColor: row.current ? colors.emerald100 : "#fff",
+                borderWidth: 1,
+                borderColor: row.current ? "#A7F3D0" : colors.border,
+                borderRadius: 8,
+                paddingHorizontal: 8,
+                justifyContent: "center",
+              }}>
+                <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}>
+                  {chip}
+                </Text>
+                <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "700", color: row.current ? "#047857" : row.done ? "#64748B" : "#94A3B8" }}>
+                  {row.current ? "şu an" : row.done ? "bitti" : row.items.length ? `${row.items.length} foto` : " "}
+                </Text>
+              </View>
+              <View style={{ minHeight: 40, flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                {row.items.map((item) => (
+                  <View key={item.url} style={{ position: "relative" }}>
+                    <Pressable
+                      testID={`${tid}-thumb`}
+                      onPress={() => Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null)}
+                      style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
+                    >
+                      <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                    </Pressable>
+                    {editable ? (
+                      <Pressable
+                        testID={`${tid}-remove`}
+                        onPress={() => remove(item.url)}
+                        style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
+                      >
+                        <Ionicons name="close" size={11} color={colors.danger} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+              <View style={{ flexDirection: "row", gap: 6, justifyContent: "flex-end" }}>
                 {editable ? (
-                  <Pressable
-                    testID={`${tid}-remove`}
-                    onPress={() => remove(item.url)}
-                    style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
-                  >
-                    <Ionicons name="close" size={11} color={colors.danger} />
-                  </Pressable>
+                  <>
+                    <Pressable
+                      testID={`${tid}-camera-${row.key}`}
+                      onPress={() => pick(row, true)}
+                      disabled={!!busyKey}
+                      style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={18} color={colors.indigo} />
+                    </Pressable>
+                    <Pressable
+                      testID={`${tid}-gallery-${row.key}`}
+                      onPress={() => pick(row, false)}
+                      disabled={!!busyKey}
+                      style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Ionicons name="image-outline" size={18} color={colors.primary} />
+                    </Pressable>
+                  </>
                 ) : null}
               </View>
-            ))}
-          </View>
-          {editable ? (
-            <View style={{ flexDirection: "row", gap: 6 }}>
-              <Pressable
-                testID={`${tid}-camera-${row.key}`}
-                onPress={() => pick(row, true)}
-                disabled={!!busyKey}
-                style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-              >
-                <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={18} color={colors.indigo} />
-              </Pressable>
-              <Pressable
-                testID={`${tid}-gallery-${row.key}`}
-                onPress={() => pick(row, false)}
-                disabled={!!busyKey}
-                style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-              >
-                <Ionicons name="image-outline" size={18} color={colors.primary} />
-              </Pressable>
             </View>
-          ) : (
-            <View style={{ width: 86 }} />
-          )}
-        </View>
-      ))}
+          );
+        })}
+      </View>
     </View>
   );
 }

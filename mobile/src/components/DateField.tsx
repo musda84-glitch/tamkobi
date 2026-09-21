@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
-import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
+import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels, ymdOrToday } from "../utils/calendar";
 
 type DateFieldProps = {
   label: string;
@@ -12,11 +12,18 @@ type DateFieldProps = {
   testID?: string;
   min?: string;
   editable?: boolean;
+  defaultToday?: boolean;
 };
 
-export function DateField({ label, value, onChangeText, testID, min, editable = true }: DateFieldProps) {
+export function DateField({ label, value, onChangeText, testID, min, editable = true, defaultToday = false }: DateFieldProps) {
   const [open, setOpen] = useState(false);
-  const ymd = normalizeYmd(value);
+  const ymd = defaultToday ? ymdOrToday(value) : normalizeYmd(value);
+
+  useEffect(() => {
+    if (!defaultToday) return;
+    const next = ymdOrToday(value);
+    if (next !== normalizeYmd(value)) onChangeText(next);
+  }, [defaultToday, value, onChangeText]);
   const minYmd = normalizeYmd(min || "");
   const selected = parseYmd(ymd);
   const seed = selected || new Date();
