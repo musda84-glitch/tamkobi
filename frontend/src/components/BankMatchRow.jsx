@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -15,15 +14,16 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
   const [mode, setMode] = useState(tx.suggested_contact_id ? "contact" : "contact");
   const [contactId, setContactId] = useState(tx.suggested_contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
-  const [targetId, setTargetId] = useState("");
+  const [targetId, setTargetId] = useState(tx.suggested_target_account_id || "");
   const [category, setCategory] = useState("");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
   const isIn = tx.type === "inflow";
+
   const openInvoices = useMemo(() => invoices
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
     .sort((a, b) => Math.abs((a.grand_total - a.paid_amount) - tx.amount) - Math.abs((b.grand_total - b.paid_amount) - tx.amount)), [invoices, contactId, isIn, tx.amount]);
-  const targets = accounts.filter((a) => a.id !== tx.account_id && !a.is_integrated);
+  const targets = accounts.filter((a) => (a.id || a._id) !== tx.account_id && !a.is_integrated);
   const canSubmit = mode === "category" ? !!category.trim() : mode === "transfer" ? !!targetId : mode === "invoice" ? !!invoiceId : true;
   const submit = async () => {
     setBusy(true);
@@ -67,9 +67,8 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
               includePartners
               collectableOnly={isIn}
               emptyLabel={isIn ? "Para nereden geldi?" : "Para nereye gitti?"}
-              className="w-48"
-            />
-          )}
+              className="w-56"
+            />          )}
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>
         </div>

@@ -7282,8 +7282,15 @@ async def create_match_rule(req: Dict[str, Any]):
         contact_name = c.get("name") if c else None
     target_name = None
     if req.get("target_account_id"):
-        a = await db.bank_accounts.find_one({"_id": req["target_account_id"]})
-        target_name = a.get("account_name") if a else None
+        t_kind, t_id = _virman_endpoint(req["target_account_id"])
+        if t_kind == "partner":
+            p = await db.partners.find_one({"_id": t_id})
+            target_name = f"{p.get('name')} (Ortak)" if p else None
+            if not p:
+                raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+        else:
+            a = await db.bank_accounts.find_one({"_id": t_id})
+            target_name = a.get("account_name") if a else None
     doc = {"pattern": pattern, "contact_id": req.get("contact_id") or None, "contact_name": contact_name, "category": req.get("category") or None,
            "target_account_id": req.get("target_account_id") or None, "target_account_name": target_name,
            "updated_at": datetime.now(timezone.utc).isoformat()}

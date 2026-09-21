@@ -95,7 +95,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`),
         axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] })),
-        axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] }))
+        axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] })),
       ]);
       setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data); setSuggestions(sug.data);
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
@@ -333,8 +333,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
               <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
-              <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} testId="rule-target-select" excludeIntegrated includePartners emptyLabel="Kasa/Hesap virman (ops.)" className="w-44" />
-              <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
+              <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} testId="rule-target-select" excludeIntegrated includePartners emptyLabel="Kasa/Hesap/Ortak virman (ops.)" className="w-52" />              <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>
             <div className="flex flex-wrap gap-1.5">
               {rules.map((r) => (

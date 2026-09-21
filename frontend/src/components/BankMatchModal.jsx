@@ -23,7 +23,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const [mode, setMode] = useState("contact");
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
-  const [targetId, setTargetId] = useState("");
+  const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || "");
   const [category, setCategory] = useState(tx?.category || "");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -140,8 +140,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
               includePartners
               collectableOnly={isIn}
               emptyLabel="Hesap / ortak seçin"
-            />
-          </div>
+            />          </div>
         )}
 
         <div>
