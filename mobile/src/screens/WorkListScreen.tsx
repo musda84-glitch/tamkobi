@@ -291,13 +291,31 @@ function QuoteListHeading({ quote }: { quote: Pick<QuoteDoc, "contact_name" | "s
   );
 }
 
-function Metric({ label, value, testID, tone }: { label: string; value: string; testID?: string; tone?: "green" | "rose" }) {
+function Metric({
+  label,
+  value,
+  testID,
+  tone,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  testID?: string;
+  tone?: "green" | "rose";
+  onPress?: () => void;
+}) {
   const color = tone === "green" ? colors.primaryHover : tone === "rose" ? colors.danger : colors.text;
-  return (
+  const body = (
     <View style={{ flex: 1, backgroundColor: colors.slate50, borderRadius: 10, padding: 8, minWidth: 0 }}>
       <Muted>{label}</Muted>
       <Text testID={testID} numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color }}>{value}</Text>
     </View>
+  );
+  if (!onPress) return body;
+  return (
+    <Pressable style={{ flex: 1, minWidth: 0 }} onPress={onPress} testID={testID ? `${testID}-open` : undefined}>
+      {body}
+    </Pressable>
   );
 }
 
@@ -387,15 +405,34 @@ function ProjectCard({
           />
         </Row>
         <Muted>{bits.contact}</Muted>
-        <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
-          <Metric label="Bütçe" value={fmtMoney(bits.budget)} testID={`project-budget-${id}`} />
-          <Metric label="Teklif" value={`${bits.quoteCount} · ${fmtMoney(bits.quoted)}`} testID={`project-quoted-${id}`} />
-        </Row>
-        <Row style={{ alignItems: "stretch", gap: 6, marginTop: 6 }}>
-          <Metric label="Faturalanan" value={fmtMoney(bits.invoiced)} testID={`project-invoiced-${id}`} tone="green" />
-          <Metric label="Masraf" value={fmtMoney(bits.expense)} testID={`project-expense-total-${id}`} tone="rose" />
-        </Row>
-        {taskBits || trackLabel ? (
+      </Pressable>
+      <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
+        <Metric label="Bütçe" value={fmtMoney(bits.budget)} testID={`project-budget-${id}`} onPress={() => go("ProjectDetail", { id })} />
+        <Metric
+          label="Teklif"
+          value={`${bits.quoteCount} · ${fmtMoney(bits.quoted)}`}
+          testID={`project-quoted-${id}`}
+          onPress={() => go("ProjectDetail", { id, section: "quotes" })}
+        />
+      </Row>
+      <Row style={{ alignItems: "stretch", gap: 6, marginTop: 6 }}>
+        <Metric
+          label="Faturalanan"
+          value={fmtMoney(bits.invoiced)}
+          testID={`project-invoiced-${id}`}
+          tone="green"
+          onPress={() => go("ProjectDetail", { id, section: "invoices" })}
+        />
+        <Metric
+          label="Masraf"
+          value={fmtMoney(bits.expense)}
+          testID={`project-expense-total-${id}`}
+          tone="rose"
+          onPress={() => go("ProjectDetail", { id, section: "expenses" })}
+        />
+      </Row>
+      {taskBits || trackLabel ? (
+        <Pressable onPress={() => go("ProjectDetail", { id })}>
           <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
             {taskBits ? (
               <View testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
@@ -408,8 +445,8 @@ function ProjectCard({
               </View>
             ) : null}
           </Row>
-        ) : null}
-      </Pressable>
+        </Pressable>
+      ) : null}
       {canEdit ? (
         <View style={{ marginTop: 8 }}>
           <GroupedSelect
