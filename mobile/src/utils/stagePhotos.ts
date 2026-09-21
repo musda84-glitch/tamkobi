@@ -1,5 +1,7 @@
 import { normalizeProjectStages, type ProjectStage } from "./projectStages";
 
+export const SURVEY_STAGE_PHOTO_LABEL = "Keşif fotoğrafı";
+
 export type StagePhoto = {
   url: string;
   stage: string;
@@ -106,7 +108,7 @@ export function groupStagePhotos(
     .sort((a, b) => (rank[a] ?? 9_000) - (rank[b] ?? 9_000) || seen.indexOf(a) - seen.indexOf(b))
     .map((key) => ({
       stage: key,
-      label: key === "other" ? "Keşif fotoğrafı" : (labelBy[key] || key),
+      label: key === "other" ? SURVEY_STAGE_PHOTO_LABEL : (labelBy[key] || key),
       images: groups[key],
     }));
 }
@@ -142,7 +144,7 @@ export function stagePhotoRows(
   }
   rows.push({
     key: "other",
-    label: "Keşif fotoğrafı",
+    label: SURVEY_STAGE_PHOTO_LABEL,
     current: false,
     done: false,
     items: [...(by.other || []), ...loose],

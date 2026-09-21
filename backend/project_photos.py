@@ -32,7 +32,7 @@ def sanitize_stage_photos(raw: Any) -> List[dict]:
 
 
 def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict]:
-    """Aşama sırasına göre fotoğraf grupları. Eşlenmemiş görseller 'Diğer' altında."""
+    """Aşama sırasına göre fotoğraf grupları. Eşlenmemiş görseller 'Keşif fotoğrafı' altında."""
     label_by = {}
     order = []
     for stage in stages or []:

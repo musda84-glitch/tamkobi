@@ -15,6 +15,7 @@ import {
   removeStagePhoto,
   stagePhotoCount,
   stagePhotoRows,
+  SURVEY_STAGE_PHOTO_LABEL,
   type StagePhoto,
 } from "../utils/stagePhotos";
 import type { ProjectStage } from "../utils/projectStages";
@@ -27,7 +28,7 @@ const stageRowGrid = {
   gap: 8,
   minHeight: 44,
   ...(Platform.OS === "web"
-    ? ({ display: "grid", gridTemplateColumns: "7.5rem minmax(0,1fr) 5.5rem", columnGap: 8, alignItems: "center" } as object)
+    ? ({ display: "grid", gridTemplateColumns: "11.5rem minmax(0,1fr) 5.5rem", columnGap: 8, alignItems: "center" } as object)
     : { justifyContent: "flex-start" }),
 };
 
@@ -137,11 +138,12 @@ export function ProjectStagePhotos({
           <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted, textAlign: "right" }}>Ekle</Text>
         </View>
         {rows.map((row) => {
-          const chip = row.key === "other" ? "Keşif" : row.label;
+          const chip = row.key === "other" ? SURVEY_STAGE_PHOTO_LABEL : row.label;
           return (
             <View key={row.key} testID={`${tid}-row-${row.key}`} style={stageRowGrid}>
               <View style={{
                 minHeight: 40,
+                minWidth: row.key === "other" ? 132 : undefined,
                 backgroundColor: row.current ? colors.emerald100 : "#fff",
                 borderWidth: 1,
                 borderColor: row.current ? "#A7F3D0" : colors.border,
@@ -149,7 +151,11 @@ export function ProjectStagePhotos({
                 paddingHorizontal: 8,
                 justifyContent: "center",
               }}>
-                <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}>
+                <Text
+                  testID={`${tid}-label-${row.key}`}
+                  numberOfLines={row.key === "other" ? 2 : 1}
+                  style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}
+                >
                   {chip}
                 </Text>
                 <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "700", color: row.current ? "#047857" : row.done ? "#64748B" : "#94A3B8" }}>
