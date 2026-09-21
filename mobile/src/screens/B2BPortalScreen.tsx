@@ -487,39 +487,50 @@ export function B2BPortalScreen() {
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={message ? (
-        <View
-          testID="b2b-flash-message"
-          style={{
-            borderWidth: 2,
-            borderStyle: "dashed",
-            borderColor: colors.danger,
-            borderRadius: 12,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            backgroundColor: colors.rose50,
-          }}
-        >
-          <Text style={{ color: colors.danger, fontWeight: "700" }}>{message}</Text>
+      stickyTop={
+        <View testID="b2b-portal-top" style={{ gap: 8 }}>
+          <B2BTopBar
+            logo={logo}
+            company={data?.company?.name}
+            contact={data?.contact?.name || b2bName}
+            count={count}
+            ping={!!addedId}
+            allowOrders={allowOrders}
+            onCart={() => setCartOpen(true)}
+            onMenu={() => setMenuOpen(true)}
+          />
+          {data?.company?.phone ? (
+            <Pressable onPress={() => Linking.openURL(`tel:${data.company.phone}`)}>
+              <Muted>{data.company.phone}</Muted>
+            </Pressable>
+          ) : null}
+          {message ? (
+            <View
+              testID="b2b-flash-message"
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                borderWidth: 2,
+                borderStyle: "dashed",
+                borderColor: colors.danger,
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                backgroundColor: colors.rose50,
+              }}
+            >
+              <Ionicons name="checkmark-circle" size={18} color={colors.danger} />
+              <Text style={{ flex: 1, color: colors.danger, fontWeight: "700" }}>{message}</Text>
+              <Pressable onPress={() => setMessage(null)} hitSlop={8} testID="b2b-flash-close">
+                <Ionicons name="close" size={18} color={colors.danger} />
+              </Pressable>
+            </View>
+          ) : null}
         </View>
-      ) : null}
+      }
     >
       <View testID="b2b-portal">
-        <B2BTopBar
-          logo={logo}
-          company={data?.company?.name}
-          contact={data?.contact?.name || b2bName}
-          count={count}
-          ping={!!addedId}
-          allowOrders={allowOrders}
-          onCart={() => setCartOpen(true)}
-          onMenu={() => setMenuOpen(true)}
-        />
-        {data?.company?.phone ? (
-          <Pressable onPress={() => Linking.openURL(`tel:${data.company.phone}`)}>
-            <Muted>{data.company.phone}</Muted>
-          </Pressable>
-        ) : null}
         <ErrorBanner message={error} />
         {done ? (
           <Card testID="b2b-order-done">
