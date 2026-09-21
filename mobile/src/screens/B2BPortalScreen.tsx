@@ -495,7 +495,22 @@ export function B2BPortalScreen() {
           </Pressable>
         ) : null}
         <ErrorBanner message={error} />
-        {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
+        {message ? (
+          <View
+            testID="b2b-flash-message"
+            style={{
+              borderWidth: 2,
+              borderStyle: "dashed",
+              borderColor: colors.danger,
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              backgroundColor: colors.rose50,
+            }}
+          >
+            <Text style={{ color: colors.danger, fontWeight: "700" }}>{message}</Text>
+          </View>
+        ) : null}
         {done ? (
           <Card testID="b2b-order-done">
             <Text style={{ fontWeight: "800", color: colors.primaryHover }}>Sipariş alındı · {done.order_number}</Text>
