@@ -42,6 +42,22 @@ def test_missing_vat_on_order_defaults_zero():
     assert row["total_incl"] == 100.0
 
 
+def test_invoice_totals_round_inclusive_260_lines_to_520():
+    """260 KDV dahil × 2 (%10) belge toplamı 520,00 olmalı; 519,99 değil."""
+    items = []
+    for name in ("A", "B"):
+        row = {"name": name, "quantity": 1, "unit_price_incl": 260, "vat_rate": 10}
+        enrich_line(row, default_vat=10)
+        items.append(row)
+    assert items[0]["total"] == 236.36
+    assert items[0]["vat_amount"] == 23.64
+    assert items[0]["total_incl"] == 260.0
+    t = invoice_document_totals(items)
+    assert t["subtotal"] == 472.72
+    assert t["vat_total"] == 47.28
+    assert t["grand_total"] == 520.0
+
+
 def test_invoice_totals_with_general_discount():
     items = [
         {"name": "A", "quantity": 1, "unit_price": 100, "vat_rate": 20, "discount_rate": 0},

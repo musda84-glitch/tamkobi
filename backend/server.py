@@ -5151,24 +5151,14 @@ async def create_invoice(invoice: Invoice):
         _c = await db.contacts.find_one({"_id": invoice.contact_id})
         if _c and _c.get("payment_term_days"):
             invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_c["payment_term_days"]))).isoformat()
-    items_sum = sum(item.total for item in invoice.items)
-    gd = invoice.general_discount_amount or (items_sum * invoice.general_discount_rate / 100)
-    gd = round(min(max(gd, 0), items_sum), 2)
-    factor = (items_sum - gd) / items_sum if items_sum else 1
-    invoice.discount_total = gd
-    invoice.general_discount_amount = gd
-    invoice.subtotal = round(items_sum - gd, 2)
-    invoice.vat_total = round(sum(item.total * factor * (item.vat_rate / 100) for item in invoice.items), 2)
-    invoice.withholding_amount = round(invoice.vat_total * float(invoice.withholding_rate or 0), 2)
-    invoice.grand_total = round(invoice.subtotal + invoice.vat_total - invoice.withholding_amount, 2)
     given_rate = fx.typed_rate(invoice.currency, invoice.fx_rate, invoice.fx_source)
     fx_stamp = await fx.stamp(invoice.company_id, invoice.currency, invoice.issue_date, given_rate)
     invoice.currency = fx_stamp["currency"]
     invoice.fx_rate = fx_stamp["fx_rate"]
     invoice.fx_date = fx_stamp["fx_date"]
     invoice.fx_source = fx_stamp["fx_source"]
-    invoice.local_total = fx.local_of(invoice.grand_total, invoice.fx_rate)
     _apply_invoice_totals(invoice)
+    invoice.local_total = fx.local_of(invoice.grand_total, invoice.fx_rate)
 
     doc = invoice.to_mongo()
     if invoice.invoice_type == "purchase" and (invoice.e_type == "e_invoice" or invoice.direction == "incoming" or invoice.source == "edoc_inbox" or invoice.edoc_id):

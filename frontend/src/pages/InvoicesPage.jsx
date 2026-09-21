@@ -20,7 +20,7 @@ import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { FxPicker } from "../components/FxPicker";
 import { fmtMoney, formatTrAmount } from "../utils/money";
-import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
+import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
@@ -286,17 +286,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
 
   const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
-  const calculateTotals = () => {
-    const { subtotal: itemsNet, vat: lineVat, lineDiscount } = documentLineTotals(formData.items);
-    const itemsSum = itemsNet;
-    const gdRaw = gdMode === "percent" ? itemsSum * Number(formData.general_discount_rate || 0) / 100 : Number(formData.general_discount_amount || 0);
-    const gd = Math.min(Math.max(gdRaw, 0), itemsSum);
-    const factor = itemsSum ? (itemsSum - gd) / itemsSum : 1;
-    const subtotal = itemsSum - gd;
-    const vat = formData.items.reduce((sum, item) => sum + (Number(computeLine(item).total || 0) * factor * (Number(item.vat_rate || 20) / 100)), 0);
-    const withholding = vat * Number(formData.withholding_rate || 0);
-    return { itemsSum: itemsSum + lineDiscount, lineDiscount, gd, subtotal, vat, withholding, grandTotal: subtotal + vat - withholding, lineVat };
-  };
+  const calculateTotals = () => invoiceMoneyTotals(formData.items, {
+    generalDiscountRate: formData.general_discount_rate,
+    generalDiscountAmount: formData.general_discount_amount,
+    discountMode: gdMode,
+    withholdingRate: formData.withholding_rate,
+  });
 
   const [editingInvoice, setEditingInvoice] = useState(null);
   const openEditInvoice = (inv) => {
@@ -1003,12 +998,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </div>
                 <div className="flex justify-between w-80">
                   <span>Toplam KDV:</span>
-                  <span className="font-semibold">{money(totals.vat)}</span>
+                  <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
                 </div>
                 {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
                 <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
                   <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
+                  <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
                 </div>
                 {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
                   <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">

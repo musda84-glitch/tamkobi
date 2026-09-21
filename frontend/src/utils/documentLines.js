@@ -102,6 +102,41 @@ export function lineFromProduct(prod, { invoiceType = "sales", quantity = 1 } = 
   }, editedField);
 }
 
+export function roundMoney(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** Fatura belgesi: genel iskonto sonrası KDV satır kuruşlarının toplamıdır. */
+export function invoiceMoneyTotals(items = [], {
+  generalDiscountRate = 0,
+  generalDiscountAmount = 0,
+  discountMode = "amount",
+  withholdingRate = 0,
+} = {}) {
+  const { subtotal: itemsNet, vat: lineVat, lineDiscount, rows } = documentLineTotals(items);
+  const gdRaw = discountMode === "percent"
+    ? itemsNet * num(generalDiscountRate) / 100
+    : num(generalDiscountAmount);
+  const gd = roundMoney(Math.min(Math.max(gdRaw, 0), itemsNet));
+  const factor = itemsNet ? (itemsNet - gd) / itemsNet : 1;
+  const subtotal = roundMoney(itemsNet - gd);
+  const vat = roundMoney(rows.reduce((sum, item) => {
+    const base = roundMoney(num(item.total) * factor);
+    return sum + roundMoney(base * num(item.vat_rate) / 100);
+  }, 0));
+  const withholding = roundMoney(vat * num(withholdingRate));
+  return {
+    itemsSum: roundMoney(itemsNet + lineDiscount),
+    lineDiscount,
+    gd,
+    subtotal,
+    vat,
+    withholding,
+    grandTotal: roundMoney(subtotal + vat - withholding),
+    lineVat,
+  };
+}
+
 export function documentLineTotals(items = []) {
   const rows = items.map((it) => computeLine(it));
   const subtotal = Math.round(rows.reduce((s, it) => s + num(it.total), 0) * 100) / 100;
