@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -17,16 +18,7 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
   const [category, setCategory] = useState("");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [partners, setPartners] = useState([]);
   const isIn = tx.type === "inflow";
-  const cid = companyId || tx.company_id;
-
-  useEffect(() => {
-    if (!cid) return;
-    axios.get(`${API_URL}/banking/partners?company_id=${cid}`)
-      .then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false)))
-      .catch(() => setPartners([]));
-  }, [cid]);
 
   const openInvoices = useMemo(() => invoices
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
@@ -65,27 +57,18 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
             </select>
           )}
           {mode === "transfer" && (
-            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={`${sel} w-56`} data-testid={`match-target-select-${tx.id}`}>
-              <option value="">{isIn ? "Para nereden geldi?" : "Para nereye gitti?"}</option>
-              {targets.length > 0 && (
-                <optgroup label="Kasa / Hesap">
-                  {targets.map((a) => {
-                    const id = a.id || a._id;
-                    return <option key={id} value={id}>{`${a.bank_name || ""} — ${a.account_name}`.replace(/^ — /, "")}</option>;
-                  })}
-                </optgroup>
-              )}
-              {partners.length > 0 && (
-                <optgroup label="Ortaklar Hesabı">
-                  {partners.map((p) => {
-                    const id = p.id || p._id;
-                    const val = `partner:${id}`;
-                    return <option key={id} value={val}>{`${p.name} (Ortak · ${fmt(p.balance)} ₺)${tx.suggested_target_account_id === val ? " ★" : ""}`}</option>;
-                  })}
-                </optgroup>
-              )}
-            </select>
-          )}
+            <PaymentTargetSelect
+              companyId={companyId}
+              accounts={targets}
+              value={targetId}
+              onChange={setTargetId}
+              testId={`match-target-select-${tx.id}`}
+              excludeIntegrated
+              includePartners
+              collectableOnly={isIn}
+              emptyLabel={isIn ? "Para nereden geldi?" : "Para nereye gitti?"}
+              className="w-56"
+            />          )}
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>
         </div>

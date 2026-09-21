@@ -1,9 +1,13 @@
 from notify import (
+    collect_dispatch_tokens,
     expo_push_messages,
     filter_notifications,
     is_expo_push_token,
+    is_targeted_note,
+    merge_push_tokens,
     notification_doc,
     notification_visible,
+    pick_unread_for_push,
     role_label,
     roles_for_type,
     user_ids_of,
@@ -91,3 +95,37 @@ def test_expo_push_token_and_payload():
     assert msgs[0]["data"]["link"] == "/orders"
     assert msgs[0]["channelId"] == "tamkobi"
     assert msgs[0]["badge"] == 1
+
+
+def test_broadcast_notes_also_use_company_push_tokens():
+    note = notification_doc("c1", "bank_sync", "1 yeni banka hareketi", "Vadesiz")
+    targeted = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_1", employee_id="emp_1")
+    assert not is_targeted_note(note)
+    assert is_targeted_note(targeted)
+    user_tok = ["ExponentPushToken[admin]"]
+    company_tok = ["ExponentPushToken[admin]", "ExponentPushToken[phone]", "bad"]
+    assert collect_dispatch_tokens(user_tok, company_tok, targeted=False) == [
+        "ExponentPushToken[admin]",
+        "ExponentPushToken[phone]",
+    ]
+    assert collect_dispatch_tokens(user_tok, company_tok, targeted=True) == ["ExponentPushToken[admin]"]
+    assert merge_push_tokens([], ["ExpoPushToken[x]"]) == ["ExpoPushToken[x]"]
+
+
+def test_unread_panel_notes_are_queued_for_phone():
+    admin = {"_id": "usr_admin", "role": "admin", "active_company_id": "c1"}
+    rows = [
+        notification_doc("c1", "bank_sync", "1 yeni banka hareketi", "Vadesiz TL Hesabı"),
+        notification_doc("c1", "b2b_order", "Yeni B2B siparişi", "B2B-2026-0010"),
+        notification_doc("c1", "quote_response", "TKF-2026-0017 ONAYLANDI", "Mustafa BAL"),
+        {**notification_doc("c1", "bank_sync", "eski", "okundu"), "is_read": True},
+        notification_doc("c1", "task_assigned", "Gizli görev", "başkasına", user_id="usr_x", roles=[]),
+    ]
+    picked = pick_unread_for_push(rows, admin, limit=3)
+    assert [n["title"] for n in picked] == [
+        "1 yeni banka hareketi",
+        "Yeni B2B siparişi",
+        "TKF-2026-0017 ONAYLANDI",
+    ]
+    staff = {"_id": "usr_wh", "role": "warehouse", "active_company_id": "c1"}
+    assert pick_unread_for_push(rows, staff) == []

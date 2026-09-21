@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2, Link2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -27,12 +28,10 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
   const [invoices, setInvoices] = useState([]);
-  const [partners, setPartners] = useState([]);
 
   useEffect(() => {
     if (!companyId) return;
     axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).then((r) => setInvoices(r.data || [])).catch(() => setInvoices([]));
-    axios.get(`${API_URL}/banking/partners?company_id=${companyId}`).then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false))).catch(() => setPartners([]));
   }, [companyId]);
 
   const openInvoices = useMemo(() => invoices
@@ -131,26 +130,17 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         {mode === "transfer" && (
           <div>
             <label className="block font-semibold mb-1">{isIn ? "Para nereden geldi?" : "Para nereye gitti?"}</label>
-            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={sel} data-testid={`tx-match-target-${txId}`}>
-              <option value="">Hesap / ortak seçin</option>
-              {targets.length > 0 && (
-                <optgroup label="Kasa / Hesap">
-                  {targets.map((a) => {
-                    const id = a.id || a._id;
-                    return <option key={id} value={id}>{a.bank_name ? `${a.bank_name} — ${a.account_name}` : a.account_name}</option>;
-                  })}
-                </optgroup>
-              )}
-              {partners.length > 0 && (
-                <optgroup label="Ortaklar Hesabı">
-                  {partners.map((p) => {
-                    const id = p.id || p._id;
-                    return <option key={id} value={`partner:${id}`}>{`${p.name} (Ortak · ${fmt(p.balance)} ₺)`}</option>;
-                  })}
-                </optgroup>
-              )}
-            </select>
-          </div>
+            <PaymentTargetSelect
+              companyId={companyId}
+              accounts={targets}
+              value={targetId}
+              onChange={setTargetId}
+              testId={`tx-match-target-${txId}`}
+              excludeIntegrated
+              includePartners
+              collectableOnly={isIn}
+              emptyLabel="Hesap / ortak seçin"
+            />          </div>
         )}
 
         <div>
