@@ -16,7 +16,7 @@ import { colors } from "../theme";
 import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
-import { balanceHint, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel } from "../utils/contactDisplay";
+import { balanceHint, contactCardVisibleActions, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel } from "../utils/contactDisplay";
 import { balanceMessage, waDigits } from "../utils/contactStatement";
 import { smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
 import { mapsLink } from "../utils/geo";
@@ -622,6 +622,7 @@ export function ContactDetailScreen() {
     c.email && { key: "mail", label: "E-posta", icon: "mail" as const, tone: "sky" as const, testID: "detail-mail-btn", onPress: () => Linking.openURL(`mailto:${c.email}`) },
     mapsLink(c) && { key: "map", label: "Konum", icon: "navigate" as const, tone: "rose" as const, testID: "detail-location-btn", onPress: () => Linking.openURL(String(mapsLink(c))) },
   ].filter(Boolean) as ActionTile[];
+  const { showMore, shown: visibleActions } = contactCardVisibleActions(actionTiles, moreActions);
 
   return (
     <Screen onRefresh={load}>
@@ -632,8 +633,7 @@ export function ContactDetailScreen() {
 
       <ActionTiles
         items={[
-          ...(moreActions ? actionTiles : actionTiles.slice(0, 4)),
-          ...(actionTiles.length > 4
+          ...(showMore
             ? [{
                 key: "more",
                 label: moreActions ? "Gizle" : "Diğerleri",
@@ -641,8 +641,9 @@ export function ContactDetailScreen() {
                 tone: "slate" as const,
                 testID: "detail-more-actions",
                 onPress: () => setMoreActions((v) => !v),
-              }]
+              } as ActionTile]
             : []),
+          ...visibleActions,
         ]}
         size="xs"
       />

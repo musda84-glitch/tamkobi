@@ -241,6 +241,15 @@ export function contactTabSelectGroups(
   }];
 }
 
+/** Düzenle stays in Diğerleri; that tile takes the first slot on the card. */
+export function contactCardVisibleActions<T extends { key: string }>(tiles: T[], moreOpen: boolean): { showMore: boolean; shown: T[] } {
+  const extra = tiles.filter((t) => t.key === "edit");
+  const front = tiles.filter((t) => t.key !== "edit");
+  const showMore = extra.length > 0 || front.length > 4;
+  if (!showMore) return { showMore: false, shown: front };
+  return { showMore: true, shown: moreOpen ? [...front, ...extra] : front.slice(0, 3) };
+}
+
 export function contactSummaryRows(summary: Record<string, unknown> | null | undefined): InfoRow[] {
   if (!summary) return [];
   const n = (k: string) => Number(summary[k]) || 0;

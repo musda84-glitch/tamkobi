@@ -1,4 +1,4 @@
-import { balanceHint, contactBalanceLabel, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
+import { balanceHint, contactBalanceLabel, contactCardVisibleActions, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel, invoiceOpenByContact } from "./contactDisplay";
 import { fmtMoney } from "./money";
 
 describe("contactDisplay", () => {
@@ -114,6 +114,21 @@ describe("contactDisplay", () => {
     });
     expect(rows.map((r) => r.key)).toEqual(["invoice_count", "order_count", "total_invoiced", "open_amount"]);
     expect(rows.find((r) => r.key === "open_amount")?.value).toBe(fmtMoney(100));
+  });
+
+  it("puts Düzenle behind Diğerleri and keeps four front tiles when there is no overflow", () => {
+    const tiles = [{ key: "edit" }, { key: "statement" }, { key: "quote" }, { key: "order" }, { key: "survey" }];
+    expect(contactCardVisibleActions(tiles, false)).toEqual({
+      showMore: true,
+      shown: [{ key: "statement" }, { key: "quote" }, { key: "order" }],
+    });
+    expect(contactCardVisibleActions(tiles, true).shown.map((t) => t.key)).toEqual([
+      "statement", "quote", "order", "survey", "edit",
+    ]);
+    expect(contactCardVisibleActions([{ key: "statement" }, { key: "quote" }, { key: "order" }, { key: "survey" }], false)).toEqual({
+      showMore: false,
+      shown: [{ key: "statement" }, { key: "quote" }, { key: "order" }, { key: "survey" }],
+    });
   });
 
   it("turns contact tabs into a dropdown with counts", () => {
