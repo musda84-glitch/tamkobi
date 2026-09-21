@@ -1,4 +1,4 @@
-import { addCartLine, cartCount, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, cartCount, formatCartSheetLine, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -45,6 +45,13 @@ describe("b2bCart", () => {
   test("normalizeNote trims and caps length", () => {
     expect(normalizeNote("  ab  ")).toBe("ab");
     expect(normalizeNote("x".repeat(600)).length).toBe(500);
+  });
+
+  test("formatCartSheetLine keeps name and qty/price on one string", () => {
+    expect(formatCartSheetLine("Duvar Rafı Çizgili_DRD 35x20cm BEYAZ", 1, "160,00 ₺")).toBe(
+      "Duvar Rafı Çizgili_DRD 35x20cm BEYAZ  1 × 160,00 ₺"
+    );
+    expect(formatCartSheetLine("Raf", 2, "", "kırmızı")).toBe("Raf  2 adet · kırmızı");
   });
 
   test("productCartQty sums every line of that product", () => {

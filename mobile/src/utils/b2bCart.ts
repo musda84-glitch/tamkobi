@@ -76,6 +76,19 @@ export function setCartLineQty(cart: B2BCart | null | undefined, key: string, qt
   return next;
 }
 
+/** Single-line cart sheet label: name, qty × price, optional note. */
+export function formatCartSheetLine(
+  name: string,
+  qty: number,
+  priceText?: string | null,
+  note?: string | null
+): string {
+  const price = String(priceText || "").trim();
+  const qtyBit = price ? `${qty} × ${price}` : `${qty} adet`;
+  const extra = normalizeNote(note);
+  return extra ? `${name}  ${qtyBit} · ${extra}` : `${name}  ${qtyBit}`;
+}
+
 export function formatOrderItemLabel(item: { quantity?: number; qty?: number; product_name?: string; name?: string; note?: string } | null | undefined): string {
   const qty = item?.quantity ?? item?.qty ?? 0;
   const name = item?.product_name || item?.name || "";
