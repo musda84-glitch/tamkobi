@@ -13,6 +13,7 @@ import {
   openInvoices,
   ruleLabel,
   suggestionLabel,
+  transferSelectGroups,
 } from "./bankMatch";
 
 const salesOpen: Invoice = {
@@ -77,6 +78,26 @@ describe("match draft / payload", () => {
     expect(canSubmitMatch({ ...d, mode: "transfer" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "  " })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "Kira" })).toBe(true);
+  });
+
+  it("keeps partner cash in the virman target list", () => {
+    const groups = transferSelectGroups(
+      [{ id: "a2", bank_name: "Matek Kasa", account_name: "Vadesiz TL Hesabı" }],
+      [
+        { id: "p1", name: "Mustafa", share_percent: 50, balance: 1200, is_active: true },
+        { id: "p2", name: "Pasif", is_active: false },
+      ]
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Kasa / Hesap", "Ortaklar Hesabı"]);
+    expect(groups[1].options.map((o) => o.value)).toEqual(["partner:p1"]);
+    expect(groups[1].options[0].label).toContain("Mustafa");
+    expect(groups[1].options[0].label).toContain("Ortak");
+    const transfer = matchPayload({
+      ...emptyMatchDraft(),
+      mode: "transfer",
+      target_account_id: "partner:p1",
+    });
+    expect(transfer.target_account_id).toBe("partner:p1");
   });
 
   it("sends only the fields that belong to the selected mode", () => {

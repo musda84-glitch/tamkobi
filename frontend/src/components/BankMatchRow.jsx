@@ -5,12 +5,13 @@ import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { PaymentTargetSelect } from "./PaymentTargetSelect";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 const MODES = [["contact", "Cari"], ["invoice", "Cari + Fatura"], ["transfer", "Kasa / Hesap (Virman)"], ["category", "Sadece Kategori"]];
 
-export const BankMatchRow = ({ tx, contacts, accounts, invoices, onDone }) => {
+export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDone }) => {
   const [mode, setMode] = useState(tx.suggested_contact_id ? "contact" : "contact");
   const [contactId, setContactId] = useState(tx.suggested_contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
@@ -56,10 +57,18 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, onDone }) => {
             </select>
           )}
           {mode === "transfer" && (
-            <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={`${sel} w-48`} data-testid={`match-target-select-${tx.id}`}>
-              <option value="">{isIn ? "Para nereden geldi?" : "Para nereye gitti?"}</option>
-              {targets.map((a) => <option key={a.id} value={a.id}>{`${a.bank_name} — ${a.account_name}`}</option>)}
-            </select>
+            <PaymentTargetSelect
+              companyId={companyId}
+              accounts={targets}
+              value={targetId}
+              onChange={setTargetId}
+              testId={`match-target-select-${tx.id}`}
+              excludeIntegrated
+              includePartners
+              collectableOnly={isIn}
+              emptyLabel={isIn ? "Para nereden geldi?" : "Para nereye gitti?"}
+              className="w-48"
+            />
           )}
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>

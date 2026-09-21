@@ -1,5 +1,5 @@
 import type { Contact, Invoice } from "../types";
-import type { BankAccount, BankTx } from "./finance";
+import type { BankAccount, BankTx, Partner } from "./finance";
 import { fmtMoney, idOf } from "./money";
 
 export const MATCH_MODES = [
@@ -186,10 +186,22 @@ export function invoiceSelectGroups(invoices: Invoice[]): SelectGroup[] {
   return [{ label: "Açık faturalar", options }];
 }
 
-export function transferSelectGroups(accounts: BankAccount[]): SelectGroup[] {
+export function transferSelectGroups(accounts: BankAccount[], partners: Partner[] = []): SelectGroup[] {
+  const groups: SelectGroup[] = [];
   const options = (accounts || []).map((a) => ({
     value: idOf(a),
     label: `${a.bank_name || "Hesap"} — ${a.account_name || ""}`.trim(),
   }));
-  return options.length ? [{ label: "Kasa / Hesap", options }] : [];
+  if (options.length) groups.push({ label: "Kasa / Hesap", options });
+  const active = (partners || []).filter((p) => p.is_active !== false);
+  if (active.length) {
+    groups.push({
+      label: "Ortaklar Hesabı",
+      options: active.map((p) => ({
+        value: `partner:${idOf(p)}`,
+        label: `${p.name || "Ortak"} (Ortak · %${p.share_percent ?? 0} · ${fmtMoney(p.balance)})`,
+      })),
+    });
+  }
+  return groups;
 }
