@@ -111,6 +111,7 @@ export const InvoiceContextMenu = (props) => {
   const onRejectIncoming = props.onRejectIncoming;
   const apiBase = props.apiBase || "";
   const ref = useRef(null);
+  const [pos, setPos] = useState(null);
   useEffect(() => {
     if (!menu) return;
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -125,23 +126,8 @@ export const InvoiceContextMenu = (props) => {
       document.removeEventListener("keydown", esc);
     };
   }, [menu, onClose]);
-
-  if (!menu) return null;
-  const { inv } = menu;
-  const incoming = isIncomingPurchaseInvoice(inv);
-  const pending = isIncomingPurchasePending(inv);
-  const issued = isGibIssued(inv);
-  const canIssue = canIssueInvoice(inv);
-  const deletable = canDeleteInvoice(inv);
-  const cancellable = canCancelInvoice(inv);
-  const [pos, setPos] = useState(() => placeContextMenu({
-    x: menu.x,
-    y: menu.y,
-    height: 360,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
-  }));
   useLayoutEffect(() => {
+    if (!menu) return;
     const el = ref.current;
     if (!el) return;
     const next = placeContextMenu({
@@ -152,12 +138,28 @@ export const InvoiceContextMenu = (props) => {
       viewportHeight: window.innerHeight,
     });
     setPos((prev) => (
-      prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight ? prev : next
+      prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight ? prev : next
     ));
     if (el.scrollHeight > next.maxHeight + 1 && menu.y > window.innerHeight * 0.55) {
       el.scrollTop = el.scrollHeight;
     }
   }, [menu]);
+
+  if (!menu) return null;
+  const { inv } = menu;
+  const incoming = isIncomingPurchaseInvoice(inv);
+  const pending = isIncomingPurchasePending(inv);
+  const issued = isGibIssued(inv);
+  const canIssue = canIssueInvoice(inv);
+  const deletable = canDeleteInvoice(inv);
+  const cancellable = canCancelInvoice(inv);
+  const placed = pos || placeContextMenu({
+    x: menu.x,
+    y: menu.y,
+    height: 360,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
   const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (
     <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition" data-testid={testId}>
       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${color}`} />
@@ -169,7 +171,7 @@ export const InvoiceContextMenu = (props) => {
   );
 
   const menuNode = (
-    <div ref={ref} style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }} className="fixed z-[70] w-64 overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={ref} style={{ left: placed.left, top: placed.top, maxHeight: placed.maxHeight }} className="fixed z-[70] w-64 overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
       <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 truncate">{inv.invoice_number} • {inv.contact_name}</div>
       {incoming ? (
         pending ? (
