@@ -153,3 +153,14 @@ code {
   min-width: 2.75rem !important;
   object-fit: contain;
 }
+#print-area td.print-compact-barcode {
+  display: table-cell;
+  min-width: 0;
+  max-width: 7.5rem;
+  vertical-align: middle;
+}
+#print-area td.print-compact-barcode svg {
+  width: 6.75rem !important;
+  height: 2rem !important;
+  max-width: 7rem !important;
+}
