@@ -65,7 +65,8 @@ describe("productDisplay", () => {
     expect(filterProducts(rows, "", "Raf").map((p) => p.name)).toEqual(["A"]);
     expect(filterProducts(rows, "99", "all").map((p) => p.name)).toEqual(["B"]);
     expect(filterProducts(rows, "masa", "Masa").map((p) => p.name)).toEqual(["B"]);
-    expect(asList({ items: rows })).toEqual([]);
+    expect(asList({ items: rows })).toEqual(rows);
+    expect(asList({ products: rows })).toEqual(rows);
     expect(productCategoryGroups({ name: "Raf" } as never, null)[0].options[0].value).toBe("all");
     expect(filterProducts({} as never, "a", "all")).toEqual([]);
   });
