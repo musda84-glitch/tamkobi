@@ -27,7 +27,6 @@ import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   FileText,
   Plus,
-  Send,
   Eye,
   CheckCircle2,
   Clock,
@@ -711,29 +710,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         >
                           <MessageSquare className="w-4 h-4" />
                         </button>
-                        {incoming ? (
-                          isIncomingPurchasePending(inv) ? (
-                            <button
-                              onClick={() => handleAcceptIncoming(inv)}
-                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                              title="Gelen e-faturayı onayla (ticari kabul). Reddetmek için ⋮ menü."
-                              data-testid={`accept-incoming-btn-${inv.invoice_number}`}
-                            >
-                              <CheckCircle2 className="w-4 h-4" />
-                            </button>
-                          ) : (
-                            <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />
-                          )
-                        ) : !isGibIssued(inv) ? (
+                        {incoming && isIncomingPurchasePending(inv) && (
                           <button
-                            onClick={() => handleSendToGib(inv.id || inv._id)}
-                            className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                            title="GİB Portalına Gönder & İmzala"
-                            data-testid={`send-gib-btn-${inv.invoice_number}`}
+                            onClick={() => handleAcceptIncoming(inv)}
+                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                            title="Gelen e-faturayı onayla (ticari kabul). Reddetmek için ⋮ menü."
+                            data-testid={`accept-incoming-btn-${inv.invoice_number}`}
                           >
-                            <Send className="w-4 h-4" />
+                            <CheckCircle2 className="w-4 h-4" />
                           </button>
-                        ) : <span className="p-1.5 w-7 h-7 inline-block" aria-hidden="true" />}
+                        )}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === 'dispatch' ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
