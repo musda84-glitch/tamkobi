@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { StockCountPanel } from "../components/StockCountPanel";
-import { StockToolbar, applyStockFilters, STOCK_FILTER_DEFAULTS } from "../components/StockToolbar";
+import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStock } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
@@ -45,6 +45,7 @@ import {
   ShoppingCart,
   Loader2,
   Clock,
+  History,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -63,7 +64,13 @@ export default function StockBarcodePage() {
   const [labelQuickProduct, setLabelQuickProduct] = useState(null);
   const [filterCategory, setFilterCategory] = useState("all");
   const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
-  const [stockF, setStockF] = useState(STOCK_FILTER_DEFAULTS);
+  const [stockF, setStockF] = useState(() => stockFiltersFromSearch(searchParams));
+  useEffect(() => {
+    const next = stockFiltersFromSearch(searchParams);
+    setStockF((prev) => (prev.status === next.status ? prev : { ...prev, status: next.status }));
+    const q = searchParams.get("q");
+    if (q) setSearchTerm(q);
+  }, [searchParams]);
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
   const loadCategories = useCallback(() => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {}), [activeCompany]);
@@ -83,6 +90,9 @@ export default function StockBarcodePage() {
   const [scanSelling, setScanSelling] = useState(false);
   const [detailProduct, setDetailProduct] = useState(null);
   const [produceProduct, setProduceProduct] = useState(null);
+  const [movesProduct, setMovesProduct] = useState(null);
+  const [moves, setMoves] = useState([]);
+  const [movesBusy, setMovesBusy] = useState(false);
   const [reorder, setReorder] = useState(null);
   const [detailTab, setDetailTab] = useState("images");
   const [withVariants, setWithVariants] = useState(false);
@@ -102,6 +112,22 @@ export default function StockBarcodePage() {
   const openDetail = (prod, tab = "images") => {
     setDetailTab(tab);
     setDetailProduct(prod);
+  };
+  const openMoves = async (prod) => {
+    const id = prod?.id || prod?._id;
+    if (!id) return;
+    setMovesProduct(prod);
+    setMoves([]);
+    setMovesBusy(true);
+    try {
+      const r = await axios.get(`${API_URL}/products/${id}/movements`);
+      setMoves(r.data?.movements || []);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Stok hareketleri yüklenemedi.");
+      setMovesProduct(null);
+    } finally {
+      setMovesBusy(false);
+    }
   };
 
   const productId = (p) => p?.id || p?._id;
@@ -490,7 +516,7 @@ export default function StockBarcodePage() {
   const stockListResetKey = useMemo(() => `${filterCategory}|${searchTerm}|${JSON.stringify(stockF)}`, [filterCategory, searchTerm, stockF]);
   const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(filtered, { resetKey: stockListResetKey });
   const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
-  const criticalCount = useMemo(() => products.filter((p) => p.track_stock !== false && p.stock_quantity <= (p.min_stock_alert ?? 0)).length, [products]);
+  const criticalCount = useMemo(() => products.filter((p) => isCriticalStock(p)).length, [products]);
 
   return (
     <div className="space-y-6" data-testid="stock-page">
@@ -547,6 +573,37 @@ export default function StockBarcodePage() {
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
+      {movesProduct && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setMovesProduct(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="stock-moves-modal">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Stok hareketleri</h3>
+                <p className="text-[11px] text-slate-500">{movesProduct.name}{movesProduct.sku ? ` · ${movesProduct.sku}` : ""} · stok {movesProduct.stock_quantity ?? "—"} {movesProduct.unit || ""}</p>
+              </div>
+              <button type="button" onClick={() => setMovesProduct(null)} className="p-1 text-slate-400 hover:text-slate-700" data-testid="stock-moves-close"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="overflow-y-auto p-4 text-xs">
+              {movesBusy && <div className="py-8 text-center text-slate-400">Yükleniyor…</div>}
+              {!movesBusy && moves.length === 0 && <div className="py-8 text-center text-slate-400">Bu ürüne ait stok hareketi yok.</div>}
+              {!movesBusy && moves.length > 0 && (
+                <table className="w-full text-left">
+                  <thead className="text-[10px] uppercase text-slate-500 border-b"><tr><th className="py-1.5">Tarih</th><th className="py-1.5">Açıklama</th><th className="py-1.5 text-right">Miktar</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {moves.map((m) => (
+                      <tr key={m.id || m._id} data-testid={`stock-move-${m.id || m._id}`}>
+                        <td className="py-1.5 font-mono text-slate-500 whitespace-nowrap">{String(m.date || "").slice(0, 16).replace("T", " ")}</td>
+                        <td className="py-1.5 text-slate-700">{m.reason || m.variant_name || "—"}</td>
+                        <td className={`py-1.5 text-right font-bold ${Number(m.change) < 0 ? "text-rose-600" : "text-emerald-700"}`}>{Number(m.change) > 0 ? "+" : ""}{m.change}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} company={activeCompany} onClose={() => setLabelQuickProduct(null)} onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }} />}
       {reorder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="stock-reorder-modal">
@@ -643,12 +700,12 @@ export default function StockBarcodePage() {
                 <th className="px-4 py-3 text-right">Satış Fiyatı</th>
                 <th className="px-4 py-3 text-center">Mevcut Stok</th>
                 <th className="px-4 py-3 text-center whitespace-nowrap">B2B / Takip</th>
-                <th className="px-4 py-3 text-center w-[168px]">İşlemler</th>
+                <th className="px-4 py-3 text-center w-[210px]">İşlemler</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pagedProducts.map((prod) => {
-                const isCritical = prod.stock_quantity <= prod.min_stock_alert;
+                const isCritical = isCriticalStock(prod);
                 return (
                   <tr key={prod.id || prod._id} className={`hover:bg-slate-50/70 transition ${selected.includes(productId(prod)) ? "bg-indigo-50/40" : ""}`} data-testid={`prod-row-${prod.sku}`}>
                     <td className="px-3 py-3">
@@ -726,7 +783,7 @@ export default function StockBarcodePage() {
                         <button type="button" onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center w-[168px] min-w-[168px]">
+                    <td className="px-4 py-3 text-center w-[210px] min-w-[210px]">
                       <div className="inline-flex items-center justify-center gap-1">
                         {prod.type !== "service" && prod.type !== "raw_material" ? (
                           <button onClick={() => setProduceProduct(prod)} className={`p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
@@ -777,6 +834,16 @@ export default function StockBarcodePage() {
                           data-testid={`edit-product-btn-${prod.sku}`}
                         >
                           <Pencil className="w-3 h-3" /> Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openMoves(prod)}
+                          className="p-1.5 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg"
+                          title="Stok hareketleri"
+                          aria-label="Stok hareketleri"
+                          data-testid={`stock-moves-btn-${prod.sku}`}
+                        >
+                          <History className="w-4 h-4" />
                         </button>
                       </div>
                     </td>

@@ -2000,39 +2000,78 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
             "budget_warnings": budgets["warnings"]}
 
 
+def _stock_alert_min(p: dict) -> float:
+    """Unset min matches dashboard stats (default 5). Explicit 0 stays 0."""
+    raw = p.get("min_stock_alert")
+    if raw is None or raw == "":
+        return 5.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 5.0
+
+
+_INCOMING_ORDER_STATUSES = ["pending", "new", "approved"]
+_DISPATCHED_ORDER_STATUSES = ["shipped", "delivered", "completed"]
+
+
+def _incoming_orders_query(company_id: str) -> dict:
+    return {
+        "company_id": company_id,
+        "order_status": {"$in": _INCOMING_ORDER_STATUSES},
+        "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}],
+    }
+
+
+def _dispatched_orders_query(company_id: str) -> dict:
+    return {
+        "company_id": company_id,
+        "$or": [
+            {"order_status": {"$in": _DISPATCHED_ORDER_STATUSES}},
+            {
+                "cargo_tracking_number": {"$gt": ""},
+                "order_status": {"$nin": ["cancelled", "returned", "partially_returned"]},
+            },
+        ],
+    }
+
+
 @api_router.get("/dashboard/ops-alerts")
 async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
     """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
-    products, new_orders, shipped, prod_orders = await asyncio.gather(
+    products, new_count, new_orders, ship_count, shipped, prod_count, prod_orders = await asyncio.gather(
         db.products.find(
             {"company_id": company_id, "track_stock": {"$ne": False}},
             {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1},
         ).to_list(5000),
+        db.orders.count_documents(_incoming_orders_query(company_id)),
         db.orders.find(
-            {"company_id": company_id, "order_status": {"$in": ["pending", "new"]}},
-            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1},
-        ).sort("created_at", -1).to_list(20),
+            _incoming_orders_query(company_id),
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "order_date": 1, "created_at": 1, "channel": 1, "order_status": 1},
+        ).sort("created_at", -1).to_list(8),
+        db.orders.count_documents(_dispatched_orders_query(company_id)),
         db.orders.find(
-            {"company_id": company_id, "order_status": "shipped"},
-            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "cargo_tracking_number": 1, "order_date": 1},
-        ).sort("updated_at", -1).to_list(20),
+            _dispatched_orders_query(company_id),
+            {"order_number": 1, "customer_name": 1, "grand_total": 1, "total_amount": 1, "updated_at": 1, "created_at": 1, "cargo_tracking_number": 1, "order_date": 1, "channel": 1, "order_status": 1},
+        ).sort("created_at", -1).to_list(8),
+        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
         db.production_orders.find(
             {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
             {"order_code": 1, "order_number": 1, "finished_product_name": 1, "product_name": 1, "status": 1, "quantity": 1, "planned_quantity": 1, "created_at": 1},
-        ).sort("created_at", -1).to_list(20),
+        ).sort("created_at", -1).to_list(8),
     )
     low_sorted = sorted(
         [
             {
                 "id": str(p.get("_id") or ""),
                 "title": p.get("name") or p.get("sku") or "Ürün",
-                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {float(p.get('min_stock_alert') or 0):g}"
+                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {_stock_alert_min(p):g}"
                 + (f" · {p['sku']}" if p.get("sku") else ""),
-                "path": "/stock",
+                "path": "/stock?status=critical&q=" + quote(str(p.get("sku") or p.get("name") or "")),
                 "_qty": float(p.get("stock_quantity") or 0),
             }
             for p in products
-            if float(p.get("stock_quantity") or 0) <= float(p.get("min_stock_alert") or 0)
+            if float(p.get("stock_quantity") or 0) <= _stock_alert_min(p)
         ],
         key=lambda x: x["_qty"],
     )
@@ -2072,10 +2111,12 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
             "path": "/production",
         }
 
+    pick_q = {"company_id": company_id, "type": {"$in": ["order_pick_missing", "order_pick_production"]}, "is_read": False}
+    pick_count = await db.notifications.count_documents(pick_q)
     pick_notes = await db.notifications.find(
-        {"company_id": company_id, "type": {"$in": ["order_pick_missing", "order_pick_production"]}, "is_read": False},
+        pick_q,
         {"title": 1, "message": 1, "link": 1, "type": 1, "ref_id": 1, "order_number": 1, "created_at": 1},
-    ).sort("created_at", -1).to_list(20)
+    ).sort("created_at", -1).to_list(8)
     pick_items = [
         {
             "id": str(n.get("_id") or ""),
@@ -2085,12 +2126,17 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
         }
         for n in pick_notes
     ]
+
+    def _order_link(o, status_key: str) -> str:
+        num = quote(str(o.get("order_number") or ""))
+        return f"/orders?status={status_key}" + (f"&q={num}" if num else "")
+
     groups = [
-        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": len(pick_items), "items": pick_items[:8]},
-        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock", "count": len(low_sorted), "items": low_sorted[:8]},
-        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": len(prod_orders), "items": [prod_row(o) for o in prod_orders[:8]]},
-        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders", "count": len(shipped), "items": [order_row(o) for o in shipped[:8]]},
-        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders", "count": len(new_orders), "items": [order_row(o) for o in new_orders[:8]]},
+        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": int(pick_count or 0), "items": pick_items},
+        {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock?status=critical", "count": len(low_sorted), "items": low_sorted[:8]},
+        {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": int(prod_count or 0), "items": [prod_row(o) for o in prod_orders]},
+        {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders?status=dispatched", "count": int(ship_count or 0), "items": [order_row(o, _order_link(o, "dispatched")) for o in shipped]},
+        {"key": "new_orders", "label": "Yeni gelen sipariş", "path": "/orders?status=incoming", "count": int(new_count or 0), "items": [order_row(o, _order_link(o, "incoming")) for o in new_orders]},
     ]
     total = sum(g["count"] for g in groups)
     return {"count": total, "groups": groups}
@@ -3369,6 +3415,43 @@ async def record_contact_payment(contact_id: str, req: Dict[str, Any]):
     await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount if tx_type == "inflow" else amount}})
     return {"status": "success", "via": "partner", "account_name": name}
 
+@api_router.post("/contacts/{contact_id}/ledger-slip")
+async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
+    """Borç / alacak fişi — kasa veya banka hareketi olmadan cari bakiyesini düzeltir."""
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    amount = round(float(req.get("amount") or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    kind = str(req.get("kind") or req.get("slip") or "debit").strip().lower()
+    if kind not in ("debit", "credit", "borc", "alacak"):
+        raise HTTPException(status_code=400, detail="Fiş türü borç veya alacak olmalı.")
+    is_debit = kind in ("debit", "borc")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    description = (req.get("description") or ("Borç fişi" if is_debit else "Alacak fişi")).strip()
+    # Borç fişi cari borcunu artırır (bakiye +); alacak fişi düşürür (bakiye −). Kasa etkilenmez.
+    tx_type = "outflow" if is_debit else "inflow"
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": contact["company_id"],
+        "account_id": None,
+        "account_name": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "type": tx_type,
+        "category": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "amount": amount,
+        "currency": "TRY",
+        "description": f"{contact.get('name')}: {description}",
+        "contact_id": contact_id,
+        "contact_name": contact.get("name"),
+        "source": "ledger",
+        "date": req.get("date") or today,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.bank_transactions.insert_one(doc)
+    await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": amount if is_debit else -amount}})
+    return {"status": "success", "id": doc["_id"], "kind": "debit" if is_debit else "credit"}
+
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]
 
@@ -4613,6 +4696,14 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest):
     updated = await db.products.find_one({"_id": product_id})
     return clean_doc(updated)
 
+@api_router.get("/products/{product_id}/movements")
+async def list_product_movements(product_id: str):
+    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "sku": 1, "unit": 1, "stock_quantity": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(300)
+    return {"product": clean_doc(product), "movements": clean_docs(rows)}
+
 @api_router.post("/products/quick-stock-adjust")
 async def quick_stock_adjust(req: Dict[str, Any]):
     product_id = req.get("product_id")
@@ -5715,7 +5806,8 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             await db.bank_accounts.update_one({"_id": tx["target_account_id"]}, {"$inc": {"current_balance": amt}})
         return
     change = amt if tx.get("type") == "inflow" else -amt
-    await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+    if tx.get("account_id") and tx.get("source") != "ledger":
+        await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
     if tx.get("contact_id"):
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -change}})
     if tx.get("related_invoice_id"):
@@ -5773,14 +5865,14 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
         allowed["amount"] = float(allowed["amount"])
         if allowed["amount"] <= 0:
             raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
-    if "account_id" in allowed and allowed["account_id"] != tx.get("account_id"):
+    if "account_id" in allowed and allowed["account_id"] and allowed["account_id"] != tx.get("account_id"):
         acc = await db.bank_accounts.find_one({"_id": allowed["account_id"]})
         if not acc:
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         allowed["account_name"] = acc.get("account_name")
     new_type = allowed.get("type", tx.get("type"))
     new_acc = allowed.get("account_id", tx.get("account_id"))
-    if new_type == "inflow":
+    if new_type == "inflow" and new_acc and tx.get("source") != "ledger":
         await bank_guard.assert_collection_allowed(db, new_acc)
     await _reverse_tx_effects(tx, -1)
     new_tx = {**tx, **allowed}
@@ -7378,6 +7470,84 @@ async def get_order(order_id: str):
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     return clean_doc(o)
+
+_MARKETPLACE_EDIT_BLOCK = {
+    "trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama",
+    "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek",
+}
+_ORDER_EDIT_LOCKED = {"cancelled", "returned", "delivered", "completed"}
+
+
+async def _staff_rebuild_order_items(company_id: str, raw_items: list) -> list:
+    rows = []
+    for it in raw_items or []:
+        d = _as_item_dict(it)
+        q = float(d.get("quantity") or 0)
+        if q <= 0:
+            continue
+        pid = d.get("product_id")
+        p = await db.products.find_one({"_id": pid, "company_id": company_id}) if pid else None
+        if p:
+            if not d.get("product_name"):
+                d["product_name"] = p.get("name")
+            if not d.get("sku"):
+                d["sku"] = p.get("sku") or ""
+            if not d.get("barcode"):
+                d["barcode"] = p.get("barcode") or ""
+            if not d.get("unit"):
+                d["unit"] = p.get("unit") or "Adet"
+            has_price = float(d.get("unit_price") or 0) or float(d.get("unit_price_incl") or 0)
+            if not has_price:
+                d["unit_price"] = float(p.get("sale_price") or 0)
+                if d.get("vat_rate") in (None, ""):
+                    d["vat_rate"] = p.get("vat_rate", 20)
+                d["price_includes_vat"] = bool(p.get("price_includes_vat"))
+            if "is_service" not in d:
+                d["is_service"] = p.get("type") == "service"
+        if not d.get("product_name"):
+            d["product_name"] = d.get("name") or "Kalem"
+        includes = bool(d.get("price_includes_vat"))
+        enrich_line(d, price_mode="incl" if includes else "excl", default_vat=float(d.get("vat_rate") or 0))
+        rows.append(d)
+    await _fill_stock_codes(company_id, rows)
+    return rows
+
+
+@api_router.put("/orders/{order_id}")
+async def update_order(order_id: str, req: Dict[str, Any]):
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    if o.get("is_invoiced") or o.get("invoice_id"):
+        raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
+    status = str(o.get("order_status") or o.get("status") or "")
+    if status in _ORDER_EDIT_LOCKED:
+        raise HTTPException(status_code=400, detail="Bu sipariş düzenlenemez.")
+    marketplace = str(o.get("channel") or "").lower() in _MARKETPLACE_EDIT_BLOCK
+    if marketplace and "items" in req:
+        raise HTTPException(status_code=400, detail="Pazaryeri sipariş kalemleri düzenlenemez.")
+
+    update: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if "notes" in req:
+        update["notes"] = req.get("notes") or ""
+    if "customer_order_number" in req or "po_number" in req:
+        update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    if "items" in req:
+        rows = await _staff_rebuild_order_items(o.get("company_id"), req.get("items") or [])
+        if not rows:
+            raise HTTPException(status_code=400, detail="Siparişte en az bir ürün olmalı.")
+        subtotal, vat_total, discount_total, grand_total = order_document_totals(rows)
+        update.update({
+            "items": [it.model_dump() for it in _order_item_models(rows)],
+            "subtotal": subtotal,
+            "vat_total": vat_total,
+            "discount_total": discount_total,
+            "grand_total": grand_total,
+            "total_amount": grand_total if vat_total else subtotal,
+        })
+    await db.orders.update_one({"_id": order_id}, {"$set": update})
+    updated = await db.orders.find_one({"_id": order_id})
+    return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
 
 # 2026 yaklaşık parametreler (kullanıcı ayarlardan değiştirebilir)
 SALARY_PARAMS = {"sgk_employee": 0.14, "unemployment_employee": 0.01, "stamp_tax": 0.00759, "sgk_employer": 0.155, "unemployment_employer": 0.02,

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post, put } from "../api/client";
+import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import type { Order } from "../types";
@@ -19,6 +19,8 @@ import {
   type CargoCatalogItem,
 } from "../utils/orderCargo";
 import { idOf } from "../utils/money";
+import { go } from "../nav";
+import { canStaffDeleteOrder, canStaffEditOrder } from "../utils/orderEdit";
 import { printCargoLabel, printOrderForm } from "../utils/orderShare";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
 import { ActionTiles, type ActionTile } from "./ActionTiles";
@@ -78,6 +80,7 @@ export function OrderActions({
   onMessage,
   onError,
   onChanged,
+  onDeleted,
 }: {
   order: Order;
   size?: "xs" | "sm";
@@ -85,6 +88,7 @@ export function OrderActions({
   onMessage?: (text: string) => void;
   onError?: (text: string) => void;
   onChanged?: () => void;
+  onDeleted?: () => void;
 }) {
   const { client, activeCompany, companyId, can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
@@ -93,6 +97,7 @@ export function OrderActions({
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
   const canProduce = can("/production", "edit") || can("/sevk", "edit") || can("/orders", "edit");
   const canEdit = can("/orders", "edit");
+  const canMutate = canEdit || can("/saha", "edit");
   const marketplace = isMarketplaceChannel(order.channel);
   const oid = idOf(order);
 
@@ -181,6 +186,26 @@ export function OrderActions({
     });
   };
 
+  const remove = () => {
+    if (!canStaffDeleteOrder(order)) {
+      onError?.("Faturalanmış sipariş silinemez.");
+      return;
+    }
+    confirmAction("Siparişi sil", `${order.order_number || "Sipariş"} çöp kutusuna taşınsın mı?`, async () => {
+      setBusy("delete");
+      try {
+        const r = await del<{ message?: string }>(client, `/orders/${oid}`);
+        onMessage?.(r.message || "Sipariş silindi.");
+        onChanged?.();
+        onDeleted?.();
+      } catch (err) {
+        onError?.(apiErrorMessage(err, "Silinemedi."));
+      } finally {
+        setBusy(null);
+      }
+    });
+  };
+
   const toProduction = () => {
     confirmAction(
       "Üretim emri",
@@ -201,8 +226,16 @@ export function OrderActions({
 
   const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
   const showCargo = canEdit && canChangeMarketplaceCargo(order);
+  const showEdit = canMutate && canStaffEditOrder(order);
+  const showDelete = canMutate && canStaffDeleteOrder(order);
 
   const defs: ActionDef[] = [
+    ...(showEdit
+      ? [{ key: "edit", label: "Düzenle", icon: "create" as const, tone: "slate" as const, busyKey: "edit", testID: `order-edit-${oid}`, onPress: () => go("OrderEdit", { id: oid }) }]
+      : []),
+    ...(showDelete
+      ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
+      : []),
     ...(showCargo
       ? [{ key: "cargo", label: "Kargo firma", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: openCargo }]
       : []),

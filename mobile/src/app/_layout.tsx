@@ -40,6 +40,7 @@ function RootStack() {
         <Stack.Screen name="invoices/[id]" options={{ title: "Fatura" }} />
         <Stack.Screen name="edoc-inbox/index" options={{ title: "Gelen e-Faturalar" }} />
         <Stack.Screen name="orders/index" options={{ title: "Siparişler" }} />
+        <Stack.Screen name="orders/edit/[id]" options={{ title: "Siparişi düzenle" }} />
         <Stack.Screen name="sevk/index" options={{ title: "Depo Sevkiyat" }} />
         <Stack.Screen name="sevk/[id]" options={{ title: "Sipariş topla" }} />
         <Stack.Screen name="atolye/index" options={{ title: "Üretim Atölye" }} />

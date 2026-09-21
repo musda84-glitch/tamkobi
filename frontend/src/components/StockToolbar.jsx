@@ -7,13 +7,32 @@ const STOCK_COLS = [{ key: "sku", label: "SKU" }, { key: "barcode", label: "Bark
 
 export const STOCK_FILTER_DEFAULTS = { status: "all", b2b: "all", sort: "name_asc" };
 const STATUS = [["all", "Tüm Stok Durumları"], ["critical", "Kritik Stok (min. altı)"], ["out", "Stokta Yok"], ["in", "Stokta Var"], ["untracked", "Stok Takibi Yok (Hizmet)"]];
+
+/** Min stok boşsa panel istatistiğiyle aynı eşik (5). Bilinçli 0 olduğu gibi kalır. */
+export function stockAlertMin(p) {
+  const m = p?.min_stock_alert;
+  if (m === null || m === undefined || m === "") return 5;
+  const n = Number(m);
+  return Number.isFinite(n) ? n : 5;
+}
+
+export function isCriticalStock(p) {
+  return p?.track_stock !== false && Number(p?.stock_quantity || 0) <= stockAlertMin(p);
+}
+
+export function stockFiltersFromSearch(params) {
+  const status = params?.get?.("status") || "";
+  const next = { ...STOCK_FILTER_DEFAULTS };
+  if (STATUS.some(([k]) => k === status)) next.status = status;
+  return next;
+}
 const B2B = [["all", "B2B: Tümü"], ["yes", "B2B'de Görünür"], ["no", "B2B'de Gizli"]];
 const SORT = [["name_asc", "Ad (A → Z)"], ["name_desc", "Ad (Z → A)"], ["stock_asc", "Stok (azdan çoğa)"], ["stock_desc", "Stok (çoktan aza)"], ["price_desc", "Satış Fiyatı (yüksek)"], ["price_asc", "Satış Fiyatı (düşük)"], ["value_desc", "Stok Değeri (yüksek)"], ["newest", "En Yeni"]];
 
 export const applyStockFilters = (products, f) => {
   const list = products.filter((p) => {
     const tracked = p.track_stock !== false;
-    if (f.status === "critical" && !(tracked && p.stock_quantity <= (p.min_stock_alert ?? 0))) return false;
+    if (f.status === "critical" && !isCriticalStock(p)) return false;
     if (f.status === "out" && !(tracked && (p.stock_quantity || 0) <= 0)) return false;
     if (f.status === "in" && !(tracked && (p.stock_quantity || 0) > 0)) return false;
     if (f.status === "untracked" && tracked) return false;

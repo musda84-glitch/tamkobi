@@ -27,7 +27,7 @@ import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 });
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
@@ -80,15 +80,69 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const lockedTxLabel = (p) => (p.source === "partner" ? "Ortak" : p.source === "cheque" || p.virtual ? "Çek" : "Banka");
   const lockedTxTitle = (p) => (p.source === "cheque" || p.virtual ? "Çek/senet kaydından geldi — Çek/Senet modülünden yönetilir" : "Banka entegrasyonu / ortaklar hesabından geldi — düzenlenemez");
   const deletePay = async (p) => {
-    if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${p.type === "inflow" ? "tahsilat" : "ödeme"} silinsin mi? Bakiyeler geri alınır.`)) return;
+    const chequeId = p.cheque_id;
+    const label = p.type === "inflow" ? "tahsilat" : "ödeme";
+    if (chequeId) {
+      if (!window.confirm(`${fmt(p.amount)} ₺ çek/senet kaydı silinsin mi? Cari bakiyesi geri alınır.`)) return;
+      try {
+        const r = await axios.delete(`${API_URL}/cheques/${chequeId}`);
+        toast.success(r.data.message || "Silindi.");
+        await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+        load();
+      } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+      return;
+    }
+    if (p.source === "bank_sync" || p.source === "partner") {
+      toast.error(lockedTxTitle(p));
+      return;
+    }
+    if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${label} silinsin mi? Bakiyeler geri alınır.`)) return;
     try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const openEditPay = async (p) => {
+    if (p.cheque_id) {
+      try {
+        const r = await axios.get(`${API_URL}/cheques/${p.cheque_id}`);
+        const ch = r.data || {};
+        setEditPay({
+          id: ch.id || p.cheque_id,
+          cheque: true,
+          type: ch.direction === "issued" ? "outflow" : "inflow",
+          amount: ch.amount,
+          date: ch.due_date || ch.issue_date || p.date,
+          description: ch.notes || p.description || "",
+          serial_no: ch.serial_no || "",
+          bank_name: ch.bank_name || "",
+        });
+      } catch (err) { toast.error(err.response?.data?.detail || "Çek/senet yüklenemedi."); }
+      return;
+    }
+    if (p.source === "bank_sync" || p.source === "partner") {
+      toast.error(lockedTxTitle(p));
+      return;
+    }
+    try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p, cheque: false }); } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const savePayEdit = async (e) => {
     e.preventDefault();
-    try { await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id }); toast.success("Ödeme güncellendi."); setEditPay(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+    try {
+      if (editPay.cheque) {
+        await axios.put(`${API_URL}/cheques/${editPay.id}`, {
+          amount: Number(editPay.amount),
+          due_date: editPay.date,
+          notes: editPay.description,
+          serial_no: editPay.serial_no,
+          bank_name: editPay.bank_name,
+        });
+      } else {
+        await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id });
+      }
+      toast.success("Güncellendi.");
+      setEditPay(null);
+      await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
-  const openEditPay = async (p) => { try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p }); } catch { toast.error("Hesaplar yüklenemedi."); } };
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -98,20 +152,45 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       setAccounts(r.data);
       const isIn = (c.balance || 0) >= 0;
       const pool = isIn ? collectableAccounts(r.data) : r.data;
-      setPayForm({ amount: Math.max(0, c.balance || 0).toFixed(2), account_id: pool[0]?.id || "", description: isIn ? "Cari tahsilat" : "Cari ödeme", type: isIn ? "inflow" : "outflow" });
+      setPayForm({ amount: Math.max(0, c.balance || 0).toFixed(2), account_id: pool[0]?.id || "", description: isIn ? "Cari tahsilat" : "Cari ödeme", type: isIn ? "inflow" : "outflow", method: "cash", instrument: "cheque", due_date: new Date().toISOString().slice(0, 10), serial_no: "", bank_name: "", slip: "debit" });
     } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const savePay = async (e) => {
     e.preventDefault();
     try {
-      const target = splitPaymentTarget(payForm.account_id);
-      if (target.partner_id) {
-        await axios.post(`${API_URL}/contacts/${c.id}/record-payment`, { partner_id: target.partner_id, type: payForm.type, amount: Number(payForm.amount), description: payForm.description });
+      const amount = Number(payForm.amount);
+      if (!(amount > 0)) { toast.error("Tutar sıfırdan büyük olmalı."); return; }
+      if (payForm.method === "ledger") {
+        await axios.post(`${API_URL}/contacts/${c.id}/ledger-slip`, {
+          kind: payForm.slip === "credit" ? "credit" : "debit",
+          amount,
+          description: payForm.description,
+        });
+        toast.success(payForm.slip === "credit" ? "Alacak fişi kaydedildi." : "Borç fişi kaydedildi.");
+      } else if (payForm.method === "cheque" || payForm.method === "promissory") {
+        await axios.post(`${API_URL}/cheques`, {
+          company_id: c.company_id,
+          contact_id: c.id,
+          instrument: payForm.method === "promissory" ? "promissory" : "cheque",
+          direction: payForm.type === "inflow" ? "received" : "issued",
+          amount,
+          due_date: payForm.due_date,
+          serial_no: payForm.serial_no,
+          bank_name: payForm.bank_name,
+          notes: payForm.description,
+        });
+        toast.success(payForm.method === "promissory" ? "Senet kaydedildi." : "Çek kaydedildi.");
       } else {
-        const acc = accounts.find((a) => a.id === payForm.account_id);
-        await axios.post(`${API_URL}/banking/transactions`, { company_id: c.company_id, account_id: payForm.account_id, account_name: acc?.account_name, type: payForm.type, category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme", amount: Number(payForm.amount), currency: "TRY", description: `${c.name}: ${payForm.description}`, contact_id: c.id, contact_name: c.name, source: "manual" });
+        const target = splitPaymentTarget(payForm.account_id);
+        if (target.partner_id) {
+          await axios.post(`${API_URL}/contacts/${c.id}/record-payment`, { partner_id: target.partner_id, type: payForm.type, amount, description: payForm.description });
+        } else {
+          const acc = accounts.find((a) => a.id === payForm.account_id);
+          await axios.post(`${API_URL}/banking/transactions`, { company_id: c.company_id, account_id: payForm.account_id, account_name: acc?.account_name, type: payForm.type, category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme", amount, currency: "TRY", description: `${c.name}: ${payForm.description}`, contact_id: c.id, contact_name: c.name, source: "manual" });
+        }
+        toast.success(payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi.");
       }
-      toast.success(payForm.type === "inflow" ? "Tahsilat kaydedildi." : "Ödeme kaydedildi."); setPayForm(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load();
+      setPayForm(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
   const [waMsg, setWaMsg] = useState("");
@@ -316,7 +395,21 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Tarih</th><th className="py-2">Hesap</th><th className="py-2">Açıklama</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.payments.length === 0 && <tr><td colSpan={4} className="py-6 text-center text-slate-400">Ödeme hareketi yok.</td></tr>}
-                {data.payments.map((p) => <tr key={p.id} data-testid={`detail-pay-${p.id}`}><td className="py-2 font-mono text-slate-500">{p.date}</td><td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td><td className="py-2 text-slate-600">{p.category} • {p.description}</td><td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>{!isLockedTx(p) && <><button onClick={() => openEditPay(p)} className="p-1 border rounded-md text-slate-600 hover:bg-slate-50" title="Düzenle" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /></button><button onClick={() => deletePay(p)} className="p-1 border border-rose-200 rounded-md text-rose-600 hover:bg-rose-50" title="Sil" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /></button></>}</div></td></tr>)}
+                {data.payments.map((p) => (
+                  <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
+                    <td className="py-2 font-mono text-slate-500">{p.date}</td>
+                    <td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className="py-2 text-slate-600">{p.category} • {p.description}</td>
+                    <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td>
+                    <td className="py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <button type="button" onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>
+                        <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                        <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -399,25 +492,56 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {editPay && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditPay(null)}>
             <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">
-              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.type === "inflow" ? "Tahsilat" : "Ödeme"} Düzenle</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
-              <div><label className="block font-semibold mb-1">Tarih</label><input type="date" value={editPay.date} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
-              <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.cheque ? "Çek / Senet Düzenle" : editPay.type === "inflow" ? "Tahsilat Düzenle" : "Ödeme Düzenle"}</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div><label className="block font-semibold mb-1">{editPay.cheque ? "Vade" : "Tarih"}</label><input type="date" value={editPay.date || ""} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
+              {editPay.cheque ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className="block font-semibold mb-1">Seri no</label><input value={editPay.serial_no || ""} onChange={(e) => setEditPay({ ...editPay, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-serial" /></div>
+                  <div><label className="block font-semibold mb-1">Banka</label><input value={editPay.bank_name || ""} onChange={(e) => setEditPay({ ...editPay, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-bank" /></div>
+                </div>
+              ) : (
+                <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>
+              )}
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="0.01" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
-              <div><label className="block font-semibold mb-1">Açıklama</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
+              <div><label className="block font-semibold mb-1">{editPay.cheque ? "Not" : "Açıklama"}</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setEditPay(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pay-edit-save">Kaydet</button></div>
             </form>
           </div>
         )}
         {payForm && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPayForm(null)}>
-            <form onSubmit={savePay} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal">
+            <form onSubmit={savePay} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal">
               <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Tahsilat / Ödeme — {c.name}</h3><button type="button" onClick={() => setPayForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { const pool = collectableAccounts(accounts); setPayForm({ ...payForm, type: "inflow", account_id: pool.some((a) => a.id === payForm.account_id) ? payForm.account_id : (pool[0]?.id || "") }); }} className={`p-2 rounded-lg border font-semibold ${payForm.type === "inflow" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="collect-type-in">Tahsilat (Müşteriden)</button><button type="button" onClick={() => setPayForm({ ...payForm, type: "outflow" })} className={`p-2 rounded-lg border font-semibold ${payForm.type === "outflow" ? "bg-rose-600 text-white border-rose-600" : ""}`} data-testid="collect-type-out">Ödeme (Cariye)</button></div>
-              <div><label className="block font-semibold mb-1">{payForm.type === "inflow" ? "Kasa / Banka / POS / Ortak" : "Kasa / Banka / Kart / Ortak"}</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={payForm.account_id} onChange={(v) => setPayForm({ ...payForm, account_id: v })} testId="collect-account-select" collectableOnly={payForm.type === "inflow"} /></div>
-              {payForm.type === "inflow" && <p className="text-[10px] text-slate-400">Tahsilatta kredi kartı seçilemez; ortaklar hesabı kullanılabilir.</p>}
+              <div className="grid grid-cols-2 gap-1.5">
+                {[["cash", "Nakit / Hesap"], ["cheque", "Çek"], ["promissory", "Senet"], ["ledger", "Borç / Alacak Fişi"]].map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setPayForm({ ...payForm, method: k })} className={`px-2 py-1.5 rounded-lg border font-semibold ${payForm.method === k ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600"}`} data-testid={`collect-method-${k}`}>{l}</button>
+                ))}
+              </div>
+              {payForm.method === "ledger" ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setPayForm({ ...payForm, slip: "debit", description: payForm.description === "Cari tahsilat" || payForm.description === "Cari ödeme" ? "Borç fişi" : payForm.description })} className={`p-2 rounded-lg border font-semibold ${payForm.slip !== "credit" ? "bg-rose-50 border-rose-300 text-rose-800" : ""}`} data-testid="collect-slip-debit">Borç fişi</button>
+                  <button type="button" onClick={() => setPayForm({ ...payForm, slip: "credit", description: payForm.description === "Cari tahsilat" || payForm.description === "Cari ödeme" ? "Alacak fişi" : payForm.description })} className={`p-2 rounded-lg border font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : ""}`} data-testid="collect-slip-credit">Alacak fişi</button>
+                </div>
+              ) : payForm.method === "cheque" || payForm.method === "promissory" ? (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-slate-500">{payForm.type === "inflow" ? "Alınan" : "Verilen"} {payForm.method === "promissory" ? "senet" : "çek"} cariye işlenir; tahsil/ödeme vadesinde Çek ve Senetler sekmesinden yapılır.</p>
+                  <div><label className="block font-semibold mb-1">Vade</label><input type="date" value={payForm.due_date || ""} onChange={(e) => setPayForm({ ...payForm, due_date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-due-date" /></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="block font-semibold mb-1">Seri no</label><input value={payForm.serial_no || ""} onChange={(e) => setPayForm({ ...payForm, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-serial" /></div>
+                    <div><label className="block font-semibold mb-1">Banka</label><input value={payForm.bank_name || ""} onChange={(e) => setPayForm({ ...payForm, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-bank" /></div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div><label className="block font-semibold mb-1">{payForm.type === "inflow" ? "Kasa / Banka / POS / Ortak" : "Kasa / Banka / Kart / Ortak"}</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={payForm.account_id} onChange={(v) => setPayForm({ ...payForm, account_id: v })} testId="collect-account-select" collectableOnly={payForm.type === "inflow"} /></div>
+                  {payForm.type === "inflow" && <p className="text-[10px] text-slate-400">Tahsilatta kredi kartı seçilemez; ortaklar hesabı kullanılabilir.</p>}
+                </>
+              )}
+              {payForm.method === "ledger" && <p className="text-[10px] text-slate-500">Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez.</p>}
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
-              <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">Kaydet</button></div>
+              <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>
             </form>
           </div>
         )}
