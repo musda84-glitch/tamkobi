@@ -79,13 +79,21 @@ export function stockRowSubtitle(
   typeLabel: string,
   priceLabel: string,
 ): string {
-  return [p.category, typeLabel, priceLabel, p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ");
+  const category = typeof p.category === "string" ? p.category : "";
+  return [category, typeLabel, priceLabel, p.is_active === false ? "Pasif" : ""].filter(Boolean).join(" · ");
 }
 
 export type ProductCategory = { name?: string; count?: number };
 
 export function asList<T>(raw: unknown): T[] {
-  return Array.isArray(raw) ? raw as T[] : [];
+  if (Array.isArray(raw)) return raw as T[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const key of ["items", "products", "rows", "data", "results"]) {
+      if (Array.isArray(o[key])) return o[key] as T[];
+    }
+  }
+  return [];
 }
 
 /** Liste için ağır galeri/base64 alanlarını at; ad her zaman string olsun. */
