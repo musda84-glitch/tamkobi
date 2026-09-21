@@ -25,7 +25,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
     ...(stages || []),
     ...extra.map((k) => ({ key: k, label: byStage[k]?.[0]?.stage_label || k })),
   ];
-  if (loose.length || byStage.other) rows.push({ key: "other", label: "Diğer" });
+  rows.push({ key: "other", label: "Keşif fotoğrafı" });
 
   const upload = async (stage, event) => {
     const raw = event.target.files?.[0];

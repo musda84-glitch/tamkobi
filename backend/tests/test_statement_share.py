@@ -72,7 +72,7 @@ def test_stage_photos_group_by_stage_and_keep_loose_images():
     assert groups[1]["label"] == "Uygulama"
     assert groups[1]["images"] == ["/api/files/a.jpg"]
     assert groups[2]["images"] == ["/api/files/eski.jpg"]
-    assert groups[2]["label"] == "Diğer"
+    assert groups[2]["label"] == "Keşif fotoğrafı"
 
 
 def test_sanitize_stage_photos_drops_foreign_urls():

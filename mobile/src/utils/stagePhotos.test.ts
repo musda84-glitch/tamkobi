@@ -41,7 +41,7 @@ describe("stagePhotos", () => {
     expect(groups.map((g) => g.stage)).toEqual(["planning", "active", "other"]);
     expect(groups[0].label).toBe("Planlama");
     expect(groups[1].images).toEqual(["/api/files/a.jpg"]);
-    expect(groups[2]).toEqual({ stage: "other", label: "Diğer", images: ["/api/files/eski.jpg"] });
+    expect(groups[2]).toEqual({ stage: "other", label: "Keşif fotoğrafı", images: ["/api/files/eski.jpg"] });
   });
 
   it("marks past stages done and current stage for the customer timeline", () => {
@@ -52,6 +52,7 @@ describe("stagePhotos", () => {
     }, stages);
     expect(rows.find((r) => r.key === "planning")).toMatchObject({ current: false, done: true, items: [{ url: "/api/files/a.jpg", stage: "planning" }] });
     expect(rows.find((r) => r.key === "active")).toMatchObject({ current: true, done: false });
+    expect(rows.find((r) => r.key === "other")).toMatchObject({ label: "Keşif fotoğrafı" });
     expect(rows.find((r) => r.key === "other")?.items.map((i) => i.url)).toEqual(["/api/files/loose.jpg"]);
     expect(stagePhotoCount({ stage_photos: [{ url: "/api/files/a.jpg", stage: "planning" }], images: ["/api/files/a.jpg", "/api/files/loose.jpg"] })).toBe(2);
   });

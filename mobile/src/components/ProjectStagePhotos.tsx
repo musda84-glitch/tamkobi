@@ -161,7 +161,7 @@ export function ProjectStagePhotos({
               </View>
             ))}
           </View>
-          {editable && row.key !== "other" ? (
+          {editable ? (
             <View style={{ flexDirection: "row", gap: 6 }}>
               <Pressable
                 testID={`${tid}-camera-${row.key}`}

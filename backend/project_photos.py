@@ -80,7 +80,7 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
     for key in sorted(seen_order, key=sort_key):
         out.append({
             "stage": key,
-            "label": "Diğer" if key == "other" else (label_by.get(key) or key),
+            "label": "Keşif fotoğrafı" if key == "other" else (label_by.get(key) or key),
             "images": groups[key],
         })
     return out
