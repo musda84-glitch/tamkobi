@@ -3,7 +3,7 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -19,7 +19,8 @@ import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
 import { VAT_OPTIONS } from "../utils/documentLines";
-import { coordText } from "../utils/geo";
+import { go } from "../nav";
+import { coordText, mapsLink } from "../utils/geo";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
@@ -41,6 +42,9 @@ import {
   hydrateWorkItem,
   namedItems,
   newButtonLabel,
+  PROJECT_MAPS_ACTION,
+  PROJECT_NEW_QUOTE_ACTION,
+  projectQuoteNavParams,
   removeWorkItem,
   projectPayload,
   quotePayload,
@@ -107,6 +111,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
   const canExp = can("/expenses", "edit");
+  const canQuote = can("/quotes", "edit");
   const isNew = !docId;
   const [title, setTitle] = useState(isNew ? String(preTitle || "") : "");
   const [linkedProjectId, setLinkedProjectId] = useState(isNew ? String(preProjectId || "") : "");
@@ -448,7 +453,33 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {!isNew && kind === "project" && (canExp || canEdit) ? (
         <PrimaryButton title="Masraf ekle" color={colors.danger} testID="project-expense-btn" onPress={openProjectExpense} />
       ) : null}
+      {!isNew && kind === "project" && canQuote && project ? (
+        <PrimaryButton
+          title={PROJECT_NEW_QUOTE_ACTION}
+          color={colors.indigo}
+          testID="project-new-quote-btn"
+          onPress={() => go("QuoteNew", projectQuoteNavParams(project))}
+        />
+      ) : null}
+      {!isNew && kind === "project" && project ? (
+        <PrimaryButton
+          title={PROJECT_MAPS_ACTION}
+          color="#9F1239"
+          testID="project-maps-btn"
+          onPress={() => {
+            const href = mapsLink(project);
+            if (!href) {
+              Alert.alert("Konum yok", "Bu projeye konum veya adres eklenmemiş.");
+              return;
+            }
+            Linking.openURL(href).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
+          }}
+        />
+      ) : null}
 
+      {isNew && kind === "quote" && linkedProjectId ? (
+        <Muted testID="quote-linked-project">Bu teklif projeye bağlanacak{preTitle ? `: ${preTitle}` : ""}.</Muted>
+      ) : null}
       {kind === "quote" ? <Field label="Başlık" testID="q-title" value={title} onChangeText={setTitle} editable={canEdit} /> : null}
       {kind === "project" ? <Field label="Proje adı" testID="p-name" value={name} onChangeText={setName} editable={canEdit} /> : null}
 

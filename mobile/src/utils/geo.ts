@@ -22,14 +22,25 @@ export function mapEmbedUrl(lat: number | string, lng: number | string): string 
   return `https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
 }
 
-/** Kayıtta link yoksa koordinattan üretilen harita bağlantısı. */
-export function mapsLink(row: { location_url?: string | null; latitude?: number | string | null; longitude?: number | string | null } | null | undefined): string | null {
+/** Adres metninden Google Maps arama linki. */
+export function mapsSearchUrl(query: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query.trim())}`;
+}
+
+/** Kayıtta link yoksa koordinat, o da yoksa adres araması. */
+export function mapsLink(row: {
+  location_url?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  address?: string | null;
+} | null | undefined): string | null {
   if (!row) return null;
   if (row.location_url) return String(row.location_url);
   if (row.latitude != null && row.latitude !== "" && row.longitude != null && row.longitude !== "") {
     return mapsUrlFor(row.latitude, row.longitude);
   }
-  return null;
+  const addr = String(row.address || "").trim();
+  return addr ? mapsSearchUrl(addr) : null;
 }
 
 export function coordText(v: unknown): string {

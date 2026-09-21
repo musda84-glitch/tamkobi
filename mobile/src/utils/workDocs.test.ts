@@ -7,6 +7,9 @@ import {
   namedItems,
   removeWorkItem,
   PROJECT_QUOTE_ACTION,
+  PROJECT_NEW_QUOTE_ACTION,
+  PROJECT_MAPS_ACTION,
+  projectQuoteNavParams,
   canCompleteProject,
   PROJECT_STATUSES,
   newButtonLabel,
@@ -167,6 +170,19 @@ describe("workDocs", () => {
     expect(newButtonLabel("project")).toBe("Yeni Proje");
     expect(newButtonLabel("survey")).toBe("Yeni Keşif");
     expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
+    expect(PROJECT_NEW_QUOTE_ACTION).toBe("Yeni Teklif");
+    expect(PROJECT_MAPS_ACTION).toBe("Konuma Git");
+    expect(projectQuoteNavParams({
+      id: "4de8de86-b709-4ff5-9371-09280e82a39b",
+      name: "Aa",
+      contact_id: "c1",
+      contact_name: "Mustafa BAL",
+    })).toEqual({
+      project_id: "4de8de86-b709-4ff5-9371-09280e82a39b",
+      contact_id: "c1",
+      contact_name: "Mustafa BAL",
+      title: "Aa",
+    });
     expect(canCompleteProject("active")).toBe(true);
     expect(canCompleteProject("planning")).toBe(true);
     expect(canCompleteProject("completed")).toBe(false);
