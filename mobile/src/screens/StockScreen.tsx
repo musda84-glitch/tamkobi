@@ -17,8 +17,7 @@ import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from ".
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { filterProducts, lastPurchaseLabel, productCategoryGroups, productImage, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
-
-type StockMove = { id?: string; _id?: string; change?: number; reason?: string; date?: string };
+import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
   const { client, companyId, can } = useAuth();
@@ -95,11 +94,12 @@ export function StockScreen() {
     try {
       const data = await get<{
         movements?: StockMove[];
+        items?: StockMove[];
         last_purchase_price?: number | null;
         last_purchase_supplier?: string | null;
         purchase_price?: number | null;
       }>(client, `/products/${idOf(p)}/movements`);
-      setMoves(data?.movements || []);
+      setMoves(parseStockMoves(data));
       setMovesFor({
         ...p,
         last_purchase_price: data?.last_purchase_price ?? p.last_purchase_price,
@@ -192,15 +192,24 @@ export function StockScreen() {
         testID="stock-moves-sheet"
       >
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
-        {!movesBusy && !moves.length ? <Muted>Hareket yok.</Muted> : null}
-        {moves.map((m, i) => (
-          <ListRow
-            key={idOf(m) || i}
-            testID={`stock-move-${idOf(m) || i}`}
-            title={`${Number(m.change) > 0 ? "+" : ""}${m.change ?? 0}`}
-            subtitle={[m.reason, fmtDate(m.date)].filter(Boolean).join(" · ")}
-          />
-        ))}
+        {!movesBusy && !moves.length ? (
+          <Muted testID="stock-moves-empty">
+            {lastPurchaseLabel(movesFor, fmtMoney)
+              ? `${lastPurchaseLabel(movesFor, fmtMoney)}. Fatura/sipariş satırı henüz düşmedi.`
+              : "Fatura, sipariş veya sayım hareketi bulunamadı."}
+          </Muted>
+        ) : null}
+        {moves.map((m, i) => {
+          const change = moveChange(m);
+          return (
+            <ListRow
+              key={idOf(m) || i}
+              testID={`stock-move-${idOf(m) || i}`}
+              title={`${change > 0 ? "+" : ""}${change}`}
+              subtitle={[m.reason, fmtDate(m.date)].filter(Boolean).join(" · ")}
+            />
+          );
+        })}
       </B2BSheet>
     </Screen>
   );

@@ -4588,41 +4588,71 @@ async def product_purchase_costs(product_id: str, company_id: Optional[str] = No
 
 @api_router.get("/products/{product_id}/movements")
 async def list_product_movements(product_id: str, limit: int = 80):
-    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "purchase_price": 1, "company_id": 1})
+    product = await db.products.find_one({"$or": [{"_id": product_id}, {"id": product_id}]})
     if not product:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     cap = max(1, min(int(limit or 80), 200))
-    stored, invoices = await asyncio.gather(
-        db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(cap),
+    company_id = product.get("company_id")
+    pids = stock_moves.product_ids_of(product, product_id)
+    sku = (product.get("sku") or "").strip()
+    barcode = (product.get("barcode") or "").strip()
+    name = (product.get("name") or "").strip()
+    item_or = [{"items.product_id": {"$in": pids}}]
+    if sku:
+        item_or.append({"items.sku": sku})
+    if barcode:
+        item_or.append({"items.barcode": barcode})
+    if name:
+        item_or.append({"items.product_name": name})
+        item_or.append({"items.name": name})
+    stored, invoices, orders, transfers = await asyncio.gather(
+        db.stock_movements.find({"product_id": {"$in": pids}}).sort("date", -1).to_list(cap),
         db.invoices.find(
             {
-                "company_id": product.get("company_id"),
-                "invoice_type": {"$in": ["sales", "purchase"]},
-                "status": {"$nin": ["cancelled", "void", "rejected", "draft"]},
-                "items.product_id": product_id,
+                "company_id": company_id,
+                "invoice_type": {"$in": ["sales", "purchase", "sales_return", "purchase_return"]},
+                "status": {"$nin": ["cancelled", "void", "rejected"]},
+                "$or": item_or,
             },
             {"invoice_number": 1, "number": 1, "invoice_type": 1, "issue_date": 1, "created_at": 1, "contact_name": 1, "items": 1},
-        ).sort("issue_date", -1).to_list(80),
+        ).sort("issue_date", -1).to_list(200),
+        db.orders.find(
+            {
+                "company_id": company_id,
+                "order_status": {"$nin": ["cancelled", "canceled", "draft"]},
+                "$or": item_or,
+            },
+            {"order_number": 1, "order_date": 1, "created_at": 1, "customer_name": 1, "contact_name": 1, "order_status": 1, "items": 1},
+        ).sort("order_date", -1).to_list(80),
+        db.warehouse_transfers.find(
+            {"company_id": company_id, "product_id": {"$in": pids}},
+            {"transfer_number": 1, "transfer_date": 1, "created_at": 1, "product_id": 1, "quantity": 1},
+        ).sort("transfer_date", -1).to_list(40),
     )
     last_price = product.get("purchase_price")
     last_supplier = None
     last_date = None
-    inv_moves = stock_moves.invoice_stock_moves(invoices, product_id)
+    inv_moves = stock_moves.invoice_stock_moves(invoices, product_id, product)
     for inv in invoices:
         if inv.get("invoice_type") != "purchase":
             continue
         last_supplier = inv.get("contact_name")
         last_date = inv.get("issue_date")
         for it in inv.get("items") or []:
-            if str(it.get("product_id") or "") == str(product_id):
+            if stock_moves.item_matches_product(it, product, product_id):
                 try:
                     last_price = float(it.get("unit_price") or last_price or 0) or last_price
                 except (TypeError, ValueError):
                     pass
                 break
         break
-    merged = clean_docs(stored or []) + inv_moves
-    merged.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
+    merged = stock_moves.merge_stock_moves(
+        clean_docs(stored or []),
+        inv_moves,
+        stock_moves.order_stock_moves(orders, product_id, product),
+        stock_moves.transfer_stock_moves(transfers, product_id, product),
+        cap=cap,
+    )
     return {
         "product_id": product_id,
         "product_name": product.get("name"),
@@ -4630,7 +4660,7 @@ async def list_product_movements(product_id: str, limit: int = 80):
         "last_purchase_price": last_price,
         "last_purchase_supplier": last_supplier,
         "last_purchase_date": last_date,
-        "movements": merged[:cap],
+        "movements": merged,
     }
 
 
