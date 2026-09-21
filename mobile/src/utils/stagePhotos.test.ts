@@ -6,6 +6,7 @@ import {
   sanitizeStagePhotos,
   stagePhotoCount,
   stagePhotoRows,
+  SURVEY_STAGE_PHOTO_LABEL,
 } from "./stagePhotos";
 
 const stages = [
@@ -29,7 +30,7 @@ describe("stagePhotos", () => {
     }]);
   });
 
-  it("groups by company stages and keeps loose images as Diğer", () => {
+  it("groups by company stages and keeps loose images as Keşif fotoğrafı", () => {
     const groups = groupStagePhotos(
       [
         { url: "/api/files/a.jpg", stage: "active", stage_label: "Devam Ediyor" },
@@ -41,7 +42,8 @@ describe("stagePhotos", () => {
     expect(groups.map((g) => g.stage)).toEqual(["planning", "active", "other"]);
     expect(groups[0].label).toBe("Planlama");
     expect(groups[1].images).toEqual(["/api/files/a.jpg"]);
-    expect(groups[2]).toEqual({ stage: "other", label: "Keşif fotoğrafı", images: ["/api/files/eski.jpg"] });
+    expect(groups[2]).toEqual({ stage: "other", label: SURVEY_STAGE_PHOTO_LABEL, images: ["/api/files/eski.jpg"] });
+    expect(SURVEY_STAGE_PHOTO_LABEL).toBe("Keşif fotoğrafı");
   });
 
   it("marks past stages done and current stage for the customer timeline", () => {
