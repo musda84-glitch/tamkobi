@@ -362,8 +362,9 @@ export function ContactDetailScreen() {
   };
 
   const removeChequePayment = (p: ContactPayment) => {
-    const cid = chequeIdOfPayment(p);
-    if (!canCheque || !cid) { setError("Çek / senet silme yetkiniz yok."); return; }
+    const cid = chequeIdOfPayment(p, cheques);
+    if (!(canCheque || canBank)) { setError("Çek / senet silme yetkiniz yok."); return; }
+    if (!cid) { setError("Çek kaydı bulunamadı."); return; }
     confirmAction(
       "Çek / seneti sil",
       `${fmtMoney(p.amount)} tutarındaki çek / senet çöp kutusuna taşınsın mı?`,
@@ -739,6 +740,8 @@ export function ContactDetailScreen() {
           ) : null}
           {!payments.length ? <Muted>Ödeme yok.</Muted> : payments.map((p: ContactPayment, idx: number) => {
             const locked = isLockedPayment(p);
+            const chequeId = isChequePayment(p) ? chequeIdOfPayment(p, cheques) : "";
+            const showChequeBtns = (canBank || canCheque) && isChequePayment(p);
             return (
               <View key={idOf(p) || idx} style={{ gap: 4 }}>
                 <ListRow
@@ -747,10 +750,23 @@ export function ContactDetailScreen() {
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
                   right={`${p.type === "inflow" ? "+" : "-"}${fmtMoney(p.amount)}`}
                 />
-                {canCheque && isChequePayment(p) && chequeIdOfPayment(p) ? (
+                {showChequeBtns ? (
                   <Row>
-                    <PrimaryButton title="Düzenle" onPress={() => go("ChequeDetail", { id: chequeIdOfPayment(p) })} color={colors.secondary} testID={`pay-cheque-edit-${chequeIdOfPayment(p)}`} />
-                    <PrimaryButton title="Sil" onPress={() => removeChequePayment(p)} color={colors.danger} testID={`pay-cheque-delete-${chequeIdOfPayment(p)}`} />
+                    <PrimaryButton
+                      title="Düzenle"
+                      onPress={() => {
+                        if (chequeId) go("ChequeDetail", { id: chequeId });
+                        else go("Cheques");
+                      }}
+                      color={colors.secondary}
+                      testID={`pay-cheque-edit-${chequeId || idOf(p) || idx}`}
+                    />
+                    <PrimaryButton
+                      title="Sil"
+                      onPress={() => removeChequePayment(p)}
+                      color={colors.danger}
+                      testID={`pay-cheque-delete-${chequeId || idOf(p) || idx}`}
+                    />
                   </Row>
                 ) : canBank && !locked ? (
                   <Row>

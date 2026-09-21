@@ -131,10 +131,24 @@ export function isChequePayment(p: ContactPayment): boolean {
   return p.source === "cheque" || !!p.virtual || !!p.cheque_id;
 }
 
-export function chequeIdOfPayment(p: ContactPayment): string {
+export function chequeNumberOfPayment(p: ContactPayment): string {
+  const m = String(p.description || "").match(/\b((?:CEK|SNT)-\d{4}-\d+)\b/i);
+  return m ? m[1].toUpperCase() : "";
+}
+
+export function chequeIdOfPayment(
+  p: ContactPayment,
+  cheques?: Array<{ id?: string; _id?: string; number?: string }> | null,
+): string {
   if (p.cheque_id) return String(p.cheque_id);
   const raw = String(p.id || p._id || "");
-  return raw.startsWith("cheque-virt-") ? raw.slice("cheque-virt-".length) : "";
+  if (raw.startsWith("cheque-virt-")) return raw.slice("cheque-virt-".length);
+  const num = chequeNumberOfPayment(p);
+  if (num && cheques?.length) {
+    const hit = cheques.find((c) => String(c.number || "").toUpperCase() === num);
+    if (hit) return String(hit.id || hit._id || "");
+  }
+  return "";
 }
 
 export function lockedPaymentLabel(p: ContactPayment): string {
