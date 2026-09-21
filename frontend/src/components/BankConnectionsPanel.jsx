@@ -181,6 +181,17 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     } catch (err) { toast.error(err.response?.data?.detail || "Kural oluşturulamadı."); }
   };
 
+  const toggleAutoSync = async (c) => {
+    try {
+      const turningOn = c.auto_sync === false;
+      await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_sync: turningOn });
+      toast.success(turningOn
+        ? "Arka plan senkronu AKTİF: sunucu her 10 dakikada hareketleri çeker."
+        : "Arka plan senkronu PASİF: yalnızca manuel «Hareketleri Çek» çalışır.");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+  };
+
   const toggleAutoMatch = async (c) => {
     try {
       const turningOn = !c.auto_match;
@@ -231,7 +242,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
           <div className="p-2 rounded-xl bg-blue-50 text-blue-600"><Link2 className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Banka Entegrasyonu — Canlı Veri</h2>
-            <p className="text-xs text-slate-500">Açık bankacılık API'si ile hesap hareketlerini otomatik çekin, cari/fatura ile eşleştirin</p>
+            <p className="text-xs text-slate-500">Açık bankacılık API'si ile hesap hareketlerini arka planda (10 dk) çekin, cari/fatura ile eşleştirin</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -263,6 +274,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               {credentialsOnFile(c) ? <span>Kimlik bilgisi <b>sunucuda kayıtlı</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
             {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
+            <button type="button" onClick={() => toggleAutoSync(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_sync !== false ? "bg-sky-50 border-sky-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-sync-toggle-${c.id}`} aria-pressed={c.auto_sync !== false}>
+              <span className="flex items-center gap-2 text-[11px]"><RefreshCw className={`w-3.5 h-3.5 ${c.auto_sync !== false ? "text-sky-600" : "text-slate-400"}`} /><span><b className={c.auto_sync !== false ? "text-sky-800" : "text-slate-700"}>Arka plan senkron</b> <span className="text-slate-500">— kimlik bilgisi varsa her 10 dakikada otomatik çekilir</span></span></span>
+              <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_sync !== false ? "bg-sky-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_sync !== false ? "left-[18px]" : "left-0.5"}`} /></span>
+            </button>
             <button type="button" onClick={() => toggleAutoMatch(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_match ? "bg-violet-50 border-violet-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-match-toggle-${c.id}`} aria-pressed={!!c.auto_match}>
               <span className="flex items-center gap-2 text-[11px]"><Zap className={`w-3.5 h-3.5 ${c.auto_match ? "text-violet-600" : "text-slate-400"}`} /><span><b className={c.auto_match ? "text-violet-800" : "text-slate-700"}>Otomatik İşle</b> <span className="text-slate-500">— önceki eşleşme veya cari adı varsa otomatik işle{c.auto_matched_count ? ` (${c.auto_matched_count} işlendi)` : ""}</span></span></span>              <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_match ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_match ? "left-[18px]" : "left-0.5"}`} /></span>
             </button>
@@ -403,7 +418,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 </div>
               ))}
               <div><label className="block font-semibold mb-1">Banka Hesap No / IBAN <span className="text-slate-400 font-normal">(opsiyonel)</span></label><input className={`${inputCls} font-mono`} value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} /></div>
-              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.auto_sync} onChange={(e) => setForm({ ...form, auto_sync: e.target.checked })} /><span className="font-semibold">Otomatik senkronizasyona dahil et</span></label>
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.auto_sync} onChange={(e) => setForm({ ...form, auto_sync: e.target.checked })} data-testid="conn-auto-sync" /><span className="font-semibold">Arka planda otomatik senkron (10 dk)</span></label>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setShowAdd(false)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-bank-connection-btn">Bağla & Test Et</button></div>
             </form>
           </div>

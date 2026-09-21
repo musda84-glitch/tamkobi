@@ -234,6 +234,7 @@ async def startup_event():
     import asyncio as _asyncio
     _asyncio.get_event_loop().create_task(attendance.watcher_loop())
     _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
+    _asyncio.get_event_loop().create_task(_bank_auto_sync_loop())
     _asyncio.get_event_loop().create_task(_einvoice_inbox_auto_loop())
     _asyncio.get_event_loop().create_task(e_invoice.outbound_status_loop())
     _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
@@ -9182,6 +9183,31 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
                         pass
         except Exception:
             pass
+        await _a.sleep(interval_s)
+
+async def _run_bank_auto_sync_tick():
+    from bank_auto_sync import should_background_sync
+    conns = await db.bank_connections.find({"auto_sync": {"$ne": False}}).to_list(200)
+    for c in conns:
+        if not should_background_sync(c):
+            continue
+        try:
+            await sync_bank_connection(c["_id"])
+        except HTTPException:
+            pass
+        except Exception:
+            logger.exception("banka otomatik senkron %s", c.get("_id"))
+
+async def _bank_auto_sync_loop(interval_s: int = 600):
+    """auto_sync açık, kimlik bilgisi olan banka bağlantılarını 10 dakikada bir çeker."""
+    import asyncio as _a
+    from bank_auto_sync import BANK_AUTO_SYNC_STARTUP_DELAY_S
+    await _a.sleep(BANK_AUTO_SYNC_STARTUP_DELAY_S)
+    while True:
+        try:
+            await _run_bank_auto_sync_tick()
+        except Exception:
+            logger.exception("banka otomatik senkron döngüsü")
         await _a.sleep(interval_s)
 
 DEFAULT_CHANNEL_FEES = {"trendyol": {"commission_rate": 21.5, "service_fee": 12.99, "cargo_fee": 0.0}, "hepsiburada": {"commission_rate": 18.0, "service_fee": 9.90, "cargo_fee": 0.0},
