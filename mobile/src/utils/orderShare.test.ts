@@ -39,7 +39,7 @@ jest.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
 }));
 
-import { printCargoLabel, printOrderForm } from "./orderShare";
+import { printCargoLabel, printInvoiceForm, printOrderForm } from "./orderShare";
 
 const order = {
   id: "ord-1",
@@ -118,6 +118,24 @@ describe("orderShare native print", () => {
     expect(printAsync).toHaveBeenCalledWith({ uri: expect.stringContaining("kargo-11573451170.pdf") });
     expect(rnShare).not.toHaveBeenCalled();
     expect(lastPrint().html).toBeUndefined();
+  });
+
+  it("prints a fatura with the web invoice template, not a text share", async () => {
+    const ok = await printInvoiceForm({
+      invoice_number: "SF-1",
+      invoice_type: "sales",
+      contact_name: "Hatice YILDIRIM",
+      issue_date: "2026-09-21",
+      grand_total: 1200,
+      items: [{ product_name: "Koltuk", quantity: 1, unit_price: 1000, total: 1000 }],
+    }, { name: "Matek" }, null);
+    expect(ok).toBe(true);
+    const html = lastPrint().html || "";
+    expect(html).toContain("FATURA");
+    expect(html).toContain("SF-1");
+    expect(html).toContain("data-print=\"invoice\"");
+    expect(html).toContain("Resim");
+    expect(rnShare).not.toHaveBeenCalled();
   });
 
   it("falls back to a PDF file share, still not text, if the printer dialog fails", async () => {

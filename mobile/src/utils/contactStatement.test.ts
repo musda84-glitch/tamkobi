@@ -38,9 +38,11 @@ describe("contactStatement", () => {
       invoices: [{ invoice_number: "SF-1", invoice_type: "sales", issue_date: "2026-01-02", grand_total: 50, status: "approved" }],
     });
     const html = statementPrintHtml({ name: "Acme", tax_number_or_id: "123", balance: 50 }, rows, "TamKobi");
-    expect(html).toContain("Cari Hesap Ekstresi");
+    expect(html).toContain("CARİ HESAP EKSTRESİ");
     expect(html).toContain("SF-1");
-    expect(html).toContain("VKN 123");
+    expect(html).toContain("VKN/TCKN: 123");
+    expect(html).toContain("TamKobi");
+    expect(html).toContain("TOPLAM");
     expect(html).toContain("<table");
   });
 });

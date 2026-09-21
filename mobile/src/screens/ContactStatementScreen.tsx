@@ -7,8 +7,9 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { Card, ErrorBanner, H1, ListRow, Muted, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { A4_PRINT_PX, printHtmlNative } from "../utils/nativePrint";
+import { printHtmlNative } from "../utils/nativePrint";
 import { openPrintHtml, printDocumentHtml } from "../utils/orderPrint";
+import { enrichPrintCompany } from "../utils/orderShare";
 import { buildStatementRows, smsBalanceText, statementPrintHtml, statementText, waDigits } from "../utils/contactStatement";
 import { fmtMoney } from "../utils/money";
 
@@ -62,10 +63,18 @@ export function ContactStatementScreen() {
 
   const print = async () => {
     const title = `Cari Hesap Ekstresi - ${contact.name || name || "Cari"}`;
+    const printCompany = await enrichPrintCompany(client, activeCompany);
     const body = statementPrintHtml(
-      { name: contact.name || name, tax_number_or_id: contact.tax_number_or_id, balance: contact.balance },
+      {
+        name: contact.name || name,
+        tax_number_or_id: contact.tax_number_or_id,
+        tax_office: contact.tax_office,
+        address: contact.address,
+        city: contact.city,
+        balance: contact.balance,
+      },
       rows,
-      activeCompany?.name,
+      printCompany || activeCompany,
     );
     try {
       if (Platform.OS === "web" && openPrintHtml(title, body, { page: "a4" })) {
@@ -74,7 +83,7 @@ export function ContactStatementScreen() {
         return;
       }
       const document = printDocumentHtml(title, body, "a4");
-      if (await printHtmlNative(document, A4_PRINT_PX)) {
+      if (await printHtmlNative(document)) {
         setMessage("Ekstre yazdırmaya gönderildi.");
         setError(null);
         return;

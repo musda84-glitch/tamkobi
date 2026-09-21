@@ -152,11 +152,17 @@ export type Invoice = {
   edoc_id?: string;
   gib_response?: string;
   dispatch_id?: string;
+  installment_plan?: boolean;
+  payment_plan?: { rows?: Array<{ no?: number | string; label?: string; due_date?: string; amount?: number; status?: string }> };
+  images?: string[];
+  contact_balance?: number | null;
 };
 
 export type Order = {
   id?: string;
   _id?: string;
+  contact_id?: string;
+  contact_balance?: number | null;
   order_number?: string;
   customer_order_number?: string;
   customer_name?: string;

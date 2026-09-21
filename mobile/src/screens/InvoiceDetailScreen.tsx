@@ -20,6 +20,7 @@ import {
 } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { printInvoiceForm } from "../utils/orderShare";
 
 function confirmAction(title: string, msg: string, onYes: () => void) {
   if (Platform.OS === "web") {
@@ -33,7 +34,7 @@ function confirmAction(title: string, msg: string, onYes: () => void) {
 }
 
 export function InvoiceDetailScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const canEdit = can("/invoices", "edit");
   const { id } = useLocalSearchParams<{ id: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
@@ -117,6 +118,16 @@ export function InvoiceDetailScreen() {
       <Muted>{inv.contact_name} · {fmtDate(inv.issue_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
+      <PrimaryButton
+        title="Yazdır"
+        testID="inv-print"
+        color={colors.slate800}
+        loading={busy}
+        onPress={() => run(async () => {
+          await printInvoiceForm(inv, activeCompany, client);
+          setMessage(inv.invoice_type === "dispatch" ? "İrsaliye yazdırmaya gönderildi." : "Fatura yazdırmaya gönderildi.");
+        }, "Yazdırılamadı.")}
+      />
       <Card>
         <Row style={{ flexWrap: "wrap" }}>
           <Badge label={invoiceTypeTr(inv.invoice_type)} tone="indigo" />

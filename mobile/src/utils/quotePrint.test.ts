@@ -51,11 +51,13 @@ describe("quotePrint", () => {
     expect(html).toContain("Konu");
     expect(html).toContain("Fiyat Teklifi");
     expect(html).toContain("Geçerlilik");
-    expect(html).toContain("Resim");
+    expect(html).toContain("Raf Yeri");
     expect(html).toContain("Barkod");
     expect(html).toContain("8690001111111");
-    expect(html).toContain("GENEL TOPLAM");
-    expect(html).toContain("Ara Toplam (KDV Hariç)");
+    expect(html).toContain("Tutar (KDV Dahil)");
+    expect(html).toContain("data-print-items=\"compact\"");
+    expect(html).toContain("Toplam");
+    expect(html).toContain("Net");
     expect(html).toContain("Kaşe / İmza");
     expect(html).toContain("Şartlar");
     expect(html).toContain("data-print=\"quote\"");

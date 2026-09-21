@@ -7,7 +7,12 @@ import { officialLabelFileMeta } from "./orderPrint";
 export type NativePrintSize = { width?: number; height?: number };
 
 export const A4_PRINT_PX: NativePrintSize = { width: 595, height: 842 };
+export const A5_PRINT_PX: NativePrintSize = { width: 420, height: 595 };
 export const THERMAL_LABEL_PX: NativePrintSize = { width: 284, height: 425 };
+
+export function paperPrintSize(paper?: string | null): NativePrintSize {
+  return paper === "A5" ? A5_PRINT_PX : A4_PRINT_PX;
+}
 
 function triggerBlobDownload(blob: Blob, filename: string): boolean {
   if (typeof document === "undefined") return false;
