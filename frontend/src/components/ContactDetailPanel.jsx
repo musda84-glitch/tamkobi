@@ -80,15 +80,69 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const lockedTxLabel = (p) => (p.source === "partner" ? "Ortak" : p.source === "cheque" || p.virtual ? "Çek" : "Banka");
   const lockedTxTitle = (p) => (p.source === "cheque" || p.virtual ? "Çek/senet kaydından geldi — Çek/Senet modülünden yönetilir" : "Banka entegrasyonu / ortaklar hesabından geldi — düzenlenemez");
   const deletePay = async (p) => {
-    if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${p.type === "inflow" ? "tahsilat" : "ödeme"} silinsin mi? Bakiyeler geri alınır.`)) return;
+    const chequeId = p.cheque_id;
+    const label = p.type === "inflow" ? "tahsilat" : "ödeme";
+    if (chequeId) {
+      if (!window.confirm(`${fmt(p.amount)} ₺ çek/senet kaydı silinsin mi? Cari bakiyesi geri alınır.`)) return;
+      try {
+        const r = await axios.delete(`${API_URL}/cheques/${chequeId}`);
+        toast.success(r.data.message || "Silindi.");
+        await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+        load();
+      } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+      return;
+    }
+    if (p.source === "bank_sync" || p.source === "partner") {
+      toast.error(lockedTxTitle(p));
+      return;
+    }
+    if (!window.confirm(`${fmt(p.amount)} ₺ tutarındaki ${label} silinsin mi? Bakiyeler geri alınır.`)) return;
     try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const openEditPay = async (p) => {
+    if (p.cheque_id) {
+      try {
+        const r = await axios.get(`${API_URL}/cheques/${p.cheque_id}`);
+        const ch = r.data || {};
+        setEditPay({
+          id: ch.id || p.cheque_id,
+          cheque: true,
+          type: ch.direction === "issued" ? "outflow" : "inflow",
+          amount: ch.amount,
+          date: ch.due_date || ch.issue_date || p.date,
+          description: ch.notes || p.description || "",
+          serial_no: ch.serial_no || "",
+          bank_name: ch.bank_name || "",
+        });
+      } catch (err) { toast.error(err.response?.data?.detail || "Çek/senet yüklenemedi."); }
+      return;
+    }
+    if (p.source === "bank_sync" || p.source === "partner") {
+      toast.error(lockedTxTitle(p));
+      return;
+    }
+    try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p, cheque: false }); } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const savePayEdit = async (e) => {
     e.preventDefault();
-    try { await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id }); toast.success("Ödeme güncellendi."); setEditPay(null); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+    try {
+      if (editPay.cheque) {
+        await axios.put(`${API_URL}/cheques/${editPay.id}`, {
+          amount: Number(editPay.amount),
+          due_date: editPay.date,
+          notes: editPay.description,
+          serial_no: editPay.serial_no,
+          bank_name: editPay.bank_name,
+        });
+      } else {
+        await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id });
+      }
+      toast.success("Güncellendi.");
+      setEditPay(null);
+      await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
-  const openEditPay = async (p) => { try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p }); } catch { toast.error("Hesaplar yüklenemedi."); } };
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -341,7 +395,21 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Tarih</th><th className="py-2">Hesap</th><th className="py-2">Açıklama</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {data.payments.length === 0 && <tr><td colSpan={4} className="py-6 text-center text-slate-400">Ödeme hareketi yok.</td></tr>}
-                {data.payments.map((p) => <tr key={p.id} data-testid={`detail-pay-${p.id}`}><td className="py-2 font-mono text-slate-500">{p.date}</td><td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td><td className="py-2 text-slate-600">{p.category} • {p.description}</td><td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>{!isLockedTx(p) && <><button onClick={() => openEditPay(p)} className="p-1 border rounded-md text-slate-600 hover:bg-slate-50" title="Düzenle" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /></button><button onClick={() => deletePay(p)} className="p-1 border border-rose-200 rounded-md text-rose-600 hover:bg-rose-50" title="Sil" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /></button></>}</div></td></tr>)}
+                {data.payments.map((p) => (
+                  <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
+                    <td className="py-2 font-mono text-slate-500">{p.date}</td>
+                    <td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className="py-2 text-slate-600">{p.category} • {p.description}</td>
+                    <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)} ₺</td>
+                    <td className="py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <button type="button" onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>
+                        <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                        <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -424,11 +492,18 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {editPay && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditPay(null)}>
             <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">
-              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.type === "inflow" ? "Tahsilat" : "Ödeme"} Düzenle</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
-              <div><label className="block font-semibold mb-1">Tarih</label><input type="date" value={editPay.date} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
-              <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.cheque ? "Çek / Senet Düzenle" : editPay.type === "inflow" ? "Tahsilat Düzenle" : "Ödeme Düzenle"}</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div><label className="block font-semibold mb-1">{editPay.cheque ? "Vade" : "Tarih"}</label><input type="date" value={editPay.date || ""} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
+              {editPay.cheque ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className="block font-semibold mb-1">Seri no</label><input value={editPay.serial_no || ""} onChange={(e) => setEditPay({ ...editPay, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-serial" /></div>
+                  <div><label className="block font-semibold mb-1">Banka</label><input value={editPay.bank_name || ""} onChange={(e) => setEditPay({ ...editPay, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-bank" /></div>
+                </div>
+              ) : (
+                <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>
+              )}
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="0.01" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
-              <div><label className="block font-semibold mb-1">Açıklama</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
+              <div><label className="block font-semibold mb-1">{editPay.cheque ? "Not" : "Açıklama"}</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setEditPay(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pay-edit-save">Kaydet</button></div>
             </form>
           </div>
