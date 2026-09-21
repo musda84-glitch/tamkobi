@@ -63,6 +63,16 @@ export function productPickSubtitle(p: Pick<Product, "sku" | "barcode">): string
   return `${productSkuLabel(p)} · Barkod ${barcode || "—"}`;
 }
 
+export function lastPurchaseLabel(
+  p: Pick<Product, "last_purchase_price" | "purchase_price" | "last_purchase_supplier">,
+  money: (n?: number) => string,
+): string {
+  const price = Number(p.last_purchase_price != null ? p.last_purchase_price : p.purchase_price);
+  if (!Number.isFinite(price) || price <= 0) return "";
+  const who = p.last_purchase_supplier ? ` · ${p.last_purchase_supplier}` : "";
+  return `Son alış ${money(price)}${who}`;
+}
+
 export function stockRowSubtitle(
   p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active" | "category">,
   typeLabel: string,

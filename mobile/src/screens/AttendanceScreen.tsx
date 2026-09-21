@@ -235,7 +235,7 @@ export function AttendanceScreen() {
           ) : intra?.status === "approved" || today?.intraday_leave_approved ? (
             <Muted testID="mesai-intraday-approved">Gün içi izin onaylandı · {intra?.out_time}–{intra?.return_time}</Muted>
           ) : (
-            <PrimaryButton title="Gün içi izin talep et" onPress={() => setIntraOpen(true)} color="#0284C7" testID="mesai-intraday-open" />
+            <PrimaryButton title="Gün ortası çıkış / giriş" onPress={() => setIntraOpen(true)} color="#0284C7" testID="mesai-intraday-open" />
           )}
         </View>
       </Card>

@@ -3612,13 +3612,15 @@ async def list_products(
         "image_url": 1, "thumbnail_url": 1, "images": 1, "company_id": 1, "type": 1, "is_active": 1,
         # üretim / stok uyarıları (maliyet geçmişi yok — hızlı liste)
         "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
+        "purchase_price": 1, "category": 1,
     } if lite else None
     limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
     if id_list and limit < 1:
         return []
     products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
     if lite:
-        return clean_docs(products)
+        # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
+        return [clean_doc(p) for p in products]
     cost_map = await _purchase_costs_by_product(company_id) if products else {}
     return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
 
@@ -3648,6 +3650,7 @@ async def _last_buys_by_product(company_id: str) -> Dict[str, dict]:
                 "contact_id": inv.get("contact_id") or "",
                 "contact_name": inv.get("contact_name") or "",
                 "unit_price": price,
+                "issue_date": inv.get("issue_date") or "",
             }
     return last
 
@@ -4531,6 +4534,46 @@ async def product_purchase_costs(product_id: str, company_id: Optional[str] = No
         "last_purchase_price": hist[0]["unit_price"] if hist else None,
         "avg_purchase_price": round(sum(x["unit_price"] for x in hist) / len(hist), 4) if hist else None,
         "costs": hist,
+    }
+
+
+@api_router.get("/products/{product_id}/movements")
+async def list_product_movements(product_id: str, limit: int = 80):
+    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "purchase_price": 1, "company_id": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(max(1, min(int(limit or 80), 200)))
+    last_price = product.get("purchase_price")
+    last_supplier = None
+    last_date = None
+    inv = await db.invoices.find_one(
+        {
+            "company_id": product.get("company_id"),
+            "invoice_type": "purchase",
+            "status": {"$nin": ["cancelled", "void", "rejected"]},
+            "items.product_id": product_id,
+        },
+        {"items": 1, "contact_name": 1, "issue_date": 1},
+        sort=[("issue_date", -1)],
+    )
+    if inv:
+        last_supplier = inv.get("contact_name")
+        last_date = inv.get("issue_date")
+        for it in inv.get("items") or []:
+            if it.get("product_id") == product_id:
+                try:
+                    last_price = float(it.get("unit_price") or last_price or 0) or last_price
+                except (TypeError, ValueError):
+                    pass
+                break
+    return {
+        "product_id": product_id,
+        "product_name": product.get("name"),
+        "purchase_price": product.get("purchase_price"),
+        "last_purchase_price": last_price,
+        "last_purchase_supplier": last_supplier,
+        "last_purchase_date": last_date,
+        "movements": clean_docs(rows),
     }
 
 

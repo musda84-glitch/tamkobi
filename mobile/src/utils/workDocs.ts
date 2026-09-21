@@ -3,6 +3,7 @@ import { coordValue } from "./geo";
 import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
+import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -503,8 +504,8 @@ export function newButtonLabel(kind: WorkKind): string {
 /** Proje kartındaki tamamla aksiyonu. */
 export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
 
-export function canCompleteProject(status?: string | null): boolean {
-  return String(status || "").trim().toLowerCase() !== "completed";
+export function canCompleteProject(status?: string | null, stages?: ProjectStage[] | null): boolean {
+  return !isCompletedProjectStatus(status, stages);
 }
 
 /** Kalem satırlarını birbirinden ayıran zebra tonları. */

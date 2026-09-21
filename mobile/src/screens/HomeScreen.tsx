@@ -9,12 +9,12 @@ import { NotificationsPanel } from "../components/NotificationsPanel";
 import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
-import { monthlySalesRow, netProfitRow } from "../utils/dashboard";
+import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
 import { pendingEdocCount, type EdocInboxList } from "../utils/edocInbox";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { pendingSevkCount, type PickRow } from "../utils/orderPick";
-import { showHomeFinanceSummary } from "../utils/permissions";
+import { hasSelfPersonnelRecord, showHomeFinanceSummary } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 import { openWorkOrderCount, type WorkOrder } from "../utils/shopFloor";
 
@@ -52,7 +52,8 @@ export function HomeScreen() {
     if (!companyId) return;
     setRefreshing(true);
     try {
-      const [ov, list, st, pending, ops, unmatched, picks, wos, inbox] = await Promise.all([
+      const staff = hasSelfPersonnelRecord(user);
+      const [ov, list, st, pending, ops, unmatched, picks, wos, inbox, me] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         showFinance
@@ -68,10 +69,17 @@ export function HomeScreen() {
         can("/edoc-inbox")
           ? get<EdocInboxList>(client, "/edocs/inbox", { company_id: companyId, status: "pending" }).catch(() => null)
           : Promise.resolve(null),
+        staff
+          ? get<{ tasks?: { done?: boolean }[]; work_orders?: unknown[] }>(client, "/personnel/me").catch(() => null)
+          : Promise.resolve(null),
       ]);
       const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
       const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
-      setOverview(ov);
+      const homeTasks = visibleHomeTasks(ov?.tasks, user, {
+        openTasks: (me?.tasks || []).filter((t) => !t.done).length,
+        openWorkOrders: (me?.work_orders || []).length,
+      });
+      setOverview(ov ? { ...ov, tasks: homeTasks } : ov);
       setNotes(visibleNotifications(list || [], user));
       setStats(st);
       setLiveBadges({
