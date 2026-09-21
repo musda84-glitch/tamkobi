@@ -76,8 +76,19 @@ export function StockScreen() {
     setMoves([]);
     setMovesBusy(true);
     try {
-      const data = await get<{ movements?: StockMove[] }>(client, `/products/${idOf(p)}/movements`);
+      const data = await get<{
+        movements?: StockMove[];
+        last_purchase_price?: number | null;
+        last_purchase_supplier?: string | null;
+        purchase_price?: number | null;
+      }>(client, `/products/${idOf(p)}/movements`);
       setMoves(data?.movements || []);
+      setMovesFor({
+        ...p,
+        last_purchase_price: data?.last_purchase_price ?? p.last_purchase_price,
+        last_purchase_supplier: data?.last_purchase_supplier ?? p.last_purchase_supplier,
+        purchase_price: data?.purchase_price ?? p.purchase_price,
+      });
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Stok hareketleri yüklenemedi."));
@@ -126,9 +137,10 @@ export function StockScreen() {
               leading={<ProductThumb uri={productImage(p)} />}
               title={p.name}
               titleLines={2}
-              compactRight
-              subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price)), lastBuy].filter(Boolean).join(" · ")}
+              subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))].filter(Boolean).join(" · ")}
               right={stockRightLabel(p)}
+              rightSub={lastBuy || undefined}
+              rightSubColor={colors.muted}
               rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
               rightTestID={`stock-qty-${idOf(p)}`}
               onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name: p.name }) : undefined}
