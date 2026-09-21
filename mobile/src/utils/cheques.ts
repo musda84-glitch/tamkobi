@@ -14,8 +14,11 @@ export type Cheque = {
   due_date?: string;
   serial_no?: string;
   bank_name?: string;
+  bank_branch?: string;
+  account_no?: string;
   drawer_name?: string;
   account_name?: string;
+  settled_at?: string;
   endorsed_to_name?: string;
   overdue?: boolean;
   due_soon?: boolean;
@@ -136,6 +139,38 @@ export function validateChequeDraft(d: ChequeDraft): string | null {
   if (d.issue_date && !/^\d{4}-\d{2}-\d{2}$/.test(d.issue_date)) return "Keşide tarihi YYYY-AA-GG olmalı.";
   if (d.due_date < d.issue_date) return "Vade, keşide tarihinden önce olamaz.";
   return null;
+}
+
+export function draftFromCheque(row: Cheque, today: string): ChequeDraft {
+  const base = emptyChequeDraft(today);
+  return {
+    ...base,
+    direction: row.direction === "issued" ? "issued" : "received",
+    instrument: row.instrument === "promissory" ? "promissory" : "cheque",
+    contact_id: String(row.contact_id || ""),
+    contact_name: String(row.contact_name || ""),
+    amount: row.amount != null ? String(row.amount) : "",
+    issue_date: String(row.issue_date || today).slice(0, 10),
+    due_date: String(row.due_date || today).slice(0, 10),
+    serial_no: String(row.serial_no || ""),
+    bank_name: String(row.bank_name || ""),
+    bank_branch: String(row.bank_branch || ""),
+    account_no: String(row.account_no || ""),
+    drawer_name: String(row.drawer_name || ""),
+    notes: String(row.notes || ""),
+  };
+}
+
+export function chequeLedgerLocked(row: Pick<Cheque, "status"> | null | undefined): boolean {
+  return !!row && row.status !== "open";
+}
+
+export function chequeReceiptKind(row: Pick<Cheque, "direction">): "collection" | "payment" {
+  return row.direction === "issued" ? "payment" : "collection";
+}
+
+export function chequeReceiptLabel(row: Pick<Cheque, "direction">): string {
+  return chequeReceiptKind(row) === "collection" ? "Tahsilat makbuzu" : "Tediye makbuzu";
 }
 
 export function chequePayload(d: ChequeDraft, companyId: string) {

@@ -218,6 +218,101 @@ async def list_cheques(
     return {"cheques": rows, "summary": summary}
 
 
+@router.get("/cheques/{cheque_id}")
+async def get_cheque(cheque_id: str):
+    doc = await _db.cheques.find_one({"_id": cheque_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+    return _annotate(doc, _today())
+
+
+def _sync_portfolio_tx(doc: dict):
+    instrument = "Senet" if doc.get("instrument") == "promissory" else "Çek"
+    kind = "Alınan" if doc.get("direction") == "received" else "Verilen"
+    due = doc.get("due_date") or ""
+    return {
+        "amount": float(doc.get("amount") or 0),
+        "contact_id": doc.get("contact_id"),
+        "contact_name": doc.get("contact_name"),
+        "type": "inflow" if doc.get("direction") == "received" else "outflow",
+        "category": f"{kind} {instrument}",
+        "description": f"{doc.get('number')} · vade {due}".strip(" ·"),
+        "date": doc.get("issue_date") or _today(),
+    }
+
+
+@router.put("/cheques/{cheque_id}")
+async def update_cheque(cheque_id: str, req: Dict[str, Any]):
+    doc = await _db.cheques.find_one({"_id": cheque_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+    notes = (req.get("notes") if "notes" in req else doc.get("notes") or "") or ""
+    serial = (req.get("serial_no") if "serial_no" in req else doc.get("serial_no") or "") or ""
+    patch = {
+        "serial_no": str(serial).strip(),
+        "bank_name": str(req.get("bank_name") if "bank_name" in req else doc.get("bank_name") or "").strip(),
+        "bank_branch": str(req.get("bank_branch") if "bank_branch" in req else doc.get("bank_branch") or "").strip(),
+        "account_no": str(req.get("account_no") if "account_no" in req else doc.get("account_no") or "").strip(),
+        "drawer_name": str(req.get("drawer_name") if "drawer_name" in req else doc.get("drawer_name") or "").strip(),
+        "notes": str(notes).strip(),
+        "updated_at": _now(),
+    }
+    if req.get("issue_date"):
+        patch["issue_date"] = req.get("issue_date")
+    if req.get("due_date"):
+        patch["due_date"] = req.get("due_date")
+        if patch["due_date"] < (patch.get("issue_date") or doc.get("issue_date") or ""):
+            raise HTTPException(status_code=400, detail="Vade, keşide tarihinden önce olamaz.")
+
+    if doc.get("status") == "open":
+        old_amount = float(doc.get("amount") or 0)
+        old_direction = doc.get("direction") or "received"
+        old_contact = doc.get("contact_id")
+        amount = round(float(req.get("amount") if req.get("amount") is not None else old_amount), 2)
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
+        direction = req.get("direction") or old_direction
+        if direction not in ("received", "issued"):
+            raise HTTPException(status_code=400, detail="Yön alınan veya verilen olmalı.")
+        instrument = _instrument({**doc, **req}) if ("instrument" in req or "kind" in req) else (doc.get("instrument") or "cheque")
+        if instrument not in ("cheque", "promissory"):
+            raise HTTPException(status_code=400, detail="Tür çek veya senet olmalı.")
+        contact_id = req.get("contact_id") or old_contact
+        contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
+        if not contact:
+            raise HTTPException(status_code=400, detail="Cari seçin.")
+        patch.update({
+            "amount": amount,
+            "direction": direction,
+            "instrument": instrument,
+            "contact_id": contact["_id"],
+            "contact_name": contact.get("name"),
+        })
+        if not patch.get("drawer_name"):
+            patch["drawer_name"] = (contact.get("name") or "").strip()
+        ledger_changed = (
+            amount != old_amount
+            or direction != old_direction
+            or contact["_id"] != old_contact
+        )
+        if ledger_changed and not doc.get("skip_ledger"):
+            await _apply_contact(old_contact, -_contact_delta_on_create(old_direction, old_amount))
+            await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
+        merged = {**doc, **patch}
+        if not doc.get("skip_ledger"):
+            await _db.bank_transactions.update_one(
+                {"cheque_id": cheque_id, "cheque_kind": "portfolio"},
+                {"$set": _sync_portfolio_tx(merged)},
+            )
+        if old_contact != contact["_id"]:
+            await _refresh_contact_cheque(old_contact)
+        await _refresh_contact_cheque(contact["_id"])
+
+    await _db.cheques.update_one({"_id": cheque_id}, {"$set": patch})
+    await _append_event(cheque_id, "updated", "Düzenleme")
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+
+
 @router.post("/cheques")
 async def create_cheque(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")

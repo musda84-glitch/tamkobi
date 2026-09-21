@@ -77,6 +77,50 @@ def test_cheque_appears_in_contact_payments():
     requests.delete(f"{API}/cheques/{cid}", headers=_h(), timeout=TIMEOUT)
 
 
+def test_cheque_get_and_update_open():
+    due = (date.today() + timedelta(days=21)).isoformat()
+    bal0 = _contact_balance()
+    r = requests.post(
+        f"{API}/cheques",
+        headers=_h(),
+        json={
+            "company_id": TEST_COMPANY_ID,
+            "instrument": "cheque",
+            "direction": "received",
+            "contact_id": CONTACT,
+            "amount": 50,
+            "due_date": due,
+            "serial_no": "123456",
+            "issue_date": date.today().isoformat(),
+        },
+        timeout=TIMEOUT,
+    )
+    assert r.status_code == 200, r.text
+    cid = r.json()["id"]
+    assert abs(_contact_balance() - (bal0 - 50)) < 0.02
+
+    got = requests.get(f"{API}/cheques/{cid}", headers=_h(), timeout=TIMEOUT)
+    assert got.status_code == 200, got.text
+    assert got.json()["serial_no"] == "123456"
+
+    new_due = (date.today() + timedelta(days=28)).isoformat()
+    upd = requests.put(
+        f"{API}/cheques/{cid}",
+        headers=_h(),
+        json={"serial_no": "123456-B", "amount": 75, "due_date": new_due, "notes": "düzenlendi"},
+        timeout=TIMEOUT,
+    )
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["serial_no"] == "123456-B"
+    assert abs(float(upd.json()["amount"]) - 75) < 0.02
+    assert upd.json()["notes"] == "düzenlendi"
+    assert abs(_contact_balance() - (bal0 - 75)) < 0.02
+
+    requests.post(f"{API}/cheques/{cid}/cancel", headers=_h(), json={"reason": "test"}, timeout=TIMEOUT)
+    requests.delete(f"{API}/cheques/{cid}", headers=_h(), timeout=TIMEOUT)
+    assert abs(_contact_balance() - bal0) < 0.02
+
+
 def test_cheque_received_collect_and_bounce():
     due = (date.today() + timedelta(days=10)).isoformat()
     bal0 = _contact_balance()
