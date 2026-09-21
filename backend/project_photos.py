@@ -11,6 +11,17 @@ def clean_stage_key(value: Any) -> str:
     return _STAGE.sub("", str(value or ""))[:40]
 
 
+def is_photo_url(value: Any) -> bool:
+    """Müşteri sayfasında gösterilebilir dosya yolu. Hata sayfası metni değil."""
+    url = str(value or "").strip()
+    if not url or len(url) > 500:
+        return False
+    lowered = url.lower()
+    if "<" in url or "request entity too large" in lowered or "<!doctype" in lowered or "<html" in lowered:
+        return False
+    return url.startswith("/api/files/")
+
+
 def sanitize_stage_photos(raw: Any) -> List[dict]:
     if not isinstance(raw, list):
         return []
@@ -18,8 +29,8 @@ def sanitize_stage_photos(raw: Any) -> List[dict]:
     for row in raw[:80]:
         if not isinstance(row, dict):
             continue
-        url = str(row.get("url") or "").strip()[:500]
-        if not url.startswith("/api/files/"):
+        url = str(row.get("url") or "").strip()
+        if not is_photo_url(url):
             continue
         stage = clean_stage_key(row.get("stage")) or "other"
         out.append({
@@ -58,7 +69,7 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
         if not isinstance(row, dict):
             continue
         url = str(row.get("url") or "")
-        if not url:
+        if not is_photo_url(url):
             continue
         key = clean_stage_key(row.get("stage")) or "other"
         if row.get("stage_label") and key not in label_by:
@@ -66,7 +77,7 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
         add(key, url)
         tagged.add(url)
     for url in images or []:
-        if url and url not in tagged:
+        if is_photo_url(url) and url not in tagged:
             add("other", str(url))
     if not groups:
         return []

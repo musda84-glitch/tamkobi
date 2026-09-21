@@ -107,6 +107,35 @@ export default function ProjectTrackingPage() {
             ))}
           </ol>
 
+          {(() => {
+            const groups = (p.stage_photos || []).length
+              ? p.stage_photos
+              : (p.images || []).length
+                ? [{ stage: "other", label: "Yapılan işler", images: p.images }]
+                : [];
+            const usable = groups
+              .map((g) => ({ ...g, images: (g.images || []).filter((img) => img && !String(img).includes("<") && !/request entity too large/i.test(String(img))) }))
+              .filter((g) => g.images.length);
+            if (!usable.length) return null;
+            return (
+              <div className="border-t pt-4 space-y-3" data-testid="public-project-photos">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800"><Camera className="w-3.5 h-3.5" /> Yapılan işler</div>
+                {usable.map((g) => (
+                  <div key={g.stage} data-testid={`public-project-photos-${g.stage}`}>
+                    <div className="text-[11px] font-semibold text-slate-500 mb-1.5">{g.label}</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {g.images.map((img) => (
+                        <a key={img} href={resolveImageUrl(img)} target="_blank" rel="noreferrer" className="block">
+                          <img src={resolveImageUrl(img)} alt={g.label || ""} className="w-full h-28 object-cover rounded-lg border bg-white" onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }} />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {p.tasks?.length > 0 && (
             <div className="border-t pt-4 space-y-1.5" data-testid="public-project-tasks">
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800"><ClipboardList className="w-3.5 h-3.5" /> İş adımları</div>
@@ -145,28 +174,6 @@ export default function ProjectTrackingPage() {
               ))}
             </div>
           )}
-
-          {(() => {
-            const groups = (p.stage_photos || []).length
-              ? p.stage_photos
-              : (p.images || []).length
-                ? [{ stage: "other", label: "Yapılan işler", images: p.images }]
-                : [];
-            if (!groups.length) return null;
-            return (
-              <div className="border-t pt-4 space-y-3" data-testid="public-project-photos">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800"><Camera className="w-3.5 h-3.5" /> Yapılan işler</div>
-                {groups.map((g) => (
-                  <div key={g.stage} data-testid={`public-project-photos-${g.stage}`}>
-                    {(groups.length > 1 || g.stage !== "other") && <div className="text-[11px] font-semibold text-slate-500 mb-1.5">{g.label}</div>}
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                      {(g.images || []).map((img) => <img key={img} src={resolveImageUrl(img)} alt="" className="w-full h-24 object-cover rounded-lg border bg-white" onError={(e) => { e.currentTarget.style.display = "none"; }} />)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
         </div>
         <p className="text-center text-[11px] text-slate-400">Bu sayfa yalnızca görüntülemedir; giriş yapmanız gerekmez. Sorularınız için {c.phone || c.email || "firmanız"}.</p>
       </div>

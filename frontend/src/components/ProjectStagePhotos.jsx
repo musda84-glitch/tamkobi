@@ -50,7 +50,11 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
       toast.success(`${stage.label} aşamasına fotoğraf yüklendi.`);
       onUpdated?.();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Yüklenemedi.");
+      const status = err.response?.status;
+      const raw = err.response?.data;
+      const detail = typeof raw === "string" ? "" : raw?.detail;
+      const tooBig = status === 413 || (typeof raw === "string" && raw.includes("413"));
+      toast.error(tooBig ? "Fotoğraf çok büyük. Daha küçük bir görsel seçin." : (detail || "Yüklenemedi."));
     } finally {
       setBusy("");
     }
@@ -72,6 +76,16 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
     <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50/70" data-testid={`project-stage-photos-${number}`}>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aşama fotoğrafları</div>
       <p className="text-[10px] text-slate-400 leading-snug">Müşteri takip sayfasında, işin yapıldığı aşamanın altında görünür.</p>
+      {(() => {
+        const current = (stages || []).find((s) => s.key === project.status) || (stages || [])[0];
+        if (!current) return null;
+        return (
+          <label className={`flex items-center justify-center gap-1.5 w-full py-2 rounded-lg border-2 border-dashed cursor-pointer font-semibold ${busy === current.key ? "opacity-50 border-slate-200 text-slate-400" : "border-emerald-300 text-emerald-800 bg-white hover:bg-emerald-50"}`} data-testid={`project-stage-upload-bar-${number}`}>
+            {busy === current.key ? "Yükleniyor…" : <><ImagePlus className="w-3.5 h-3.5" /> {current.label} aşamasına fotoğraf yükle</>}
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={!!busy} onChange={(e) => upload(current, e)} data-testid={`project-stage-upload-main-${number}`} />
+          </label>
+        );
+      })()}
       {rows.map((stage) => {
         const items = stage.key === "other"
           ? [...(byStage.other || []), ...loose.map((url) => ({ url, loose: true }))]
