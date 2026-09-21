@@ -1182,11 +1182,22 @@ async def create_quote(req: Dict[str, Any]):
     items = req.get("items") or []
     if not items:
         raise HTTPException(status_code=400, detail="En az bir kalem ekleyin.")
+    project_id = req.get("project_id") or None
+    project_number = None
+    contact_id = req.get("contact_id")
+    contact_name = req.get("contact_name")
+    if project_id:
+        proj = await db.projects.find_one({"_id": project_id, "company_id": company_id})
+        if not proj:
+            raise HTTPException(status_code=400, detail="Teklif bağlanacak proje bulunamadı.")
+        project_number = proj.get("project_number")
+        contact_id = contact_id or proj.get("contact_id")
+        contact_name = contact_name or proj.get("contact_name")
     await _fill_stock_codes(company_id, items)
     subtotal, vat_total, grand_total = _calc_items(items)
-    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "quote_number": await _next_number("TKF", db.quotes), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "quote_number": await _next_number("TKF", db.quotes), "contact_id": contact_id, "contact_name": contact_name,
            "title": req.get("title") or "Fiyat Teklifi", "items": items, "subtotal": subtotal, "vat_total": vat_total, "grand_total": grand_total, "currency": "TRY",
-           "status": "draft", "valid_until": req.get("valid_until"), "notes": req.get("notes", ""), "terms": req.get("terms", ""), "images": [], "project_id": req.get("project_id"),
+           "status": "draft", "valid_until": req.get("valid_until"), "notes": req.get("notes", ""), "terms": req.get("terms", ""), "images": [], "project_id": project_id, "project_number": project_number,
            "survey_id": req.get("survey_id"), "invoice_id": None, "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.quotes.insert_one(doc)
     return clean_doc(doc)
