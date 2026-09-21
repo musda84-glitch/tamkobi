@@ -6706,25 +6706,32 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
         if linked_acc.get("type") not in ("bank", "pos", "okc_pos"):
             raise HTTPException(status_code=400, detail="Yalnızca banka, POS veya ÖKC hesabı bağlanabilir.")
         allowed["linked_account_name"] = _linked_account_label(linked_acc)
+    prev = await db.bank_connections.find_one({"_id": conn_id})
+    if not prev:
+        raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": allowed})
     doc = await db.bank_connections.find_one({"_id": conn_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
     if linked_acc is None and doc.get("linked_account_id"):
         linked_acc = await db.bank_accounts.find_one({"_id": doc["linked_account_id"]})
-    out = _enrich_connection(doc, linked_acc)
-    if allowed.get("auto_match"):
-        q = {"company_id": doc["company_id"], "source": "bank_sync", "match_status": "unmatched"}
-        if doc.get("linked_account_id"):
-            q["account_id"] = doc["linked_account_id"]
-        pending = await db.bank_transactions.find(q).to_list(1000)
-        applied, _ = await _auto_match_by_rules(doc["company_id"], pending, via="auto")
-        if applied:
-            await db.bank_connections.update_one({"_id": conn_id}, {"$inc": {"auto_matched_count": applied}})
+    # Otomatik İşle açılınca bekleyen hareketleri hemen işle (önceki eşleşme + cari)
+    just_enabled = bool(allowed.get("auto_match")) and not bool(prev.get("auto_match"))
+    auto_matched = 0
+    if just_enabled and doc.get("linked_account_id"):
+        auto_matched, _ = await _auto_match_pending_for_account(doc["company_id"], doc["linked_account_id"])
+        if auto_matched:
+            await db.bank_connections.update_one({"_id": conn_id}, {"$inc": {"auto_matched_count": auto_matched}})
             doc = await db.bank_connections.find_one({"_id": conn_id})
-            out = _enrich_connection(doc, linked_acc)
-            out["auto_matched"] = applied
-            out["message"] = f"{applied} bekleyen hareket otomatik işlendi (önceki eşleşme veya cari adı)."
+    out = _enrich_connection(doc, linked_acc)
+    if just_enabled:
+        out["auto_matched_now"] = auto_matched
+        out["auto_matched"] = auto_matched
+        out["auto_match_message"] = (
+            f"Otomatik işleme açıldı; {auto_matched} bekleyen hareket önceki eşleşme/cari ile işlendi."
+            if auto_matched else
+            "Otomatik işleme açıldı; yeni hareketler senkron sırasında işlenecek."
+        )
+        if auto_matched:
+            out["message"] = f"{auto_matched} bekleyen hareket otomatik işlendi (önceki eşleşme veya cari adı)."
     return out
 
 @api_router.delete("/banking/connections/{conn_id}")
@@ -6838,7 +6845,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
             "source": "bank_sync",
             "match_status": "unmatched",
         }).to_list(1000)
-        auto_matched, _ = await _auto_match_by_rules(doc["company_id"], pending, via="auto")
+        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True)
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -6881,7 +6888,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         "message": (
             f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı).{bal_note}"
             + (result.get("notice") or "")
-            + (f" {auto_matched} hareket öğrenilen kurallarla otomatik işlendi." if auto_matched else "")
+            + (f" {auto_matched} hareket önceki eşleşme/cari ile otomatik işlendi." if auto_matched else "")
             + (" [SİMÜLE VERİ]" if result["simulated"] else "")
         ),
     }
@@ -7081,6 +7088,111 @@ async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule"):
         })
     return matched, details
 
+
+async def _prior_match_lookup(company_id: str) -> Dict[str, dict]:
+    """Aynı açıklama kalıbıyla daha önce eşleştirilmiş hareketlerden tutarlı hedef haritası."""
+    matched_txs = await db.bank_transactions.find(
+        {"company_id": company_id, "source": "bank_sync", "match_status": "matched"},
+        {"description": 1, "contact_id": 1, "contact_name": 1, "target_account_id": 1, "target_account_name": 1, "category": 1},
+    ).to_list(3000)
+    groups: Dict[str, dict] = {}
+    for t in matched_txs:
+        p = _match_pattern(t.get("description", ""))
+        if not p:
+            continue
+        key = (t.get("contact_id") or "", t.get("target_account_id") or "", t.get("category") or "")
+        if not (key[0] or key[1] or key[2]):
+            continue
+        g = groups.setdefault(p, {"targets": {}, "sample": t})
+        g["targets"][key] = g["targets"].get(key, 0) + 1
+        g["sample"] = t
+    out: Dict[str, dict] = {}
+    for p, g in groups.items():
+        (cid, tid, cat), n = max(g["targets"].items(), key=lambda kv: kv[1])
+        total = sum(g["targets"].values())
+        # Çoğunluk aynı hedefe gittiyse (veya tek örnek) önceki eşleşmeyi kullan
+        if n < total and n < 2:
+            continue
+        sample = g["sample"]
+        out[p] = {
+            "contact_id": cid or None,
+            "contact_name": sample.get("contact_name"),
+            "target_account_id": tid or None,
+            "target_account_name": sample.get("target_account_name"),
+            "category": cat or None,
+        }
+    return out
+
+
+async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto", use_cari: bool = True) -> tuple:
+    """Öğrenilen kurallar → önceki eşleşmeler → cari adı önerisi sırasıyla otomatik işle."""
+    if not txs:
+        return 0, []
+    matched, details = await _auto_match_by_rules(company_id, txs, via=via if via != "auto" else "auto")
+    done = {d["tx_id"] for d in details}
+    prior = await _prior_match_lookup(company_id) if use_cari else {}
+    for tx in txs:
+        if tx["_id"] in done or tx.get("match_status") == "matched":
+            continue
+        pattern = _match_pattern(tx.get("description", ""))
+        prior_hit = prior.get(pattern) if pattern else None
+        if prior_hit and (prior_hit.get("contact_id") or prior_hit.get("target_account_id") or prior_hit.get("category")):
+            try:
+                await _apply_match(
+                    tx,
+                    prior_hit.get("contact_id"),
+                    None,
+                    prior_hit.get("category"),
+                    learn=True,
+                    target_account_id=prior_hit.get("target_account_id"),
+                    via="auto",
+                )
+            except HTTPException:
+                pass
+            else:
+                matched += 1
+                done.add(tx["_id"])
+                details.append({
+                    "tx_id": tx["_id"],
+                    "description": tx.get("description"),
+                    "contact_name": prior_hit.get("contact_name"),
+                    "target_account_name": prior_hit.get("target_account_name"),
+                    "via": "prior",
+                })
+                continue
+        if not use_cari:
+            continue
+        contact_id = tx.get("suggested_contact_id")
+        contact_name = tx.get("suggested_contact_name")
+        if not contact_id:
+            suggestion = await _suggest_contact(company_id, "", tx.get("description", "") or "")
+            if suggestion:
+                contact_id = suggestion.get("_id")
+                contact_name = suggestion.get("name")
+        if not contact_id:
+            continue
+        try:
+            await _apply_match(tx, contact_id, None, None, learn=True, via="suggestion")
+        except HTTPException:
+            continue
+        matched += 1
+        done.add(tx["_id"])
+        details.append({
+            "tx_id": tx["_id"],
+            "description": tx.get("description"),
+            "contact_name": contact_name,
+            "via": "suggestion",
+        })
+    return matched, details
+
+
+async def _auto_match_pending_for_account(company_id: str, account_id: Optional[str] = None) -> tuple:
+    q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
+    if account_id:
+        q["account_id"] = account_id
+    txs = await db.bank_transactions.find(q).to_list(1000)
+    return await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=True)
+
 @api_router.post("/banking/transactions/{tx_id}/match")
 async def match_bank_transaction(tx_id: str, req: Dict[str, Any]):
     tx = await db.bank_transactions.find_one({"_id": tx_id})
@@ -7105,26 +7217,16 @@ async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main
     return clean_docs(txs)
 
 @api_router.post("/banking/transactions/auto-match")
-async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = False, account_id: Optional[str] = None):
+async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = True, account_id: Optional[str] = None):
+    """Bekleyen banka hareketlerini otomatik işle: kurallar, önceki eşleşmeler ve cari adı önerisi."""
     q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
     if account_id:
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(1000)
-    matched, details = await _auto_match_by_rules(company_id, txs)
-    done = {d["tx_id"] for d in details}
-    skipped = 0
-    for tx in txs:
-        if tx["_id"] in done:
-            continue
-        if use_suggestions and tx.get("suggested_contact_id"):
-            await _apply_match(tx, tx["suggested_contact_id"], None, None, learn=True, via="suggestion")
-            matched += 1
-            details.append({"tx_id": tx["_id"], "description": tx.get("description"), "contact_name": tx.get("suggested_contact_name"), "via": "suggestion"})
-        else:
-            skipped += 1
+    matched, details = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions))
+    skipped = max(0, len(txs) - matched)
     return {"status": "success", "matched": matched, "skipped": skipped, "details": details,
             "message": f"{matched} hareket önceki eşleşme veya cari adına göre otomatik işlendi, {skipped} hareket manuel bekliyor."}
-
 @api_router.get("/banking/match-rules")
 async def list_match_rules(company_id: Optional[str] = "comp_nexus_main_01"):
     rules = await db.bank_match_rules.find({"company_id": company_id}).sort("hits", -1).to_list(500)
