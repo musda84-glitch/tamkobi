@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from mysql_store import MySQLClient, chunk_list
 from client_ip import request_ip
 import partner_pay
+from order_edit import order_edit_block_reason
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -7744,8 +7745,6 @@ _MARKETPLACE_EDIT_BLOCK = {
     "trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama",
     "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek",
 }
-_ORDER_EDIT_LOCKED = {"cancelled", "returned", "delivered", "completed"}
-
 
 async def _staff_rebuild_order_items(company_id: str, raw_items: list) -> list:
     rows = []
@@ -7787,11 +7786,11 @@ async def update_order(order_id: str, req: Dict[str, Any]):
     o = await db.orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
-    if o.get("is_invoiced") or o.get("invoice_id"):
-        raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
-    status = str(o.get("order_status") or o.get("status") or "")
-    if status in _ORDER_EDIT_LOCKED:
-        raise HTTPException(status_code=400, detail="Bu sipariş düzenlenemez.")
+    invoice = await db.invoices.find_one({"_id": o["invoice_id"]}) if o.get("invoice_id") else None
+    dispatch = await db.invoices.find_one({"_id": o["dispatch_id"]}) if o.get("dispatch_id") else None
+    blocked = order_edit_block_reason(o, invoice, dispatch)
+    if blocked:
+        raise HTTPException(status_code=400, detail=blocked)
     marketplace = str(o.get("channel") or "").lower() in _MARKETPLACE_EDIT_BLOCK
     if marketplace and "items" in req:
         raise HTTPException(status_code=400, detail="Pazaryeri sipariş kalemleri düzenlenemez.")
@@ -7815,6 +7814,18 @@ async def update_order(order_id: str, req: Dict[str, Any]):
             "total_amount": grand_total if vat_total else subtotal,
         })
     await db.orders.update_one({"_id": order_id}, {"$set": update})
+    if invoice and invoice.get("status") == "draft" and not o.get("is_invoiced") and update.get("items"):
+        inv_rows = order_items_to_invoice_items(update["items"])
+        await _fill_stock_codes(o.get("company_id"), inv_rows)
+        inv_items = [it.model_dump() for it in _invoice_item_models(inv_rows)]
+        totals = invoice_document_totals(inv_items)
+        await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
+            "items": inv_items,
+            "subtotal": totals["subtotal"],
+            "vat_total": totals["vat_total"],
+            "discount_total": totals["discount_total"],
+            "grand_total": totals["grand_total"],
+        }})
     updated = await db.orders.find_one({"_id": order_id})
     return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
 

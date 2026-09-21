@@ -5,7 +5,8 @@ import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
-import { computeLine, documentLineTotals, emptyLine } from "../utils/documentLines";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
+import { orderLinesLocked } from "../utils/orderEdit";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
@@ -77,6 +78,72 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
         <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} />
         <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
         <div className="flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
+      </div>
+    </div>
+  );
+};
+
+export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
+  useEscape(onClose);
+  const linesLocked = orderLinesLocked(order);
+  const [notes, setNotes] = useState(order?.notes || "");
+  const [po, setPo] = useState(order?.customer_order_number || "");
+  const [items, setItems] = useState(() => (order?.items || []).map((it) => hydrateLine(it)));
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const valid = items.map((it) => computeLine(it)).filter((it) => (it.product_name || it.name) && Number(it.quantity) > 0);
+    if (!linesLocked && !valid.length) { toast.error("Siparişte en az bir kalem olmalı."); return; }
+    setBusy(true);
+    try {
+      const payload = { notes, customer_order_number: po };
+      if (!linesLocked) {
+        payload.items = valid.map((it) => ({
+          product_id: it.product_id || "",
+          product_name: it.product_name || it.name,
+          sku: it.sku || "",
+          quantity: Number(it.quantity),
+          unit: it.unit || "Adet",
+          unit_price: Number(it.unit_price),
+          unit_price_incl: Number(it.unit_price_incl),
+          vat_rate: Number(it.vat_rate),
+          discount_rate: Number(it.discount_rate || 0),
+          total: Number(it.total),
+          total_incl: Number(it.total_incl),
+          vat_amount: Number(it.vat_amount),
+          is_service: !!it.is_service,
+        }));
+      }
+      const r = await axios.put(`${API_URL}/orders/${order.id || order._id}`, payload);
+      toast.success(r.data.message || "Sipariş güncellendi.");
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Sipariş güncellenemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="edit-order-modal">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-slate-900">Siparişi Düzenle · {order.order_number}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="edit-order-close"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-slate-500">Onaylı sipariş düzenlenebilir. E-belge kesildiyse kayıt kapanır.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label className="block font-semibold mb-1">Müşteri sipariş no</label><input value={po} onChange={(e) => setPo(e.target.value)} className={inp} data-testid="edit-order-po" /></div>
+          <div><label className="block font-semibold mb-1">Not</label><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inp} data-testid="edit-order-notes" /></div>
+        </div>
+        {linesLocked ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Pazaryeri kalemleri değiştirilemez. Not ve müşteri sipariş numarası kaydedilir.</div>
+        ) : (
+          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" testIdPrefix="edit-order" />
+        )}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button>
+          <button type="button" onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="edit-order-save">{busy ? "Kaydediliyor…" : "Kaydet"}</button>
+        </div>
       </div>
     </div>
   );
