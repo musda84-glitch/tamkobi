@@ -3,6 +3,7 @@ import {
   canDeleteInvoice,
   createInvoiceButtonLabel,
   invoiceListSubtitle,
+  invoiceListTitle,
   draftFromInvoice,
   eTypeForContact,
   emptyInvoiceDraft,
@@ -116,15 +117,17 @@ describe("invoiceDraft", () => {
     expect(createInvoiceButtonLabel("dispatch")).toBe("Yeni İrsaliye");
   });
 
-  it("puts the contact name first on the invoice list row", () => {
+  it("puts the contact name on the invoice list title and the number below", () => {
+    expect(invoiceListTitle({ contact_name: "Mustafa BAL" })).toBe("Mustafa BAL");
+    expect(invoiceListTitle({})).toBe("Cari yok");
     expect(invoiceListSubtitle({
-      contact_name: "Acme Mobilya",
+      invoice_number: "NX202600000017",
       invoice_type: "sales",
       e_type: "e_archive",
       status: "draft",
-      issue_date: "2026-09-20",
-    })).toBe("Acme Mobilya · Satış · E-Arşiv · Taslak · 20 Eyl 2026");
-    expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Cari yok · Satış/);
+      issue_date: "2026-09-21",
+    })).toBe("NX202600000017 · Satış · E-Arşiv · Taslak · 21 Eyl 2026");
+    expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Fatura · Satış/);
   });
 
   it("deletes drafts and unpaid paper, not issued e-docs", () => {

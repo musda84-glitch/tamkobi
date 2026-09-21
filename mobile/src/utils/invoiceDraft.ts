@@ -341,16 +341,20 @@ export function createInvoiceButtonLabel(filterType: string): string {
   return "Yeni Fatura Kes";
 }
 
-/** Liste satırı: önce cari, sonra tür / belge / durum / tarih. */
+/** Liste başlığı: cari adı. */
+export function invoiceListTitle(inv: { contact_name?: string }): string {
+  return (inv.contact_name || "").trim() || "Cari yok";
+}
+
+/** Liste alt satırı: fatura no, sonra tür / belge / durum / tarih. */
 export function invoiceListSubtitle(inv: {
-  contact_name?: string;
+  invoice_number?: string;
   invoice_type?: string;
   e_type?: string;
   status?: string;
   issue_date?: string;
 }): string {
-  const cari = (inv.contact_name || "").trim() || "Cari yok";
-  return [cari, invoiceTypeTr(inv.invoice_type), eTypeTr(inv.e_type), statusTr(inv.status), fmtDate(inv.issue_date)]
+  return [inv.invoice_number || "Fatura", invoiceTypeTr(inv.invoice_type), eTypeTr(inv.e_type), statusTr(inv.status), fmtDate(inv.issue_date)]
     .filter(Boolean)
     .join(" · ");
 }
