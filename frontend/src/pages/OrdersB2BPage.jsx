@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Pencil } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
@@ -34,11 +34,11 @@ import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { channelTr, statusTr } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
-import { NewOrderModal, AiOrderImportModal } from "../components/OrderCreateModals";
+import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
-import { formatTrAmount } from "../utils/money";
+import { orderEditBlockedReason } from "../utils/orderEdit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -246,6 +246,7 @@ export default function OrdersB2BPage() {
   const [returnReason, setReturnReason] = useState("");
   const [autoBusy, setAutoBusy] = useState(false);
   const [newOrder, setNewOrder] = useState(false);
+  const [editOrder, setEditOrder] = useState(null);
   const [aiImport, setAiImport] = useState(false);
   const [autoShip, setAutoShip] = useState(false);
   const autoContacts = async () => {
@@ -532,6 +533,7 @@ export default function OrdersB2BPage() {
       {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
+      {editOrder && <OrderEditModal order={editOrder} products={allProducts} onClose={() => setEditOrder(null)} onSaved={loadData} />}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
       {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
 
@@ -689,6 +691,11 @@ export default function OrdersB2BPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
                             {[
+                              [Pencil, "Siparişi Düzenle", () => {
+                                const reason = orderEditBlockedReason(ord);
+                                if (reason) toast.error(reason);
+                                else setEditOrder(ord);
+                              }, `edit-order-menu-${ord.order_number}`, true],
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],

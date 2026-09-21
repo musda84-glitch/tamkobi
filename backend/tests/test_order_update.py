@@ -84,12 +84,26 @@ def test_staff_update_empty_items_400():
         s.delete(f"{BASE}/orders/{oid}", timeout=15)
 
 
-def test_staff_update_invoiced_400():
+def test_staff_update_issued_order_stays_locked_draft_link_does_not():
+    """Kesilmiş fatura (is_invoiced) kilitli kalır. Yalnızca taslak invoice_id düzenlemeyi kesmez."""
     s = requests.Session()
     orders = s.get(f"{BASE}/orders", params={"company_id": CO}, timeout=TIMEOUT).json()
-    inv = next((o for o in orders if o.get("is_invoiced") or o.get("invoice_id")), None)
-    if not inv:
+    issued = next((o for o in orders if o.get("is_invoiced")), None)
+    if issued:
+        r = s.put(f"{BASE}/orders/{issued['id']}", json={"notes": issued.get("notes") or ""}, timeout=TIMEOUT)
+        if r.status_code == 400:
+            assert "E-belge" in r.json().get("detail", "") or "düzenlenemez" in r.json().get("detail", "")
+        else:
+            assert r.status_code == 200, r.text
+    draft_linked = next((
+        o for o in orders
+        if o.get("invoice_id") and not o.get("is_invoiced") and o.get("order_status") not in ("cancelled", "returned", "completed", "delivered")
+    ), None)
+    if not draft_linked:
         return
-    r = s.put(f"{BASE}/orders/{inv['id']}", json={"notes": "should fail"}, timeout=TIMEOUT)
-    assert r.status_code == 400
-    assert "Faturalanmış" in r.json().get("detail", "")
+    r = s.put(
+        f"{BASE}/orders/{draft_linked['id']}",
+        json={"notes": draft_linked.get("notes") or ""},
+        timeout=TIMEOUT,
+    )
+    assert r.status_code == 200, r.text

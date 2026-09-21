@@ -26,6 +26,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { formatTrAmount } from "../utils/money";
+import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -43,12 +44,6 @@ function mailDeliveryBadge(m) {
 }
 
 const ORDER_STATUS_OPTIONS = [["pending", "Beklemede"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargolandı"], ["completed", "Tamamlandı"], ["returned", "İade Edildi"], ["partially_returned", "Kısmi İade"]];
-const ORDER_EDIT_LOCKED = new Set(["cancelled", "returned", "delivered", "completed"]);
-const MARKETPLACE_CHANNELS = new Set(["trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama", "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek"]);
-
-function orderChannelLocked(o) {
-  return MARKETPLACE_CHANNELS.has(String(o?.channel || "").toLowerCase());
-}
 
 function chequeReceipt(ch) {
   const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
@@ -112,8 +107,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const openEditOrder = (o) => {
-    if (o.is_invoiced || o.invoice_id) { toast.error("Faturalanmış sipariş düzenlenemez."); return; }
-    if (ORDER_EDIT_LOCKED.has(o.order_status)) { toast.error("Bu durumdaki sipariş düzenlenemez."); return; }
+    const reason = orderEditBlockedReason(o);
+    if (reason) { toast.error(reason); return; }
     setEditOrder({
       id: o.id,
       order_number: o.order_number,
