@@ -145,3 +145,11 @@ code {
   min-width: 4rem !important;
   object-fit: contain;
 }
+#print-area .print-compact-thumb,
+#print-area .print-compact-thumb img,
+#print-area .print-compact-thumb span {
+  width: 2.75rem !important;
+  height: 2.75rem !important;
+  min-width: 2.75rem !important;
+  object-fit: contain;
+}

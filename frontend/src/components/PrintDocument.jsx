@@ -4,6 +4,7 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix } from "../utils/money";
+import { balanceSentence, isOrderQuotePrint, printNetAmount, printQtyLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
 const pickItemImage = (it = {}, prod = {}) => (
@@ -49,7 +50,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const [prodById, setProdById] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [contactBalance, setContactBalance] = useState(null);
   const companyId = company?.id || "comp_nexus_main_01";
+  const compactForm = isOrderQuotePrint(docType);
   const items = doc.items || [];
   const productIds = useMemo(
     () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
@@ -82,6 +85,28 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   }, [items, prodById]);
   useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
+  useEffect(() => {
+    if (!compactForm) return undefined;
+    if (doc.contact_balance != null && doc.contact_balance !== "") {
+      setContactBalance(Number(doc.contact_balance));
+      return undefined;
+    }
+    const cid = doc.contact_id;
+    const name = String(doc.contact_name || doc.customer_name || "").trim().toLocaleLowerCase("tr-TR");
+    if (!cid && !name) {
+      setContactBalance(null);
+      return undefined;
+    }
+    let cancelled = false;
+    axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+      if (cancelled) return;
+      const rows = Array.isArray(r.data) ? r.data : [];
+      const hit = (cid && rows.find((c) => (c.id || c._id) === cid))
+        || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name);
+      setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
+    }).catch(() => { if (!cancelled) setContactBalance(null); });
+    return () => { cancelled = true; };
+  }, [compactForm, companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
   const pickLayout = async (l) => { const next = { ...tpl, layout: l }; setTpl(next); try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, next); } catch { /* keep local */ } };
@@ -99,6 +124,10 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const title = tpl.title_override || docTitle(docType, doc);
   const itemNote = (it) => it.note || it.notes || it.description || it.line_note || "";
   const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
+  const showImages = tpl.show_images !== false;
+  const vatLines = printVatLines(doc, items);
+  const netAmount = printNetAmount(doc, items);
+  const balanceText = !hideAll ? balanceSentence(contactBalance) : "";
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
@@ -181,6 +210,51 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             </div>
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
+          {compactForm ? (
+          <table className="w-full mt-6 border-collapse text-[13px]" data-testid="print-items-table">
+            <thead>
+              <tr className="text-slate-900 border-b border-slate-400">
+                <th className="text-left py-2 pr-3 font-semibold">Açıklama</th>
+                <th className="text-right py-2 px-2 font-semibold whitespace-nowrap">Miktar</th>
+                {!hideLine && <th className="text-right py-2 px-2 font-semibold">Fiyat</th>}
+                {!hideLine && !hideVat && <th className="text-right py-2 px-2 font-semibold whitespace-nowrap">KDV (%)</th>}
+                {!hideLine && <th className="text-right py-2 pl-2 font-semibold whitespace-nowrap">{hideVat ? "Tutar" : "Tutar (KDV Hariç)"}</th>}
+              </tr>
+            </thead>
+            <tbody>{items.map((it, i) => {
+              const prod = prodById[it.product_id] || {};
+              const img = printThumbUrl(pickItemImage(it, prod));
+              return (
+                <tr key={i} className="border-b border-slate-200" data-testid={`print-item-row-${i}`}>
+                  <td className="py-3 pr-3 align-middle" data-testid={`print-item-name-${i}`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-4 shrink-0 text-xs tabular-nums text-slate-500" data-testid={`print-item-index-${i}`}>{i + 1}</span>
+                      {showImages && (
+                        <span className="print-compact-thumb shrink-0" data-testid={`print-item-image-${i}`}>
+                          {img ? (
+                            <img src={img} alt="" width={44} height={44} loading="eager" decoding="async" fetchPriority="high" className="w-11 h-11 object-contain bg-white" />
+                          ) : <span className="block w-11 h-11 bg-slate-50" />}
+                        </span>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900">
+                          {it.name || it.product_name}
+                          {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600 font-normal">(%{it.discount_rate} isk.)</span>}
+                        </div>
+                        {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
+                        {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">{printQtyLabel(it.quantity, it.unit)}</td>
+                  {!hideLine && <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">{fmtM(it.unit_price)}</td>}
+                  {!hideLine && !hideVat && <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">%{it.vat_rate ?? 20}</td>}
+                  {!hideLine && <td className="py-3 pl-2 text-right align-middle whitespace-nowrap tabular-nums">{fmtM(it.total)}</td>}
+                </tr>
+              );
+            })}</tbody>
+          </table>
+          ) : (
           <table className={`w-full mt-6 border-collapse ${isModern ? "rounded-xl overflow-hidden" : ""}`} data-testid="print-items-table">
             <thead>
               <tr style={thStyle} className={thCls}>
@@ -245,14 +319,19 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
               );
             })}</tbody>
           </table>
+          )}
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
-          {!hideAll && <div className="flex justify-end mt-4"><div className={`w-64 space-y-1 ${isModern ? "rounded-xl p-3" : ""}`} style={isModern ? { backgroundColor: `${color}14` } : {}}>
-            {doc.discount_total > 0 && <div className="flex justify-between text-rose-600"><span>İskonto</span><span>-{fmtM(doc.discount_total)}</span></div>}
-            {!hideVat && doc.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Ara Toplam (KDV Hariç)</span><span>{fmtM(doc.subtotal)}</span></div>}
-            {!hideVat && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmtM(doc.vat_total)}</span></div>}
-            {doc.withholding_amount > 0 && <div className="flex justify-between text-indigo-700"><span>Tevkifat</span><span>-{fmtM(doc.withholding_amount)}</span></div>}
-            <div className="flex justify-between text-base font-black border-t-2 pt-1" style={{ borderColor: color }}><span>{hideVat ? "TOPLAM" : "GENEL TOPLAM (KDV Dahil)"}</span><span style={{ color }}>{fmtM(total)}</span></div>
-          </div></div>}
+          {(compactForm ? (balanceText || !hideAll) : !hideAll) && <div className={`mt-4 flex items-start justify-between gap-6 ${compactForm ? "" : "justify-end"}`} data-testid="print-totals">
+            {compactForm && <div className="pt-1 text-sm text-slate-800" data-testid="print-current-balance">{balanceText}</div>}
+            {!hideAll && <div className={`${compactForm ? "min-w-[16rem] text-sm" : "w-64"} space-y-1 ${!compactForm && isModern ? "rounded-xl p-3" : ""}`} style={!compactForm && isModern ? { backgroundColor: `${color}14` } : {}}>
+            {doc.discount_total > 0 && <div className="flex justify-between gap-8 text-rose-600"><span>İskonto</span><span>-{fmtM(doc.discount_total)}</span></div>}
+            {!hideVat && (compactForm || doc.subtotal !== undefined) && <div className="flex justify-between gap-8" data-testid="print-net"><span className={compactForm ? "text-slate-800" : "text-slate-500"}>{compactForm ? "Net" : "Ara Toplam (KDV Hariç)"}</span><span className="tabular-nums">{fmtM(compactForm ? netAmount : doc.subtotal)}</span></div>}
+            {!hideVat && compactForm && vatLines.map((line) => <div key={line.rate ?? "vat"} className="flex justify-between gap-8" data-testid={`print-vat-${line.rate ?? "total"}`}><span>{vatRateLabel(line.rate)}</span><span className="tabular-nums">{fmtM(line.amount)}</span></div>)}
+            {!hideVat && !compactForm && doc.vat_total !== undefined && <div className="flex justify-between"><span className="text-slate-500">KDV</span><span>{fmtM(doc.vat_total)}</span></div>}
+            {doc.withholding_amount > 0 && <div className="flex justify-between gap-8 text-indigo-700"><span>Tevkifat</span><span>-{fmtM(doc.withholding_amount)}</span></div>}
+            <div className={`flex justify-between gap-8 border-t pt-1 ${compactForm ? "text-lg font-black border-slate-300" : "text-base font-black border-t-2"}`} style={compactForm ? {} : { borderColor: color }} data-testid="print-grand-total"><span>{compactForm ? "Toplam" : (hideVat ? "TOPLAM" : "GENEL TOPLAM (KDV Dahil)")}</span><span className="tabular-nums" style={compactForm ? {} : { color }}>{fmtM(total)}</span></div>
+          </div>}
+          </div>}
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Ödeme Planı ({plan.length} taksit)</div>
