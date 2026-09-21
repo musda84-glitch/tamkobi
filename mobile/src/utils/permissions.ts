@@ -42,6 +42,10 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" = "v
   }
   if (!user?.permissions) return true;
   const value = permissionLevel(user, path);
+  // Sunucu backfill: /cheques anahtarı yoksa banka yetkisi geçer.
+  if (value == null && path === "/cheques") {
+    return can(user, "/banking", level);
+  }
   if (level === "view") return value !== "none";
   return value === "edit";
 }

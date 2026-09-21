@@ -7,6 +7,16 @@ describe("permissions", () => {
     expect(visibleModules(user, null).some((m) => m.key === "saha")).toBe(true);
   });
 
+  it("inherits missing cheque permission from banking", () => {
+    const cashier = { role: "sales", permissions: { "/banking": "edit" } };
+    expect(can(cashier, "/cheques", "edit")).toBe(true);
+    const viewer = { role: "sales", permissions: { "/banking": "view" } };
+    expect(can(viewer, "/cheques", "edit")).toBe(false);
+    expect(can(viewer, "/cheques", "view")).toBe(true);
+    const blocked = { role: "sales", permissions: { "/banking": "edit", "/cheques": "none" } };
+    expect(can(blocked, "/cheques", "edit")).toBe(false);
+  });
+
   it("honors none vs edit", () => {
     const user = { role: "sales", permissions: { "/saha": "edit", "/invoices": "view", "/stock": "none" } };
     expect(can(user, "/saha", "edit")).toBe(true);

@@ -10,6 +10,7 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { TabStrip, type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
+import { DateField } from "../components/DateField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -84,6 +85,7 @@ export function ContactDetailScreen() {
   const canSurvey = can("/surveys", "edit");
   const canOrder = can("/orders", "edit") || can("/saha", "edit");
   const canCheque = can("/cheques", "edit");
+  const canPaper = canCheque || canBank;
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -207,7 +209,7 @@ export function ContactDetailScreen() {
     const amt = n(payForm.amount);
     if (!(amt > 0)) { setError("Geçerli bir tutar girin."); return; }
     const paper = payForm.method === "cheque" || payForm.method === "promissory";
-    if (paper && !canCheque) { setError("Çek / senet kaydı yetkiniz yok."); return; }
+    if (paper && !canPaper) { setError("Çek / senet kaydı yetkiniz yok."); return; }
     if (!paper && !payForm.account_id) { setError("Kasa / banka / ortak seçin."); return; }
     setPayBusy(true);
     try {
@@ -630,17 +632,41 @@ export function ContactDetailScreen() {
         <Card testID="collect-form">
           <Muted>Tahsilat / ödeme</Muted>
           <Row style={{ flexWrap: "wrap" }}>
-            <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow" })} />
-            <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow" })} />
+            <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow", description: payForm.method === "cash" ? "Cari tahsilat" : payForm.description })} />
+            <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow", description: payForm.method === "cash" ? "Cari ödeme" : payForm.description })} />
           </Row>
+          <Muted>Tahsil şekli</Muted>
           <Row style={{ flexWrap: "wrap" }}>
-            <Chip label="Nakit / banka" active={payForm.method === "cash"} testID="collect-method-cash" onPress={() => setPayForm({ ...payForm, method: "cash" })} />
-            {canCheque ? (
-              <>
-                <Chip label="Çek" active={payForm.method === "cheque"} testID="collect-method-cheque" onPress={() => setPayForm({ ...payForm, method: "cheque" })} />
-                <Chip label="Senet" active={payForm.method === "promissory"} testID="collect-method-promissory" onPress={() => setPayForm({ ...payForm, method: "promissory" })} />
-              </>
-            ) : null}
+            <Chip
+              label="Nakit / banka"
+              active={payForm.method === "cash"}
+              testID="collect-method-cash"
+              onPress={() => setPayForm({
+                ...payForm,
+                method: "cash",
+                description: payForm.type === "inflow" ? "Cari tahsilat" : "Cari ödeme",
+              })}
+            />
+            <Chip
+              label="Çek"
+              active={payForm.method === "cheque"}
+              testID="collect-method-cheque"
+              onPress={() => setPayForm({
+                ...payForm,
+                method: "cheque",
+                description: payForm.type === "inflow" ? "Çek tahsilatı" : "Çek ödemesi",
+              })}
+            />
+            <Chip
+              label="Senet"
+              active={payForm.method === "promissory"}
+              testID="collect-method-promissory"
+              onPress={() => setPayForm({
+                ...payForm,
+                method: "promissory",
+                description: payForm.type === "inflow" ? "Senet tahsilatı" : "Senet ödemesi",
+              })}
+            />
           </Row>
           {payForm.method === "cash" ? (
             <GroupedSelect
@@ -653,8 +679,21 @@ export function ContactDetailScreen() {
             />
           ) : (
             <>
-              <Field label="Vade" testID="collect-cheque-due" value={payForm.due_date} onChangeText={(v) => setPayForm({ ...payForm, due_date: v })} placeholder="YYYY-AA-GG" />
-              <Field label="Seri / çek no" testID="collect-cheque-serial" value={payForm.serial_no} onChangeText={(v) => setPayForm({ ...payForm, serial_no: v })} />
+              <Muted>
+                {payForm.method === "promissory" ? "Senet" : "Çek"} portföye alınır ve cari bakiyeye işlenir. Vade günü kasa tahsilatı Çekler ekranından yapılır.
+              </Muted>
+              <DateField
+                label="Vade"
+                testID="collect-cheque-due"
+                value={payForm.due_date}
+                onChangeText={(v) => setPayForm({ ...payForm, due_date: v })}
+              />
+              <Field
+                label={payForm.method === "promissory" ? "Seri / senet no" : "Seri / çek no"}
+                testID="collect-cheque-serial"
+                value={payForm.serial_no}
+                onChangeText={(v) => setPayForm({ ...payForm, serial_no: v })}
+              />
             </>
           )}
           <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
