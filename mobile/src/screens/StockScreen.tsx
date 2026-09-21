@@ -196,10 +196,11 @@ export function StockScreen() {
           <Muted testID="stock-list-count">{matched.length} ürün</Muted>
         ) : null}
         <LazyBarcodeScanner visible={scan} onClose={() => setScan(false)} onScan={lookup} />
+        {movesFor ? (
         <B2BSheet
-          visible={!!movesFor}
+          visible
           title="Stok hareketleri"
-          subtitle={movesFor ? [listRowText(movesFor.name), lastPurchaseLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") : undefined}
+          subtitle={[listRowText(movesFor.name), lastPurchaseLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") || undefined}
           onClose={() => setMovesFor(null)}
           testID="stock-moves-sheet"
         >
@@ -223,6 +224,7 @@ export function StockScreen() {
             );
           })}
         </B2BSheet>
+        ) : null}
     </Screen>
   );
 }
