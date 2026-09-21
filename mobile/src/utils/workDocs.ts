@@ -4,6 +4,7 @@ import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
 import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
+import type { StagePhoto } from "./stagePhotos";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -78,6 +79,7 @@ export type ProjectDoc = {
   latitude?: number | null;
   longitude?: number | null;
   images?: string[];
+  stage_photos?: StagePhoto[];
   tasks?: ProjectTask[];
   tracking?: ProjectTracking;
 };
@@ -131,14 +133,29 @@ export const PROJECT_STATUSES = [
   { key: "completed", label: "Tamamlandı" },
 ];
 
-/** Kart / form açılır listesi — listeye yeni aşama eklenince dropdown da büyür. */
-export function projectStatusSelectGroups(current?: string | null) {
-  const options = PROJECT_STATUSES.map((s) => ({ value: s.key, label: s.label }));
+function withCurrentOption(options: { value: string; label: string }[], current?: string | null) {
   const cur = String(current || "").trim();
   if (cur && !options.some((o) => o.value === cur)) {
     options.push({ value: cur, label: cur });
   }
+  return options;
+}
+
+/** Kart / form açılır listesi — listeye yeni aşama eklenince dropdown da büyür. */
+export function projectStatusSelectGroups(current?: string | null, stages?: ProjectStage[] | null) {
+  const list = stages?.length ? stages : PROJECT_STATUSES;
+  const options = withCurrentOption(list.map((s) => ({ value: s.key, label: s.label })), current);
   return [{ label: "Aşamalar", options }];
+}
+
+export function workStatusSelectGroups(
+  kind: WorkKind,
+  current?: string | null,
+  projectStages?: ProjectStage[] | null,
+) {
+  if (kind === "project") return projectStatusSelectGroups(current, projectStages);
+  const list = kind === "quote" ? QUOTE_STATUSES : SURVEY_STATUSES;
+  return [{ label: "Durum", options: withCurrentOption(list.map((s) => ({ value: s.key, label: s.label })), current) }];
 }
 
 export const SURVEY_STATUSES = [

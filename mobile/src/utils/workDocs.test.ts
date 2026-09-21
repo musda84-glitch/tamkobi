@@ -14,6 +14,7 @@ import {
   PROJECT_STATUSES,
   newButtonLabel,
   projectStatusSelectGroups,
+  workStatusSelectGroups,
   projectCardBits,
   projectPayload,
   projectTaskRows,
@@ -195,6 +196,10 @@ describe("workDocs", () => {
     expect(groups[0].options.map((o) => o.label)).toEqual(["Planlama", "Devam Ediyor", "Beklemede", "Tamamlandı"]);
     const extra = projectStatusSelectGroups("keşif");
     expect(extra[0].options.some((o) => o.value === "keşif" && o.label === "keşif")).toBe(true);
+    const custom = projectStatusSelectGroups("active", [{ key: "active", label: "Uygulama" }, { key: "done", label: "Bitti", is_final: true }]);
+    expect(custom[0].options.map((o) => o.label)).toEqual(["Uygulama", "Bitti"]);
+    expect(workStatusSelectGroups("quote", "draft")[0].options.map((o) => o.value)).toEqual(["draft", "sent", "accepted", "rejected"]);
+    expect(workStatusSelectGroups("survey", "planned")[0].label).toBe("Durum");
   });
 
   it("prefers the line photo then the stock card image", () => {

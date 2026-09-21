@@ -6,6 +6,7 @@ import { get, post, put } from "../api/client";
 import { normalizeApiBase } from "../api/url";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
+import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -75,6 +76,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [refreshing, setRefreshing] = useState(false);
   const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
+  const [previewProject, setPreviewProject] = useState<ProjectDoc | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
@@ -198,6 +200,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         <ProjectCard
           key={r.id}
           project={r.project!}
+          stages={projectStages}
           canEdit={canEdit}
           canExp={canExp}
           canQuote={canQuote}
@@ -205,6 +208,8 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           onStatus={(status) => setProjectStatus(r.id, status)}
           onTeam={() => setTeamProject(r.project!)}
           onTrack={() => setTrackProject(r.project!)}
+          onPhotos={(id, patch) => patchProject(id, patch)}
+          onPreview={() => setPreviewProject(r.project!)}
         />
       )) : filtered.map((r) => (
         <ListRow
@@ -237,6 +242,20 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
         onMinted={(id, tracking) => patchProject(id, { tracking })}
         onError={setError}
       />
+      <B2BSheet
+        visible={!!previewProject}
+        title="Yapılan işler"
+        subtitle={previewProject ? `${previewProject.contact_name || "Müşteri"} · takip linkinde böyle görünür` : undefined}
+        onClose={() => setPreviewProject(null)}
+        testID="project-work-preview-sheet"
+      >
+        {previewProject ? (
+          <ProjectWorkPreview
+            project={projects.find((p) => idOf(p) === idOf(previewProject)) || previewProject}
+            stages={projectStages}
+          />
+        ) : null}
+      </B2BSheet>
     </Screen>
   );
 }
@@ -329,6 +348,7 @@ function openProjectLocation(project: ProjectDoc) {
 
 function ProjectCard({
   project,
+  stages,
   canEdit,
   canExp,
   canQuote,
@@ -336,8 +356,11 @@ function ProjectCard({
   onStatus,
   onTeam,
   onTrack,
+  onPhotos,
+  onPreview,
 }: {
   project: ProjectDoc;
+  stages: ProjectStage[];
   canEdit: boolean;
   canExp: boolean;
   canQuote: boolean;
@@ -345,6 +368,8 @@ function ProjectCard({
   onStatus: (status: string) => void;
   onTeam: () => void;
   onTrack: () => void;
+  onPhotos: (id: string, patch: Pick<ProjectDoc, "stage_photos" | "images">) => void;
+  onPreview: () => void;
 }) {
   const id = idOf(project);
   const bits = projectCardBits(project);
@@ -398,6 +423,14 @@ function ProjectCard({
           />
         </View>
       ) : null}
+      <ProjectStagePhotos
+        project={project}
+        stages={stages}
+        editable={canEdit}
+        onChanged={(patch) => onPhotos(id, patch)}
+        onPreview={onPreview}
+        testID={`project-stage-photos-${id}`}
+      />
       <View style={{ gap: 6, marginTop: 8 }}>
         <Row style={{ flexWrap: "wrap" }}>
           {canQuote ? (
@@ -672,7 +705,7 @@ function ProjectTrackSheet({
       testID="project-track-sheet"
     >
       <ErrorBanner message={localError} />
-      <Muted>SMS, WhatsApp veya e-posta ile gönderin; ya da yalnız link üretin.</Muted>
+      <Muted>SMS, WhatsApp veya e-posta ile gönderin; ya da yalnız link üretin. Aşama fotoğrafları müşteri sayfasında “Yapılan işler” olarak görünür.</Muted>
       <Row style={{ flexWrap: "wrap", gap: 6, marginVertical: 8 }}>
         {(["sms", "email", "whatsapp"] as const).map((k) => (
           <Chip

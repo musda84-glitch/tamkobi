@@ -1,4 +1,4 @@
-import { coordText, coordValue, mapsLink, mapsSearchUrl, mapsUrlFor, parseMapsUrl } from "./geo";
+import { coordText, coordValue, locationPickerSummary, mapsLink, mapsSearchUrl, mapsUrlFor, parseMapsUrl } from "./geo";
 
 describe("geo", () => {
   it("parses coordinates from the maps links web accepts", () => {
@@ -25,5 +25,11 @@ describe("geo", () => {
     expect(coordValue("abc")).toBeNull();
     expect(coordText(null)).toBe("");
     expect(coordText(41.5)).toBe("41.5");
+  });
+
+  it("summarizes a collapsed location picker", () => {
+    expect(locationPickerSummary({ url: "", lat: "", lng: "" })).toBe("Kapalı");
+    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var");
+    expect(locationPickerSummary({ url: "", lat: "41.01", lng: "28.97" })).toBe("41.01, 28.97");
   });
 });

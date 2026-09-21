@@ -12,6 +12,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { DateField } from "../components/DateField";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
+import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
@@ -21,6 +22,8 @@ import type { Contact, Product } from "../types";
 import { VAT_OPTIONS } from "../utils/documentLines";
 import { go } from "../nav";
 import { coordText, mapsLink } from "../utils/geo";
+import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
+import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
@@ -35,9 +38,6 @@ import {
   type ExpenseDraft,
 } from "../utils/finance";
 import {
-  PROJECT_STATUSES,
-  QUOTE_STATUSES,
-  SURVEY_STATUSES,
   emptyItem,
   hydrateWorkItem,
   namedItems,
@@ -45,6 +45,7 @@ import {
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   projectQuoteNavParams,
+  workStatusSelectGroups,
   removeWorkItem,
   projectPayload,
   quotePayload,
@@ -124,7 +125,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [notes, setNotes] = useState("");
   const [address, setAddress] = useState("");
   const [budget, setBudget] = useState("");
-  const [startDate, setStartDate] = useState("");
+  const [startDate, setStartDate] = useState(kind === "project" ? todayIso() : "");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
   const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
@@ -135,6 +136,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
   const [project, setProject] = useState<ProjectDoc | null>(null);
+  const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
+  const [workPreview, setWorkPreview] = useState(false);
   const [survey, setSurvey] = useState<SurveyDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -196,13 +199,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setContactId(p.contact_id || "");
         setContactName(p.contact_name || "");
         setBudget(String(p.budget ?? ""));
-        setStartDate(String(p.start_date || "").slice(0, 10));
+        setStartDate(String(p.start_date || todayIso()).slice(0, 10));
         setEndDate(String(p.end_date || "").slice(0, 10));
         setNotes(p.description || "");
         setAddress(p.address || "");
         setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
         setPhotos(p.images || []);
         setStatus(p.status || "planning");
+        const stages = await get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] }));
+        setProjectStages(normalizeProjectStages(stages?.stages));
         const expList = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] }));
         setProjectExpenses(expList.expenses || []);
       } else {
@@ -251,7 +256,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const totals = workItemTotals(pricedItems);
   const custHits = custQ.trim().length < 2 ? [] : contacts.filter((c) => [c.name, c.phone].some((v) => String(v || "").toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 8);
   const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
-  const statuses = kind === "quote" ? QUOTE_STATUSES : kind === "project" ? PROJECT_STATUSES : SURVEY_STATUSES;
+  const statusGroups = workStatusSelectGroups(kind, status, projectStages);
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
     setItems((rows) => rows.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
@@ -529,14 +534,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
 
       {!isNew ? (
-        <>
-          <Muted>Durum · {statusTr(status)}</Muted>
-          <Row style={{ flexWrap: "wrap" }}>
-            {statuses.map((s) => (
-              <Chip key={s.key} label={s.label} active={status === s.key} onPress={() => canEdit && setStatus(s.key)} />
-            ))}
-          </Row>
-        </>
+        <GroupedSelect
+          dense
+          label="Durum"
+          testID={`${kind}-status`}
+          value={status}
+          onChange={(v) => canEdit && setStatus(v)}
+          groups={statusGroups}
+          emptyLabel="Durum seçin"
+        />
       ) : null}
 
       {kind !== "project" ? (
@@ -637,14 +643,28 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "quote" ? (
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
       ) : null}
-      <ImageUploader
-        entity={kind}
-        entityId={docId}
-        images={photos}
-        onUploaded={(url) => setPhotos((prev) => [...prev, url])}
-        editable={canEdit}
-        testID="work-photos"
-      />
+      {kind === "project" && project ? (
+        <ProjectStagePhotos
+          project={project}
+          stages={projectStages}
+          editable={canEdit}
+          onChanged={(patch: { stage_photos: StagePhoto[]; images: string[] }) => {
+            setProject((cur) => (cur ? { ...cur, ...patch } : cur));
+            setPhotos(patch.images);
+          }}
+          onPreview={() => setWorkPreview(true)}
+          testID="project-stage-photos"
+        />
+      ) : (
+        <ImageUploader
+          entity={kind}
+          entityId={docId}
+          images={photos}
+          onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          editable={canEdit}
+          testID="work-photos"
+        />
+      )}
 
       <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       {isNew || kind !== "quote" ? (
@@ -672,9 +692,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               onPress={() => router.push({ pathname: "/expenses/[id]", params: { id: idOf(e) } })}
             />
           ))}
-          {!isNew && (canExp || canEdit) ? (
-            <PrimaryButton title="Masraf ekle" color={colors.danger} testID="project-expense-card-btn" onPress={openProjectExpense} />
-          ) : null}
         </Card>
       ) : null}
       {!isNew && kind === "quote" && quote ? (
@@ -735,6 +752,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           onPress={saveProjectExpense}
           testID="proj-exp-save"
         />
+      </B2BSheet>
+      <B2BSheet
+        visible={workPreview && !!project}
+        title="Yapılan işler"
+        subtitle={project ? `${project.contact_name || "Müşteri"} · takip linkinde böyle görünür` : undefined}
+        onClose={() => setWorkPreview(false)}
+        testID="project-work-preview-sheet"
+      >
+        {project ? <ProjectWorkPreview project={project} stages={projectStages} /> : null}
       </B2BSheet>
     </Screen>
   );

@@ -51,14 +51,19 @@ export async function resolveUploadBlob(
   return { blob: await readFile(uri), name };
 }
 
-export function imageUploadRequest(entity: ImageEntity, entityId: string, companyId?: string) {
+export function imageUploadRequest(
+  entity: ImageEntity,
+  entityId: string,
+  companyId?: string,
+  extra?: { stage?: string; stage_label?: string },
+) {
   if (entity === "product") {
     return { path: `/products/${entityId}/image`, query: undefined as Record<string, string> | undefined };
   }
-  return {
-    path: "/files/upload",
-    query: { entity, entity_id: entityId, company_id: companyId || "" },
-  };
+  const query: Record<string, string> = { entity, entity_id: entityId, company_id: companyId || "" };
+  if (extra?.stage) query.stage = extra.stage;
+  if (extra?.stage_label) query.stage_label = extra.stage_label;
+  return { path: "/files/upload", query };
 }
 
 export function uploadedImageUrl(res: unknown): string {
