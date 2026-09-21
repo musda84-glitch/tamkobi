@@ -401,6 +401,29 @@ export function invoiceItemsPayload(items: InvoiceLine[]) {
   };
 }
 
+/** Draft PUT: kalemler + genel iskonto. Tutar modunda oranı gönderme — backend oranı görünce tutarı sıfırlar. */
+export function invoiceDipPayload(
+  items: InvoiceLine[],
+  gdMode: GdMode,
+  gdValue: number,
+): { items: ReturnType<typeof invoiceItemsPayload>["items"]; general_discount_rate?: number; general_discount_amount?: number } {
+  const body = invoiceItemsPayload(items);
+  const v = num(gdValue);
+  if (gdMode === "percent") return { ...body, general_discount_rate: v };
+  if (!v) return { ...body, general_discount_rate: 0 };
+  return { ...body, general_discount_amount: v };
+}
+
+export function invoiceDetailTotals(inv: Invoice, gdMode?: GdMode, gdValue?: number): InvoiceTotals {
+  const d = draftFromInvoice(inv);
+  if (gdMode) {
+    d.gdMode = gdMode;
+    d.general_discount_rate = gdMode === "percent" ? num(gdValue) : 0;
+    d.general_discount_amount = gdMode === "amount" ? num(gdValue) : 0;
+  }
+  return invoiceTotals(d);
+}
+
 export function canDeleteInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
   if (inv.status === "draft") return true;

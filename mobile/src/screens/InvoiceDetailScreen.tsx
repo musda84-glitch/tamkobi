@@ -5,7 +5,7 @@ import { Alert, Platform, Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
-import { Chip } from "../components/chips";
+import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
@@ -19,10 +19,12 @@ import {
   canDeleteInvoice,
   canEditInvoiceItems,
   E_TYPES,
-  invoiceItemsPayload,
+  invoiceDetailTotals,
+  invoiceDipPayload,
   isGibIssued,
   isIncomingPurchasePending,
   remainingAmount,
+  type GdMode,
 } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
@@ -56,6 +58,8 @@ export function InvoiceDetailScreen() {
   const [busy, setBusy] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string; unit_price: string; vat_rate: number } | null>(null);
+  const [gdMode, setGdMode] = useState<GdMode>("amount");
+  const [gdValue, setGdValue] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +67,15 @@ export function InvoiceDetailScreen() {
       setInv(data);
       setDueDate(String(data.due_date || "").slice(0, 10));
       setNotes(data.notes || "");
+      const rate = Number(data.general_discount_rate || 0);
+      const amt = Number(data.general_discount_amount || 0);
+      if (rate) {
+        setGdMode("percent");
+        setGdValue(String(rate));
+      } else {
+        setGdMode("amount");
+        setGdValue(amt ? String(amt) : "");
+      }
       const left = remainingAmount(data);
       setPayAmount(left ? String(left) : "");
       setError(null);
@@ -110,14 +123,24 @@ export function InvoiceDetailScreen() {
   const draft = inv.status === "draft";
   const itemsEditable = canEdit && canEditInvoiceItems(inv);
   const lines = inv.items || [];
+  const totals = invoiceDetailTotals(inv, gdMode, n(gdValue));
+  const gdNum = n(gdValue);
 
-  const persistItems = (next: typeof lines) =>
+  const persistItems = (next: typeof lines, okMsg = "Kalemler güncellendi.") =>
     run(async () => {
-      await put(client, `/invoices/${id}`, invoiceItemsPayload(next.map((it) => hydrateLine(it))));
-      setMessage("Kalemler güncellendi.");
+      await put(client, `/invoices/${id}`, invoiceDipPayload(next.map((it) => hydrateLine(it)), gdMode, gdNum));
+      setMessage(okMsg);
       setEditLine(null);
       setOpenRow(null);
     }, "Kalemler kaydedilemedi.");
+
+  const saveDip = () => {
+    if (!itemsEditable) {
+      setError("Kesilmiş faturada dip toplam değiştirilemez. Taslakken genel iskontoyu güncelleyin.");
+      return;
+    }
+    persistItems(lines, "Dip toplamlar güncellendi.");
+  };
 
   const blockedItems = () => {
     setOpenRow(null);
@@ -205,7 +228,7 @@ export function InvoiceDetailScreen() {
           {inv.payment_status ? <Badge label={statusTr(inv.payment_status)} tone={inv.payment_status === "paid" ? "green" : "amber"} /> : null}
           {inv.trade_kind ? <Badge label={tradeKindTr(inv.trade_kind)} tone="indigo" /> : null}
         </Row>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }}>{fmtMoney(inv.grand_total, inv.currency)}</Text>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }} testID="inv-header-total">{fmtMoney(totals.grandTotal, inv.currency)}</Text>
         <Muted>Ödenen {fmtMoney(inv.paid_amount, inv.currency)} · kalan {fmtMoney(leftover, inv.currency)} · vade {fmtDate(inv.due_date)}</Muted>
         {inv.gib_status ? <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted> : null}
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
@@ -235,6 +258,55 @@ export function InvoiceDetailScreen() {
           </SwipeRevealRow>
         );
       })}
+
+      <Card testID="inv-dip-totals">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Dip toplamlar</Text>
+        <Row style={{ justifyContent: "space-between" }}><Muted>Mal / hizmet</Muted><Text style={{ fontWeight: "700" }}>{fmtMoney(totals.itemsSum, inv.currency)}</Text></Row>
+        {totals.lineDiscount > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Satır iskontoları</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.lineDiscount, inv.currency)}</Text></Row>
+        ) : null}
+        <Muted>Genel iskonto</Muted>
+        {itemsEditable ? (
+          <>
+            <Row>
+              <Chip label="%" active={gdMode === "percent"} onPress={() => setGdMode("percent")} testID="gd-mode-percent" />
+              <Chip label="₺" active={gdMode === "amount"} onPress={() => setGdMode("amount")} testID="gd-mode-amount" />
+            </Row>
+            <Field
+              label={gdMode === "percent" ? "Genel iskonto %" : "Genel iskonto tutarı"}
+              testID="general-discount-input"
+              value={gdValue}
+              onChangeText={setGdValue}
+              keyboardType="decimal-pad"
+            />
+          </>
+        ) : (
+          <Muted>{inv.general_discount_rate ? `%${inv.general_discount_rate}` : fmtMoney(inv.general_discount_amount || 0, inv.currency)}</Muted>
+        )}
+        {totals.gd > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Genel iskonto</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.gd, inv.currency)}</Text></Row>
+        ) : null}
+        <Row style={{ justifyContent: "space-between" }}><Muted>Ara toplam</Muted><Text style={{ fontWeight: "700" }} testID="inv-dip-subtotal">{fmtMoney(totals.subtotal, inv.currency)}</Text></Row>
+        <Row style={{ justifyContent: "space-between" }}><Muted>Toplam KDV</Muted><Text style={{ fontWeight: "700" }} testID="inv-vat-total">{fmtMoney(totals.vat, inv.currency)}</Text></Row>
+        {totals.withholding > 0 ? (
+          <Row style={{ justifyContent: "space-between" }}><Muted>Tevkifat</Muted><Text style={{ fontWeight: "700", color: colors.indigo }}>-{fmtMoney(totals.withholding, inv.currency)}</Text></Row>
+        ) : null}
+        <Row style={{ justifyContent: "space-between" }}>
+          <Text style={{ fontSize: 18, fontWeight: "800" }}>{totals.withholding > 0 ? "Ödenecek" : "Genel toplam"}</Text>
+          <Text style={{ fontSize: 18, fontWeight: "800", color: colors.primary }} testID="inv-grand-total">{fmtMoney(totals.grandTotal, inv.currency)}</Text>
+        </Row>
+        {itemsEditable ? (
+          <PrimaryButton
+            title={busy ? "Kaydediliyor…" : "Dip toplamı kaydet"}
+            testID="inv-dip-save"
+            color={colors.primary}
+            loading={busy}
+            onPress={saveDip}
+          />
+        ) : (
+          <Muted>Kesilmiş belgede dip toplam GİB kaydına bağlıdır; kalem veya iskonto değiştirilemez.</Muted>
+        )}
+      </Card>
 
       {canEdit && draft ? (
         <PrimaryButton title="Taslağı düzenle" onPress={() => go("InvoiceEdit", { id })} color={colors.primary} testID="inv-edit" />

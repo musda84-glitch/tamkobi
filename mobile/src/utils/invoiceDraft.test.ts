@@ -3,6 +3,8 @@ import {
   canDeleteInvoice,
   canEditInvoiceItems,
   createInvoiceButtonLabel,
+  invoiceDetailTotals,
+  invoiceDipPayload,
   invoiceItemsPayload,
   invoiceListSubtitle,
   draftFromInvoice,
@@ -137,6 +139,29 @@ describe("invoiceDraft", () => {
     ]);
     expect(body.items[0].name).toBe("Raf");
     expect(body.items[0].quantity).toBe(2);
+  });
+
+  it("invoiceDipPayload keeps amount-mode discount and live-updates detail totals", () => {
+    const lines = [
+      { product_id: "p1", name: "Raf", product_name: "Raf", sku: "", quantity: 1, unit: "Adet", unit_price: 200, unit_price_incl: 220, vat_rate: 10, discount_rate: 0, total: 200, total_incl: 220, vat_amount: 20, is_service: false },
+    ];
+    const pct = invoiceDipPayload(lines, "percent", 10);
+    expect(pct.general_discount_rate).toBe(10);
+    expect(pct.general_discount_amount).toBeUndefined();
+    const amt = invoiceDipPayload(lines, "amount", 25);
+    expect(amt.general_discount_amount).toBe(25);
+    expect(amt.general_discount_rate).toBeUndefined();
+    const cleared = invoiceDipPayload(lines, "amount", 0);
+    expect(cleared.general_discount_rate).toBe(0);
+    const live = invoiceDetailTotals(
+      { items: lines, general_discount_rate: 0, general_discount_amount: 0 },
+      "amount",
+      20,
+    );
+    expect(live.gd).toBeCloseTo(20);
+    expect(live.subtotal).toBeCloseTo(180);
+    expect(live.vat).toBeCloseTo(18);
+    expect(live.grandTotal).toBeCloseTo(198);
   });
 
   it("deletes drafts and unpaid paper, not issued e-docs", () => {
