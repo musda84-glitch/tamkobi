@@ -2,10 +2,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
-import { MoreVertical, Printer, Pencil, Trash2, Lock, X } from "lucide-react";
+import { MoreVertical, Printer, Pencil, Trash2, Lock, X, Link2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL } from "../context/AuthContext";
 import { ReceiptPrint } from "./ReceiptPrint";
+import { BankMatchModal } from "./BankMatchModal";
 
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
@@ -26,17 +27,22 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
   const [open, setOpen] = useState(false);
   const [receipt, setReceipt] = useState(false);
   const [editTx, setEditTx] = useState(null);
+  const [matchTx, setMatchTx] = useState(null);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef(null);
   const menuRef = useRef(null);
   const txId = tx.id || tx._id;
   const locked = isLockedTx(tx);
+  const isBankSync = tx?.source === "bank_sync";
+  const isMatched = isBankSync && tx?.match_status === "matched";
+  const needsMatch = isBankSync && tx?.match_status !== "matched";
+  const companyId = company?.id || company?._id || tx?.company_id;
 
   const placeMenu = () => {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
     const menuW = 220;
-    const menuH = 148;
+    const menuH = isBankSync ? 220 : 148;
     const openUp = r.bottom + menuH + 8 > window.innerHeight;
     setMenuPos({
       top: openUp ? Math.max(8, r.top - menuH - 4) : r.bottom + 4,
@@ -65,6 +71,24 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
   };
 
   const onPrint = () => { setOpen(false); setReceipt(true); };
+
+  const onMatch = () => {
+    setOpen(false);
+    setMatchTx(tx);
+  };
+
+  const onFixMatch = async () => {
+    setOpen(false);
+    if (!window.confirm("Mevcut eşleşme geri alınsın ve yeniden eşleştirilsin mi? Cari bakiye / fatura / virman etkileri düzeltilir.")) return;
+    try {
+      await axios.post(`${API_URL}/banking/transactions/${txId}/unmatch`);
+      toast.success("Eşleşme geri alındı; yeni eşleşmeyi seçin.");
+      setMatchTx({ ...tx, match_status: "unmatched", contact_id: null, contact_name: null, related_invoice_id: null, target_account_id: null });
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Eşleşme geri alınamadı.");
+    }
+  };
 
   const onEdit = () => {
     if (locked) {
@@ -144,6 +168,26 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
           <button type="button" onClick={onPrint} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100" data-testid={`tx-print-btn-${txId}`}>
             <Printer className="w-4 h-4 shrink-0" /> Hareket makbuzu yazdır
           </button>
+          {needsMatch && (
+            <button
+              type="button"
+              onClick={onMatch}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-violet-700 hover:bg-violet-50"
+              data-testid={`tx-match-btn-${txId}`}
+            >
+              <Link2 className="w-4 h-4 shrink-0" /> Eşleşme
+            </button>
+          )}
+          {isMatched && (
+            <button
+              type="button"
+              onClick={onFixMatch}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-amber-800 hover:bg-amber-50"
+              data-testid={`tx-fix-match-btn-${txId}`}
+            >
+              <Undo2 className="w-4 h-4 shrink-0" /> Eşleşme düzelt
+            </button>
+          )}
           <button
             type="button"
             onClick={onEdit}
@@ -215,6 +259,16 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
           </form>
         </div>,
         document.body
+      )}
+      {matchTx && (
+        <BankMatchModal
+          tx={matchTx}
+          contacts={contacts}
+          accounts={accounts}
+          companyId={companyId}
+          onClose={() => setMatchTx(null)}
+          onDone={() => onChanged?.()}
+        />
       )}
     </>
   );
