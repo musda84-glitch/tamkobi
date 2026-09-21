@@ -1,5 +1,6 @@
 import { splitPaymentTarget } from "./finance";
 import { idOf } from "./money";
+import { hoursFromTimeRange } from "./overtimeRange";
 
 export type Employee = {
   id?: string;
@@ -317,8 +318,13 @@ export function advancePayload(employeeId: string, amount: string, period: strin
   };
 }
 
-export function validateOvertime(hours: string): string | null {
-  if (!String(hours || "").trim()) return "Mesai saati girin.";
+export function validateOvertime(hours: string, start?: string, end?: string): string | null {
+  const ranged = hoursFromTimeRange(start, end);
+  if (ranged != null && ranged > 0) return null;
+  const clock = hoursFromTimeRange("00:00", hours);
+  if (clock != null && clock > 0) return null;
+  if (!String(hours || "").trim() && !(start || end)) return "Mesai saati veya saat aralığı girin.";
+  if (start || end) return "Saat aralığını başlangıç ve bitiş olarak girin.";
   const n = num(hours);
   if (!(n > 0)) return "Mesai saati 0'dan büyük olmalı.";
   return null;
@@ -329,12 +335,23 @@ export function validateIsoDate(date: string): string | null {
   return null;
 }
 
-export function overtimePayload(employeeId: string, date: string, hours: string, note: string) {
+export function overtimePayload(
+  employeeId: string,
+  date: string,
+  hours: string,
+  note: string,
+  start?: string,
+  end?: string,
+) {
+  const ranged = hoursFromTimeRange(start, end);
+  const clock = hoursFromTimeRange("00:00", hours);
   return {
     employee_id: employeeId,
     date: date.trim(),
-    hours: Math.round(num(hours) * 100) / 100,
+    hours: ranged != null ? ranged : clock != null ? clock : Math.round(num(hours) * 100) / 100,
     note: note.trim(),
+    ...(start ? { start_time: start } : {}),
+    ...(end ? { end_time: end } : {}),
   };
 }
 

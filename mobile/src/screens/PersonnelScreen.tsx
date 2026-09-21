@@ -6,6 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
@@ -76,6 +77,8 @@ export function PersonnelScreen() {
   const [calc, setCalc] = useState<SalaryCalc | null>(null);
   const [otEmp, setOtEmp] = useState<Employee | null>(null);
   const [otHours, setOtHours] = useState("");
+  const [otStart, setOtStart] = useState("");
+  const [otEnd, setOtEnd] = useState("");
   const [otDate, setOtDate] = useState(todayIso());
   const [otNote, setOtNote] = useState("");
   const [taskEmp, setTaskEmp] = useState<Employee | null>(null);
@@ -179,17 +182,19 @@ export function PersonnelScreen() {
   const openOvertime = (emp: Employee) => {
     setOtEmp(emp);
     setOtHours("");
+    setOtStart("");
+    setOtEnd("");
     setOtDate(todayIso());
     setOtNote("");
   };
 
   const saveOvertime = async () => {
     if (!otEmp) return;
-    const invalid = validateOvertime(otHours) || validateIsoDate(otDate);
+    const invalid = validateOvertime(otHours, otStart, otEnd) || validateIsoDate(otDate);
     if (invalid) { setError(invalid); return; }
     setBusy(true);
     try {
-      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote));
+      const r = await put<{ message?: string }>(client, "/personnel/attendance/assign-overtime", overtimePayload(idOf(otEmp), otDate, otHours, otNote, otStart, otEnd));
       setOtEmp(null);
       setMessage(r?.message || `${otEmp.full_name} için fazla mesai yazıldı.`);
       await load();
@@ -581,13 +586,20 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!otEmp}
         title="+ Mesai yaz"
-        subtitle={otEmp ? `${otEmp.full_name} · beklenen çıkış mesai bitişi + atanan saat` : undefined}
+        subtitle={otEmp ? `${otEmp.full_name} · saat aralığı (örn. 18:00–20:30)` : undefined}
         onClose={() => setOtEmp(null)}
         testID="overtime-assign-sheet"
       >
-        <Field label="Tarih" testID="ot-date-input" value={otDate} onChangeText={setOtDate} placeholder="YYYY-MM-DD" />
-        <Field label="Saat" testID="ot-hours-input" value={otHours} onChangeText={setOtHours} keyboardType="numeric" placeholder="Örn: 2" />
-        <Field label="Not" testID="ot-note-input" value={otNote} onChangeText={setOtNote} placeholder="Opsiyonel" />
+        <OvertimeAssignFields
+          value={{ date: otDate, start: otStart, end: otEnd, hours: otHours, note: otNote }}
+          onChange={(next) => {
+            setOtDate(next.date);
+            setOtStart(next.start);
+            setOtEnd(next.end);
+            setOtHours(next.hours);
+            setOtNote(next.note);
+          }}
+        />
         <PrimaryButton title="Mesaiyi kaydet" testID="ot-save-btn" color={colors.indigo} loading={busy} onPress={saveOvertime} />
       </B2BSheet>
 

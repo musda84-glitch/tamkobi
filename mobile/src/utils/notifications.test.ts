@@ -4,9 +4,11 @@ import {
   notificationLook,
   notificationRoute,
   notificationTitle,
+  liveBadgeCounts,
   tileBadgeLabel,
   tileBadges,
   unreadByTile,
+  unreadFromBadges,
   unreadCount,
   visibleNotifications,
 } from "./notifications";
@@ -53,6 +55,22 @@ describe("tileBadges", () => {
       [{ type: "b2b_order", is_read: false }, { type: "order_pick_missing", is_read: false }],
       { orders: 5, personnel: 2, banking: 0, sevk: 8, atolye: 4 },
     )).toEqual({ orders: "5", sevk: "8", personnel: "2", atolye: "4" });
+  });
+
+  it("hides a tile when live work is zero even if unread notes remain", () => {
+    expect(tileBadges(
+      [{ type: "b2b_order", is_read: false }, { type: "b2b_order", is_read: false }, { type: "b2b_order", is_read: false }],
+      { orders: 0 },
+    )).toEqual({});
+  });
+});
+
+describe("liveBadgeCounts", () => {
+  it("reads the cheap tile-badges payload", () => {
+    expect(liveBadgeCounts({ orders: 4, sevk: 0, unread: 9 })).toEqual({
+      orders: 4, sevk: 0, personnel: 0, banking: 0, atolye: 0, edoc: 0,
+    });
+    expect(unreadFromBadges({ unread: 9 })).toBe(9);
   });
 });
 

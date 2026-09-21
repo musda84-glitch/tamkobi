@@ -3,6 +3,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { useBadges } from "../auth/BadgeContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, Muted, Row, Screen, StatRows } from "../components/kit";
 import { NotificationsPanel } from "../components/NotificationsPanel";
@@ -10,20 +11,17 @@ import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
-import { pendingEdocCount, type EdocInboxList } from "../utils/edocInbox";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
-import { pendingSevkCount, type PickRow } from "../utils/orderPick";
 import { hasSelfPersonnelRecord, showHomeFinanceSummary } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
-import { openWorkOrderCount, type WorkOrder } from "../utils/shopFloor";
 
 export function HomeScreen() {
-  const { client, companyId, user, license, can } = useAuth();
+  const { client, companyId, user, license } = useAuth();
+  const { live, refresh: refreshBadges } = useBadges();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
-  const [liveBadges, setLiveBadges] = useState<Partial<Record<string, number>>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -33,7 +31,7 @@ export function HomeScreen() {
     [user, license]
   );
 
-  const badges = useMemo(() => tileBadges(notes, liveBadges), [notes, liveBadges]);
+  const badges = useMemo(() => tileBadges(notes, live), [notes, live]);
 
   const quickItems: ActionTile[] = useMemo(
     () => tiles.map((tile) => ({
@@ -53,28 +51,17 @@ export function HomeScreen() {
     setRefreshing(true);
     try {
       const staff = hasSelfPersonnelRecord(user);
-      const [ov, list, st, pending, ops, unmatched, picks, wos, inbox, me] = await Promise.all([
+      const [ov, list, st, me] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         showFinance
           ? get<DashboardStats>(client, "/dashboard/stats", { company_id: companyId }).catch(() => null)
           : Promise.resolve(null),
-        get<{ count?: number }>(client, "/personnel/pending-requests", { company_id: companyId }).catch(() => null),
-        get<{ groups?: { key?: string; count?: number }[] }>(client, "/dashboard/ops-alerts", { company_id: companyId }).catch(() => null),
-        get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
-        get<PickRow[]>(client, "/order-picks", { company_id: companyId }).catch(() => []),
-        can("/atolye")
-          ? get<WorkOrder[]>(client, "/production/work-orders", { company_id: companyId, status: "ready,in_progress,paused" }).catch(() => [])
-          : Promise.resolve([] as WorkOrder[]),
-        can("/edoc-inbox")
-          ? get<EdocInboxList>(client, "/edocs/inbox", { company_id: companyId, status: "pending" }).catch(() => null)
-          : Promise.resolve(null),
         staff
           ? get<{ tasks?: { done?: boolean }[]; work_orders?: unknown[] }>(client, "/personnel/me").catch(() => null)
           : Promise.resolve(null),
+        refreshBadges(),
       ]);
-      const pendingOrders = Number((ov?.tasks || []).find((t) => t.key === "pending_orders")?.count || 0);
-      const newOrders = Number((ops?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
       const homeTasks = visibleHomeTasks(ov?.tasks, user, {
         openTasks: (me?.tasks || []).filter((t) => !t.done).length,
         openWorkOrders: (me?.work_orders || []).length,
@@ -82,21 +69,13 @@ export function HomeScreen() {
       setOverview(ov ? { ...ov, tasks: homeTasks } : ov);
       setNotes(visibleNotifications(list || [], user));
       setStats(st);
-      setLiveBadges({
-        orders: Math.max(pendingOrders, newOrders),
-        sevk: pendingSevkCount({ picks, tasks: ov?.tasks, ops: ops?.groups }),
-        personnel: Number(pending?.count || 0),
-        banking: Array.isArray(unmatched) ? unmatched.length : 0,
-        atolye: openWorkOrderCount(wos),
-        edoc: pendingEdocCount(inbox?.counts),
-      });
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Özet yüklenemedi."));
     } finally {
       setRefreshing(false);
     }
-  }, [can, client, companyId, showFinance, user]);
+  }, [client, companyId, refreshBadges, showFinance, user]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -105,9 +84,10 @@ export function HomeScreen() {
     if (id && !n.is_read) {
       setNotes((prev) => prev.map((x) => (idOf(x) === id ? { ...x, is_read: true } : x)));
       post(client, `/notifications/${id}/read`, {}).catch(() => { /* okundu işareti kritik değil */ });
+      refreshBadges();
     }
     goHref(notificationRoute(n) || "/notifications");
-  }, [client]);
+  }, [client, refreshBadges]);
 
   const profitRow = netProfitRow(stats);
 

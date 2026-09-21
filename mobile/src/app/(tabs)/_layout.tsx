@@ -1,4 +1,5 @@
 import { useAuth } from "@/auth/AuthContext";
+import { useBadges } from "@/auth/BadgeContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
@@ -14,9 +15,11 @@ function tabIconColor(color: unknown): string {
 
 export default function TabsLayout() {
   const { can, moduleOn, user, activeCompany, license, baseUrl } = useAuth();
+  const { unread } = useBadges();
   const show = (path: string) => can(path) && moduleOn(path);
   const selfTabs = showSelfPersonnelTabs(user, license);
   const financeTabs = showFinanceSubstituteTabs(user);
+  const homeBadge = unread > 99 ? "99+" : unread > 0 ? unread : undefined;
   return (
     <Tabs
       screenOptions={{
@@ -42,6 +45,8 @@ export default function TabsLayout() {
               logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url)}
             />
           ),
+          tabBarBadge: homeBadge,
+          tabBarBadgeStyle: { backgroundColor: colors.danger, color: "#fff", fontSize: 10, fontWeight: "800" },
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
       />

@@ -96,6 +96,7 @@ import order_pick
 import platform_mail
 import applog
 import mail_tracking
+import stock_moves
 
 applog.setup_logging()
 import addons
@@ -2139,6 +2140,54 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
     ]
     total = sum(g["count"] for g in groups)
     return {"count": total, "groups": groups}
+
+
+@api_router.get("/dashboard/tile-badges")
+async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_main_01"):
+    """Ana ekran kutucuk rozetleri: tam liste yok, sadece bekleyen iş sayıları."""
+    pending_orders, incoming, pick_missing, pickable, leaves, early, intraday, disputes, advances, unmatched, atolye, edoc, notes = await asyncio.gather(
+        db.orders.count_documents({"company_id": company_id, "order_status": "pending"}),
+        db.orders.count_documents(_incoming_orders_query(company_id)),
+        db.notifications.count_documents({
+            "company_id": company_id,
+            "type": {"$in": ["order_pick_missing", "order_pick_production"]},
+            "is_read": False,
+        }),
+        db.orders.count_documents({"company_id": company_id, "order_status": {"$in": list(order_pick.PICKABLE)}}),
+        db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "early_leave_request.status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "intraday_leave_request.status": "pending"}),
+        db.attendance.count_documents({
+            "company_id": company_id,
+            "dispute_note": {"$exists": True, "$nin": [None, ""]},
+            "dispute_resolved": {"$ne": True},
+        }),
+        db.bonus_payments.count_documents({"company_id": company_id, "type": "advance", "source": "self", "status": "pending"}),
+        db.bank_transactions.count_documents({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}),
+        db.work_orders.count_documents({"company_id": company_id, "status": {"$in": ["ready", "in_progress", "paused"]}}),
+        db.incoming_edocs.count_documents({"company_id": company_id, "status": "pending"}),
+        db.notifications.find({"company_id": company_id, "is_read": False}).sort("created_at", -1).to_list(80),
+    )
+    user = None
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    import notify as _notify
+    from tile_badges import tile_badge_payload
+    unread = len(_notify.filter_notifications(notes or [], user))
+    return tile_badge_payload(
+        pending_orders=pending_orders,
+        incoming_orders=incoming,
+        pickable=pickable,
+        pick_missing=pick_missing,
+        personnel=int(leaves or 0) + int(early or 0) + int(intraday or 0) + int(disputes or 0) + int(advances or 0),
+        unmatched=unmatched,
+        atolye=atolye,
+        edoc=edoc,
+        unread=unread,
+    )
+
 
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -4539,33 +4588,71 @@ async def product_purchase_costs(product_id: str, company_id: Optional[str] = No
 
 @api_router.get("/products/{product_id}/movements")
 async def list_product_movements(product_id: str, limit: int = 80):
-    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "purchase_price": 1, "company_id": 1})
+    product = await db.products.find_one({"$or": [{"_id": product_id}, {"id": product_id}]})
     if not product:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(max(1, min(int(limit or 80), 200)))
+    cap = max(1, min(int(limit or 80), 200))
+    company_id = product.get("company_id")
+    pids = stock_moves.product_ids_of(product, product_id)
+    sku = (product.get("sku") or "").strip()
+    barcode = (product.get("barcode") or "").strip()
+    name = (product.get("name") or "").strip()
+    item_or = [{"items.product_id": {"$in": pids}}]
+    if sku:
+        item_or.append({"items.sku": sku})
+    if barcode:
+        item_or.append({"items.barcode": barcode})
+    if name:
+        item_or.append({"items.product_name": name})
+        item_or.append({"items.name": name})
+    stored, invoices, orders, transfers = await asyncio.gather(
+        db.stock_movements.find({"product_id": {"$in": pids}}).sort("date", -1).to_list(cap),
+        db.invoices.find(
+            {
+                "company_id": company_id,
+                "invoice_type": {"$in": ["sales", "purchase", "sales_return", "purchase_return"]},
+                "status": {"$nin": ["cancelled", "void", "rejected"]},
+                "$or": item_or,
+            },
+            {"invoice_number": 1, "number": 1, "invoice_type": 1, "issue_date": 1, "created_at": 1, "contact_name": 1, "items": 1},
+        ).sort("issue_date", -1).to_list(200),
+        db.orders.find(
+            {
+                "company_id": company_id,
+                "order_status": {"$nin": ["cancelled", "canceled", "draft"]},
+                "$or": item_or,
+            },
+            {"order_number": 1, "order_date": 1, "created_at": 1, "customer_name": 1, "contact_name": 1, "order_status": 1, "items": 1},
+        ).sort("order_date", -1).to_list(80),
+        db.warehouse_transfers.find(
+            {"company_id": company_id, "product_id": {"$in": pids}},
+            {"transfer_number": 1, "transfer_date": 1, "created_at": 1, "product_id": 1, "quantity": 1},
+        ).sort("transfer_date", -1).to_list(40),
+    )
     last_price = product.get("purchase_price")
     last_supplier = None
     last_date = None
-    inv = await db.invoices.find_one(
-        {
-            "company_id": product.get("company_id"),
-            "invoice_type": "purchase",
-            "status": {"$nin": ["cancelled", "void", "rejected"]},
-            "items.product_id": product_id,
-        },
-        {"items": 1, "contact_name": 1, "issue_date": 1},
-        sort=[("issue_date", -1)],
-    )
-    if inv:
+    inv_moves = stock_moves.invoice_stock_moves(invoices, product_id, product)
+    for inv in invoices:
+        if inv.get("invoice_type") != "purchase":
+            continue
         last_supplier = inv.get("contact_name")
         last_date = inv.get("issue_date")
         for it in inv.get("items") or []:
-            if it.get("product_id") == product_id:
+            if stock_moves.item_matches_product(it, product, product_id):
                 try:
                     last_price = float(it.get("unit_price") or last_price or 0) or last_price
                 except (TypeError, ValueError):
                     pass
                 break
+        break
+    merged = stock_moves.merge_stock_moves(
+        clean_docs(stored or []),
+        inv_moves,
+        stock_moves.order_stock_moves(orders, product_id, product),
+        stock_moves.transfer_stock_moves(transfers, product_id, product),
+        cap=cap,
+    )
     return {
         "product_id": product_id,
         "product_name": product.get("name"),
@@ -4573,7 +4660,7 @@ async def list_product_movements(product_id: str, limit: int = 80):
         "last_purchase_price": last_price,
         "last_purchase_supplier": last_supplier,
         "last_purchase_date": last_date,
-        "movements": clean_docs(rows),
+        "movements": merged,
     }
 
 
@@ -4699,14 +4786,6 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest):
     await db.products.update_one({"_id": product_id}, {"$set": update})
     updated = await db.products.find_one({"_id": product_id})
     return clean_doc(updated)
-
-@api_router.get("/products/{product_id}/movements")
-async def list_product_movements(product_id: str):
-    product = await db.products.find_one({"_id": product_id}, {"_id": 1, "name": 1, "sku": 1, "unit": 1, "stock_quantity": 1})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    rows = await db.stock_movements.find({"product_id": product_id}).sort("date", -1).to_list(300)
-    return {"product": clean_doc(product), "movements": clean_docs(rows)}
 
 @api_router.post("/products/quick-stock-adjust")
 async def quick_stock_adjust(req: Dict[str, Any]):

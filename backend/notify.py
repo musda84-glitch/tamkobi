@@ -172,6 +172,7 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
             "sound": "default",
             "channelId": "tamkobi",
             "priority": "high",
+            "badge": 1,
             "data": data,
         })
     return msgs

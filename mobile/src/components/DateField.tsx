@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo, useState } from "react";
-import { Modal, Pressable, Text, View } from "react-native";
+import { Modal, Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels } from "../utils/calendar";
@@ -45,6 +45,37 @@ export function DateField({ label, value, onChangeText, testID, min, editable = 
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
+      {Platform.OS === "web" ? (
+        <input
+          type="date"
+          data-testid={testID}
+          value={ymd}
+          min={minYmd || undefined}
+          disabled={!editable}
+          onChange={(e) => commit(e.currentTarget.value)}
+          onFocus={(e) => {
+            const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+            try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
+          }}
+          onClick={(e) => {
+            const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+            try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
+          }}
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            borderWidth: 1,
+            borderStyle: "solid",
+            borderColor: colors.border,
+            borderRadius: 10,
+            padding: "10px 12px",
+            minHeight: 44,
+            fontSize: 15,
+            color: colors.text,
+            backgroundColor: "#fff",
+          }}
+        />
+      ) : (
       <Pressable
         testID={testID}
         onPress={openCal}
@@ -54,6 +85,7 @@ export function DateField({ label, value, onChangeText, testID, min, editable = 
         <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
         <Ionicons name="calendar-outline" size={18} color={colors.muted} />
       </Pressable>
+      )}
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.35)", justifyContent: "center", padding: 16 }}>
           <Pressable
