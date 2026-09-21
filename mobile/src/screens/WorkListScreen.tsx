@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Linking, Platform, Pressable, Share, Text, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, Share, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { normalizeApiBase } from "../api/url";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -13,6 +13,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import { statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { mapsLink } from "../utils/geo";
 import { isCompletedProjectStatus, normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import type { Employee, ProjectTask } from "../utils/personnel";
 import {
@@ -24,6 +25,9 @@ import {
 } from "../utils/quoteApproval";
 import {
   PROJECT_QUOTE_ACTION,
+  PROJECT_NEW_QUOTE_ACTION,
+  PROJECT_MAPS_ACTION,
+  projectQuoteNavParams,
   canCompleteProject,
   applyTaskAssignee,
   assigneeSelectGroups,
@@ -62,6 +66,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const { client, companyId, can, baseUrl } = useAuth();
   const canEdit = can(meta.perm, "edit");
   const canExp = can("/expenses", "edit");
+  const canQuote = can("/quotes", "edit");
   const [quotes, setQuotes] = useState<QuoteDoc[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
   const [surveys, setSurveys] = useState<SurveyDoc[]>([]);
@@ -195,6 +200,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           project={r.project!}
           canEdit={canEdit}
           canExp={canExp}
+          canQuote={canQuote}
           statusBusy={statusBusyId === r.id}
           onStatus={(status) => setProjectStatus(r.id, status)}
           onTeam={() => setTeamProject(r.project!)}
@@ -312,10 +318,20 @@ function ActionBtn({
   );
 }
 
+function openProjectLocation(project: ProjectDoc) {
+  const href = mapsLink(project);
+  if (!href) {
+    Alert.alert("Konum yok", "Bu projeye konum veya adres eklenmemiş.");
+    return;
+  }
+  Linking.openURL(href).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
+}
+
 function ProjectCard({
   project,
   canEdit,
   canExp,
+  canQuote,
   statusBusy,
   onStatus,
   onTeam,
@@ -324,6 +340,7 @@ function ProjectCard({
   project: ProjectDoc;
   canEdit: boolean;
   canExp: boolean;
+  canQuote: boolean;
   statusBusy: boolean;
   onStatus: (status: string) => void;
   onTeam: () => void;
@@ -381,8 +398,27 @@ function ProjectCard({
           />
         </View>
       ) : null}
-      {canExp || canEdit ? (
-        <View style={{ gap: 6, marginTop: 8 }}>
+      <View style={{ gap: 6, marginTop: 8 }}>
+        <Row style={{ flexWrap: "wrap" }}>
+          {canQuote ? (
+            <ActionBtn
+              title={PROJECT_NEW_QUOTE_ACTION}
+              testID={`project-new-quote-${id}`}
+              onPress={() => go("QuoteNew", projectQuoteNavParams(project))}
+              bg="#FFFBEB"
+              border="#FDE68A"
+              color="#92400E"
+            />
+          ) : null}
+          <ActionBtn
+            title={PROJECT_MAPS_ACTION}
+            testID={`project-maps-${id}`}
+            onPress={() => openProjectLocation(project)}
+            bg="#FFF1F2"
+            border="#FECDD3"
+            color="#9F1239"
+          />
+        </Row>
           {canExp || canEdit ? (
             <Row style={{ flexWrap: "wrap" }}>
               {canExp ? (
@@ -428,8 +464,7 @@ function ProjectCard({
               ) : null}
             </Row>
           ) : null}
-        </View>
-      ) : null}
+      </View>
     </Card>
   );
 }

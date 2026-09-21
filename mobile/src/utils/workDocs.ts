@@ -503,6 +503,18 @@ export function newButtonLabel(kind: WorkKind): string {
 
 /** Proje kartındaki tamamla aksiyonu. */
 export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
+export const PROJECT_NEW_QUOTE_ACTION = "Yeni Teklif";
+export const PROJECT_MAPS_ACTION = "Konuma Git";
+
+/** Karttan teklif formuna proje + cariyi taşır. */
+export function projectQuoteNavParams(p: ProjectDoc) {
+  return {
+    project_id: idOf(p),
+    contact_id: String(p.contact_id || ""),
+    contact_name: String(p.contact_name || ""),
+    title: String(p.name || ""),
+  };
+}
 
 export function canCompleteProject(status?: string | null, stages?: ProjectStage[] | null): boolean {
   return !isCompletedProjectStatus(status, stages);

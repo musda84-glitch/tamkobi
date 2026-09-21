@@ -1,4 +1,4 @@
-import { coordText, coordValue, mapsLink, mapsUrlFor, parseMapsUrl } from "./geo";
+import { coordText, coordValue, mapsLink, mapsSearchUrl, mapsUrlFor, parseMapsUrl } from "./geo";
 
 describe("geo", () => {
   it("parses coordinates from the maps links web accepts", () => {
@@ -13,6 +13,10 @@ describe("geo", () => {
     expect(mapsLink({ latitude: 41, longitude: 29 })).toBe(mapsUrlFor(41, 29));
     expect(mapsLink({ latitude: null, longitude: null })).toBeNull();
     expect(mapsLink(null)).toBeNull();
+    expect(mapsLink({ address: "Kayabaşı Mah. Başakşehir İstanbul" })).toBe(
+      mapsSearchUrl("Kayabaşı Mah. Başakşehir İstanbul"),
+    );
+    expect(mapsLink({ location_url: "https://x.test/map", address: "Kadıköy" })).toBe("https://x.test/map");
   });
 
   it("keeps empty coordinates null for the API", () => {
