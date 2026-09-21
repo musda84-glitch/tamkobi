@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { fileUrl, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
@@ -22,14 +22,13 @@ import type { ProjectStage } from "../utils/projectStages";
 import type { ProjectDoc } from "../utils/workDocs";
 import { Muted, Row } from "./kit";
 
-const stageRowGrid = {
+const CELL = 34;
+const stageRowStyle = {
   flexDirection: "row" as const,
   alignItems: "center" as const,
-  gap: 8,
-  minHeight: 44,
-  ...(Platform.OS === "web"
-    ? ({ display: "grid", gridTemplateColumns: "11.5rem minmax(0,1fr) 5.5rem", columnGap: 8, alignItems: "center" } as object)
-    : { justifyContent: "flex-start" }),
+  gap: 6,
+  width: "100%" as const,
+  minHeight: CELL,
 };
 
 export function ProjectStagePhotos({
@@ -132,28 +131,27 @@ export function ProjectStagePhotos({
       </Row>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
       <View testID={`${tid}-grid`} style={{ gap: 6 }}>
-        <View style={stageRowGrid}>
-          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted }}>Aşama</Text>
-          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted }}>Fotoğraf</Text>
-          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted, textAlign: "right" }}>Ekle</Text>
-        </View>
         {rows.map((row) => {
           const chip = row.key === "other" ? SURVEY_STAGE_PHOTO_LABEL : row.label;
           return (
-            <View key={row.key} testID={`${tid}-row-${row.key}`} style={stageRowGrid}>
+            <View key={row.key} testID={`${tid}-row-${row.key}`} style={stageRowStyle}>
               <View style={{
-                minHeight: 40,
-                minWidth: row.key === "other" ? 132 : undefined,
+                flexGrow: 0,
+                flexShrink: 1,
+                flexBasis: 96,
+                maxWidth: 118,
+                minWidth: 0,
+                minHeight: CELL,
                 backgroundColor: row.current ? colors.emerald100 : "#fff",
                 borderWidth: 1,
                 borderColor: row.current ? "#A7F3D0" : colors.border,
                 borderRadius: 8,
-                paddingHorizontal: 8,
+                paddingHorizontal: 6,
                 justifyContent: "center",
               }}>
                 <Text
                   testID={`${tid}-label-${row.key}`}
-                  numberOfLines={row.key === "other" ? 2 : 1}
+                  numberOfLines={1}
                   style={{ fontWeight: "800", fontSize: 11, color: row.current ? "#047857" : colors.muted }}
                 >
                   {chip}
@@ -162,13 +160,19 @@ export function ProjectStagePhotos({
                   {row.current ? "şu an" : row.done ? "bitti" : row.items.length ? `${row.items.length} foto` : " "}
                 </Text>
               </View>
-              <View style={{ minHeight: 40, flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                style={{ flex: 1, minWidth: CELL, maxHeight: CELL + 8 }}
+                contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 2 }}
+              >
                 {row.items.map((item) => (
-                  <View key={item.url} style={{ position: "relative" }}>
+                  <View key={item.url} style={{ position: "relative", width: CELL, height: CELL }}>
                     <Pressable
                       testID={`${tid}-thumb`}
                       onPress={() => Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null)}
-                      style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
+                      style={{ width: CELL, height: CELL, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
                     >
                       <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
                     </Pressable>
@@ -176,36 +180,34 @@ export function ProjectStagePhotos({
                       <Pressable
                         testID={`${tid}-remove`}
                         onPress={() => remove(item.url)}
-                        style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
+                        style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
                       >
-                        <Ionicons name="close" size={11} color={colors.danger} />
+                        <Ionicons name="close" size={10} color={colors.danger} />
                       </Pressable>
                     ) : null}
                   </View>
                 ))}
-              </View>
-              <View style={{ flexDirection: "row", gap: 6, justifyContent: "flex-end" }}>
-                {editable ? (
-                  <>
-                    <Pressable
-                      testID={`${tid}-camera-${row.key}`}
-                      onPress={() => pick(row, true)}
-                      disabled={!!busyKey}
-                      style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-                    >
-                      <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={18} color={colors.indigo} />
-                    </Pressable>
-                    <Pressable
-                      testID={`${tid}-gallery-${row.key}`}
-                      onPress={() => pick(row, false)}
-                      disabled={!!busyKey}
-                      style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
-                    >
-                      <Ionicons name="image-outline" size={18} color={colors.primary} />
-                    </Pressable>
-                  </>
-                ) : null}
-              </View>
+              </ScrollView>
+              {editable ? (
+                <View style={{ flexDirection: "row", flexShrink: 0, gap: 4 }}>
+                  <Pressable
+                    testID={`${tid}-camera-${row.key}`}
+                    onPress={() => pick(row, true)}
+                    disabled={!!busyKey}
+                    style={{ width: CELL, height: CELL, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <Ionicons name={busyKey === row.key ? "hourglass-outline" : "camera-outline"} size={16} color={colors.indigo} />
+                  </Pressable>
+                  <Pressable
+                    testID={`${tid}-gallery-${row.key}`}
+                    onPress={() => pick(row, false)}
+                    disabled={!!busyKey}
+                    style={{ width: CELL, height: CELL, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <Ionicons name="image-outline" size={16} color={colors.primary} />
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           );
         })}
