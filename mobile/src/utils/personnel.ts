@@ -321,6 +321,8 @@ export function advancePayload(employeeId: string, amount: string, period: strin
 export function validateOvertime(hours: string, start?: string, end?: string): string | null {
   const ranged = hoursFromTimeRange(start, end);
   if (ranged != null && ranged > 0) return null;
+  const clock = hoursFromTimeRange("00:00", hours);
+  if (clock != null && clock > 0) return null;
   if (!String(hours || "").trim() && !(start || end)) return "Mesai saati veya saat aralığı girin.";
   if (start || end) return "Saat aralığını başlangıç ve bitiş olarak girin.";
   const n = num(hours);
@@ -342,10 +344,11 @@ export function overtimePayload(
   end?: string,
 ) {
   const ranged = hoursFromTimeRange(start, end);
+  const clock = hoursFromTimeRange("00:00", hours);
   return {
     employee_id: employeeId,
     date: date.trim(),
-    hours: ranged != null ? ranged : Math.round(num(hours) * 100) / 100,
+    hours: ranged != null ? ranged : clock != null ? clock : Math.round(num(hours) * 100) / 100,
     note: note.trim(),
     ...(start ? { start_time: start } : {}),
     ...(end ? { end_time: end } : {}),

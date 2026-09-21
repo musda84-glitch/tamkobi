@@ -122,6 +122,7 @@ describe("overtime assign", () => {
     expect(validateOvertime("")).toBe("Mesai saati veya saat aralığı girin.");
     expect(validateOvertime("0")).toBe("Mesai saati 0'dan büyük olmalı.");
     expect(validateOvertime("2,5")).toBeNull();
+    expect(validateOvertime("02:30")).toBeNull();
     expect(validateOvertime("", "18:00", "20:30")).toBeNull();
     expect(validateOvertime("", "18:00", "")).toBe("Saat aralığını başlangıç ve bitiş olarak girin.");
     expect(validateIsoDate("19.09.2026")).toBe("Tarih YYYY-AA-GG formatında olmalı.");
@@ -131,6 +132,12 @@ describe("overtime assign", () => {
       date: "2026-09-19",
       hours: 2.5,
       note: "keşif",
+    });
+    expect(overtimePayload("e1", "2026-09-19", "02:30", "")).toEqual({
+      employee_id: "e1",
+      date: "2026-09-19",
+      hours: 2.5,
+      note: "",
     });
     expect(overtimePayload("e1", "2026-09-19", "", "", "18:00", "20:30")).toEqual({
       employee_id: "e1",

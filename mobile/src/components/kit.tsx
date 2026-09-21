@@ -17,9 +17,12 @@ import {
 } from "react-native";
 import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing } from "../theme";
+import { fieldUsesDatePicker, fieldUsesTimePicker } from "../utils/fieldKind";
 import { contentBottomPad, SCREEN_BASE_PAD } from "../utils/keyboardPad";
 import { trUpper } from "../utils/labels";
+import { DateField } from "./DateField";
 import { ProductThumb } from "./ProductThumb";
+import { TimeField } from "./TimeField";
 
 export function Screen({ children, onRefresh, refreshing, padded = true }: {
   children: React.ReactNode;
@@ -110,6 +113,27 @@ export function PrimaryButton({
 
 export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean; dense?: boolean }) {
   const { label, style, compact, dense, ...rest } = props;
+  if (fieldUsesDatePicker(props.testID, typeof props.placeholder === "string" ? props.placeholder : undefined)) {
+    return (
+      <DateField
+        label={label}
+        value={String(props.value ?? "")}
+        onChangeText={props.onChangeText || (() => { /* no-op */ })}
+        testID={props.testID}
+        editable={props.editable !== false}
+      />
+    );
+  }
+  if (fieldUsesTimePicker(props.testID)) {
+    return (
+      <TimeField
+        label={label}
+        value={String(props.value ?? "")}
+        onChangeText={props.onChangeText || (() => { /* no-op */ })}
+        testID={props.testID}
+      />
+    );
+  }
   return (
     <View style={{ marginBottom: compact || dense ? 0 : spacing.md }}>
       <Text style={[styles.label, dense && styles.labelDense]}>{trUpper(label)}</Text>
