@@ -41,12 +41,37 @@ function mailDeliveryBadge(m) {
   return { text: "Gönderildi", cls: "text-emerald-700 bg-emerald-50" };
 }
 
+const ORDER_STATUS_OPTIONS = [["pending", "Beklemede"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargolandı"], ["completed", "Tamamlandı"], ["returned", "İade Edildi"], ["partially_returned", "Kısmi İade"]];
+const ORDER_EDIT_LOCKED = new Set(["cancelled", "returned", "delivered", "completed"]);
+const MARKETPLACE_CHANNELS = new Set(["trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama", "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek"]);
+
+function orderChannelLocked(o) {
+  return MARKETPLACE_CHANNELS.has(String(o?.channel || "").toLowerCase());
+}
+
+function chequeReceipt(ch) {
+  const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
+  const dir = ch.direction === "received" ? "Alınan" : "Verilen";
+  return {
+    id: ch.id,
+    type: ch.direction === "received" ? "inflow" : "outflow",
+    date: ch.issue_date || ch.due_date || "",
+    account_name: ch.bank_name || "Çek Portföyü",
+    category: `${dir} ${kind}`,
+    description: `${ch.number || "Çek"} · vade ${ch.due_date || "—"}${ch.serial_no ? ` · seri ${ch.serial_no}` : ""}`,
+    amount: ch.amount,
+    contact_name: ch.contact_name,
+  };
+}
+
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("invoices");
   const [busy, setBusy] = useState(null);
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
+  const [editOrder, setEditOrder] = useState(null);
+  const [orderProducts, setOrderProducts] = useState([]);
   const [printDoc, setPrintDoc] = useState(null);
   const [editTpl, setEditTpl] = useState(null);
   const navigate = useNavigate();
@@ -60,11 +85,61 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     catch { toast.error("Cari detayı yüklenemedi."); onCloseRef.current(); }
   }, [contactId]);
   useEffect(() => { load(); }, [load]);
-  useDataRefresh(load, { companyId: data?.contact?.company_id, scopes: ["cash", "contacts", "invoices"] });
+  useDataRefresh(load, { companyId: data?.contact?.company_id, scopes: ["cash", "contacts", "invoices", "orders"] });
 
   const convertQuote = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const convertQuoteToProject = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-project`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
   const convertSurvey = async (sv) => { try { const r = await axios.post(`${API_URL}/surveys/${sv.id}/convert-to-quote`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
+
+  const changeOrderStatus = async (o, status) => {
+    if (!status || status === o.order_status) return;
+    try {
+      const r = await axios.put(`${API_URL}/orders/${o.id}/status`, { status });
+      toast.success(r.data.message || "Sipariş durumu güncellendi.");
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "invoices"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Durum güncellenemedi."); }
+  };
+  const deleteContactOrder = async (o) => {
+    if (o.is_invoiced || o.invoice_id) { toast.error("Faturalanmış sipariş silinemez."); return; }
+    if (!window.confirm(`${o.order_number} silinsin mi?`)) return;
+    try {
+      const r = await axios.delete(`${API_URL}/orders/${o.id}`);
+      toast.success(r.data.message || "Sipariş silindi.");
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const openEditOrder = (o) => {
+    if (o.is_invoiced || o.invoice_id) { toast.error("Faturalanmış sipariş düzenlenemez."); return; }
+    if (ORDER_EDIT_LOCKED.has(o.order_status)) { toast.error("Bu durumdaki sipariş düzenlenemez."); return; }
+    setEditOrder({
+      id: o.id,
+      order_number: o.order_number,
+      notes: o.notes || "",
+      customer_order_number: o.customer_order_number || "",
+      items: (o.items || []).map((it) => hydrateLine(it)),
+      linesLocked: orderChannelLocked(o),
+    });
+    if (!orderChannelLocked(o) && orderProducts.length === 0 && data?.contact?.company_id) {
+      axios.get(`${API_URL}/products?company_id=${data.contact.company_id}&lite=1`).then((r) => setOrderProducts(r.data || [])).catch(() => {});
+    }
+  };
+  const saveEditOrder = async () => {
+    if (!editOrder) return;
+    const items = (editOrder.items || []).filter((it) => (it.product_name || it.name) && Number(it.quantity) > 0);
+    if (!editOrder.linesLocked && items.length === 0) { toast.error("Siparişte en az bir kalem olmalı."); return; }
+    try {
+      const payload = { notes: editOrder.notes, customer_order_number: editOrder.customer_order_number };
+      if (!editOrder.linesLocked) payload.items = items;
+      const r = await axios.put(`${API_URL}/orders/${editOrder.id}`, payload);
+      toast.success(r.data.message || "Sipariş güncellendi.");
+      setEditOrder(null);
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Sipariş güncellenemedi."); }
+  };
+
   const [editInv, setEditInv] = useState(null);
   const [editQuote, setEditQuote] = useState(null);
   const [termsOpen, setTermsOpen] = useState(false);
@@ -409,10 +484,25 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           )}
           {tab === "cheques" && (
             <table className="w-full text-left" data-testid="detail-cheques">
-              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th></tr></thead>
+              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {!(data.cheques || []).length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
-                {(data.cheques || []).map((ch) => <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}><td className="py-2 font-mono font-semibold">{ch.number}</td><td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td><td className="py-2 font-mono">{ch.due_date}</td><td className="py-2"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100">{ch.status_label || ch.status}</span></td><td className="py-2 text-right font-bold">{fmt(ch.amount)} ₺</td></tr>)}
+                {!(data.cheques || []).length && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
+                {(data.cheques || []).map((ch) => (
+                  <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}>
+                    <td className="py-2 font-mono font-semibold">{ch.number}</td>
+                    <td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td>
+                    <td className="py-2 font-mono">{ch.due_date}</td>
+                    <td className="py-2"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100">{ch.status_label || ch.status}</span></td>
+                    <td className="py-2 text-right font-bold">{fmt(ch.amount)} ₺</td>
+                    <td className="py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <button type="button" onClick={() => setReceipt(chequeReceipt(ch))} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-cheque-receipt-${ch.number}`}>Makbuz</button>
+                        <button type="button" onClick={() => openEditPay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`detail-cheque-edit-${ch.number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                        <button type="button" onClick={() => deletePay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-cheque-delete-${ch.number}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -443,8 +533,37 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <table className="w-full text-left">
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Sipariş</th><th className="py-2">Kanal</th><th className="py-2">Durum</th><th className="py-2">Kargo</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {data.orders.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Sipariş yok.</td></tr>}
-                {data.orders.map((o) => <tr key={o.id}><td className="py-2 font-mono font-semibold">{o.order_number}</td><td className="py-2 text-slate-500">{channelTr(o.channel)}</td><td className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold">{statusTr(o.order_status)}</span></td><td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td><td className="py-2 text-right font-bold">{fmt(o.total_amount)} ₺</td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button><button onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button></div></td></tr>)}
+                {data.orders.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Sipariş yok.</td></tr>}
+                {data.orders.map((o) => {
+                  const marketplace = orderChannelLocked(o);
+                  const canDelete = !o.is_invoiced && !o.invoice_id;
+                  return (
+                    <tr key={o.id} data-testid={`detail-order-${o.order_number}`}>
+                      <td className="py-2 font-mono font-semibold">{o.order_number}</td>
+                      <td className="py-2 text-slate-500">{channelTr(o.channel)}</td>
+                      <td className="py-2">
+                        {marketplace ? (
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Durum pazaryerinden güncellenir">{statusTr(o.order_status)}</span>
+                        ) : (
+                          <select value={o.order_status || "pending"} onChange={(e) => changeOrderStatus(o, e.target.value)} className="bg-slate-100 border border-slate-200 rounded p-1 text-[11px] font-semibold" data-testid={`detail-order-status-${o.order_number}`}>
+                            {ORDER_STATUS_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                            {o.order_status && !ORDER_STATUS_OPTIONS.some(([k]) => k === o.order_status) && <option value={o.order_status}>{statusTr(o.order_status)}</option>}
+                          </select>
+                        )}
+                      </td>
+                      <td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td>
+                      <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)} ₺</td>
+                      <td className="py-2 text-right">
+                        <div className="flex justify-end gap-1">
+                          <button type="button" onClick={() => openEditOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                          {canDelete && <button type="button" onClick={() => deleteContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>}
+                          <button type="button" onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button>
+                          <button type="button" onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -633,6 +752,23 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {(() => { const t = documentLineTotals(editInv.items || []); return (
               <div className="flex justify-between items-center border-t pt-2"><div className="text-right space-y-0.5"><div>KDV Hariç: <b>{fmtMoney(t.subtotal)} ₺</b></div><div>KDV: <b>{fmtMoney(t.vat)} ₺</b></div><div className="font-bold">Genel Toplam (KDV Dahil): {fmtMoney(t.grandTotal)} ₺</div></div><div className="flex gap-2"><button onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button></div></div>
               ); })()}
+            </div>
+          </div>
+        )}
+        {editOrder && (
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditOrder(null)}>
+            <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="detail-order-edit-modal">
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Sipariş Düzenle · {editOrder.order_number}</h3><button type="button" onClick={() => setEditOrder(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div><label className="block font-semibold mb-1">Müşteri sipariş no</label><input value={editOrder.customer_order_number} onChange={(e) => setEditOrder({ ...editOrder, customer_order_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="detail-order-edit-po" /></div>
+                <div><label className="block font-semibold mb-1">Not</label><input value={editOrder.notes} onChange={(e) => setEditOrder({ ...editOrder, notes: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="detail-order-edit-notes" /></div>
+              </div>
+              {editOrder.linesLocked ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Pazaryeri kalemleri değiştirilemez. Not ve müşteri sipariş numarası kaydedilir.</div>
+              ) : (
+                <DocumentLineEditor items={editOrder.items} onChange={(items) => setEditOrder({ ...editOrder, items })} products={orderProducts} kind="order" testIdPrefix="detail-order-line" />
+              )}
+              <div className="flex justify-end gap-2 border-t pt-2"><button type="button" onClick={() => setEditOrder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="button" onClick={saveEditOrder} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="detail-order-edit-save">Kaydet</button></div>
             </div>
           </div>
         )}
