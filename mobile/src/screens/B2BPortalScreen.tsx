@@ -14,7 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, cartCount, formatCartSheetLine, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { addCartLine, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
 import {
@@ -734,26 +734,46 @@ export function B2BPortalScreen() {
         {!lines.length ? <Empty icon="cart-outline" title="Sepet boş" /> : (
           <View>
             {lines.map((l) => (
-              <Row key={l.key} style={{ justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                <Text
-                  testID={`b2b-cart-line-${l.p.id}`}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.65}
-                  style={{ flex: 1, minWidth: 0, color: colors.text, fontWeight: "700", fontSize: 12, lineHeight: 16 }}
-                >
-                  {formatCartSheetLine(l.p.name, l.qty, showPrices ? fmtMoney(b2bGross(l.p)) : "", l.note)}
-                </Text>
-                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty - 1))} testID={`b2b-qty-dec-${l.p.id}`}>
-                  <Ionicons name="remove-circle" size={22} color={colors.muted} />
-                </Pressable>
-                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty + 1))} testID={`b2b-qty-inc-${l.p.id}`}>
-                  <Ionicons name="add-circle" size={22} color={colors.primary} />
-                </Pressable>
-                <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, 0))} testID={`b2b-qty-del-${l.p.id}`}>
-                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                </Pressable>
-              </Row>
+              <View
+                key={l.key}
+                style={{
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: 12,
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                  marginBottom: 8,
+                  backgroundColor: "#fff",
+                }}
+              >
+                <Row style={{ alignItems: "center", gap: 6 }}>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <Text
+                      testID={`b2b-cart-line-${l.p.id}`}
+                      numberOfLines={2}
+                      style={{ color: colors.text, fontWeight: "700", fontSize: 12, lineHeight: 16 }}
+                    >
+                      {l.p.name}
+                    </Text>
+                    <Text
+                      testID={`b2b-cart-line-meta-${l.p.id}`}
+                      numberOfLines={1}
+                      style={{ color: colors.muted, fontWeight: "700", fontSize: 12, lineHeight: 16 }}
+                    >
+                      {formatCartSheetMeta(l.qty, showPrices ? fmtMoney(b2bGross(l.p)) : "", l.note)}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty - 1))} testID={`b2b-qty-dec-${l.p.id}`}>
+                    <Ionicons name="remove-circle" size={22} color={colors.muted} />
+                  </Pressable>
+                  <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty + 1))} testID={`b2b-qty-inc-${l.p.id}`}>
+                    <Ionicons name="add-circle" size={22} color={colors.primary} />
+                  </Pressable>
+                  <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, 0))} testID={`b2b-qty-del-${l.p.id}`}>
+                    <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                  </Pressable>
+                </Row>
+              </View>
             ))}
             {showPrices ? (
               <View>

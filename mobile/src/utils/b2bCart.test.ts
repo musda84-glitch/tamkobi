@@ -1,4 +1,4 @@
-import { addCartLine, cartCount, formatCartSheetLine, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, cartCount, formatCartSheetLine, formatCartSheetMeta, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -47,11 +47,12 @@ describe("b2bCart", () => {
     expect(normalizeNote("x".repeat(600)).length).toBe(500);
   });
 
-  test("formatCartSheetLine keeps name and qty/price on one string", () => {
+  test("formatCartSheetMeta puts qty and price on the second line", () => {
+    expect(formatCartSheetMeta(1, "160,00 ₺")).toBe("1 × 160,00 ₺");
+    expect(formatCartSheetMeta(2, "", "kırmızı")).toBe("2 adet · kırmızı");
     expect(formatCartSheetLine("Duvar Rafı Çizgili_DRD 35x20cm BEYAZ", 1, "160,00 ₺")).toBe(
       "Duvar Rafı Çizgili_DRD 35x20cm BEYAZ  1 × 160,00 ₺"
     );
-    expect(formatCartSheetLine("Raf", 2, "", "kırmızı")).toBe("Raf  2 adet · kırmızı");
   });
 
   test("productCartQty sums every line of that product", () => {
