@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
@@ -75,6 +75,19 @@ export function canIssueInvoice(inv) {
   return !isGibIssued(inv);
 }
 
+/** Keep a fixed menu inside the viewport. Tall menus scroll instead of running off the bottom. */
+export function placeContextMenu({ x, y, width = 256, height, viewportWidth, viewportHeight, margin = 8 }) {
+  const available = Math.max(120, viewportHeight - margin * 2);
+  const used = Math.min(Math.max(Number(height) || 0, 0), available);
+  let top = y;
+  if (top + used > viewportHeight - margin) top = viewportHeight - margin - used;
+  if (top < margin) top = margin;
+  let left = x;
+  if (left + width > viewportWidth - margin) left = viewportWidth - margin - width;
+  if (left < margin) left = margin;
+  return { left, top, maxHeight: available };
+}
+
 export function invoiceHasPayment(inv) {
   if (!inv) return false;
   if (Number(inv.paid_amount || 0) > 0.01) return true;
@@ -114,6 +127,7 @@ export const InvoiceContextMenu = (props) => {
   const onRejectIncoming = props.onRejectIncoming;
   const apiBase = props.apiBase || "";
   const ref = useRef(null);
+  const [pos, setPos] = useState(null);
   useEffect(() => {
     if (!menu) return;
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -128,6 +142,24 @@ export const InvoiceContextMenu = (props) => {
       document.removeEventListener("keydown", esc);
     };
   }, [menu, onClose]);
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const el = ref.current;
+    if (!el) return;
+    const next = placeContextMenu({
+      x: menu.x,
+      y: menu.y,
+      height: el.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setPos((prev) => (
+      prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight ? prev : next
+    ));
+    if (el.scrollHeight > next.maxHeight + 1 && menu.y > window.innerHeight * 0.55) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [menu]);
 
   if (!menu) return null;
   const { inv } = menu;
@@ -140,8 +172,13 @@ export const InvoiceContextMenu = (props) => {
   const slipable = canIssueExpenseSlip(inv);
   const paid = invoiceHasPayment(inv);
   const showIssuedActions = issued && !incoming;
-  const left = Math.min(menu.x, window.innerWidth - 280);
-  const top = Math.min(menu.y, window.innerHeight - 420);
+  const placed = pos || placeContextMenu({
+    x: menu.x,
+    y: menu.y,
+    height: 360,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
   const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (
     <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition" data-testid={testId}>
       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${color}`} />
@@ -153,7 +190,7 @@ export const InvoiceContextMenu = (props) => {
   );
 
   const menuNode = (
-    <div ref={ref} style={{ left, top }} className="fixed z-[70] w-64 max-h-[min(520px,calc(100vh-1rem))] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={ref} style={{ left: placed.left, top: placed.top, maxHeight: placed.maxHeight }} className="fixed z-[70] w-64 overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
       <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 truncate">{inv.invoice_number} • {inv.contact_name}</div>
       {incoming ? (
         pending ? (
