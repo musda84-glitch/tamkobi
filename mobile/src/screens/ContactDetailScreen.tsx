@@ -819,33 +819,34 @@ export function ContactDetailScreen() {
       />
 
       {tab === "invoices" ? (
-        !invoices.length ? <Muted>Fatura yok.</Muted> : invoices.map((inv: any, idx: number) => {
+        !invoices.length ? <Muted>Fatura yok.</Muted> : (
+        <>
+        <Muted>Düzenlemek veya silmek için satırı sola kaydırın.</Muted>
+        {invoices.map((inv: any, idx: number) => {
           const iid = idOf(inv) || String(idx);
-          const row = (
-            <ListRow
-              title={inv.invoice_number || "Fatura"}
-              subtitle={[invoiceTypeTr(inv.invoice_type), statusTr(inv.status), fmtDate(inv.issue_date)].filter(Boolean).join(" · ")}
-              right={fmtMoney(inv.grand_total)}
-              onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
-            />
-          );
-          if (!canInvoice) {
-            return <React.Fragment key={iid}>{row}</React.Fragment>;
-          }
           return (
             <SwipeRevealRow
               key={iid}
               rowKey={iid}
               openKey={openInvRow}
               onOpen={setOpenInvRow}
+              onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
               onEdit={() => editInvoice(inv)}
               onDelete={() => removeInvoice(inv)}
               testID={`detail-inv-${iid}`}
             >
-              {row}
+              <ListRow
+                testID={`detail-inv-${iid}`}
+                title={inv.invoice_number || "Fatura"}
+                subtitle={[invoiceTypeTr(inv.invoice_type), statusTr(inv.status), fmtDate(inv.issue_date)].filter(Boolean).join(" · ")}
+                right={fmtMoney(inv.grand_total)}
+                showChevron
+              />
             </SwipeRevealRow>
           );
-        })
+        })}
+        </>
+        )
       ) : null}
 
       {tab === "payments" ? (
