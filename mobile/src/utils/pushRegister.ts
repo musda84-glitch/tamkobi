@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { del, post, type ApiClient } from "../api/client";
-import { isExpoPushToken, PUSH_CHANNEL } from "./push";
+import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, shouldAskPushOnOpen } from "./push";
 
 const TOKEN_KEY = "tamkobi.pushToken";
 
@@ -56,10 +56,10 @@ export async function getStoredPushToken(): Promise<string | null> {
   return AsyncStorage.getItem(TOKEN_KEY);
 }
 
-export async function requestPushToken(): Promise<{ status: PushStatus; token?: string }> {
-  if (Platform.OS === "web") return { status: "web" };
+export async function askPushPermission(): Promise<PushStatus> {
+  if (!shouldAskPushOnOpen(Platform.OS)) return "web";
   const Notifications = await nativeNotifications();
-  if (!Notifications) return { status: "unavailable" };
+  if (!Notifications) return "unavailable";
   try {
     if (Platform.OS === "android" && Notifications.setNotificationChannelAsync) {
       await Notifications.setNotificationChannelAsync(PUSH_CHANNEL, {
@@ -71,12 +71,20 @@ export async function requestPushToken(): Promise<{ status: PushStatus; token?: 
       });
     }
     const existing = await Notifications.getPermissionsAsync();
-    let granted = existing.status === "granted" || existing.granted === true;
-    if (!granted) {
-      const asked = await Notifications.requestPermissionsAsync();
-      granted = asked.status === "granted" || asked.granted === true;
-    }
-    if (!granted) return { status: "denied" };
+    if (isPushPermissionGranted(existing)) return "ok";
+    const asked = await Notifications.requestPermissionsAsync(IOS_PUSH_PERMISSION);
+    return isPushPermissionGranted(asked) ? "ok" : "denied";
+  } catch {
+    return "unavailable";
+  }
+}
+
+export async function requestPushToken(): Promise<{ status: PushStatus; token?: string }> {
+  const perm = await askPushPermission();
+  if (perm !== "ok") return { status: perm };
+  const Notifications = await nativeNotifications();
+  if (!Notifications) return { status: "unavailable" };
+  try {
     const pid = projectId();
     const tokenRes = pid
       ? await Notifications.getExpoPushTokenAsync({ projectId: pid })

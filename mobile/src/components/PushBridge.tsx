@@ -4,16 +4,19 @@ import { useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
 import { goHref } from "../nav";
 import { notificationHref } from "../utils/push";
-import { enablePushHandler, registerDevicePush } from "../utils/pushRegister";
+import { askPushPermission, enablePushHandler, registerDevicePush } from "../utils/pushRegister";
 
-/** Girişli oturumda Expo token kaydı + bildirime dokununca ilgili ekranı açar. */
+/** Açılışta bildirim izni + girişli oturumda Expo token kaydı; bildirime dokununca ilgili ekranı açar. */
 export function PushBridge() {
   const { client, user, token, sessionKind } = useAuth();
   const { refresh } = useBadges();
   const lastId = useRef("");
 
   useEffect(() => {
-    enablePushHandler().catch(() => { /* native yoksa sessiz */ });
+    (async () => {
+      await enablePushHandler();
+      await askPushPermission();
+    })().catch(() => { /* web / native yoksa sessiz */ });
   }, []);
 
   useEffect(() => {
