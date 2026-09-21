@@ -18,7 +18,8 @@ import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
 import { colors } from "../theme";
-import type { Contact, Product } from "../types";
+import type { Contact, Invoice, Product } from "../types";
+import { invoiceListSubtitle } from "../utils/invoiceDraft";
 import { VAT_OPTIONS } from "../utils/documentLines";
 import { go } from "../nav";
 import { coordText, mapsLink } from "../utils/geo";
@@ -45,7 +46,11 @@ import {
   newButtonLabel,
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
+  projectMetricSectionOrder,
   projectQuoteNavParams,
+  quoteListSubtitle,
+  quoteListTitle,
+  quotesForProject,
   workStatusSelectGroups,
   removeWorkItem,
   projectPayload,
@@ -103,12 +108,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     project_id: preProjectId,
     title: preTitle,
     open_expense: openExpense,
+    section: focusSection,
   } = useLocalSearchParams<{
     contact_id?: string;
     contact_name?: string;
     project_id?: string;
     title?: string;
     open_expense?: string;
+    section?: string;
   }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
@@ -144,6 +151,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [projectExpenses, setProjectExpenses] = useState<Expense[]>([]);
+  const [projectQuotes, setProjectQuotes] = useState<QuoteDoc[]>([]);
+  const [projectInvoices, setProjectInvoices] = useState<Invoice[]>([]);
   const [expOpen, setExpOpen] = useState(false);
   const [expDraft, setExpDraft] = useState<ExpenseDraft>(emptyProjectExpenseDraft(todayIso()));
   const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
@@ -209,8 +218,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setStatus(p.status || "planning");
         const stages = await get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] }));
         setProjectStages(normalizeProjectStages(stages?.stages));
-        const expList = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] }));
+        const [expList, quoteRows, invoiceRows] = await Promise.all([
+          get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] })),
+          get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, summary: 1 }).catch(() => []),
+          get<Invoice[]>(client, "/invoices", { company_id: companyId, project_id: docId }).catch(() => []),
+        ]);
         setProjectExpenses(expList.expenses || []);
+        setProjectQuotes(quotesForProject(quoteRows, p));
+        setProjectInvoices(invoiceRows || []);
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
         const s = (rows || []).find((x) => idOf(x) === docId) || null;
@@ -450,6 +465,62 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         ? project?.project_number || name || "Proje"
         : survey?.survey_number || "Keşif";
 
+  const focus = String(focusSection || "").trim();
+  const projectDocs = !isNew && kind === "project" && project
+    ? projectMetricSectionOrder(focus).map((key) => {
+      const active = focus === key;
+      const frame = active ? { borderColor: colors.primary, borderWidth: 2 } : undefined;
+      if (key === "quotes") {
+        return (
+          <Card key="quotes" testID="project-quotes" style={frame}>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Teklifler</Text>
+            {!projectQuotes.length ? <Muted>Bu projeye teklif yok.</Muted> : projectQuotes.map((q) => (
+              <ListRow
+                key={idOf(q)}
+                testID={`project-quote-${idOf(q)}`}
+                title={quoteListSubtitle(q)}
+                subtitle={quoteListTitle(q)}
+                right={fmtMoney(q.grand_total)}
+                onPress={() => go("QuoteDetail", { id: idOf(q) })}
+              />
+            ))}
+          </Card>
+        );
+      }
+      if (key === "invoices") {
+        return (
+          <Card key="invoices" testID="project-invoices" style={frame}>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Faturalar</Text>
+            {!projectInvoices.length ? <Muted>Bu projeye fatura yok.</Muted> : projectInvoices.map((inv) => (
+              <ListRow
+                key={idOf(inv)}
+                testID={`project-invoice-${idOf(inv)}`}
+                title={inv.invoice_number || "Fatura"}
+                subtitle={invoiceListSubtitle(inv)}
+                right={fmtMoney(inv.grand_total)}
+                onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
+              />
+            ))}
+          </Card>
+        );
+      }
+      return (
+        <Card key="expenses" testID="project-expenses" style={frame}>
+          <Text style={{ fontWeight: "800", color: colors.text }}>Masraflar</Text>
+          {!projectExpenses.length ? <Muted>Bu projeye masraf yok.</Muted> : projectExpenses.map((e) => (
+            <ListRow
+              key={idOf(e)}
+              testID={`project-expense-${idOf(e)}`}
+              title={e.description || e.expense_number || "Masraf"}
+              subtitle={`${e.expense_number || ""} · ${e.category || ""} · ${statusTr(e.payment_status)} · ${fmtMoney(e.total ?? e.amount)}`}
+              onPress={() => router.push({ pathname: "/expenses/[id]", params: { id: idOf(e) } })}
+            />
+          ))}
+        </Card>
+      );
+    })
+    : null;
+
   return (
     <Screen>
       <H1>{heading}</H1>
@@ -482,6 +553,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           }}
         />
       ) : null}
+      {projectDocs}
 
       {isNew && kind === "quote" && linkedProjectId ? (
         <Muted testID="quote-linked-project">Bu teklif projeye bağlanacak{preTitle ? `: ${preTitle}` : ""}.</Muted>
@@ -682,18 +754,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <PrimaryButton title="Projeyi faturalandır" onPress={convert} color={colors.primary} testID="project-invoice" />
       ) : null}
       {kind === "project" && project ? (
-        <Card>
-          <Muted>Teklif {fmtMoney(project.quoted_total)} · Fatura {fmtMoney(project.invoiced_total)} · Masraf {fmtMoney(project.expense_total)}</Muted>
-          {projectExpenses.map((e) => (
-            <ListRow
-              key={idOf(e)}
-              testID={`project-expense-${idOf(e)}`}
-              title={e.description || e.expense_number || "Masraf"}
-              subtitle={`${e.expense_number || ""} · ${e.category || ""} · ${statusTr(e.payment_status)} · ${fmtMoney(e.total ?? e.amount)}`}
-              onPress={() => router.push({ pathname: "/expenses/[id]", params: { id: idOf(e) } })}
-            />
-          ))}
-        </Card>
+        <Muted>Teklif {fmtMoney(project.quoted_total)} · Fatura {fmtMoney(project.invoiced_total)} · Masraf {fmtMoney(project.expense_total)}</Muted>
       ) : null}
       {!isNew && kind === "quote" && quote ? (
         <QuoteActions

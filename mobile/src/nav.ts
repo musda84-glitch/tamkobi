@@ -129,7 +129,11 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "ProjectDetail":
       return router.push({
         pathname: "/projects/[id]",
-        params: { id: String(params?.id || ""), open_expense: String(params?.open_expense || "") },
+        params: {
+          id: String(params?.id || ""),
+          open_expense: String(params?.open_expense || ""),
+          section: String(params?.section || ""),
+        },
       });
     case "Surveys":
       return router.push("/surveys");

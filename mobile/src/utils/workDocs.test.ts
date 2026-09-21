@@ -16,6 +16,8 @@ import {
   projectStatusSelectGroups,
   workStatusSelectGroups,
   projectCardBits,
+  projectMetricSectionOrder,
+  quotesForProject,
   projectPayload,
   projectTaskRows,
   projectTaskSummary,
@@ -164,6 +166,18 @@ describe("workDocs", () => {
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
     expect(bits.expense).toBe(18.5);
+  });
+
+  it("picks quotes linked to a project and puts the focused metric first", () => {
+    const quotes = [
+      { id: "q1", project_id: "p1", quote_number: "TKF-1" },
+      { id: "q2", project_id: "p2", quote_number: "TKF-2" },
+      { id: "q3", quote_number: "TKF-3" },
+    ];
+    expect(quotesForProject(quotes, { id: "p1" }).map((q) => q.id)).toEqual(["q1"]);
+    expect(quotesForProject(quotes, { id: "p9", quote_id: "q3" }).map((q) => q.id)).toEqual(["q3"]);
+    expect(projectMetricSectionOrder("expenses")).toEqual(["expenses", "quotes", "invoices"]);
+    expect(projectMetricSectionOrder("")).toEqual(["quotes", "invoices", "expenses"]);
   });
 
   it("labels create buttons like web", () => {

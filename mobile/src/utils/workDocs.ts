@@ -73,6 +73,7 @@ export type ProjectDoc = {
   expense_total?: number;
   quote_count?: number;
   quote_number?: string;
+  quote_id?: string;
   can_invoice?: boolean;
   invoice_id?: string;
   location_url?: string;
@@ -364,6 +365,28 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
       unit_price: Number(i.unit_price) || 0,
     })),
   };
+}
+
+/** Quotes created for a project, or the source quote that became the project. */
+export function quotesForProject(
+  quotes: QuoteDoc[] | null | undefined,
+  project: Pick<ProjectDoc, "id" | "_id" | "quote_id"> | null | undefined
+): QuoteDoc[] {
+  const pid = idOf(project);
+  const sourceId = String(project?.quote_id || "").trim();
+  return (quotes || []).filter((q) => {
+    if (pid && q.project_id === pid) return true;
+    return Boolean(sourceId && idOf(q) === sourceId);
+  });
+}
+
+export type ProjectMetricSection = "quotes" | "invoices" | "expenses";
+
+export function projectMetricSectionOrder(focus?: string | null): ProjectMetricSection[] {
+  const all: ProjectMetricSection[] = ["quotes", "invoices", "expenses"];
+  const key = String(focus || "").trim() as ProjectMetricSection;
+  if (!all.includes(key)) return all;
+  return [key, ...all.filter((s) => s !== key)];
 }
 
 /** Web proje kartı: no + teklif no, cari / adres, bütçe-teklif-fatura-masraf. */
