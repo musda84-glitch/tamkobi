@@ -1,10 +1,13 @@
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
 import { Plus, Trash2 } from "lucide-react";
 import { SearchSelect } from "./SearchSelect";
+import { API_URL, useAuth } from "../context/AuthContext";
 import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
 
 const inp = "w-full bg-white border border-slate-200 rounded p-1.5 text-xs";
+const FALLBACK_UNITS = ["Adet", "Kg", "Gr", "Lt", "Mt", "Paket", "Koli"];
 
 export function DocumentLineEditor({
   items,
@@ -20,6 +23,19 @@ export function DocumentLineEditor({
   getProductExtra,
   renderRowExtra,
 }) {
+  const { activeCompany } = useAuth();
+  const [units, setUnits] = useState(FALLBACK_UNITS);
+  useEffect(() => {
+    const companyId = activeCompany?.id || activeCompany?._id;
+    if (!companyId) return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => {
+      if (cancelled) return;
+      const names = (r.data || []).map((u) => u.name).filter(Boolean);
+      if (names.length) setUnits(names);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeCompany]);
   const rows = (items || []).map((it) => hydrateLine(it));
   const setRows = (next) => onChange(next.map((it) => computeLine(it)));
 
@@ -62,11 +78,12 @@ export function DocumentLineEditor({
   return (
     <div className="space-y-2" data-testid={`${testIdPrefix}-editor`}>
       <div className="overflow-x-auto border border-slate-200 rounded-xl">
-        <table className="w-full min-w-[980px] text-xs">
+        <table className="w-full min-w-[1080px] text-xs">
           <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
             <tr>
               <th className="px-2 py-2 text-left min-w-[220px]">Stok adı / Hizmet</th>
               <th className="px-2 py-2 text-center w-20">Miktar</th>
+              <th className="px-2 py-2 text-center w-24">Birim</th>
               <th className="px-2 py-2 text-right w-28">Birim (KDV'siz)</th>
               <th className="px-2 py-2 text-right w-28">Birim (KDV'li)</th>
               <th className="px-2 py-2 text-center w-20 text-rose-500">İskonto %</th>
@@ -148,6 +165,19 @@ export function DocumentLineEditor({
                   />
                 </td>
                 <td className="px-2 py-1.5">
+                  <select
+                    disabled={disabled}
+                    value={item.unit || "Adet"}
+                    onChange={(e) => patch(idx, "unit", e.target.value)}
+                    className={inp}
+                    data-testid={`${testIdPrefix}-unit-${idx}`}
+                  >
+                    {(units.includes(item.unit || "Adet") ? units : [item.unit || "Adet", ...units]).map((u) => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-2 py-1.5">
                   <input
                     disabled={disabled}
                     type="number"
@@ -217,7 +247,7 @@ export function DocumentLineEditor({
               </tr>
               {renderRowExtra ? (
                 <tr className="bg-slate-50/60">
-                  <td colSpan={9} className="px-2 pb-2 pt-0">
+                  <td colSpan={10} className="px-2 pb-2 pt-0">
                     {renderRowExtra(item, idx, {
                       patch: (field, value) => patch(idx, field, value),
                     })}
