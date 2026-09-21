@@ -1,6 +1,8 @@
-/** Order and quote print forms share one compact line table. */
+/** Order and quote print forms share one line table (shelf, barcode, discount, VAT-incl.). */
 
 export const isOrderQuotePrint = (docType) => docType === "order" || docType === "quote";
+
+const SHELF_KEYS = ["shelf", "shelf_location", "raf_yeri", "raf", "bin", "bin_location", "location_code", "slot"];
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -9,6 +11,30 @@ export const printQtyLabel = (quantity, unit) => {
   const raw = String(unit || "").trim();
   const u = !raw || /^adet$/i.test(raw) ? "ad" : raw;
   return `${q} ${u}`.trim();
+};
+
+export const printShelfLabel = (it = {}, prod = {}) => {
+  for (const src of [it, prod]) {
+    if (!src || typeof src !== "object") continue;
+    for (const key of SHELF_KEYS) {
+      const value = src[key];
+      if (value != null && String(value).trim()) return String(value).trim();
+    }
+  }
+  return "";
+};
+
+export const printDiscountLabel = (rate) => {
+  const n = Number(rate || 0);
+  if (!Number.isFinite(n)) return "0";
+  if (Number.isInteger(n)) return String(n);
+  return n.toLocaleString("tr-TR", { maximumFractionDigits: 2 });
+};
+
+export const lineTotalIncl = (it = {}) => {
+  if (it.total_incl != null && it.total_incl !== "") return round2(it.total_incl);
+  const net = Number(it.total || 0);
+  return round2(net * (1 + Number(it.vat_rate || 0) / 100));
 };
 
 export const lineVatAmount = (it = {}) => {

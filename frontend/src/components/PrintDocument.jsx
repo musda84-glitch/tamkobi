@@ -4,7 +4,7 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix } from "../utils/money";
-import { balanceSentence, isOrderQuotePrint, printNetAmount, printQtyLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
+import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
 const pickItemImage = (it = {}, prod = {}) => (
@@ -125,6 +125,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const itemNote = (it) => it.note || it.notes || it.description || it.line_note || "";
   const orderNotes = [doc.customer_note, doc.order_note, doc.customer_notes].filter(Boolean);
   const showImages = tpl.show_images !== false;
+  const showBarcode = tpl.show_barcode !== false;
   const vatLines = printVatLines(doc, items);
   const netAmount = printNetAmount(doc, items);
   const balanceText = !hideAll ? balanceSentence(contactBalance) : "";
@@ -155,7 +156,8 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             ))}
           </div>
         )}
-        <div className={`${textSize} text-slate-800 print-area flex`} id="print-area">
+          <style>{`@media print{@page{size:${tpl.paper === "A5" ? "A5" : "A4"};margin:10mm}}`}</style>
+          <div className={`${textSize} text-slate-800 print-area flex`} id="print-area">
           {isBold && <div className="w-3 shrink-0 self-stretch" style={{ backgroundColor: color }} />}
           <div className={`flex-1 ${isModern ? "" : "p-10"}`}>
           {isModern ? (
@@ -211,23 +213,28 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
             {doc.title && <div className="text-right"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Konu</div><div className="font-semibold">{doc.title}</div></div>}
           </div>
           {compactForm ? (
-          <table className="w-full mt-6 border-collapse text-[13px]" data-testid="print-items-table">
+          <table className="w-full mt-6 border-collapse" data-testid="print-items-table">
             <thead>
               <tr className="text-slate-900 border-b border-slate-400">
-                <th className="text-left py-2 pr-3 font-semibold">Açıklama</th>
+                <th className="text-left py-2 pr-2 font-semibold">Açıklama</th>
+                <th className="text-left py-2 px-2 font-semibold whitespace-nowrap" data-testid="print-col-shelf">Raf Yeri</th>
+                {showBarcode && <th className="text-center py-2 px-2 font-semibold whitespace-nowrap" data-testid="print-col-barcode">Barkod</th>}
                 <th className="text-right py-2 px-2 font-semibold whitespace-nowrap">Miktar</th>
                 {!hideLine && <th className="text-right py-2 px-2 font-semibold">Fiyat</th>}
+                {!hideLine && <th className="text-right py-2 px-2 font-semibold whitespace-nowrap" data-testid="print-col-discount">İndirim (%)</th>}
                 {!hideLine && !hideVat && <th className="text-right py-2 px-2 font-semibold whitespace-nowrap">KDV (%)</th>}
-                {!hideLine && <th className="text-right py-2 pl-2 font-semibold whitespace-nowrap">{hideVat ? "Tutar" : "Tutar (KDV Hariç)"}</th>}
+                {!hideLine && <th className="text-right py-2 pl-2 font-semibold whitespace-nowrap" data-testid="print-col-total">{hideVat ? "Tutar" : "Tutar (KDV Dahil)"}</th>}
               </tr>
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = prodById[it.product_id] || {};
               const img = printThumbUrl(pickItemImage(it, prod));
+              const code = it.barcode || prod.barcode || it.sku || prod.sku;
+              const shelf = printShelfLabel(it, prod);
               return (
                 <tr key={i} className="border-b border-slate-200" data-testid={`print-item-row-${i}`}>
-                  <td className="py-3 pr-3 align-middle" data-testid={`print-item-name-${i}`}>
-                    <div className="flex items-center gap-3 min-w-0">
+                  <td className="py-3 pr-2 align-middle" data-testid={`print-item-name-${i}`}>
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <span className="w-4 shrink-0 text-xs tabular-nums text-slate-500" data-testid={`print-item-index-${i}`}>{i + 1}</span>
                       {showImages && (
                         <span className="print-compact-thumb shrink-0" data-testid={`print-item-image-${i}`}>
@@ -237,19 +244,28 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
                         </span>
                       )}
                       <div className="min-w-0">
-                        <div className="font-bold text-slate-900">
-                          {it.name || it.product_name}
-                          {!hideLine && it.discount_rate > 0 && <span className="ml-1 text-[10px] text-rose-600 font-normal">(%{it.discount_rate} isk.)</span>}
-                        </div>
+                        <div className="font-bold text-slate-900">{it.name || it.product_name}</div>
                         {it.gtip && <div className="text-[10px] font-mono text-slate-400">GTIP {it.gtip}{it.origin_country ? ` · ${it.origin_country}` : ""}</div>}
                         {tpl.show_item_notes !== false && itemNote(it) && <div className="text-[10px] text-slate-500 italic whitespace-pre-wrap" data-testid={`print-item-note-${i}`}>{itemNote(it)}</div>}
                       </div>
                     </div>
                   </td>
+                  <td className="py-3 px-2 align-middle text-slate-700 whitespace-nowrap" data-testid={`print-item-shelf-${i}`}>{shelf}</td>
+                  {showBarcode && (
+                    <td className="py-2 px-1 align-middle print-compact-barcode" data-testid={`print-item-barcode-${i}`}>
+                      {code ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <BarcodeRenderer code={String(code)} width={108} height={32} showText={false} compact />
+                          <span className="font-mono text-[10px] leading-none tracking-wide text-slate-700 text-center">{code}</span>
+                        </div>
+                      ) : null}
+                    </td>
+                  )}
                   <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">{printQtyLabel(it.quantity, it.unit)}</td>
                   {!hideLine && <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">{fmtM(it.unit_price)}</td>}
+                  {!hideLine && <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums" data-testid={`print-item-discount-${i}`}>{printDiscountLabel(it.discount_rate)}</td>}
                   {!hideLine && !hideVat && <td className="py-3 px-2 text-right align-middle whitespace-nowrap tabular-nums">%{it.vat_rate ?? 20}</td>}
-                  {!hideLine && <td className="py-3 pl-2 text-right align-middle whitespace-nowrap tabular-nums">{fmtM(it.total)}</td>}
+                  {!hideLine && <td className="py-3 pl-2 text-right align-middle whitespace-nowrap tabular-nums" data-testid={`print-item-line-total-${i}`}>{fmtM(hideVat ? it.total : lineTotalIncl(it))}</td>}
                 </tr>
               );
             })}</tbody>

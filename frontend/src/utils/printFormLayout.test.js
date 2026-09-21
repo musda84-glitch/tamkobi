@@ -1,4 +1,4 @@
-import { balanceSentence, isOrderQuotePrint, printNetAmount, printQtyLabel, printVatLines, vatRateLabel } from "./printFormLayout";
+import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
 
 test("order and quote use the compact print form", () => {
   expect(isOrderQuotePrint("order")).toBe(true);
@@ -29,6 +29,15 @@ test("mixed vat rates stay on separate lines", () => {
     { vat_rate: 20, total: 100, vat_amount: 20 },
   ]);
   expect(lines).toEqual([{ rate: 10, amount: 10 }, { rate: 20, amount: 20 }]);
+});
+
+test("line total includes vat and shelf reads only a real location", () => {
+  expect(lineTotalIncl({ total: 100, vat_rate: 20 })).toBe(120);
+  expect(lineTotalIncl({ total: 100, total_incl: 110, vat_rate: 20 })).toBe(110);
+  expect(printDiscountLabel(0)).toBe("0");
+  expect(printDiscountLabel(12.5)).toBe("12,5");
+  expect(printShelfLabel({ name: "Ürün" }, { barcode: "868" })).toBe("");
+  expect(printShelfLabel({}, { raf_yeri: "A-12" })).toBe("A-12");
 });
 
 test("balance sentence uses TL not the lira sign", () => {
