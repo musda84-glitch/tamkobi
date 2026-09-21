@@ -228,6 +228,19 @@ export function contactDisplayBalance(
   );
 }
 
+export function contactTabSelectGroups(
+  tabs: { key: string; label: string }[],
+  counts: Record<string, number> = {},
+) {
+  return [{
+    label: "Kayıtlar",
+    options: (tabs || []).map((t) => ({
+      value: t.key,
+      label: counts[t.key] ? `${t.label} (${counts[t.key]})` : t.label,
+    })),
+  }];
+}
+
 export function contactSummaryRows(summary: Record<string, unknown> | null | undefined): InfoRow[] {
   if (!summary) return [];
   const n = (k: string) => Number(summary[k]) || 0;

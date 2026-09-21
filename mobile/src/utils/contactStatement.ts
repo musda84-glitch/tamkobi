@@ -94,3 +94,41 @@ export function balanceMessage(contact: { name?: string; balance?: number }): st
 export function waDigits(phone?: string | null): string {
   return String(phone || "").replace(/\D/g, "").replace(/^0/, "90");
 }
+
+function esc(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function statementPrintHtml(
+  contact: { name?: string; tax_number_or_id?: string; balance?: number },
+  rows: StatementRow[],
+  companyName?: string,
+): string {
+  const last = rows.length ? rows[rows.length - 1].balance : Number(contact.balance) || 0;
+  const side = last > 0 ? "Borçlu" : last < 0 ? "Alacaklı" : "";
+  const trs = rows.map((r) => (
+    `<tr><td>${esc(r.date)}</td><td>${esc(r.doc)}</td>`
+    + `<td style="text-align:right">${r.debit ? esc(fmtMoney(r.debit)) : ""}</td>`
+    + `<td style="text-align:right">${r.credit ? esc(fmtMoney(r.credit)) : ""}</td>`
+    + `<td style="text-align:right">${esc(fmtMoney(r.balance))}</td></tr>`
+  )).join("");
+  return `<div>
+    <h1 style="font-size:18px;margin:0 0 8px">${esc(companyName || "Firmamız")} — Cari Hesap Ekstresi</h1>
+    <p style="margin:0 0 12px">Sayın ${esc(contact.name || "Cari")}${contact.tax_number_or_id ? ` · VKN ${esc(contact.tax_number_or_id)}` : ""}<br/>Tarih: ${esc(new Date().toLocaleDateString("tr-TR"))}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:6px 4px">Tarih</th>
+        <th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:6px 4px">Belge</th>
+        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Borç</th>
+        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Alacak</th>
+        <th style="text-align:right;border-bottom:1px solid #cbd5e1;padding:6px 4px">Bakiye</th>
+      </tr></thead>
+      <tbody>${trs || `<tr><td colspan="5">Hareket yok.</td></tr>`}</tbody>
+    </table>
+    <p style="margin-top:12px;font-weight:700">Güncel bakiye ${esc(fmtMoney(Math.abs(last)))} ${esc(side)}</p>
+  </div>`;
+}
