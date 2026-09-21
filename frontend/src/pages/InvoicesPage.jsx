@@ -643,7 +643,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           ? "bg-amber-100 text-amber-800"
                           : "bg-rose-100 text-rose-800"
                       }`}>
-                        {inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Ödenmedi"}
+                        {inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
                       </span>
                       )}
                     </td>

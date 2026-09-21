@@ -3,7 +3,7 @@ import { Search, ArrowUpDown, X, CalendarDays } from "lucide-react";
 import { ExportButtons } from "./ExportButtons";
 import { formatTrAmount } from "../utils/money";
 
-const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Ödenmedi" }, { key: "gib_status", label: "GİB" }];
+const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { key: "issue_date", label: "Tarih" }, { key: "due_date", label: "Vade" }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi" }, { key: "gib_status", label: "GİB" }];
 
 export const SORT_OPTIONS = [
   ["date_desc", "Tarih (yeni → eski)"], ["date_asc", "Tarih (eski → yeni)"],
@@ -32,7 +32,7 @@ export const invoiceSortCol = (sort) => Object.keys(SORT_COL_KEYS).find((c) => S
 export const invoiceSortDir = (sort) => (String(sort || "").endsWith("_asc") ? "asc" : String(sort || "").endsWith("_desc") ? "desc" : null);
 
 const PAY_RANK = { unpaid: 0, partially_paid: 1, paid: 2 };
-const PAY = [["all", "Tümü"], ["unpaid", "Ödenmedi"], ["partially_paid", "Kısmi"], ["paid", "Ödendi"], ["overdue", "Vadesi Geçti"]];
+const PAY = [["all", "Tümü"], ["unpaid", "Cariye işlendi"], ["partially_paid", "Kısmi"], ["paid", "Ödendi"], ["overdue", "Vadesi Geçti"]];
 const ETYPE = [["all", "Tüm Belgeler"], ["e_invoice", "E-Fatura"], ["e_archive", "E-Arşiv"], ["e_export", "e-İhracat"], ["paper", "Kağıt"], ["e_dispatch", "E-İrsaliye"]];
 const PRESETS = [["", "Tüm zamanlar"], ["today", "Bugün"], ["week", "Bu hafta"], ["month", "Bu ay"], ["quarter", "Bu çeyrek"], ["year", "Bu yıl"]];
 
