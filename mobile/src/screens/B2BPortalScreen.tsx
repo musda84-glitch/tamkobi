@@ -14,7 +14,8 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, cartCount, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { addCartLine, cartCount, formatCartSheetLine, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
 import {
   addEditProduct,
@@ -262,6 +263,7 @@ export function B2BPortalScreen() {
   const [cancel, setCancel] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [legal, setLegal] = useState<{ title: string; text: string } | null>(null);
+  const [legalAccept, setLegalAccept] = useState<LegalAcceptMap>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [addedId, setAddedId] = useState<string | null>(null);
@@ -306,6 +308,10 @@ export function B2BPortalScreen() {
     if (!data) return;
     if (!tabs.some((t) => t.id === tab)) setTab("catalog");
   }, [data, tabs, tab]);
+
+  useEffect(() => {
+    setLegalAccept((cur) => seedLegalAccept(cur, data?.legal));
+  }, [data?.legal]);
 
   const products = data?.products || [];
   const catGroups = useMemo(() => categorySelectGroups(products), [products]);
@@ -355,6 +361,7 @@ export function B2BPortalScreen() {
           items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
           note,
           customer_order_number: customerOrderNo.trim(),
+          ...legalAcceptPayload(legalAccept),
         }
       );
       setDone(res.order || null);
@@ -716,19 +723,24 @@ export function B2BPortalScreen() {
         {!lines.length ? <Empty icon="cart-outline" title="Sepet boş" /> : (
           <View>
             {lines.map((l) => (
-              <Row key={l.key} style={{ justifyContent: "space-between" }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ color: colors.text, fontWeight: "700" }}>{l.p.name}</Text>
-                  <Muted>{l.qty} × {showPrices ? fmtMoney(b2bGross(l.p)) : ""}{l.note ? ` · ${l.note}` : ""}</Muted>
-                </View>
+              <Row key={l.key} style={{ justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                <Text
+                  testID={`b2b-cart-line-${l.p.id}`}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.65}
+                  style={{ flex: 1, minWidth: 0, color: colors.text, fontWeight: "700", fontSize: 12, lineHeight: 16 }}
+                >
+                  {formatCartSheetLine(l.p.name, l.qty, showPrices ? fmtMoney(b2bGross(l.p)) : "", l.note)}
+                </Text>
                 <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty - 1))} testID={`b2b-qty-dec-${l.p.id}`}>
-                  <Ionicons name="remove-circle" size={26} color={colors.muted} />
+                  <Ionicons name="remove-circle" size={22} color={colors.muted} />
                 </Pressable>
                 <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, l.qty + 1))} testID={`b2b-qty-inc-${l.p.id}`}>
-                  <Ionicons name="add-circle" size={26} color={colors.primary} />
+                  <Ionicons name="add-circle" size={22} color={colors.primary} />
                 </Pressable>
                 <Pressable onPress={() => setCart((c) => setCartLineQty(c, l.key, 0))} testID={`b2b-qty-del-${l.p.id}`}>
-                  <Ionicons name="trash-outline" size={22} color={colors.danger} />
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
                 </Pressable>
               </Row>
             ))}
@@ -742,13 +754,39 @@ export function B2BPortalScreen() {
             <Field label="Sipariş notu (teslimat, adres…)" value={note} onChangeText={setNote} testID="b2b-order-note" />
             <Field label="Sizin sipariş no" value={customerOrderNo} onChangeText={setCustomerOrderNo} testID="b2b-po-number" autoCapitalize="none" />
             {(data?.legal || []).length ? (
-              <Row style={{ flexWrap: "wrap" }}>
-                {data?.legal?.map((doc) => (
-                  <Pressable key={doc.slug} onPress={() => openLegal(doc.slug, doc.title)} testID={`b2b-legal-${doc.slug}`}>
-                    <Text style={{ color: colors.indigo, fontWeight: "700", fontSize: 12, marginRight: 10 }}>{doc.title}</Text>
-                  </Pressable>
-                ))}
-              </Row>
+              <View
+                testID="b2b-legal-consent"
+                style={{
+                  gap: 8,
+                  padding: 10,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.slate50,
+                }}
+              >
+                {data?.legal?.map((doc) => {
+                  const checked = isLegalAccepted(legalAccept, doc.slug);
+                  return (
+                    <Row key={doc.slug} style={{ alignItems: "center", gap: 8 }}>
+                      <Pressable
+                        onPress={() => setLegalAccept((cur) => toggleLegalAccept(cur, doc.slug))}
+                        testID={`b2b-legal-check-${doc.slug}`}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked }}
+                        hitSlop={8}
+                      >
+                        <Ionicons name={checked ? "checkbox" : "square-outline"} size={20} color={checked ? colors.primary : colors.muted} />
+                      </Pressable>
+                      <Pressable onPress={() => openLegal(doc.slug, doc.title)} testID={`b2b-legal-${doc.slug}`} style={{ flex: 1, minWidth: 0 }}>
+                        <Text numberOfLines={1} style={{ color: colors.indigo, fontWeight: "700", fontSize: 12 }}>
+                          {doc.title}
+                        </Text>
+                      </Pressable>
+                    </Row>
+                  );
+                })}
+              </View>
             ) : null}
             <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
           </View>
