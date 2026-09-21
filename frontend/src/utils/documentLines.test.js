@@ -34,14 +34,16 @@ test("hydrateLine maps product_name and discount_percent", () => {
   expect(row.name).toBe("Stok A");
   expect(row.product_name).toBe("Stok A");
   expect(row.discount_rate).toBe(10);
+  expect(row.unit).toBe("Adet");
   expect(row.total).toBeCloseTo(45);
   expect(row.total_incl).toBeCloseTo(54);
 });
 
 test("lineFromProduct uses sale vs purchase price and product VAT", () => {
-  const prod = { id: "p1", name: "Kart", sale_price: 100, purchase_price: 80, vat_rate: 10, sku: "SKU-1" };
+  const prod = { id: "p1", name: "Kart", sale_price: 100, purchase_price: 80, vat_rate: 10, sku: "SKU-1", unit: "Koli" };
   const sale = lineFromProduct(prod, { invoiceType: "sales", quantity: 2 });
   expect(sale.unit_price).toBe(100);
+  expect(sale.unit).toBe("Koli");
   expect(sale.vat_rate).toBe(10);
   expect(sale.total_incl).toBeCloseTo(220);
   const buy = lineFromProduct(prod, { invoiceType: "purchase", quantity: 1 });

@@ -45,6 +45,7 @@ export function computeLine(item, editedField) {
   const vatAmount = Math.round(total * vat / 100 * 100) / 100;
   return {
     ...item,
+    unit: item.unit || "Adet",
     discount_rate: disc,
     vat_rate: vat,
     unit_price: Math.round(excl * 10000) / 10000,
