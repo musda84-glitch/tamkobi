@@ -477,7 +477,26 @@ export function B2BPortalScreen() {
   const inStockProducts = products.filter((p) => p.in_stock !== false);
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={message ? (
+        <View
+          testID="b2b-flash-message"
+          style={{
+            borderWidth: 2,
+            borderStyle: "dashed",
+            borderColor: colors.danger,
+            borderRadius: 12,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            backgroundColor: colors.rose50,
+          }}
+        >
+          <Text style={{ color: colors.danger, fontWeight: "700" }}>{message}</Text>
+        </View>
+      ) : null}
+    >
       <View testID="b2b-portal">
         <B2BTopBar
           logo={logo}
@@ -495,22 +514,6 @@ export function B2BPortalScreen() {
           </Pressable>
         ) : null}
         <ErrorBanner message={error} />
-        {message ? (
-          <View
-            testID="b2b-flash-message"
-            style={{
-              borderWidth: 2,
-              borderStyle: "dashed",
-              borderColor: colors.danger,
-              borderRadius: 12,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              backgroundColor: colors.rose50,
-            }}
-          >
-            <Text style={{ color: colors.danger, fontWeight: "700" }}>{message}</Text>
-          </View>
-        ) : null}
         {done ? (
           <Card testID="b2b-order-done">
             <Text style={{ fontWeight: "800", color: colors.primaryHover }}>Sipariş alındı · {done.order_number}</Text>
