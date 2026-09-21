@@ -90,5 +90,7 @@ describe("productDisplay", () => {
     expect(lastPurchaseLabel({ last_purchase_price: 80, last_purchase_supplier: "Ahmet" }, (n) => `${n} ₺`)).toBe("Son alış 80 ₺ · Ahmet");
     expect(lastPurchaseLabel({ purchase_price: 60 }, (n) => `${n} ₺`)).toBe("Son alış 60 ₺");
     expect(lastPurchaseLabel({}, (n) => `${n} ₺`)).toBe("");
+    expect(lastPurchaseLabel(null, (n) => `${n} ₺`)).toBe("");
+    expect(lastPurchaseLabel(undefined, (n) => `${n} ₺`)).toBe("");
   });
 });

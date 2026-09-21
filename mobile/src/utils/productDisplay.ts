@@ -65,9 +65,10 @@ export function productPickSubtitle(p: Pick<Product, "sku" | "barcode">): string
 }
 
 export function lastPurchaseLabel(
-  p: Pick<Product, "last_purchase_price" | "purchase_price" | "last_purchase_supplier">,
-  money: (n?: number) => string,
+  p?: Pick<Product, "last_purchase_price" | "purchase_price" | "last_purchase_supplier"> | null,
+  money: (n?: number) => string = () => "",
 ): string {
+  if (!p) return "";
   const price = Number(p.last_purchase_price != null ? p.last_purchase_price : p.purchase_price);
   if (!Number.isFinite(price) || price <= 0) return "";
   const who = p.last_purchase_supplier ? ` · ${p.last_purchase_supplier}` : "";
