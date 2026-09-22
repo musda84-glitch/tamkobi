@@ -55,6 +55,7 @@ import {
   employeePayload,
   overtimePayload,
   projectSelectGroups,
+  closedProjectCount,
   taskSelectGroups,
   validateAdvance,
   validateEmployee,
@@ -122,6 +123,7 @@ export function PersonnelScreen() {
   const [taskId, setTaskId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDays, setTaskDays] = useState("");
+  const [taskShowCompleted, setTaskShowCompleted] = useState(false);
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
@@ -335,6 +337,7 @@ export function PersonnelScreen() {
     setTaskId("");
     setTaskTitle("");
     setTaskDays("");
+    setTaskShowCompleted(false);
     setBusy(true);
     try {
       const rows = await get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 });
@@ -1350,6 +1353,21 @@ export function PersonnelScreen() {
         ) : (
           <Muted testID="task-assign-days-hint">Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır.</Muted>
         )}
+        {closedProjectCount(projects) ? (
+          <>
+            <PrimaryButton
+              title={taskShowCompleted
+                ? "Tamamlananları gizle"
+                : `Tamamlananları göster (${closedProjectCount(projects)})`}
+              onPress={() => setTaskShowCompleted((v) => !v)}
+              color={colors.secondary}
+              testID="task-show-completed-btn"
+            />
+            {!taskShowCompleted ? (
+              <Muted testID="task-completed-hint">{closedProjectCount(projects)} tamamlanan proje gizlendi.</Muted>
+            ) : null}
+          </>
+        ) : null}
         <GroupedSelect
           label="Proje"
           testID="task-project-select"
@@ -1366,7 +1384,7 @@ export function PersonnelScreen() {
               })
               .catch(() => undefined);
           }}
-          groups={projectSelectGroups(projects)}
+          groups={projectSelectGroups(projects, { includeCompleted: taskShowCompleted, keepId: taskProjectId })}
           emptyLabel="Proje seçin"
         />
         <GroupedSelect
