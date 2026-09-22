@@ -496,6 +496,36 @@ export function quoteUpdateBody(form: { contact_id: string; contact_name: string
   return rest;
 }
 
+export function quoteLinkedProjectId(quote?: Pick<QuoteDoc, "project_id"> | null): string {
+  return String(quote?.project_id || "").trim();
+}
+
+/** Projeye dönüştür / bağlı projeyi tekliften güncelle. */
+export function quoteToProjectAction(quote?: Pick<QuoteDoc, "project_id"> | null): {
+  mode: "create" | "update";
+  title: string;
+  testID: string;
+  confirmTitle: string;
+  confirmMessage: string;
+} {
+  if (quoteLinkedProjectId(quote)) {
+    return {
+      mode: "update",
+      title: "Güncelle",
+      testID: "quote-update-project",
+      confirmTitle: "Proje",
+      confirmMessage: "Bağlı proje tekliften güncellensin mi?",
+    };
+  }
+  return {
+    mode: "create",
+    title: "Projeye dönüştür",
+    testID: "quote-to-project",
+    confirmTitle: "Proje",
+    confirmMessage: "Teklif projeye dönüştürülsün mü?",
+  };
+}
+
 export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string }) {
   return {
     company_id: companyId,

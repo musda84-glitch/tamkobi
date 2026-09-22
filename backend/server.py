@@ -1445,13 +1445,39 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
     await db.quotes.update_one({"_id": quote_id}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
     return {"status": "success", "invoice": clean_doc(inv), "message": f"{q['quote_number']} → {inv['invoice_number']} taslak fatura oluşturuldu."}
 
+def _quote_project_sync_fields(q: Dict[str, Any]) -> Dict[str, Any]:
+    """Tekliften bağlı projeye yazılacak alanlar (ad, cari, bütçe, not, görseller)."""
+    name = (q.get("title") or "").strip() or f"{q.get('quote_number') or 'Teklif'} projesi"
+    fields: Dict[str, Any] = {
+        "name": name,
+        "contact_id": q.get("contact_id"),
+        "contact_name": q.get("contact_name"),
+        "budget": float(q.get("grand_total") or 0),
+        "description": q.get("notes") or "",
+    }
+    images = q.get("images") or []
+    if images:
+        fields["images"] = images
+    return fields
+
+
 @api_router.post("/quotes/{quote_id}/convert-to-project")
 async def convert_quote_to_project(quote_id: str):
     q = await db.quotes.find_one({"_id": quote_id})
     if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
     if q.get("project_id"):
-        raise HTTPException(status_code=400, detail="Bu teklif zaten bir projeye bağlı.")
+        project = await db.projects.find_one({"_id": q["project_id"]})
+        if not project:
+            raise HTTPException(status_code=404, detail="Bağlı proje bulunamadı.")
+        await db.projects.update_one({"_id": project["_id"]}, {"$set": _quote_project_sync_fields(q)})
+        project = clean_doc(await db.projects.find_one({"_id": project["_id"]}))
+        return {
+            "status": "success",
+            "project": project,
+            "updated": True,
+            "message": f"{q['quote_number']} → {project['project_number']} proje güncellendi.",
+        }
     survey = await db.surveys.find_one({"_id": q["survey_id"]}) if q.get("survey_id") else None
     name = (q.get("title") or "").strip() or f"{q['quote_number']} projesi"
     project = await create_project({

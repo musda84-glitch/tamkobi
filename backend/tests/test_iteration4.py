@@ -325,7 +325,16 @@ class TestProjects:
         s2 = next(x for x in client.get(f"{BASE}/surveys", timeout=30).json() if x["id"] == s["id"])
         assert s2["project_id"] == p["id"]
         again_p = client.post(f"{BASE}/quotes/{q['id']}/convert-to-project", timeout=30)
-        assert again_p.status_code == 400
+        assert again_p.status_code == 200, again_p.text
+        assert again_p.json().get("updated") is True
+        assert again_p.json()["project"]["id"] == p["id"]
+        client.put(f"{BASE}/quotes/{q['id']}", json={"title": "Guncel Villa", "notes": "revize", "items": q.get("items") or []}, timeout=30)
+        synced = client.post(f"{BASE}/quotes/{q['id']}/convert-to-project", timeout=30)
+        assert synced.status_code == 200, synced.text
+        p2 = synced.json()["project"]
+        assert p2["id"] == p["id"]
+        assert p2["name"] == "Guncel Villa"
+        assert p2["description"] == "revize"
         client.delete(f"{BASE}/quotes/{q['id']}", timeout=30)
         client.delete(f"{BASE}/projects/{p['id']}", timeout=30)
         client.delete(f"{BASE}/surveys/{s['id']}", timeout=30)

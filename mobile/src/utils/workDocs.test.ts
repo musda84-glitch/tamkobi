@@ -36,6 +36,7 @@ import {
   surveyListSubtitle,
   surveyStatusTone,
   quotePayload,
+  quoteToProjectAction,
   surveyPayload,
   trackingAbsoluteLink,
   trackingBadgeLabel,
@@ -192,6 +193,11 @@ describe("workDocs", () => {
       .toBe("Teklif kaydedildi. Taslak fatura NX202600000004 cariye işlendi.");
     expect(quoteSaveMessage({ hasContact: false, alreadyInvoiced: false })).toBe("Teklif kaydedildi. Taslak fatura için cari seçin.");
     expect(quoteSaveMessage({ hasContact: true, alreadyInvoiced: true })).toBe("Teklif güncellendi.");
+    expect(quoteToProjectAction({}).title).toBe("Projeye dönüştür");
+    expect(quoteToProjectAction({}).testID).toBe("quote-to-project");
+    expect(quoteToProjectAction({ project_id: "p1" }).title).toBe("Güncelle");
+    expect(quoteToProjectAction({ project_id: "p1" }).mode).toBe("update");
+    expect(quoteToProjectAction({ project_id: "p1" }).testID).toBe("quote-update-project");
   });
 
   it("requires at least one named quote line and a project name", () => {
