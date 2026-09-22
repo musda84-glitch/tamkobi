@@ -1,9 +1,17 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, MessageSquare, Send } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, MessageSquare, Send } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { messageAuthor, messagePreview, previewStaffMessages, validateMessageBody } from "../utils/staffMessages";
+import {
+  MESSAGES_HIDDEN_KEY,
+  mergeInboxWithDirectory,
+  messageAuthor,
+  messagePreview,
+  parseHiddenFlag,
+  previewStaffMessages,
+  validateMessageBody,
+} from "../utils/staffMessages";
 
 function Bubble({ m }) {
   return (
@@ -21,11 +29,15 @@ export function StaffMessagesPanel({
   employeeId,
   compact,
   testId = "staff-messages-panel",
+  collapsible = true,
 }) {
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [openEmp, setOpenEmp] = useState(employeeId || "");
+  const [hidden, setHidden] = useState(() => {
+    try { return parseHiddenFlag(localStorage.getItem(MESSAGES_HIDDEN_KEY)); } catch { return false; }
+  });
 
   const load = useCallback(() => {
     const params = {};
@@ -37,6 +49,12 @@ export function StaffMessagesPanel({
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setOpenEmp(employeeId || ""); }, [employeeId]);
+
+  const toggleHidden = () => {
+    const next = !hidden;
+    setHidden(next);
+    try { localStorage.setItem(MESSAGES_HIDDEN_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+  };
 
   const send = async (e) => {
     e?.preventDefault?.();
@@ -63,9 +81,14 @@ export function StaffMessagesPanel({
   if (data?.mode === "none") return null;
 
   const mode = data?.mode || "";
-  const showThread = mode === "staff" || mode === "both" || mode === "thread" || !!employeeId || !!openEmp;
-  const showInbox = (mode === "manager" || mode === "both") && !employeeId && !openEmp;
+  const locked = !!employeeId;
+  const showThread = mode === "staff" || mode === "both" || mode === "thread" || locked || !!openEmp;
+  const showInbox = (mode === "manager" || mode === "both") && !locked && !openEmp;
   const unread = Number(data?.unread || 0);
+  const conversations = useMemo(
+    () => mergeInboxWithDirectory(data?.inbox, data?.directory),
+    [data?.inbox, data?.directory],
+  );
   const preview = compact ? previewStaffMessages(data?.thread) : (data?.thread || []);
 
   if (!data) {
@@ -83,14 +106,12 @@ export function StaffMessagesPanel({
           <MessageSquare className="w-4 h-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-bold text-slate-900">
-            {showInbox && !showThread ? "Personel mesajları" : (employeeId || openEmp) && mode === "thread" ? "Personel mesajı" : "Yönetici mesajları"}
-          </div>
+          <div className="text-sm font-bold text-slate-900">Mesajlar</div>
           <div className="text-[11px] text-slate-500">
-            {data.employee?.full_name ? `${data.employee.full_name} ile konuşma` : "Şirket içi mesajlaşma"}
+            {data.employee?.full_name && (locked || mode === "staff") ? `${data.employee.full_name} ile yazışma` : "Tüm yazışmalar burada"}
           </div>
         </div>
-        {openEmp && !employeeId ? (
+        {openEmp && !locked ? (
           <button type="button" onClick={() => setOpenEmp("")} className="text-[11px] font-bold text-violet-700" data-testid={`${testId}-back`}>Geri</button>
         ) : null}
         {unread > 0 ? (
@@ -98,53 +119,83 @@ export function StaffMessagesPanel({
             {unread} yeni
           </button>
         ) : null}
+        {collapsible && !locked ? (
+          <button
+            type="button"
+            onClick={toggleHidden}
+            className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+            data-testid={`${testId}-toggle`}
+          >
+            {hidden ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+            {hidden ? "Göster" : "Gizle"}
+          </button>
+        ) : null}
       </div>
 
-      {showInbox ? (
-        <div className="space-y-1.5" data-testid={`${testId}-inbox`}>
-          {(data.inbox || []).length === 0 ? (
-            <div className="text-xs text-slate-400">Personelden henüz mesaj yok. Personel kartından yazabilirsiniz.</div>
-          ) : (data.inbox || []).map((row) => (
-            <button
-              key={row.employee_id}
-              type="button"
-              onClick={() => setOpenEmp(row.employee_id)}
-              className="w-full text-left rounded-xl border border-slate-100 px-3 py-2 hover:bg-slate-50"
-              data-testid={`${testId}-inbox-${row.employee_id}`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-800 truncate">{row.employee_name || "Personel"}</span>
-                {row.unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{row.unread}</span> : null}
-              </div>
-              <div className="text-[11px] text-slate-500 truncate">{messagePreview(row.last)}</div>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {hidden && collapsible && !locked ? (
+        <div className="text-xs text-slate-400">Yazışmalar gizli. Göster ile açın.</div>
+      ) : (
+        <>
+          {showInbox ? (
+            <div className="space-y-1.5" data-testid={`${testId}-inbox`}>
+              {(data.directory || []).length > 0 ? (
+                <select
+                  className="w-full border rounded-xl p-2 text-xs font-semibold"
+                  value=""
+                  onChange={(e) => { if (e.target.value) setOpenEmp(e.target.value); }}
+                  data-testid={`${testId}-pick`}
+                >
+                  <option value="">Personel seç · yeni yazışma</option>
+                  {(data.directory || []).map((emp) => (
+                    <option key={emp.id} value={emp.id}>{emp.full_name}{emp.position ? ` · ${emp.position}` : ""}</option>
+                  ))}
+                </select>
+              ) : null}
+              {conversations.length === 0 ? (
+                <div className="text-xs text-slate-400">Kayıtlı personel yok.</div>
+              ) : conversations.map((row) => (
+                <button
+                  key={row.employee_id}
+                  type="button"
+                  onClick={() => setOpenEmp(row.employee_id)}
+                  className="w-full text-left rounded-xl border border-slate-100 px-3 py-2 hover:bg-slate-50"
+                  data-testid={`${testId}-inbox-${row.employee_id}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-800 truncate">{row.employee_name || "Personel"}</span>
+                    {row.unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{row.unread}</span> : null}
+                  </div>
+                  <div className="text-[11px] text-slate-500 truncate">{row.last ? messagePreview(row.last) : "Yeni yazışma"}</div>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-      {showThread ? (
-        <div className="space-y-2 max-h-72 overflow-y-auto" data-testid={`${testId}-thread`}>
-          {preview.length === 0 ? (
-            <div className="text-xs text-slate-400 text-center py-3">Henüz mesaj yok.</div>
-          ) : (compact ? preview : [...preview].reverse()).map((m) => <Bubble key={m.id || m.created_at} m={m} />)}
-        </div>
-      ) : null}
+          {showThread ? (
+            <div className="space-y-2 max-h-72 overflow-y-auto" data-testid={`${testId}-thread`}>
+              {preview.length === 0 ? (
+                <div className="text-xs text-slate-400 text-center py-3">Henüz mesaj yok. Aşağıdan yazın.</div>
+              ) : (compact ? preview : [...preview].reverse()).map((m) => <Bubble key={m.id || m.created_at} m={m} />)}
+            </div>
+          ) : null}
 
-      {showThread || employeeId ? (
-        <form onSubmit={send} className="flex gap-2">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={2}
-            placeholder={employeeId ? "Personele yazın…" : "Yöneticiye yazın…"}
-            className="flex-1 border rounded-xl p-2 text-xs"
-            data-testid={`${testId}-draft`}
-          />
-          <button type="submit" disabled={busy} className="self-end px-3 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs disabled:opacity-50" data-testid={`${testId}-send`}>
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </button>
-        </form>
-      ) : null}
+          {showThread || locked ? (
+            <form onSubmit={send} className="flex gap-2">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={2}
+                placeholder={locked || openEmp ? "Mesaj yazın…" : "Yöneticiye yazın…"}
+                className="flex-1 border rounded-xl p-2 text-xs"
+                data-testid={`${testId}-draft`}
+              />
+              <button type="submit" disabled={busy} className="self-end px-3 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs disabled:opacity-50" data-testid={`${testId}-send`}>
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+            </form>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

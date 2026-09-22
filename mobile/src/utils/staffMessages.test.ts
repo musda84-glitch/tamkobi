@@ -1,7 +1,9 @@
 import {
   inboxUnreadTotal,
+  mergeInboxWithDirectory,
   messageAuthor,
   messagePreview,
+  parseHiddenFlag,
   previewStaffMessages,
   unreadStaffMessages,
   validateMessageBody,
@@ -21,5 +23,13 @@ describe("staffMessages", () => {
     expect(messageAuthor(rows[0])).toBe("Mustafa");
     expect(messagePreview({ body: "  a \n b  " })).toBe("a b");
     expect(inboxUnreadTotal([{ employee_id: "e1", unread: 2 }, { employee_id: "e2", unread: 0 }])).toBe(2);
+    expect(parseHiddenFlag("1")).toBe(true);
+    expect(parseHiddenFlag("0")).toBe(false);
+    const merged = mergeInboxWithDirectory(
+      [{ employee_id: "e1", employee_name: "Ali", unread: 1, last: { body: "selam" } }],
+      [{ id: "e1", full_name: "Ali" }, { id: "e2", full_name: "Ayşe" }],
+    );
+    expect(merged.map((r) => r.employee_id)).toEqual(["e1", "e2"]);
+    expect(merged[1].last).toBeNull();
   });
 });

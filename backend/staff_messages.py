@@ -136,6 +136,24 @@ def _clean_emp(emp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+INACTIVE = frozenset({"terminated", "passive", "inactive", "left"})
+
+
+async def _employee_directory(company_id: str, skip_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    rows = await _db.employees.find({"company_id": company_id}).to_list(400)
+    out = []
+    skip = str(skip_id or "")
+    for e in rows:
+        if str(e.get("status") or "").lower() in INACTIVE:
+            continue
+        eid = str(e.get("_id") or e.get("id") or "")
+        if skip and eid == skip:
+            continue
+        out.append(_clean_emp(e))
+    out.sort(key=lambda x: str(x.get("full_name") or "").lower())
+    return out
+
+
 async def _thread_rows(company_id: str, employee_id: str, limit: int = 80) -> List[Dict[str, Any]]:
     return await _db.staff_messages.find({
         "company_id": company_id,
@@ -188,29 +206,35 @@ async def _list_messages(employee_id: Optional[str] = None, user: dict = None):
             "thread": [public_message(r) for r in rows],
             "unread": unread_for_reader(rows, "manager"),
             "inbox": [],
+            "directory": [],
         }
     if own and str(own.get("company_id") or "") == company_id:
         rows = await _thread_rows(company_id, own["_id"])
         inbox = []
+        directory = []
         if manager:
             all_rows = await _db.staff_messages.find({"company_id": company_id}).sort("created_at", -1).to_list(300)
             inbox = inbox_from_rows(all_rows)
+            directory = await _employee_directory(company_id, own.get("_id"))
         return {
             "mode": "both" if manager else "staff",
             "employee": _clean_emp(own),
             "thread": [public_message(r) for r in rows],
             "unread": unread_for_reader(rows, "staff"),
             "inbox": inbox,
+            "directory": directory,
         }
     if manager:
         all_rows = await _db.staff_messages.find({"company_id": company_id}).sort("created_at", -1).to_list(300)
         inbox = inbox_from_rows(all_rows)
+        directory = await _employee_directory(company_id)
         return {
             "mode": "manager",
             "employee": None,
             "thread": [],
             "unread": sum(x["unread"] for x in inbox),
             "inbox": inbox,
+            "directory": directory,
         }
     raise HTTPException(status_code=403, detail="Mesajları görmek için personel kartı veya yönetici yetkisi gerekir.")
 
