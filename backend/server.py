@@ -1174,11 +1174,13 @@ def _calc_items(items: List[Dict[str, Any]]):
     return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
 
 @api_router.get("/quotes")
-async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
+async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, project_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
     """summary=1: liste için hafif payload (kalemler hariç) — Teklif/Proje/Keşif sayfası."""
     q = {"company_id": company_id}
     if contact_id:
         q["contact_id"] = contact_id
+    if project_id:
+        q["project_id"] = project_id
     if status:
         q["status"] = status
     proj = {"items": 0} if summary else None
@@ -1578,6 +1580,13 @@ async def create_project(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Proje adı gerekli.")
     await db.projects.insert_one(doc)
     return clean_doc(doc)
+
+@api_router.get("/projects/{project_id}")
+async def get_project(project_id: str):
+    p = await db.projects.find_one({"_id": project_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    return clean_doc(p)
 
 @api_router.put("/projects/{project_id}")
 async def update_project(project_id: str, req: Dict[str, Any]):

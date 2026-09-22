@@ -36,6 +36,7 @@ import {
   surveyListSubtitle,
   surveyStatusTone,
   quotePayload,
+  quoteProjectSyncPayload,
   quoteToProjectAction,
   surveyPayload,
   trackingAbsoluteLink,
@@ -198,6 +199,25 @@ describe("workDocs", () => {
     expect(quoteToProjectAction({ project_id: "p1" }).title).toBe("Güncelle");
     expect(quoteToProjectAction({ project_id: "p1" }).mode).toBe("update");
     expect(quoteToProjectAction({ project_id: "p1" }).testID).toBe("quote-update-project");
+    expect(quoteProjectSyncPayload({
+      title: "Villa",
+      quote_number: "TKF-1",
+      contact_id: "c1",
+      contact_name: "Acme",
+      notes: "revize",
+      grand_total: 240,
+      images: ["/api/files/a.jpg", ""],
+    })).toEqual({
+      name: "Villa",
+      contact_id: "c1",
+      contact_name: "Acme",
+      budget: 240,
+      description: "revize",
+      images: ["/api/files/a.jpg"],
+    });
+    expect(quoteProjectSyncPayload({ quote_number: "TKF-2" }).name).toBe("TKF-2 projesi");
+    expect(quoteProjectSyncPayload({}).name).toBe("Teklif projesi");
+    expect(quoteProjectSyncPayload({ images: [] }).images).toBeUndefined();
   });
 
   it("requires at least one named quote line and a project name", () => {
