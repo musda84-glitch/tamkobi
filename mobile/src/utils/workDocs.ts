@@ -218,7 +218,7 @@ export function workItemFromProduct(prod: {
 export function toggleWorkItemService(item: WorkItem): WorkItem {
   const is_service = !item.is_service;
   if (is_service) {
-    return { ...item, is_service: true, product_id: "", image_url: undefined, thumbnail_url: undefined };
+    return { ...item, is_service: true, product_id: "" };
   }
   return { ...item, is_service: false };
 }

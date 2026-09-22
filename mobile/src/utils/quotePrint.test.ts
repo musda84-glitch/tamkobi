@@ -66,6 +66,24 @@ describe("quotePrint", () => {
     expect(quoteFormText(quote, company)).toContain("AHMET AĞDEMİR");
   });
 
+  it("puts a service line photo only on the print form", () => {
+    const html = quoteFormHtml({
+      ...quote,
+      items: [{
+        name: "Montaj",
+        quantity: 1,
+        unit_price: 500,
+        vat_rate: 20,
+        unit: "Adet",
+        is_service: true,
+        image_url: "/api/files/hizmet.jpg",
+      }],
+    }, company, { template: mergePrintTemplate({ show_images: true }), mediaBase: "https://tamkobi.com" });
+    expect(html).toContain("Montaj");
+    expect(html).toContain("/api/files/hizmet.jpg");
+    expect(html).toContain("<img");
+  });
+
   it("uses the company quote print-template", () => {
     const html = quoteFormHtml(quote, company, {
       template: mergePrintTemplate({

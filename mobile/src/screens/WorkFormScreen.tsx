@@ -1154,7 +1154,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       ) : null}
       {!isNew && kind === "quote" && quote ? (
         <QuoteActions
-          quote={{ ...quote, title, contact_name: contactName, valid_until: validUntil, notes, items, grand_total: totals.grandTotal }}
+          quote={{
+            ...quote,
+            title,
+            contact_id: contactId,
+            contact_name: contactName,
+            valid_until: validUntil,
+            notes,
+            items,
+            grand_total: totals.grandTotal,
+          }}
           contact={contacts.find((c) => idOf(c) === contactId) || null}
           onSave={canEdit ? save : undefined}
           saveBusy={busy}

@@ -138,10 +138,10 @@ describe("workDocs", () => {
       is_service: false,
     }).map((p) => p.id)).toEqual(["p1"]);
     expect(workItemNameHits(products, { name: "DL120", is_service: false }).map((p) => p.id)).toEqual(["p1"]);
-    const service = toggleWorkItemService({ ...emptyItem(), product_id: "p1", name: "Profil", image_url: "x.jpg" });
+    const service = toggleWorkItemService({ ...emptyItem(), product_id: "p1", name: "Profil", image_url: "x.jpg", thumbnail_url: "x.jpg" });
     expect(service.is_service).toBe(true);
     expect(service.product_id).toBe("");
-    expect(service.image_url).toBeUndefined();
+    expect(service.image_url).toBe("x.jpg");
     expect(toggleWorkItemService(service).is_service).toBe(false);
     const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
     expect(fromSvc.is_service).toBe(true);

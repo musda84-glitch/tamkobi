@@ -2,24 +2,20 @@ import * as Print from "expo-print";
 import { Platform, Share } from "react-native";
 import type { ApiClient } from "../api/client";
 import { normalizeApiBase } from "../api/url";
-import { htmlToPdfFile, paperPrintSize, printHtmlNative, printOfficialBlob, sharePdfFile } from "./nativePrint";
+import { htmlToPdfFile, paperPrintSize, printHtmlNative, sharePdfFile } from "./nativePrint";
 import { openPrintHtml, printPageSize, type PrintCompany } from "./orderPrint";
 import {
   enrichPrintCompany,
-  fetchApiBlob,
   loadContactBalance,
   loadPrintProducts,
   loadPrintTemplate,
 } from "./orderShare";
 import {
-  isPdfContentType,
-  isPdfMagic,
   quoteFormHtml,
   quoteFormText,
   quotePdfFilename,
   quotePrintDocument,
 } from "./quotePrint";
-import { idOf } from "./money";
 import type { QuoteDoc } from "./workDocs";
 
 async function quotePrintParts(quote: QuoteDoc, company?: PrintCompany | null, client?: ApiClient | null) {
@@ -55,27 +51,12 @@ export async function printQuoteForm(
   throw new Error("Yazdırılamadı.");
 }
 
-async function downloadServerQuotePdf(client: ApiClient, quote: QuoteDoc): Promise<boolean> {
-  const id = idOf(quote);
-  if (!id) return false;
-  const blob = await fetchApiBlob(client, `/quotes/${id}/pdf?download=1`);
-  if (!blob) return false;
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  if (!isPdfMagic(bytes) && !isPdfContentType(blob.type)) return false;
-  return printOfficialBlob(blob, quotePdfFilename(quote).replace(/\.pdf$/i, ""));
-}
-
 export async function downloadQuotePdf(
   client: ApiClient,
   quote: QuoteDoc,
   company?: PrintCompany | null,
 ): Promise<"file" | "print"> {
   const filename = quotePdfFilename(quote);
-  try {
-    if (await downloadServerQuotePdf(client, quote)) return "file";
-  } catch {
-    /* local HTML fallback uses the same web print-template */
-  }
   const { body, html, paper } = await quotePrintParts(quote, company, client);
   try {
     if (await htmlToPdfFile(html, filename, paperPrintSize(paper))) return "file";
