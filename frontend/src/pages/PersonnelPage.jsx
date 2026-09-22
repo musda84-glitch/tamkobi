@@ -610,7 +610,7 @@ export default function PersonnelPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-bonus-due-${emp.tc_kimlik || empKey}`}>
-                <span className="text-slate-400">Prim hakedişi:</span>
+                <span className="text-slate-400">{isDailyWage(emp) ? "Yevmiye hakedişi:" : "Prim hakedişi:"}</span>
                 <span className="text-sm font-bold text-amber-800">{Number(emp.balance?.bonus_pending || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>
