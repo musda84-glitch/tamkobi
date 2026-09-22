@@ -816,7 +816,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           </View>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
-            const noteShown = kind === "quote" && workItemNoteOpen(it, noteOpen[i]);
+            const richLine = kind !== "project";
+            const noteShown = richLine && workItemNoteOpen(it, noteOpen[i]);
             const quoteGrossField = (
               <View
                 style={{
@@ -870,7 +871,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 position: "relative",
               }}
             >
-              {kind === "quote" && canEdit ? (
+              {richLine && canEdit ? (
                 <Pressable
                   onPress={() => removeItem(i)}
                   testID={`q-item-del-${i}`}
@@ -890,7 +891,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 </Pressable>
               ) : null}
               <View style={{ gap: 4 }}>
-                  {kind === "quote" ? (
+                  {richLine ? (
                     <Row style={{ alignItems: "flex-start", gap: 8, paddingRight: 28 }}>
                       <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
                         <Chip
@@ -922,7 +923,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
                     />
                   )}
-                  {kind === "quote" ? (
+                  {richLine ? (
                     <Row style={{ alignItems: "stretch", gap: 8 }}>
                       <Pressable
                         onPress={() => pickLineImage(i)}
@@ -1077,7 +1078,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       </Row>
                     </Row>
                   )}
-                  {kind === "quote" ? (
+                  {richLine ? (
                     <>
                       <Row style={{ alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <Pressable
