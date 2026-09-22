@@ -25,9 +25,10 @@ import { DateField } from "./DateField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, stickyTop, onRefresh, refreshing, padded = true }: {
+export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true }: {
   children: React.ReactNode;
   stickyTop?: React.ReactNode;
+  stickyBottom?: React.ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
   padded?: boolean;
@@ -46,6 +47,7 @@ export function Screen({ children, stickyTop, onRefresh, refreshing, padded = tr
       >
         {children}
       </ScrollView>
+      {stickyBottom ? <View style={[styles.stickyBottom, padded && styles.stickyPadBottom]}>{stickyBottom}</View> : null}
     </KeyboardAvoidingView>
   );
 }
@@ -272,7 +274,9 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
   stickyTop: { backgroundColor: colors.background, zIndex: 20, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 8 },
+  stickyBottom: { backgroundColor: colors.background, zIndex: 20, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   stickyPad: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4, paddingBottom: spacing.xs },
+  stickyPadBottom: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.xs, paddingBottom: spacing.sm + 4 },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

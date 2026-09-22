@@ -116,6 +116,7 @@ export function BankingScreen() {
   const [groupF, setGroupF] = useState<string>("all");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [partnerDock, setPartnerDock] = useState<React.ReactNode>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -199,12 +200,13 @@ export function BankingScreen() {
       onRefresh={load}
       refreshing={refreshing}
       stickyTop={showAccountList ? <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" /> : undefined}
+      stickyBottom={tab === "partners" ? partnerDock : undefined}
     >
       <TabStrip
         testID="banking-tab"
         variant="icons"
         value={tab}
-        onChange={(key) => { setTab(key); setGroupF("all"); }}
+        onChange={(key) => { setTab(key); setGroupF("all"); setPartnerDock(null); }}
         items={[
           { key: "all", label: "Tümü", icon: "apps", color: colors.primary },
           { key: "cash", label: "Kasa", icon: "wallet", color: accountGroupTone("cash_box").accent, count: cashCount || undefined },
@@ -215,7 +217,7 @@ export function BankingScreen() {
       />
 
       {tab === "partners" ? (
-        <BankingPartnersPanel accounts={rows} onChanged={load} />
+        <BankingPartnersPanel accounts={rows} onChanged={load} onSelectedDock={setPartnerDock} />
       ) : tab === "match" ? (
         <BankingMatchPanel accounts={rows} onChanged={load} />
       ) : (
