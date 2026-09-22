@@ -1,6 +1,7 @@
 import { splitPaymentTarget } from "./finance";
 import { idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
+import type { Workplace } from "./workplace";
 
 export type Employee = {
   id?: string;
@@ -85,6 +86,7 @@ export type EmployeeCard = {
   bonuses?: EmployeeBonus[];
   balance?: EmployeeBalance;
   overtime?: { hours?: number; amount?: number };
+  workplace?: Workplace | null;
 };
 
 export type EmployeePayMove = {
@@ -195,6 +197,7 @@ export type AttendanceSummary = {
   daily_wage?: number;
   period_wage?: number;
   today?: AttendanceToday | null;
+  workplace?: Workplace | null;
 };
 
 export type AttendanceRecord = {
@@ -581,6 +584,10 @@ export type ProjectWithTasks = {
   project_number?: string;
   status?: string;
   tasks?: ProjectTask[];
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string;
+  location_url?: string;
 };
 
 export function newTaskId(now = Date.now(), rand = Math.random().toString(36).slice(2, 7)): string {

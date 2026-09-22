@@ -13,6 +13,7 @@ import { empIdOf, nextTasksAfterAssign, validateEmployeeTaskAssign } from "../ut
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
+import { workplaceHint, workplaceShort } from "../utils/workplace";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -265,6 +266,13 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {empStatusLabel(e.status)}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
+                {card.workplace?.kind === "task" ? (
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3 text-indigo-900" data-testid="emp-card-workplace">
+                    <div className="font-bold">Dış görev — giriş/çıkış görev yerinden</div>
+                    <div className="text-[11px] mt-0.5">{workplaceHint(card.workplace, true)}</div>
+                    {card.workplace.address ? <div className="text-[11px] text-indigo-700 mt-0.5">{card.workplace.address}</div> : null}
+                  </div>
+                ) : null}
                 <div className="border border-slate-100 rounded-xl p-3 space-y-3" data-testid="emp-performance">
                   <div className="flex items-center justify-between"><div className="font-bold text-slate-800">Performans</div><div className={`text-sm font-black ${TONE[performanceTone(perf.overall)]}`} data-testid="emp-perf-overall">%{perf.overall ?? 0}</div></div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -302,7 +310,10 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <tbody className="divide-y">{card.leaves.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">İzin kaydı yok.</td></tr>}{card.leaves.map((l) => <tr key={l.id}><td className="py-1.5 font-semibold">{LEAVE[l.type] || l.type}</td><td>{l.start_date} → {l.end_date}</td><td className="text-right">{l.days}</td><td className="pl-3 text-slate-500">{l.reason}</td><td className="text-right"><Badge s={l.status} /></td></tr>)}</tbody></table></div>
             )}
             {tab === "attendance" && (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2" data-testid="emp-attendance"><Stat label={`Ay (${card.attendance.month})`} value="Özet" /><Stat label="Çalışılan Gün" value={card.attendance.days_present} /><Stat label="Devamsız" value={card.attendance.days_absent} /><Stat label="İzinli" value={card.attendance.days_leave} /><Stat label="Toplam / Mesai Saat" value={`${card.attendance.total_hours} / ${card.attendance.overtime_hours}`} />{isDailyWage(e) ? <Stat label="Yevmiye hak ediş" value={`${fmt(periodWage(e, card.attendance.days_present))} ₺`} sub={`${card.attendance.days_present || 0} gün × ${fmt(e.daily_wage)} ₺`} testid="emp-att-yevmiye" /> : null}</div>
+              <div className="space-y-3" data-testid="emp-attendance">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2"><Stat label={`Ay (${card.attendance.month})`} value="Özet" /><Stat label="Çalışılan Gün" value={card.attendance.days_present} /><Stat label="Devamsız" value={card.attendance.days_absent} /><Stat label="İzinli" value={card.attendance.days_leave} /><Stat label="Toplam / Mesai Saat" value={`${card.attendance.total_hours} / ${card.attendance.overtime_hours}`} />{isDailyWage(e) ? <Stat label="Yevmiye hak ediş" value={`${fmt(periodWage(e, card.attendance.days_present))} ₺`} sub={`${card.attendance.days_present || 0} gün × ${fmt(e.daily_wage)} ₺`} testid="emp-att-yevmiye" /> : null}</div>
+                {card.workplace?.kind === "task" ? <div className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-att-workplace">Dış görev: {workplaceShort(card.workplace)} — giriş/çıkış görev yerinden</div> : null}
+              </div>
             )}
             {tab === "pay" && <EmployeeCompensationForm key={card.employee.updated_at || card.employee.id} employee={card.employee} companySchedule={schedule} onSaved={reload} />}
             {tab === "user" && <UserTab card={card} reload={reload} />}
@@ -438,6 +449,10 @@ function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
           <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
         </div>
         <p className="text-slate-600">{employee.full_name} · proje görevi seçin veya yeni yazın</p>
+        <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-card-task-field-hint">
+          Dış görevde işe giriş/çıkış, projenin konumu iş yeri sayılarak görev yerinden yapılır.
+          {project && project.latitude != null && project.longitude != null ? ` Seçili proje konumu kayıtlı.` : project ? " Seçili projenin konumu yoksa giriş konumsuz olur (firma ofisi zorunlu değil)." : ""}
+        </p>
         <div>
           <label className="block font-semibold text-slate-700 mb-1">Proje</label>
           <select value={projectId} onChange={(ev) => { setProjectId(ev.target.value); setTaskId(""); }} className="w-full border rounded-lg p-2" data-testid="emp-card-task-project">

@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
+import { workplaceHint } from "../utils/workplace";
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -135,7 +136,10 @@ export default function MyAttendancePage() {
             <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">
               <span className="inline-flex items-center gap-1"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Mesai {sch.start}–{sch.end} · mola {sch.break_minutes} dk</span>
               <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-emerald-400" /> {workDays}</span>
-              {data.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> Firma konumu · {data.location.radius_m} m{sch.require_geo === false ? " (girişte zorunlu değil)" : " (yalnızca girişte)"}</span> : <span className="text-amber-300">Firma konumu tanımsız — konumsuz giriş</span>}
+              <span className={`inline-flex items-center gap-1 ${data.workplace?.kind === "task" ? "text-indigo-200" : ""}`} data-testid="my-att-workplace">
+                <MapPin className={`w-3.5 h-3.5 ${data.workplace?.kind === "task" ? "text-indigo-300" : "text-emerald-400"}`} />
+                {workplaceHint(data.workplace || data.location, sch.require_geo !== false)}
+              </span>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -244,7 +248,7 @@ export default function MyAttendancePage() {
             })()}
           </div>
 
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Açık proje görevi varsa giriş <b className="text-indigo-200">görev yerinden</b> yapılır (dış görev). Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

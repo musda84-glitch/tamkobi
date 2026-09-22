@@ -8701,6 +8701,7 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
     emps = await db.employees.find({"company_id": company_id}).to_list(200)
     company = await db.companies.find_one({"_id": company_id}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
+    workplaces = await attendance.workplaces_by_employee(company_id, [e["_id"] for e in emps], today_s, company.get("location"))
     summary = []
     for e in emps:
         mine = [r for r in rows if r["employee_id"] == e["_id"]]
@@ -8712,7 +8713,8 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
                         "period_wage": personnel_wage.period_wage(e, summ.get("days_present") or 0),
                         "overtime_pay": ot["amount"], "overtime_rate": ot["weekday_rate"], "overtime_method": ot["method"],
                         "schedule": attendance.merge_schedule(company, e), "has_override": bool(e.get("work_schedule")),
-                        "today": clean_doc(next((r for r in mine if r["date"] == today_s), None) or {}) or None})
+                        "today": clean_doc(next((r for r in mine if r["date"] == today_s), None) or {}) or None,
+                        "workplace": workplaces.get(e["_id"])})
     return {"month": month, "records": clean_docs(rows), "summary": summary, "schedule": attendance.merge_schedule(company)}
 
 @api_router.get("/geocode")
@@ -8757,7 +8759,14 @@ async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depend
     emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
     today = attendance._today(attendance.merge_schedule(company, emp))
     rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) if emp else None
-    return {"location": company.get("location"), "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None, "today": clean_doc(rec) if rec else None}
+    workplace = await attendance.workplace_for_employee(emp, company, today) if emp else None
+    return {
+        "location": attendance.geo_target(workplace) if workplace else company.get("location"),
+        "company_location": company.get("location"),
+        "workplace": workplace,
+        "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None,
+        "today": clean_doc(rec) if rec else None,
+    }
 
 @api_router.post("/personnel/attendance/geo")
 async def geo_attendance(req: Dict[str, Any], request: Request):
@@ -11577,22 +11586,13 @@ async def _employee_assigned_work(company_id: str, emp_id: str):
     tasks = []
     async for proj in db.projects.find(
         {"company_id": company_id, "tasks.assignee_id": emp_id},
-        {"name": 1, "project_number": 1, "status": 1, "tasks": 1},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
     ):
         for t in (proj.get("tasks") or []):
             if t.get("assignee_id") != emp_id:
                 continue
-            done = bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
-            tasks.append({
-                "id": t.get("id") or t.get("_id"),
-                "title": t.get("title") or t.get("name") or "Görev",
-                "done": done,
-                "due_date": t.get("due_date"),
-                "project_id": proj["_id"],
-                "project_name": proj.get("name"),
-                "project_number": proj.get("project_number"),
-                "project_status": proj.get("status"),
-            })
+            tasks.append(attendance.assignment_from_project(proj, t))
     tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
     wo_rows = clean_docs(await db.work_orders.find({"company_id": company_id, "assigned_to": emp_id}).sort([("planned_date", 1), ("order_code", 1)]).to_list(200))
     work_orders = [{
@@ -11711,12 +11711,15 @@ async def employee_card(emp_id: str):
     tasks, work_orders = await _employee_assigned_work(emp.get("company_id"), emp_id)
     expected = attendance.expected_work_dates(month, schedule.get("work_days"), emp.get("start_date"), emp.get("end_date"))
     perf = attendance.performance_scores(att, leaves, tasks, work_orders, expected, month)
+    workplace = attendance.workplace_payload(company.get("location"), attendance.pick_field_assignment(tasks, attendance._today(schedule)))
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
             "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
             "attendance": {"month": month, **att_sum},
             "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
                          "amount": ot["amount"], "method": ot["method"], "weekday_rate": ot["weekday_rate"], "holiday_rate": ot["holiday_rate"]},
             "performance": perf,
+            "tasks": tasks,
+            "workplace": workplace,
             "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
             "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
             "pending_invite": clean_doc(invite) if invite else None,
@@ -11783,43 +11786,11 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     annual = emp.get("annual_leave_days", 14)
     used_n = used or emp.get("used_leave_days", 0)
 
-    tasks = []
-    async for proj in db.projects.find(
-        {"company_id": company_id, "tasks.assignee_id": emp_id},
-        {"name": 1, "project_number": 1, "status": 1, "tasks": 1},
-    ):
-        for t in (proj.get("tasks") or []):
-            if t.get("assignee_id") != emp_id:
-                continue
-            done = bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi"))
-            tasks.append({
-                "id": t.get("id") or t.get("_id"),
-                "title": t.get("title") or t.get("name") or "Görev",
-                "done": done,
-                "due_date": t.get("due_date"),
-                "project_id": proj["_id"],
-                "project_name": proj.get("name"),
-                "project_number": proj.get("project_number"),
-                "project_status": proj.get("status"),
-            })
-    tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
-
-    wo_rows = clean_docs(await db.work_orders.find({
-        "company_id": company_id,
-        "assigned_to": emp_id,
-        "status": {"$nin": ["done", "completed", "cancelled", "canceled"]},
-    }).sort([("planned_date", 1), ("order_code", 1)]).to_list(100))
-    work_orders = [{
-        "id": w.get("id") or w.get("_id"),
-        "order_code": w.get("order_code") or w.get("code"),
-        "product_name": w.get("product_name") or w.get("name"),
-        "station": w.get("station"),
-        "step_no": w.get("step_no"),
-        "status": w.get("status"),
-        "planned_date": w.get("planned_date"),
-        "qty": w.get("qty") or w.get("quantity"),
-        "assigned_name": w.get("assigned_name"),
-    } for w in wo_rows]
+    tasks, work_orders_all = await _employee_assigned_work(company_id, emp_id)
+    work_orders = [
+        w for w in work_orders_all
+        if (w.get("status") or "") not in ("done", "completed", "cancelled", "canceled")
+    ]
 
     safe_emp = {
         "id": emp_id,
@@ -11875,6 +11846,7 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "balance": await _employee_receivable(emp, payrolls, bonuses, month),
         "tasks": tasks,
         "work_orders": work_orders,
+        "workplace": await attendance.workplace_for_employee(emp),
     }
 
 
