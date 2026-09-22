@@ -106,7 +106,11 @@ export function InstallmentsScreen() {
   };
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" testID="inst-search" value={q} onChangeText={setQ} placeholder="Fatura no, cari, taksit" />}
+    >
       <StatRows
         testID="installments-summary"
         items={[
@@ -115,7 +119,6 @@ export function InstallmentsScreen() {
           { key: "paid", label: "Ödenen", value: fmtMoney(paidTotal) },
         ]}
       />
-      <Field label="Ara" testID="inst-search" value={q} onChangeText={setQ} placeholder="Fatura no, cari, taksit" />
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
