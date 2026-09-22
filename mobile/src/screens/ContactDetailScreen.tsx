@@ -30,6 +30,9 @@ import {
   isChequePayment,
   isLockedPayment,
   lockedPaymentLabel,
+  paymentAmountColor,
+  paymentAmountPrefix,
+  paymentKindLabel,
   paymentEditFrom,
   paymentEditPayload,
   planPayload,
@@ -909,17 +912,24 @@ export function ContactDetailScreen() {
               <PrimaryButton title="Vazgeç" onPress={() => setPayEdit(null)} testID="pay-edit-cancel" />
             </Card>
           ) : null}
-          {!payments.length ? <Muted>Ödeme yok.</Muted> : payments.map((p: ContactPayment, idx: number) => {
+          {!payments.length ? <Muted>Tahsilat / ödeme yok.</Muted> : payments.map((p: ContactPayment, idx: number) => {
             const locked = isLockedPayment(p);
             const chequeId = isChequePayment(p) ? chequeIdOfPayment(p, cheques) : "";
             const showChequeBtns = (canBank || canCheque) && isChequePayment(p);
+            const tone = paymentAmountColor(p);
+            const kind = paymentKindLabel(p);
             return (
               <View key={idOf(p) || idx} style={{ gap: 4 }}>
                 <ListRow
                   testID={`detail-pay-${idOf(p) || idx}`}
-                  title={`${p.type === "inflow" ? "Tahsilat" : p.type === "outflow" ? "Ödeme" : p.type || "Hareket"}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
+                  title={
+                    <Text style={{ fontWeight: "700", fontSize: 14, color: tone }}>
+                      {`${kind}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
+                    </Text>
+                  }
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
-                  right={`${p.type === "inflow" ? "+" : "-"}${fmtMoney(p.amount)}`}
+                  right={`${paymentAmountPrefix(p)}${fmtMoney(p.amount)}`}
+                  rightColor={tone}
                 />
                 <Row>
                   <PrimaryButton

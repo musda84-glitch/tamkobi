@@ -47,7 +47,15 @@ async def _next_number(company_id: str) -> str:
 
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
     if partner_id:
-        name = await partner_pay.withdraw(_db, exp["company_id"], partner_id, fx.try_amount(exp, exp.get("total")), f"{exp['expense_number']} {exp.get('description', '')}", pay_date, extra={"expense_id": exp["_id"]})
+        name = await partner_pay.withdraw(
+            _db,
+            exp["company_id"],
+            partner_id,
+            fx.try_amount(exp, exp.get("total")),
+            f"{exp['expense_number']} {exp.get('description', '')}",
+            pay_date,
+            extra={"expense_id": exp["_id"], "contact_id": exp.get("contact_id"), "contact_name": exp.get("contact_name")},
+        )
         return f"{name} (Ortak)"
     if not account_id:
         raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
@@ -60,8 +68,23 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     posted = exp["total"] if acc_ccy == exp_ccy else fx.try_amount(exp, exp.get("total"))
     posted_ccy = acc_ccy if acc_ccy == exp_ccy else "TRY"
     await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -posted}})
-    await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": exp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": f"Masraf: {exp.get('category')}",
-                                            "amount": posted, "currency": posted_ccy, "description": f"{exp['expense_number']} {exp.get('description', '')}", "source": "expense", "expense_id": exp["_id"], "date": pay_date, "created_at": _now()})
+    await _db.bank_transactions.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": exp["company_id"],
+        "account_id": account_id,
+        "account_name": acc.get("account_name"),
+        "type": "outflow",
+        "category": f"Masraf: {exp.get('category')}",
+        "amount": posted,
+        "currency": posted_ccy,
+        "description": f"{exp['expense_number']} {exp.get('description', '')}",
+        "contact_id": exp.get("contact_id"),
+        "contact_name": exp.get("contact_name"),
+        "source": "expense",
+        "expense_id": exp["_id"],
+        "date": pay_date,
+        "created_at": _now(),
+    })
     return acc.get("account_name")
 
 

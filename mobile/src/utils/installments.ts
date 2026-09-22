@@ -122,9 +122,28 @@ export type ContactPayment = {
   cheque_id?: string;
 };
 
+export function isPaymentInflow(p: ContactPayment): boolean {
+  return p.type === "inflow";
+}
+
+export function paymentKindLabel(p: ContactPayment): string {
+  if (p.type === "inflow") return "Tahsilat";
+  if (p.type === "outflow") return "Ödeme";
+  return p.type || "Hareket";
+}
+
+/** Web cari kartı: tahsilat yeşil, ödeme kırmızı. */
+export function paymentAmountColor(p: ContactPayment): string {
+  return isPaymentInflow(p) ? "#059669" : "#E11D48";
+}
+
+export function paymentAmountPrefix(p: ContactPayment): string {
+  return isPaymentInflow(p) ? "+" : "-";
+}
+
 /** Banka entegrasyonu, ortak ve çek kaynaklı hareketler kendi modülünden yönetilir. */
 export function isLockedPayment(p: ContactPayment): boolean {
-  return p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || !!p.virtual;
+  return p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || p.source === "expense" || p.source === "invoice" || !!p.virtual;
 }
 
 export function isChequePayment(p: ContactPayment): boolean {
@@ -153,6 +172,8 @@ export function chequeIdOfPayment(
 
 export function lockedPaymentLabel(p: ContactPayment): string {
   if (p.source === "partner") return "Ortak";
+  if (p.source === "expense") return "Masraf";
+  if (p.source === "invoice") return "Fatura";
   if (p.source === "cheque" || p.virtual) return "Çek";
   return "Banka";
 }

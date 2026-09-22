@@ -67,6 +67,7 @@ import cargo_providers
 import cargo_label
 import rbac
 import expenses
+import contact_payments
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -3584,10 +3585,11 @@ async def get_contact_overview(contact_id: str):
     invoices = await db.invoices.find({"contact_id": contact_id}).sort("issue_date", -1).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).sort("date", -1).to_list(200)
     for ptx in await db.partner_transactions.find({"contact_id": contact_id}).to_list(200):
+        is_out = ptx.get("type") != "withdrawal" or ptx.get("expense_id")
         payments.append({
             **ptx,
-            "type": "inflow" if ptx.get("type") == "withdrawal" else "outflow",
-            "category": "Cari Tahsilat" if ptx.get("type") == "withdrawal" else "Cari Ödeme",
+            "type": "outflow" if is_out else "inflow",
+            "category": "Cari Ödeme" if is_out else "Cari Tahsilat",
             "account_name": ptx.get("account_name") or "Ortaklar Hesabı",
             "source": "partner",
         })
@@ -3619,6 +3621,20 @@ async def get_contact_overview(contact_id: str):
             "created_at": ch.get("created_at"),
             "virtual": True,
         })
+    expense_rows = await db.expenses.find({"contact_id": contact_id}).to_list(200)
+    expense_ids = [e["_id"] for e in expense_rows]
+    expense_txs = {}
+    if expense_ids:
+        for bt in await db.bank_transactions.find({"expense_id": {"$in": expense_ids}}).to_list(200):
+            expense_txs[str(bt.get("expense_id"))] = bt
+    payments = contact_payments.append_contact_outflows(
+        payments,
+        contact_id=contact_id,
+        contact_name=contact.get("name"),
+        expenses=expense_rows,
+        expense_bank_txs=expense_txs,
+        invoices=invoices,
+    )
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
@@ -5683,7 +5699,11 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
         description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
         ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=try_amt,
                                  account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-        await db.partner_transactions.insert_one(ptx.to_mongo())
+        pdoc = ptx.to_mongo()
+        pdoc["contact_id"] = inv.get("contact_id")
+        pdoc["contact_name"] = inv.get("contact_name")
+        pdoc["related_invoice_id"] = invoice_id
+        await db.partner_transactions.insert_one(pdoc)
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -try_amt if is_sales else try_amt}})
         return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
 
