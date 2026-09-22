@@ -70,6 +70,8 @@ import {
   projectPayload,
   quotePayload,
   quoteSaveMessage,
+  quoteLinkedProjectId,
+  quoteToProjectAction,
   quoteUpdateBody,
   shouldAttachQuoteDraftInvoice,
   surveyPayload,
@@ -562,10 +564,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         if (qid) router.replace({ pathname: "/quotes/[id]", params: { id: qid } });
       } else if (kind === "quote") {
         if (!(await persistExistingQuote(true))) return;
-        const r = await post<{ project?: ProjectDoc; message?: string }>(client, `/quotes/${docId}/convert-to-project`);
-        setMessage(r.message || "Proje oluşturuldu.");
+        const updating = Boolean(quoteLinkedProjectId(quote));
+        const r = await post<{ project?: ProjectDoc; message?: string; updated?: boolean }>(client, `/quotes/${docId}/convert-to-project`);
+        setMessage(r.message || (updating ? "Proje güncellendi." : "Proje oluşturuldu."));
         const pid = idOf(r.project);
-        if (pid) router.replace({ pathname: "/projects/[id]", params: { id: pid } });
+        if (updating || r.updated) {
+          if (pid) setLinkedProjectId(pid);
+          await loadDoc();
+        } else if (pid) {
+          router.replace({ pathname: "/projects/[id]", params: { id: pid } });
+        }
       } else {
         const r = await post<{ invoice?: { id?: string; _id?: string; invoice_number?: string }; message?: string }>(client, `/projects/${docId}/invoice`);
         setMessage(r.message || "Fatura oluşturuldu.");
@@ -595,6 +603,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       : kind === "project"
         ? project?.project_number || name || "Proje"
         : survey?.survey_number || "Keşif";
+  const quoteProjectAction = kind === "quote" ? quoteToProjectAction(quote) : null;
 
   const focus = String(focusSection || "").trim();
   const projectDocs = !isNew && kind === "project" && project
@@ -1148,8 +1157,13 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
         <PrimaryButton title="Teklife dönüştür" onPress={() => confirmAction("Teklif", "Keşif teklife dönüştürülsün mü?", convert)} color={colors.indigo} testID="survey-to-quote" />
       ) : null}
-      {!isNew && kind === "quote" && !quote?.project_id && canEdit ? (
-        <PrimaryButton title="Projeye dönüştür" onPress={() => confirmAction("Proje", "Teklif projeye dönüştürülsün mü?", convert)} color={colors.indigo} testID="quote-to-project" />
+      {!isNew && kind === "quote" && canEdit && quoteProjectAction ? (
+        <PrimaryButton
+          title={quoteProjectAction.title}
+          onPress={() => confirmAction(quoteProjectAction.confirmTitle, quoteProjectAction.confirmMessage, convert)}
+          color={colors.indigo}
+          testID={quoteProjectAction.testID}
+        />
       ) : null}
       {!isNew && kind === "project" && project?.can_invoice && canEdit ? (
         <PrimaryButton title="Projeyi faturalandır" onPress={convert} color={colors.primary} testID="project-invoice" />
