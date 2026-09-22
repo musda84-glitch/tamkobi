@@ -725,6 +725,8 @@ export function overtimePayload(
   };
 }
 
+export type TaskKind = "field" | "office";
+
 export type ProjectTask = {
   id?: string;
   title?: string;
@@ -735,7 +737,23 @@ export type ProjectTask = {
   assignee_name?: string | null;
   due_date?: string | null;
   duration_days?: number | null;
+  kind?: TaskKind | string | null;
+  task_kind?: TaskKind | string | null;
 };
+
+export function normalizeTaskKind(raw?: string | null): TaskKind {
+  const s = String(raw || "").toLocaleLowerCase("tr-TR").replace(/ı/g, "i").replace(/ç/g, "c").replace(/ş/g, "s");
+  if (s === "office" || s === "ic" || s === "internal" || s === "iceride") return "office";
+  return "field";
+}
+
+export function isFieldTask(task?: Pick<ProjectTask, "kind" | "task_kind"> | null): boolean {
+  return normalizeTaskKind(task?.kind || task?.task_kind) === "field";
+}
+
+export function taskKindLabel(kind?: string | null): string {
+  return normalizeTaskKind(kind) === "office" ? "İç görev" : "Dış görev";
+}
 
 /** Dış görev gün sayısı: 1–366. */
 export function parseTaskDays(raw: string): number | null {
@@ -787,12 +805,21 @@ export function normalizeProjectTasks(tasks?: ProjectTask[] | null): ProjectTask
       assignee_name: t.assignee_name || null,
       due_date: t.due_date || null,
       duration_days: t.duration_days || null,
+      kind: normalizeTaskKind(t.kind || t.task_kind),
     }))
     .filter((t) => t.title);
 }
 
-function withTaskDuration(task: ProjectTask, opts: { durationDays?: number; dueDate?: string }): ProjectTask {
-  const next = { ...task };
+function withTaskAssign(
+  task: ProjectTask,
+  opts: { durationDays?: number; dueDate?: string; kind?: string },
+): ProjectTask {
+  const kind = normalizeTaskKind(opts.kind || task.kind);
+  const next: ProjectTask = { ...task, kind };
+  if (kind === "office") {
+    next.duration_days = null;
+    return next;
+  }
   if (opts.durationDays) next.duration_days = opts.durationDays;
   if (opts.dueDate) next.due_date = opts.dueDate;
   return next;
@@ -801,7 +828,7 @@ function withTaskDuration(task: ProjectTask, opts: { durationDays?: number; dueD
 export function assignEmployeeToTasks(
   tasks: ProjectTask[] | undefined,
   employee: Pick<Employee, "id" | "_id" | "full_name">,
-  opts: { taskId?: string; title?: string; newId?: string; durationDays?: number; dueDate?: string },
+  opts: { taskId?: string; title?: string; newId?: string; durationDays?: number; dueDate?: string; kind?: string },
 ): { tasks: ProjectTask[]; error: string | null } {
   const empId = idOf(employee);
   const empName = employee.full_name || "Personel";
@@ -810,14 +837,14 @@ export function assignEmployeeToTasks(
     const idx = existing.findIndex((t) => t.id === opts.taskId);
     if (idx < 0) return { tasks: existing, error: "Görev bulunamadı." };
     return {
-      tasks: existing.map((t, i) => (i === idx ? withTaskDuration({ ...t, assignee_id: empId, assignee_name: empName }, opts) : t)),
+      tasks: existing.map((t, i) => (i === idx ? withTaskAssign({ ...t, assignee_id: empId, assignee_name: empName }, opts) : t)),
       error: null,
     };
   }
   const title = (opts.title || "").trim();
   if (!title) return { tasks: existing, error: "Görev adı girin." };
   return {
-    tasks: [...existing, withTaskDuration({
+    tasks: [...existing, withTaskAssign({
       id: opts.newId || newTaskId(),
       title,
       done: false,
@@ -872,7 +899,7 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
       label: "Yapılacak işler",
       options: open.map((t) => ({
         value: t.id || "",
-        label: t.assignee_name ? `${t.title} · ${t.assignee_name}` : String(t.title || ""),
+        label: String(t.title || ""),
       })),
     });
   }

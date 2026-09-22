@@ -1,7 +1,9 @@
 from attendance import (
     geo_target,
     pick_field_assignment,
+    task_is_field,
     task_is_open,
+    task_kind_of,
     workplace_payload,
     workplace_place_label,
 )
@@ -25,6 +27,27 @@ def test_pick_prefers_due_today_then_coords():
     ]
     picked = pick_field_assignment(rows, today)
     assert picked["title"] == "Bugün konumlu"
+
+
+def test_office_task_is_not_field():
+    assert task_kind_of({"kind": "office"}) == "office"
+    assert task_kind_of({"kind": "iç"}) == "office"
+    assert task_kind_of({"title": "Montaj"}) == "field"
+    assert task_is_field({"kind": "field"})
+    assert not task_is_field({"kind": "office"})
+    today = "2026-09-22"
+    picked = pick_field_assignment(
+        [
+            {"title": "Ofis", "kind": "office", "project_status": "active", "latitude": 41, "longitude": 29},
+            {"title": "Saha", "kind": "field", "project_status": "active", "latitude": 40, "longitude": 32},
+        ],
+        today,
+    )
+    assert picked["title"] == "Saha"
+    assert pick_field_assignment(
+        [{"title": "Ofis", "kind": "office", "project_status": "active"}],
+        today,
+    ) is None
 
 
 def test_pick_open_without_due():

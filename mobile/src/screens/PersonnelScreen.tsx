@@ -123,6 +123,7 @@ export function PersonnelScreen() {
   const [taskId, setTaskId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDays, setTaskDays] = useState("");
+  const [taskKind, setTaskKind] = useState<"field" | "office">("field");
   const [taskShowCompleted, setTaskShowCompleted] = useState(false);
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
@@ -204,9 +205,12 @@ export function PersonnelScreen() {
       setLedgerSide("alacak");
       setLedgerAmount(due > 0 ? String(due) : "");
       setLedgerNote("");
-      setPayAccount("");
+      setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : ""));
       get<Partner[]>(client, "/banking/partners", { company_id: companyId })
-        .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+        .then((pars) => {
+          if (Array.isArray(pars)) setPartners(pars);
+          setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : pars?.[0] ? `partner:${idOf(pars[0])}` : ""));
+        })
         .catch(() => undefined);
       return;
     }
@@ -408,6 +412,7 @@ export function PersonnelScreen() {
     if (!ledgerEmp) return;
     const invalid = validateAdvance(ledgerAmount);
     if (invalid) { setError(invalid === "Avans tutarı girin." ? "Tutar girin." : invalid); return; }
+    if (!payAccount) { setError("Kasa / banka / ortak seçin."); return; }
     setBusy(true);
     try {
       await post(client, "/personnel/bonuses", ledgerPayPayload(
@@ -422,9 +427,7 @@ export function PersonnelScreen() {
       setLedgerEmp(null);
       setLedgerAmount("");
       setLedgerNote("");
-      setMessage(payAccount
-        ? `${ledgerEmp.full_name} için ${label} ödemesi yapıldı.`
-        : `${ledgerEmp.full_name} için ${label} kaydedildi.`);
+      setMessage(`${ledgerEmp.full_name} için ${label} ödemesi yapıldı.`);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Kayıt yazılamadı."));
@@ -559,12 +562,13 @@ export function PersonnelScreen() {
     if (invalid) { setError(invalid); return; }
     const project = projects.find((p) => idOf(p) === taskProjectId);
     if (!project) { setError("Proje bulunamadı."); return; }
-    const daysInvalid = validateTaskDays(taskDays);
+    const field = taskKind === "field";
+    const daysInvalid = field ? validateTaskDays(taskDays) : null;
     if (daysInvalid) { setError(daysInvalid); return; }
-    const days = parseTaskDays(taskDays);
+    const days = field ? parseTaskDays(taskDays) : null;
     const due = days ? dueDateFromDays(todayIso(), days) : undefined;
     const next = assignEmployeeToTasks(project.tasks, taskEmp, {
-      taskId, title: taskTitle, durationDays: days || undefined, dueDate: due,
+      taskId, title: taskTitle, durationDays: days || undefined, dueDate: due, kind: taskKind,
     });
     if (next.error) { setError(next.error); return; }
     setBusy(true);
@@ -1243,10 +1247,9 @@ export function PersonnelScreen() {
           value={payAccount}
           onChange={setPayAccount}
           groups={payGroups}
-          emptyLabel={ledgerSide === "borc" ? "Ödeme yok — borca yaz" : "Ödeme yok — bakiyeyi kaydet"}
         />
         <PrimaryButton
-          title={payAccount ? "Bakiyeyi öde" : (ledgerSide === "borc" ? "Borcu yaz" : "Bakiyeyi kaydet")}
+          title={ledgerSide === "borc" ? "Borcu öde" : "Bakiyeyi öde"}
           testID="emp-ledger-submit"
           color={ledgerSide === "borc" ? colors.danger : colors.primaryHover}
           loading={busy}
@@ -1335,39 +1338,59 @@ export function PersonnelScreen() {
         visible={!!taskEmp}
         title="Görev ata"
         subtitle={taskEmp ? `${taskEmp.full_name} · atama bu personele · yapacağı işi seçin` : undefined}
-        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); }}
+        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); setTaskKind("field"); }}
         testID="task-assign-sheet"
       >
-        <Field
-          label="Dış görev kaç gün?"
-          testID="task-assign-days"
-          value={taskDays}
-          onChangeText={setTaskDays}
-          keyboardType="number-pad"
-          placeholder="Örn: 3"
-        />
-        {parseTaskDays(taskDays) ? (
-          <Muted testID="task-assign-days-hint">
-            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
-          </Muted>
-        ) : (
-          <Muted testID="task-assign-days-hint">Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır.</Muted>
-        )}
-        {closedProjectCount(projects) ? (
+        <Row>
+          {([
+            ["office", "İç görev"],
+            ["field", "Dış görev"],
+          ] as const).map(([k, label]) => (
+            <Pressable
+              key={k}
+              testID={`task-kind-${k}`}
+              onPress={() => {
+                setTaskKind(k);
+                if (k === "office") setTaskDays("");
+              }}
+              style={{
+                flex: 1,
+                minHeight: 36,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: taskKind === k ? (k === "field" ? "#C7D2FE" : colors.border) : colors.border,
+                backgroundColor: taskKind === k ? (k === "field" ? colors.indigo50 : colors.slate100) : colors.surface,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontWeight: "700", fontSize: 13, color: taskKind === k ? (k === "field" ? colors.indigo : colors.text) : colors.muted }}>
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </Row>
+        {taskKind === "field" ? (
           <>
-            <PrimaryButton
-              title={taskShowCompleted
-                ? "Tamamlananları gizle"
-                : `Tamamlananları göster (${closedProjectCount(projects)})`}
-              onPress={() => setTaskShowCompleted((v) => !v)}
-              color={colors.secondary}
-              testID="task-show-completed-btn"
+            <Field
+              label="Dış görev kaç gün?"
+              testID="task-assign-days"
+              value={taskDays}
+              onChangeText={setTaskDays}
+              keyboardType="number-pad"
+              placeholder="Örn: 3"
             />
-            {!taskShowCompleted ? (
-              <Muted testID="task-completed-hint">{closedProjectCount(projects)} tamamlanan proje gizlendi.</Muted>
-            ) : null}
+            {parseTaskDays(taskDays) ? (
+              <Muted testID="task-assign-days-hint">
+                {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
+              </Muted>
+            ) : (
+              <Muted testID="task-assign-days-hint">Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır.</Muted>
+            )}
           </>
-        ) : null}
+        ) : (
+          <Muted testID="task-assign-office-hint">İç görev ofiste yapılır; konum kontrolü ücreti etkilemez.</Muted>
+        )}
         <GroupedSelect
           label="Proje"
           testID="task-project-select"
@@ -1387,6 +1410,19 @@ export function PersonnelScreen() {
           groups={projectSelectGroups(projects, { includeCompleted: taskShowCompleted, keepId: taskProjectId })}
           emptyLabel="Proje seçin"
         />
+        {closedProjectCount(projects) ? (
+          <Pressable
+            testID="task-show-completed-btn"
+            onPress={() => setTaskShowCompleted((v) => !v)}
+            style={{ paddingVertical: 2, alignSelf: "flex-start" }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: "600", color: colors.muted }}>
+              {taskShowCompleted
+                ? "Tamamlananları gizle"
+                : `Tamamlananları göster (${closedProjectCount(projects)})`}
+            </Text>
+          </Pressable>
+        ) : null}
         <GroupedSelect
           label="Yapacağı iş"
           testID="task-existing-select"
@@ -1415,6 +1451,9 @@ export function PersonnelScreen() {
         ) : null}
         <Muted testID="task-assign-field-hint">
           {(() => {
+            if (taskKind === "office") {
+              return "İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez.";
+            }
             const proj = projects.find((p) => idOf(p) === taskProjectId);
             const days = parseTaskDays(taskDays);
             const hint = !proj
