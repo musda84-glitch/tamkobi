@@ -414,6 +414,34 @@ export function shouldCollapseAddress(address?: string | null, min = 36): boolea
   return String(address || "").trim().length > min;
 }
 
+/** Cari detay / liste: company-wide light satırlardan bu carinin projeleri. */
+export function projectsForContact(rows: ProjectDoc[] | null | undefined, contactId?: string | null): ProjectDoc[] {
+  const id = String(contactId || "").trim();
+  if (!id) return [];
+  return (rows || []).filter((p) => String(p.contact_id || "") === id);
+}
+
+/** Overview satırlarını light metriklerle birleştir; yüklenene kadar overlay kalsın. */
+export function mergeContactProjects(overlay: ProjectDoc[] | null | undefined, light: ProjectDoc[] | null | undefined): ProjectDoc[] {
+  const base = overlay || [];
+  const extra = light || [];
+  if (!extra.length) return base;
+  if (!base.length) return extra;
+  const byId = new Map(extra.map((p) => [idOf(p), p]));
+  const seen = new Set<string>();
+  const merged = base.map((p) => {
+    const id = idOf(p);
+    seen.add(id);
+    const richer = byId.get(id);
+    return richer ? { ...p, ...richer } : p;
+  });
+  for (const p of extra) {
+    const id = idOf(p);
+    if (!seen.has(id)) merged.push(p);
+  }
+  return merged;
+}
+
 export function projectTaskSummary(tasks?: ProjectTask[] | null) {
   const rows = normalizeProjectTasks(tasks);
   if (!rows.length) return null;
