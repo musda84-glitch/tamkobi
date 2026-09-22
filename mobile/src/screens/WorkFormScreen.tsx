@@ -28,13 +28,14 @@ import { normalizeProjectStages, type ProjectStage } from "../utils/projectStage
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
-import { fmtMoney, getPriceDecimals, idOf, todayIso } from "../utils/money";
+import { formatMoneyInput, fmtMoney, idOf, parseMoneyInput, sanitizeMoneyInput, todayIso } from "../utils/money";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
   imageUploadRequest,
   lineItemImageUploadRequest,
   pickBrowserImage,
+  removeGalleryImage,
   resolveUploadBlob,
   uploadedImageUrl,
 } from "../utils/formDataFile";
@@ -85,6 +86,7 @@ import {
   workItemFromProduct,
   workItemNeedsStockCard,
   matchProductByName,
+  rememberStockCreate,
   quoteLineSku,
   quoteLineProductPayload,
   attachProductToWorkItem,
@@ -105,9 +107,7 @@ import {
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
 
 function quotePriceText(v: unknown): string {
-  const x = Number(v);
-  if (!Number.isFinite(x)) return "";
-  return x.toFixed(getPriceDecimals());
+  return formatMoneyInput(v);
 }
 
 function quoteDraftSig(
@@ -182,6 +182,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [noteOpen, setNoteOpen] = useState<Record<number, boolean>>({});
   const [grossDraft, setGrossDraft] = useState<Record<number, string>>({});
+  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -200,6 +202,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
   const [expBusy, setExpBusy] = useState(false);
   const quoteBaseline = useRef("");
+  const productsRef = useRef(products);
+  productsRef.current = products;
+  const stockCreates = useRef(new Map<string, Promise<Product>>());
 
   const loadRefs = useCallback(async () => {
     try {
@@ -388,9 +393,23 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     setItems((rows) => removeWorkItem(rows, i));
   };
 
+  const persistWorkPhotos = async (next: string[]) => {
+    setPhotos(next);
+    if (!docId || !canEdit) return;
+    const path = kind === "quote" ? `/quotes/${docId}` : kind === "project" ? `/projects/${docId}` : `/surveys/${docId}`;
+    await put(client, path, { images: next });
+  };
+
+  const removeLineImage = (i: number) => {
+    if (!canEdit) return;
+    setItems((rows) => rows.map((row, idx) => (
+      idx === i ? { ...row, image_url: "", thumbnail_url: "", print_image_url: "" } : row
+    )));
+  };
+
   const ensureQuoteStockCards = useCallback(async (rows: WorkItem[]): Promise<WorkItem[]> => {
     if (!workItemLineKind(kind) || !canEdit) return rows;
-    let catalog = products;
+    let catalog = productsRef.current;
     let next = rows;
     let changed = false;
     for (let i = 0; i < next.length; i += 1) {
@@ -403,9 +422,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         continue;
       }
       if (!canStock) continue;
-      const sku = quoteLineSku(it.name, `${Date.now().toString(36)}${i}`.slice(-6));
-      const created = await post<Product>(client, "/products", quoteLineProductPayload(it, companyId, sku));
-      catalog = [...catalog, created];
+      const created = await rememberStockCreate(stockCreates.current, it.name, async () => {
+        const again = matchProductByName(productsRef.current, it.name);
+        if (again) return again;
+        const sku = quoteLineSku(it.name, `${Date.now().toString(36)}${i}`.slice(-6));
+        return post<Product>(client, "/products", quoteLineProductPayload(it, companyId, sku));
+      });
+      if (!created) continue;
+      if (!matchProductByName(catalog, it.name)) catalog = [...catalog, created];
+      productsRef.current = catalog;
       next = next.map((row, idx) => (idx === i ? attachProductToWorkItem(row, created) : row));
       changed = true;
     }
@@ -414,7 +439,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       setProducts(catalog);
     }
     return next;
-  }, [canEdit, canStock, client, companyId, kind, products]);
+  }, [canEdit, canStock, client, companyId, kind]);
 
   const addProductFromSearch = (p: Product) => {
     setItems((rows) => {
@@ -891,8 +916,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   })}
                   onChangeText={(v) => {
                     if (!canEdit) return;
-                    setGrossDraft((m) => ({ ...m, [i]: v }));
-                    const unit = workItemPriceFromGross(it, n(v));
+                    const typed = sanitizeMoneyInput(v);
+                    setGrossDraft((m) => ({ ...m, [i]: typed }));
+                    const unit = workItemPriceFromGross(it, parseMoneyInput(typed));
                     setItems((rows) => rows.map((row, idx) => (
                       idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
                     )));
@@ -958,20 +984,45 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                     </Row>
                   </Row>
                     <Row style={{ alignItems: "stretch", gap: 8 }}>
-                      <Pressable
-                        onPress={() => pickLineImage(i)}
-                        disabled={!canEdit}
-                        accessibilityLabel="Satır görseli ekle"
-                        testID={`q-item-thumb-pick-${i}`}
-                        style={{ justifyContent: "center", cursor: "pointer" as const }}
-                      >
-                        <ProductThumb
-                          uri={workItemImage(it, prod)}
-                          width={QUOTE_SERVICE_THUMB.width}
-                          height={QUOTE_SERVICE_THUMB.height}
-                          testID={`q-item-thumb-${i}`}
-                        />
-                      </Pressable>
+                      <View>
+                        <Pressable
+                          onPress={() => pickLineImage(i)}
+                          disabled={!canEdit}
+                          accessibilityLabel="Satır görseli ekle"
+                          testID={`q-item-thumb-pick-${i}`}
+                          style={{ justifyContent: "center", cursor: "pointer" as const }}
+                        >
+                          <ProductThumb
+                            uri={workItemImage(it, prod)}
+                            width={QUOTE_SERVICE_THUMB.width}
+                            height={QUOTE_SERVICE_THUMB.height}
+                            testID={`q-item-thumb-${i}`}
+                          />
+                        </Pressable>
+                        {canEdit && workItemImage(it, prod) ? (
+                          <Pressable
+                            testID={`q-item-thumb-remove-${i}`}
+                            accessibilityLabel="Satır görselini sil"
+                            onPress={() => confirmAction("Fotoğraf", "Satır görseli silinsin mi?", () => removeLineImage(i))}
+                            hitSlop={8}
+                            style={{
+                              position: "absolute",
+                              top: -6,
+                              right: -6,
+                              width: 22,
+                              height: 22,
+                              borderRadius: 11,
+                              backgroundColor: "#fff",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                            }}
+                          >
+                            <Ionicons name="close" size={12} color={colors.danger} />
+                          </Pressable>
+                        ) : null}
+                      </View>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                         <View>
                           <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>
@@ -1023,15 +1074,32 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 testID={`q-item-qty-dec-${i}`}
                                 accessibilityLabel="Miktarı azalt"
                                 disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
+                                onPress={() => {
+                                  setQtyDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1));
+                                }}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
                               </Pressable>
                               <TextInput
                                 testID={`q-item-qty-${i}`}
-                                value={String(it.quantity)}
-                                onChangeText={(v) => patchItem(i, "quantity", n(v))}
+                                value={qtyDraft[i] ?? String(it.quantity || "")}
+                                onFocus={() => setQtyDraft((m) => ({ ...m, [i]: String(it.quantity || "") }))}
+                                onBlur={() => setQtyDraft((m) => {
+                                  const next = { ...m };
+                                  delete next[i];
+                                  return next;
+                                })}
+                                onChangeText={(v) => {
+                                  const typed = sanitizeMoneyInput(v);
+                                  setQtyDraft((m) => ({ ...m, [i]: typed }));
+                                  patchItem(i, "quantity", parseMoneyInput(typed));
+                                }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
                                 style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
@@ -1040,7 +1108,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 testID={`q-item-qty-inc-${i}`}
                                 accessibilityLabel="Miktarı artır"
                                 disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
+                                onPress={() => {
+                                  setQtyDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1));
+                                }}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
@@ -1066,8 +1141,18 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                             >
                               <TextInput
                                 testID={`q-item-price-${i}`}
-                                value={quotePriceText(it.unit_price)}
-                                onChangeText={(v) => patchItem(i, "unit_price", n(v))}
+                                value={priceDraft[i] ?? quotePriceText(it.unit_price)}
+                                onFocus={() => setPriceDraft((m) => ({ ...m, [i]: quotePriceText(it.unit_price) }))}
+                                onBlur={() => setPriceDraft((m) => {
+                                  const next = { ...m };
+                                  delete next[i];
+                                  return next;
+                                })}
+                                onChangeText={(v) => {
+                                  const typed = sanitizeMoneyInput(v);
+                                  setPriceDraft((m) => ({ ...m, [i]: typed }));
+                                  patchItem(i, "unit_price", parseMoneyInput(typed));
+                                }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
                                 numberOfLines={1}
@@ -1171,6 +1256,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           entityId={docId}
           images={workGalleryWithoutLinePhotos(photos, items)}
           onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          onRemoved={(url) => {
+            const next = removeGalleryImage(photos, url);
+            void persistWorkPhotos(next).catch((err) => setError(apiErrorMessage(err, "Fotoğraf silinemedi.")));
+          }}
           editable={canEdit}
           testID="work-photos"
         />

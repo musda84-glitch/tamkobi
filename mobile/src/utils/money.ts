@@ -19,6 +19,31 @@ export function getPriceDecimals(): number {
   return priceDecimals;
 }
 
+/** Yazım sırasında 2. / 2,10 gibi ara halleri koru; her tuşta toFixed yapma. */
+export function sanitizeMoneyInput(raw: string): string {
+  const s = String(raw ?? "");
+  const minus = s.trim().startsWith("-") ? "-" : "";
+  const body = s.replace(/[^\d.,]/g, "");
+  const sepMatch = body.match(/[.,]/);
+  if (!sepMatch) return minus + body;
+  const sep = sepMatch[0];
+  const [head, ...tail] = body.split(/[.,]/);
+  return minus + (head || "") + sep + tail.join("").replace(/[^\d]/g, "");
+}
+
+export function parseMoneyInput(raw: string): number {
+  const s = sanitizeMoneyInput(raw).replace(",", ".");
+  if (!s || s === "-" || s === "." || s === "-.") return 0;
+  const x = Number(s);
+  return Number.isFinite(x) ? x : 0;
+}
+
+export function formatMoneyInput(v: unknown, decimals = getPriceDecimals()): string {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "";
+  return x.toFixed(decimals);
+}
+
 export function formatTrAmount(n: unknown): string {
   const num = Number(n);
   const amount = Number.isFinite(num) ? num : 0;

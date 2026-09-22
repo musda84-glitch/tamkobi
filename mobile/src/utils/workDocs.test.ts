@@ -68,6 +68,8 @@ import {
   toggleWorkItemService,
   workItemNeedsStockCard,
   matchProductByName,
+  rememberStockCreate,
+  stockCardNameKey,
   quoteLineSku,
   quoteLineProductPayload,
   attachProductToWorkItem,
@@ -130,7 +132,7 @@ describe("workDocs", () => {
     expect(namedItems([{ ...emptyItem(), name: "X" }, emptyItem()])).toHaveLength(1);
   });
 
-  it("searches stock from the line name and toggles ürün / hizmet", () => {
+  it("searches stock from the line name and toggles ürün / hizmet", async () => {
     const products = [
       { id: "p1", name: "Dekorasyon Profili", sku: "DL120", barcode: "868", category: "Profil" },
       { id: "p2", name: "Kapı kolu", sku: "KK-1", barcode: "111", category: "Aksesuar" },
@@ -172,6 +174,7 @@ describe("workDocs", () => {
     expect(workItemNeedsStockCard({ name: "a", product_id: "p1", is_service: false })).toBe(false);
     expect(workItemNeedsStockCard({ name: "  ", is_service: false })).toBe(false);
     expect(matchProductByName([{ id: "p1", name: "A" }, { id: "p2", name: "Raf" }], "a")?.id).toBe("p1");
+    expect(stockCardNameKey("  Raf ")).toBe(stockCardNameKey("raf"));
     expect(quoteLineSku("çelik raf", "ab12")).toBe("CELIK-RAF-AB12");
     expect(quoteLineSku("", "x")).toBe("STOK-X");
     const body = quoteLineProductPayload({ name: "a", unit_price: 236.36, vat_rate: 10, unit: "Adet", image_url: "blob:x" }, "comp_1", "A-1");
@@ -179,6 +182,19 @@ describe("workDocs", () => {
     expect(body.image_url).toBeUndefined();
     expect(quoteLineProductPayload({ name: "Raf", unit_price: 10, vat_rate: 20, unit: "Adet", image_url: "/api/files/raf.jpg" }, "comp_1", "RAF-1").image_url).toBe("/api/files/raf.jpg");
     expect(attachProductToWorkItem({ ...emptyItem(), name: "a" }, { id: "p9", image_url: "raf.jpg" }).product_id).toBe("p9");
+    const inflight = new Map<string, Promise<{ id: string }>>();
+    let calls = 0;
+    const factory = () => {
+      calls += 1;
+      return Promise.resolve({ id: "p1" });
+    };
+    const first = rememberStockCreate(inflight, "Raf", factory);
+    const second = rememberStockCreate(inflight, "raf", factory);
+    expect(first).toBe(second);
+    expect(await first).toEqual({ id: "p1" });
+    expect(await second).toEqual({ id: "p1" });
+    expect(calls).toBe(1);
+    expect(rememberStockCreate(inflight, "  ", factory)).toBeNull();
   });
 
   it("removes a quote or survey line and keeps one empty row", () => {
