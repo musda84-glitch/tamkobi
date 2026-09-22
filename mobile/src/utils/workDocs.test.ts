@@ -17,6 +17,8 @@ import {
   projectStatusSelectGroups,
   workStatusSelectGroups,
   projectCardBits,
+  addressToggleLabel,
+  shouldCollapseAddress,
   projectMetricSectionOrder,
   quotesForProject,
   projectPayload,
@@ -163,7 +165,13 @@ describe("workDocs", () => {
       expense_total: 18.5,
     });
     expect(bits.codes).toBe("PRJ-2026-0011 · TKF-2026-0004");
+    expect(bits.contactName).toBe("Mustafa BAL");
+    expect(bits.address).toBe("Kadıköy");
     expect(bits.contact).toBe("Mustafa BAL · Kadıköy");
+    expect(shouldCollapseAddress("Kadıköy")).toBe(false);
+    expect(shouldCollapseAddress("Kayabaşı Mah. Ulubatlı Hasan Cad. GİRİŞ KAYAŞEHİR")).toBe(true);
+    expect(addressToggleLabel(false)).toBe("Göster");
+    expect(addressToggleLabel(true)).toBe("Gizle");
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
     expect(bits.expense).toBe(18.5);

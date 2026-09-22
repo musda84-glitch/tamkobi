@@ -37,6 +37,8 @@ import {
   emptyProjectTask,
   newButtonLabel,
   projectCardBits,
+  addressToggleLabel,
+  shouldCollapseAddress,
   projectStatusSelectGroups,
   projectTaskRows,
   projectTaskSummary,
@@ -412,6 +414,8 @@ function ProjectCard({
 }) {
   const id = idOf(project);
   const bits = projectCardBits(project);
+  const collapseAddr = shouldCollapseAddress(bits.address);
+  const [showAddr, setShowAddr] = useState(!collapseAddr);
   const taskBits = projectTaskSummary(project.tasks);
   const trackLabel = trackingBadgeLabel(project.tracking);
   return (
@@ -425,8 +429,23 @@ function ProjectCard({
             tone={project.status === "completed" ? "green" : project.status === "on_hold" ? "amber" : project.status === "active" ? "indigo" : "slate"}
           />
         </Row>
-        <Muted>{bits.contact}</Muted>
+        <Muted>{bits.contactName}</Muted>
       </Pressable>
+      {bits.address ? (
+        <View>
+          {showAddr ? <Muted testID={`project-addr-${id}`}>{bits.address}</Muted> : null}
+          {collapseAddr ? (
+            <Pressable
+              testID={`project-addr-toggle-${id}`}
+              onPress={() => setShowAddr((v) => !v)}
+              hitSlop={8}
+              style={{ alignSelf: "flex-start", paddingTop: 2, paddingBottom: 2 }}
+            >
+              <Text style={{ fontWeight: "800", color: colors.primary, fontSize: 12 }}>{addressToggleLabel(showAddr)}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
         <Metric label="Bütçe" value={fmtMoney(bits.budget)} testID={`project-budget-${id}`} onPress={() => go("ProjectDetail", { id })} />
         <Metric
