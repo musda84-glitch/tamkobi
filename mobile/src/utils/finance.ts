@@ -278,6 +278,11 @@ export function isBankingPosAccount(a?: { type?: string } | null): boolean {
   return POS_TAB_TYPES.has(normalizeAccountType(a?.type));
 }
 
+/** Üst sekmedeki Kasa: kasa / nakit alias’ları. */
+export function isBankingCashAccount(a?: { type?: string } | null): boolean {
+  return normalizeAccountType(a?.type) === "cash_box";
+}
+
 export type PaymentTargetOption = { value: string; label: string; disabled?: boolean };
 export type PaymentTargetGroup = { label: string; options: PaymentTargetOption[] };
 

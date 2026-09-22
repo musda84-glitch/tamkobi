@@ -15,6 +15,7 @@ import {
   accountTypeTr,
   groupedAccounts,
   isBankingBankAccount,
+  isBankingCashAccount,
   isBankingPosAccount,
   totalLiquidity,
   virmanAccounts,
@@ -71,7 +72,7 @@ function Approvals({
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
-  const [tab, setTab] = useState<"accounts" | "banks" | "partners" | "pos" | "match">("accounts");
+  const [tab, setTab] = useState<"all" | "cash" | "banks" | "partners" | "pos" | "match">("all");
   const [rows, setRows] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
@@ -110,6 +111,7 @@ export function BankingScreen() {
   const pool = useMemo(() => {
     if (tab === "banks") return rows.filter(isBankingBankAccount);
     if (tab === "pos") return rows.filter(isBankingPosAccount);
+    if (tab === "cash") return rows.filter(isBankingCashAccount);
     return rows;
   }, [rows, tab]);
   const searched = useMemo(() => {
@@ -126,8 +128,9 @@ export function BankingScreen() {
   const liquidity = totalLiquidity(rows);
   const activePartners = useMemo(() => (partners || []).filter((p) => p.is_active !== false), [partners]);
   const searching = q.trim().length > 0;
-  const showAccountList = tab !== "accounts" || groupF !== "all" || searching;
+  const showAccountList = tab !== "all" || groupF !== "all" || searching;
   const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
+  const cashCount = useMemo(() => rows.filter(isBankingCashAccount).length, [rows]);
   const posCount = useMemo(() => rows.filter(isBankingPosAccount).length, [rows]);
   const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
@@ -157,7 +160,8 @@ export function BankingScreen() {
         value={tab}
         onChange={(key) => { setTab(key); setGroupF("all"); }}
         items={[
-          { key: "accounts", label: "Hesaplar", icon: "wallet", color: colors.primary },
+          { key: "all", label: "Tümü", icon: "apps", color: colors.primary },
+          { key: "cash", label: "Kasa", icon: "wallet", color: accountGroupTone("cash_box").accent, count: cashCount || undefined },
           { key: "banks", label: "Bankalar", icon: "business", color: accountGroupTone("bank").accent, count: bankCount || undefined },
           { key: "partners", label: "Ortaklar", icon: "people", color: accountGroupTone("partners").accent, count: partnerSummary?.partner_count || undefined },
           { key: "pos", label: "POS", icon: "card", color: accountGroupTone("pos").accent, count: posCount || undefined },
@@ -187,7 +191,7 @@ export function BankingScreen() {
             ) : null}
           </Card>
           <Approvals items={approvals} onAct={actApproval} />
-          {tab === "accounts" ? (
+          {tab === "all" ? (
             <View style={{ gap: 8 }} testID="account-groups-stack">
               {overviewGroups.map((g) => {
                 const total = g.items.reduce((s, a) => s + accountBalance(a), 0);
@@ -199,6 +203,7 @@ export function BankingScreen() {
                     onPress={() => {
                       if (g.key === "bank") { setTab("banks"); setGroupF("all"); return; }
                       if (g.key === "pos") { setTab("pos"); setGroupF("all"); return; }
+                      if (g.key === "cash_box") { setTab("cash"); setGroupF("all"); return; }
                       setGroupF(active ? "all" : g.key);
                     }}
                     testID={`account-group-${g.key}`}
