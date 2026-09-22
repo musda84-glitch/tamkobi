@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus, UtensilsCrossed, Bus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -205,10 +205,18 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
             <button type="button" onClick={() => setTab("salary")} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
-            <button type="button" onClick={() => setQuickPay("advance")} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
+            <button type="button" onClick={() => setQuickPay({ type: "advance" })} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
             <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>
             <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
-            <button type="button" onClick={() => setQuickPay("expense")} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
+            <button type="button" onClick={() => setQuickPay({ type: "expense", initialMode: "new" })} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
+            <button type="button" onClick={() => {
+              const due = Number(card?.balance?.meal_due ?? e.meal_allowance ?? 0) || 0;
+              setQuickPay({ type: "expense", category: "Yemek", description: "Yemek ücreti", amount: due > 0 ? due : "", initialMode: "new" });
+            }} className={`${btn} bg-orange-50 hover:bg-orange-100 text-orange-800 border-orange-200`} title="Yemek ücreti — masraf" data-testid="emp-card-meal-btn"><UtensilsCrossed className="w-3.5 h-3.5 inline mr-1" />Yemek</button>
+            <button type="button" onClick={() => {
+              const due = Number(card?.balance?.transport_due ?? e.transport_allowance ?? 0) || 0;
+              setQuickPay({ type: "expense", category: "Yol / Ulaşım", description: "Yol / ulaşım ödemesi", amount: due > 0 ? due : "", initialMode: "new" });
+            }} className={`${btn} bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border-cyan-200`} title="Yol ödemesi — masraf" data-testid="emp-card-transport-btn"><Bus className="w-3.5 h-3.5 inline mr-1" />Yol</button>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
           </div>
         </div>
@@ -270,7 +278,24 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </>)}
         </div>
       </div>
-      {quickPay && <QuickPayModal payroll={payStub()} type={quickPay} companyId={companyId} accounts={accounts} initialMode={quickPay === "expense" ? "new" : undefined} onClose={() => setQuickPay(null)} onDone={afterMoney} />}
+      {quickPay && <QuickPayModal
+        payroll={payStub()}
+        type={quickPay.type || quickPay}
+        companyId={companyId}
+        accounts={accounts}
+        initialMode={quickPay.initialMode || ((quickPay.type || quickPay) === "expense" ? "new" : undefined)}
+        initialCategory={quickPay.category}
+        initialDescription={quickPay.description}
+        initialAmount={quickPay.amount}
+        allowances={{
+          meal: e?.meal_allowance,
+          transport: e?.transport_allowance,
+          mealDue: card?.balance?.meal_due,
+          transportDue: card?.balance?.transport_due,
+        }}
+        onClose={() => setQuickPay(null)}
+        onDone={afterMoney}
+      />}
       {taskOpen ? <AssignEmployeeTaskModal employee={e} companyId={companyId} onClose={() => setTaskOpen(false)} /> : null}
       {payItem && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
