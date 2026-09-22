@@ -394,8 +394,14 @@ COLLECTIONS = {
     "staff_messages": {
         "scope": SCOPE_TENANT,
         "description": "Personel ile yönetici uygulama içi mesajları.",
-        "keys": ("_id", "company_id", "employee_id", "from_side", "from_user_id", "body", "created_at", "read_at"),
-        "refs": ("employees._id", "users._id"),
+        "keys": ("_id", "company_id", "employee_id", "from_side", "from_user_id", "to_user_id", "group_id", "body", "created_at", "read_at"),
+        "refs": ("employees._id", "users._id", "staff_groups._id"),
+    },
+    "staff_groups": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel / yönetici grup yazışmaları.",
+        "keys": ("_id", "company_id", "title", "member_user_ids", "member_employee_ids"),
+        "refs": ("companies._id", "users._id", "employees._id"),
     },
     "bonus_payments": {
         "scope": SCOPE_TENANT,

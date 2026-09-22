@@ -1,15 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Loader2, MessageSquare, Send } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, MessageSquare, Send, Users } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import {
   MESSAGES_HIDDEN_KEY,
   mergeInboxWithDirectory,
+  mergeManagerInbox,
   messageAuthor,
   messagePreview,
   parseHiddenFlag,
+  parsePeerValue,
+  peerPostBody,
+  peerQuery,
   previewStaffMessages,
+  requireManagerId,
   validateMessageBody,
 } from "../utils/staffMessages";
 
@@ -25,6 +30,23 @@ function Bubble({ m }) {
   );
 }
 
+function InboxButton({ title, last, unread, onClick, testId }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left rounded-xl border border-slate-100 px-3 py-2 hover:bg-slate-50"
+      data-testid={testId}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-bold text-slate-800 truncate">{title}</span>
+        {unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span> : null}
+      </div>
+      <div className="text-[11px] text-slate-500 truncate">{last ? messagePreview(last) : "Yeni yazışma"}</div>
+    </button>
+  );
+}
+
 export function StaffMessagesPanel({
   employeeId,
   compact,
@@ -34,21 +56,25 @@ export function StaffMessagesPanel({
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [openEmp, setOpenEmp] = useState(employeeId || "");
+  const [channel, setChannel] = useState(employeeId ? { kind: "emp", id: employeeId } : null);
+  const [selectedManager, setSelectedManager] = useState("");
   const [hidden, setHidden] = useState(() => {
     try { return parseHiddenFlag(localStorage.getItem(MESSAGES_HIDDEN_KEY)); } catch { return false; }
   });
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [groupTitle, setGroupTitle] = useState("");
+  const [groupUsers, setGroupUsers] = useState([]);
+  const [groupEmps, setGroupEmps] = useState([]);
 
   const load = useCallback(() => {
-    const params = {};
-    if (openEmp) params.employee_id = openEmp;
+    const params = employeeId ? { employee_id: employeeId } : peerQuery(channel);
     axios.get(`${API_URL}/personnel/messages`, { params, withCredentials: true })
       .then((r) => setData(r.data))
       .catch((err) => setData(err.response?.status === 403 ? { mode: "none", thread: [], inbox: [] } : null));
-  }, [openEmp]);
+  }, [channel, employeeId]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setOpenEmp(employeeId || ""); }, [employeeId]);
+  useEffect(() => { setChannel(employeeId ? { kind: "emp", id: employeeId } : null); }, [employeeId]);
 
   const toggleHidden = () => {
     const next = !hidden;
@@ -56,13 +82,31 @@ export function StaffMessagesPanel({
     try { localStorage.setItem(MESSAGES_HIDDEN_KEY, next ? "1" : "0"); } catch { /* ignore */ }
   };
 
+  const managers = data?.managers || [];
+  const selfId = data?.self_user_id || "";
+  const managerRows = useMemo(
+    () => mergeManagerInbox(data?.manager_inbox, managers, selfId),
+    [data?.manager_inbox, managers, selfId],
+  );
+
+  useEffect(() => {
+    if (selectedManager || employeeId) return;
+    const real = managerRows.filter((r) => r.user_id && r.user_id !== "_all");
+    if (real.length === 1) setSelectedManager(real[0].user_id);
+  }, [managerRows, selectedManager, employeeId]);
+
   const send = async (e) => {
     e?.preventDefault?.();
-    const invalid = validateMessageBody(draft);
+    const staffNeedsManager = !employeeId && !channel && (data?.mode === "staff" || data?.mode === "both");
+    const invalid = validateMessageBody(draft)
+      || (staffNeedsManager ? requireManagerId(selectedManager, managers.filter((m) => m.id !== selfId)) : null);
     if (invalid) { toast.error(invalid); return; }
     setBusy(true);
     try {
-      await axios.post(`${API_URL}/personnel/messages`, { body: draft, employee_id: openEmp || undefined }, { withCredentials: true });
+      const peer = employeeId
+        ? { kind: "emp", id: employeeId }
+        : (channel || (selectedManager ? { kind: "manager", id: selectedManager } : null));
+      await axios.post(`${API_URL}/personnel/messages`, peerPostBody(peer, { body: draft }), { withCredentials: true });
       setDraft("");
       toast.success("Mesaj gönderildi.");
       load();
@@ -74,22 +118,74 @@ export function StaffMessagesPanel({
   };
 
   const markRead = async () => {
-    await axios.post(`${API_URL}/personnel/messages/read`, { employee_id: openEmp || undefined }, { withCredentials: true }).catch(() => {});
+    const peer = employeeId
+      ? { kind: "emp", id: employeeId }
+      : (channel || (selectedManager ? { kind: "manager", id: selectedManager } : null));
+    await axios.post(`${API_URL}/personnel/messages/read`, peerPostBody(peer), { withCredentials: true }).catch(() => {});
     load();
+  };
+
+  const createGroup = async (e) => {
+    e?.preventDefault?.();
+    if (!groupUsers.length && !groupEmps.length) {
+      toast.error("Gruba en az bir kişi daha ekleyin.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API_URL}/personnel/messages/groups`, {
+        title: groupTitle,
+        member_user_ids: groupUsers,
+        member_employee_ids: groupEmps,
+      }, { withCredentials: true });
+      setShowGroupForm(false);
+      setGroupTitle("");
+      setGroupUsers([]);
+      setGroupEmps([]);
+      toast.success("Grup oluşturuldu.");
+      if (res.data?.group?.id) {
+        setChannel({ kind: "group", id: res.data.group.id });
+      } else {
+        load();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Grup oluşturulamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = (list, id, set) => {
+    set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   };
 
   if (data?.mode === "none") return null;
 
   const mode = data?.mode || "";
   const locked = !!employeeId;
-  const showThread = mode === "staff" || mode === "both" || mode === "thread" || locked || !!openEmp;
-  const showInbox = (mode === "manager" || mode === "both") && !locked && !openEmp;
+  const showInbox = (mode === "manager" || mode === "both") && !locked && !channel;
+  const showStaffPick = (mode === "staff" || mode === "both") && !locked && !channel;
+  const showThread = mode === "staff" || mode === "both" || mode === "thread" || mode === "group" || locked || !!channel;
   const unread = Number(data?.unread || 0);
   const conversations = useMemo(
     () => mergeInboxWithDirectory(data?.inbox, data?.directory),
     [data?.inbox, data?.directory],
   );
-  const preview = compact ? previewStaffMessages(data?.thread) : (data?.thread || []);
+  const groups = data?.group_inbox || data?.groups || [];
+  const threadRows = (() => {
+    const rows = data?.thread || [];
+    if (channel || locked) return rows;
+    const realManagers = managers.filter((m) => m.id && m.id !== selfId && m.id !== "_all");
+    if (!selectedManager) return realManagers.length ? [] : rows.filter((m) => !m.group_id);
+    if (selectedManager === "_all") return rows.filter((m) => !m.group_id && !m.to_user_id);
+    return rows.filter((m) => !m.group_id && (
+      m.to_user_id === selectedManager || m.from_user_id === selectedManager
+    ));
+  })();
+  const preview = compact ? previewStaffMessages(threadRows) : threadRows;
+  const selectedName = managerRows.find((r) => r.user_id === selectedManager)?.name
+    || managers.find((m) => m.id === selectedManager)?.name
+    || "";
 
   if (!data) {
     return (
@@ -108,11 +204,17 @@ export function StaffMessagesPanel({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-bold text-slate-900">Mesajlar</div>
           <div className="text-[11px] text-slate-500">
-            {data.employee?.full_name && (locked || mode === "staff") ? `${data.employee.full_name} ile yazışma` : "Tüm yazışmalar burada"}
+            {channel?.kind === "group"
+              ? (data.group?.title || "Grup yazışması")
+              : data.employee?.full_name && (locked || mode === "staff")
+                ? `${data.employee.full_name} ile yazışma`
+                : selectedName
+                  ? `${selectedName} ile yazışma`
+                  : "Tüm yazışmalar burada"}
           </div>
         </div>
-        {openEmp && !locked ? (
-          <button type="button" onClick={() => setOpenEmp("")} className="text-[11px] font-bold text-violet-700" data-testid={`${testId}-back`}>Geri</button>
+        {channel && !locked ? (
+          <button type="button" onClick={() => setChannel(null)} className="text-[11px] font-bold text-violet-700" data-testid={`${testId}-back`}>Geri</button>
         ) : null}
         {unread > 0 ? (
           <button type="button" onClick={markRead} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-600 text-white" data-testid={`${testId}-unread`}>
@@ -136,45 +238,148 @@ export function StaffMessagesPanel({
         <div className="text-xs text-slate-400">Yazışmalar gizli. Göster ile açın.</div>
       ) : (
         <>
+          {showStaffPick ? (
+            <div className="space-y-1.5" data-testid={`${testId}-managers`}>
+              {managerRows.length ? (
+                <select
+                  className="w-full border rounded-xl p-2 text-xs font-semibold"
+                  value={selectedManager}
+                  onChange={(e) => setSelectedManager(e.target.value)}
+                  data-testid={`${testId}-manager-pick`}
+                >
+                  <option value="">Yönetici seçin</option>
+                  {managerRows.map((row) => (
+                    <option key={row.user_id} value={row.user_id}>{row.name || "Yönetici"}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-xs text-slate-400">Kayıtlı yönetici yok.</div>
+              )}
+            </div>
+          ) : null}
+
           {showInbox ? (
             <div className="space-y-1.5" data-testid={`${testId}-inbox`}>
-              {(data.directory || []).length > 0 ? (
+              {(data.directory || []).length || managers.length ? (
                 <select
                   className="w-full border rounded-xl p-2 text-xs font-semibold"
                   value=""
-                  onChange={(e) => { if (e.target.value) setOpenEmp(e.target.value); }}
+                  onChange={(e) => {
+                    const peer = parsePeerValue(e.target.value);
+                    if (peer) setChannel(peer);
+                  }}
                   data-testid={`${testId}-pick`}
                 >
-                  <option value="">Personel seç · yeni yazışma</option>
-                  {(data.directory || []).map((emp) => (
-                    <option key={emp.id} value={emp.id}>{emp.full_name}{emp.position ? ` · ${emp.position}` : ""}</option>
-                  ))}
+                  <option value="">Personel veya yönetici seç · yeni yazışma</option>
+                  {(data.directory || []).length ? (
+                    <optgroup label="Personel">
+                      {(data.directory || []).map((emp) => (
+                        <option key={emp.id} value={`e:${emp.id}`}>{emp.full_name}{emp.position ? ` · ${emp.position}` : ""}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {managers.filter((m) => m.id && m.id !== selfId).length ? (
+                    <optgroup label="Yöneticiler">
+                      {managers.filter((m) => m.id && m.id !== selfId).map((m) => (
+                        <option key={m.id} value={`m:${m.id}`}>{m.name || "Yönetici"}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </select>
               ) : null}
+              {managerRows.filter((r) => r.user_id !== "_all").map((row) => (
+                <InboxButton
+                  key={`m-${row.user_id}`}
+                  title={row.name || "Yönetici"}
+                  last={row.last}
+                  unread={row.unread || 0}
+                  testId={`${testId}-inbox-mgr-${row.user_id}`}
+                  onClick={() => setChannel({ kind: "manager", id: row.user_id })}
+                />
+              ))}
               {conversations.length === 0 ? (
                 <div className="text-xs text-slate-400">Kayıtlı personel yok.</div>
               ) : conversations.map((row) => (
-                <button
+                <InboxButton
                   key={row.employee_id}
-                  type="button"
-                  onClick={() => setOpenEmp(row.employee_id)}
-                  className="w-full text-left rounded-xl border border-slate-100 px-3 py-2 hover:bg-slate-50"
-                  data-testid={`${testId}-inbox-${row.employee_id}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-800 truncate">{row.employee_name || "Personel"}</span>
-                    {row.unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{row.unread}</span> : null}
-                  </div>
-                  <div className="text-[11px] text-slate-500 truncate">{row.last ? messagePreview(row.last) : "Yeni yazışma"}</div>
-                </button>
+                  title={row.employee_name || "Personel"}
+                  last={row.last}
+                  unread={row.unread || 0}
+                  testId={`${testId}-inbox-${row.employee_id}`}
+                  onClick={() => setChannel({ kind: "emp", id: row.employee_id })}
+                />
               ))}
             </div>
           ) : null}
 
-          {showThread ? (
+          {!locked && !channel ? (
+            <div className="space-y-1.5" data-testid={`${testId}-groups`}>
+              <div className="flex items-center gap-2">
+                <div className="text-xs font-bold text-slate-800 flex-1">Grup yazışmaları</div>
+                <button
+                  type="button"
+                  onClick={() => setShowGroupForm((v) => !v)}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                  data-testid={`${testId}-group-new`}
+                >
+                  <Users className="w-3.5 h-3.5" /> Yeni grup
+                </button>
+              </div>
+              {showGroupForm ? (
+                <form onSubmit={createGroup} className="rounded-xl border border-violet-100 p-2 space-y-2" data-testid={`${testId}-group-form`}>
+                  <input
+                    value={groupTitle}
+                    onChange={(e) => setGroupTitle(e.target.value)}
+                    placeholder="Grup adı"
+                    className="w-full border rounded-xl p-2 text-xs font-semibold"
+                    data-testid={`${testId}-group-title`}
+                  />
+                  {managers.filter((m) => m.id && m.id !== selfId).length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {managers.filter((m) => m.id && m.id !== selfId).map((m) => (
+                        <label key={m.id} className={`text-[11px] font-bold px-2 py-1 rounded-full border cursor-pointer ${groupUsers.includes(m.id) ? "bg-violet-50 border-violet-400 text-violet-700" : "border-slate-200 text-slate-600"}`}>
+                          <input type="checkbox" className="sr-only" checked={groupUsers.includes(m.id)} onChange={() => toggle(groupUsers, m.id, setGroupUsers)} />
+                          {m.name || "Yönetici"}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                  {(data.directory || []).length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(data.directory || []).map((emp) => (
+                        <label key={emp.id} className={`text-[11px] font-bold px-2 py-1 rounded-full border cursor-pointer ${groupEmps.includes(emp.id) ? "bg-violet-50 border-violet-400 text-violet-700" : "border-slate-200 text-slate-600"}`}>
+                          <input type="checkbox" className="sr-only" checked={groupEmps.includes(emp.id)} onChange={() => toggle(groupEmps, emp.id, setGroupEmps)} />
+                          {emp.full_name || "Personel"}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                  <button type="submit" disabled={busy} className="px-3 py-1.5 rounded-xl bg-violet-600 text-white font-bold text-xs disabled:opacity-50" data-testid={`${testId}-group-create`}>
+                    Grup oluştur
+                  </button>
+                </form>
+              ) : null}
+              {!groups.length ? (
+                <div className="text-xs text-slate-400">Henüz grup yok.</div>
+              ) : groups.map((row) => (
+                <InboxButton
+                  key={row.group_id || row.id}
+                  title={row.name || row.title || "Grup"}
+                  last={row.last}
+                  unread={row.unread || 0}
+                  testId={`${testId}-inbox-group-${row.group_id || row.id}`}
+                  onClick={() => setChannel({ kind: "group", id: row.group_id || row.id })}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {showThread && (channel || locked || selectedManager || mode === "staff" || mode === "both") ? (
             <div className="space-y-2 max-h-72 overflow-y-auto" data-testid={`${testId}-thread`}>
               {preview.length === 0 ? (
-                <div className="text-xs text-slate-400 text-center py-3">Henüz mesaj yok. Aşağıdan yazın.</div>
+                <div className="text-xs text-slate-400 text-center py-3">
+                  {showStaffPick && !selectedManager && !channel ? "Yazışmak için yönetici seçin." : "Henüz mesaj yok. Aşağıdan yazın."}
+                </div>
               ) : (compact ? preview : [...preview].reverse()).map((m) => <Bubble key={m.id || m.created_at} m={m} />)}
             </div>
           ) : null}
@@ -185,7 +390,15 @@ export function StaffMessagesPanel({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 rows={2}
-                placeholder={locked || openEmp ? "Mesaj yazın…" : "Yöneticiye yazın…"}
+                placeholder={
+                  channel?.kind === "group"
+                    ? "Gruba yazın…"
+                    : locked || channel?.kind === "emp"
+                      ? "Mesaj yazın…"
+                      : selectedName
+                        ? `${selectedName} adlı yöneticiye yazın…`
+                        : "Yöneticiye yazın…"
+                }
                 className="flex-1 border rounded-xl p-2 text-xs"
                 data-testid={`${testId}-draft`}
               />
