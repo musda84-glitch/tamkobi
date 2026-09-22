@@ -301,8 +301,8 @@ export function StaffMessagesPanel({
     [data?.inbox, data?.directory],
   );
   const pickGroups = useMemo(
-    () => peerSelectGroups(data?.directory, managers, selfId),
-    [data?.directory, managers, selfId],
+    () => peerSelectGroups(data?.directory, managers, selfId, data?.manager_inbox),
+    [data?.directory, managers, selfId, data?.manager_inbox],
   );
   const groups = data?.group_inbox || [];
   const announcements = data?.announcements || [];
@@ -432,7 +432,7 @@ export function StaffMessagesPanel({
                   openThread(peer, name);
                 }}
                 groups={pickGroups}
-                emptyLabel="Personel veya yönetici seçin"
+                emptyLabel="Yeni yazışma · personel veya yönetici"
                 dense
               />
               {!pickGroups.length ? (

@@ -78,6 +78,32 @@ export function mergeManagerInbox(inbox, managers, selfId) {
   return sortUnreadThenName([...by.values()]);
 }
 
+export function peerSelectGroups(directory, managers, selfId, inbox) {
+  const groups = [];
+  const emps = (directory || [])
+    .filter((e) => e.id)
+    .map((e) => ({
+      value: `e:${e.id}`,
+      label: [e.full_name, e.position || e.department].filter(Boolean).join(" · "),
+    }));
+  if (emps.length) groups.push({ label: "Personel", options: emps });
+  const skip = String(selfId || "");
+  const by = new Map();
+  for (const m of managers || []) {
+    const id = String(m.id || "");
+    if (!id || id === "_all" || id === skip) continue;
+    by.set(id, { value: `m:${id}`, label: m.name || "Yönetici" });
+  }
+  for (const row of inbox || []) {
+    const id = String(row.user_id || "");
+    if (!id || id === "_all" || id === skip || by.has(id)) continue;
+    by.set(id, { value: `m:${id}`, label: row.name || "Yönetici" });
+  }
+  const mgrs = [...by.values()].sort((a, b) => a.label.localeCompare(b.label, "tr"));
+  if (mgrs.length) groups.push({ label: "Yöneticiler", options: mgrs });
+  return groups;
+}
+
 export function managerSelectGroups(managers, inbox, selfId) {
   const skip = String(selfId || "");
   const by = new Map();

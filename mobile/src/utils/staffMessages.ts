@@ -215,6 +215,7 @@ export function peerSelectGroups(
   directory?: StaffDirectoryEmp[] | null,
   managers?: StaffManager[] | null,
   selfId?: string | null,
+  inbox?: ManagerInboxRow[] | null,
 ) {
   const groups: { label: string; options: { value: string; label: string }[] }[] = [];
   const emps = (directory || [])
@@ -225,9 +226,18 @@ export function peerSelectGroups(
     }));
   if (emps.length) groups.push({ label: "Personel", options: emps });
   const skip = String(selfId || "");
-  const mgrs = (managers || [])
-    .filter((m) => m.id && m.id !== "_all" && m.id !== skip)
-    .map((m) => ({ value: `m:${m.id}`, label: m.name || "Yönetici" }));
+  const by = new Map<string, { value: string; label: string }>();
+  for (const m of managers || []) {
+    const id = String(m.id || "");
+    if (!id || id === "_all" || id === skip) continue;
+    by.set(id, { value: `m:${id}`, label: m.name || "Yönetici" });
+  }
+  for (const row of inbox || []) {
+    const id = String(row.user_id || "");
+    if (!id || id === "_all" || id === skip || by.has(id)) continue;
+    by.set(id, { value: `m:${id}`, label: row.name || "Yönetici" });
+  }
+  const mgrs = [...by.values()].sort((a, b) => a.label.localeCompare(b.label, "tr"));
   if (mgrs.length) groups.push({ label: "Yöneticiler", options: mgrs });
   return groups;
 }

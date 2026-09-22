@@ -13,6 +13,7 @@ import {
   parsePeerValue,
   peerPostBody,
   peerQuery,
+  peerSelectGroups,
   previewStaffMessages,
   requireManagerId,
   announceAudienceLabel,
@@ -214,6 +215,10 @@ export function StaffMessagesPanel({
     () => mergeInboxWithDirectory(data?.inbox, data?.directory),
     [data?.inbox, data?.directory],
   );
+  const pickGroups = useMemo(
+    () => peerSelectGroups(data?.directory, managers, selfId, data?.manager_inbox),
+    [data?.directory, managers, selfId, data?.manager_inbox],
+  );
   const groups = data?.group_inbox || data?.groups || [];
   const threadRows = (() => {
     const rows = data?.thread || [];
@@ -312,21 +317,14 @@ export function StaffMessagesPanel({
                 }}
                 data-testid={`${testId}-pick`}
               >
-                <option value="">Personel seç · yeni yazışma</option>
-                  {(data.directory || []).length ? (
-                    <optgroup label="Personel">
-                      {(data.directory || []).map((emp) => (
-                        <option key={emp.id} value={`e:${emp.id}`}>{emp.full_name}{emp.position ? ` · ${emp.position}` : ""}</option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {managers.filter((m) => m.id && m.id !== selfId).length ? (
-                    <optgroup label="Yöneticiler">
-                      {managers.filter((m) => m.id && m.id !== selfId).map((m) => (
-                        <option key={m.id} value={`m:${m.id}`}>{m.name || "Yönetici"}</option>
-                      ))}
-                    </optgroup>
-                  ) : null}
+                <option value="">Yeni yazışma · personel veya yönetici</option>
+                {pickGroups.map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.options.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
               {managerRows.filter((r) => r.user_id !== "_all").map((row) => (
                 <InboxButton
