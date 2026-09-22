@@ -18,6 +18,7 @@ import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort
 import InvoiceActionPanel from "../components/InvoiceActionPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
+import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { FxPicker } from "../components/FxPicker";
 import { fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
@@ -557,20 +558,29 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını satırdaki <b>⋮</b> menüden E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır. Boş alana sağ tık hızlı menüyü açar.
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-left text-xs text-slate-600">
+          <table className="w-full table-fixed text-left text-xs text-slate-600">
+            <colgroup>
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: INVOICE_ACTIONS_COL }} />
+            </colgroup>
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
-                <SortTh col="number" className="min-w-[200px]">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</SortTh>
-                <SortTh col="contact" className="min-w-[200px]">Cari (Müşteri / Tedarikçi)</SortTh>
-                <SortTh col="date" className="min-w-[120px]">Tarih / Vade</SortTh>
-                <SortTh col="gib" className="min-w-[240px]">GİB Durumu</SortTh>
-                <SortTh col="amount" className="text-right min-w-[110px]">Tutar</SortTh>
+                <SortTh col="number">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</SortTh>
+                <SortTh col="contact">Cari (Müşteri / Tedarikçi)</SortTh>
+                <SortTh col="date">Tarih / Vade</SortTh>
+                <SortTh col="gib">GİB Durumu</SortTh>
+                <SortTh col="amount" className="text-right">Tutar</SortTh>
                 {filterType === "dispatch" ? (
-                  <th className="px-4 py-3 text-right min-w-[120px]">İrsaliye Durumu</th>
+                  <th className="px-4 py-3 text-right">İrsaliye Durumu</th>
                 ) : (
-                  <SortTh col="pay" className="text-right min-w-[120px]">Ödeme Durumu</SortTh>
+                  <SortTh col="pay" className="text-right">Ödeme Durumu</SortTh>
                 )}
-                <th className="px-4 py-3 text-center">İşlemler</th>
+                <th className="px-3 py-3 text-center bg-slate-50 sticky right-0 z-[1]" style={{ width: INVOICE_ACTIONS_COL }} data-testid="inv-actions-header">İşlemler</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -584,9 +594,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </tr>
               ) : (
                 pagedInvoices.map((inv) => (
-                  <tr key={inv.id || inv._id || inv.invoice_number} className={`hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
-                    <td className="px-4 py-3 font-medium">
-                      <div className="text-slate-900 font-mono font-semibold">{inv.invoice_number}</div>
+                  <tr key={inv.id || inv._id || inv.invoice_number} className={`group/row hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
+                    <td className="px-4 py-3 font-medium overflow-hidden">
+                      <div className="text-slate-900 font-mono font-semibold truncate">{inv.invoice_number}</div>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${typeBadge(inv)[1]}`}>
                           {typeBadge(inv)[0]}
@@ -598,9 +608,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
                       </div>
                     </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => inv.contact_id && navigate(`/contacts?contact_id=${inv.contact_id}`)} className="font-semibold text-slate-900 hover:text-emerald-700 hover:underline text-left" data-testid={`inv-contact-link-${inv.invoice_number}`}>{inv.contact_name}</button>
-                      <div className="text-[11px] text-slate-400">VKN/TCKN: {inv.contact_tax_id || '-'}</div>
+                    <td className="px-4 py-3 overflow-hidden">
+                      <button onClick={() => inv.contact_id && navigate(`/contacts?contact_id=${inv.contact_id}`)} className="font-semibold text-slate-900 hover:text-emerald-700 hover:underline text-left truncate max-w-full block" data-testid={`inv-contact-link-${inv.invoice_number}`}>{inv.contact_name}</button>
+                      <div className="text-[11px] text-slate-400 truncate">VKN/TCKN: {inv.contact_tax_id || '-'}</div>
                     </td>
                     <td className="px-4 py-3">
                       <div>{inv.issue_date}</div>
@@ -653,7 +663,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center w-[320px] min-w-[320px]">
+                    <td
+                      className={`px-3 py-3 text-center sticky right-0 z-[1] ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`}
+                      style={{ width: INVOICE_ACTIONS_COL }}
+                    >
                       {inv._is_quote ? (
                         <div className="flex items-center justify-center gap-1.5" data-testid={`quote-actions-${inv.invoice_number}`}>
                           <button type="button" onClick={() => navigate("/quotes")} className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 hover:bg-slate-50" data-testid={`quote-open-${inv.invoice_number}`}>Teklifler</button>
