@@ -1,6 +1,7 @@
 import {
   appendUploadBlob,
   imageUploadRequest,
+  lineItemImageUploadRequest,
   imageUploaderCopy,
   isExpoFetchFilePart,
   pickBrowserImage,
@@ -108,6 +109,13 @@ describe("pickerFileMeta and upload target", () => {
     expect(imageUploadRequest("product", "prod_1")).toEqual({
       path: "/products/prod_1/image",
       query: undefined,
+    });
+  });
+
+  it("uploads a line photo without attaching it to the quote gallery", () => {
+    expect(lineItemImageUploadRequest("c1")).toEqual({
+      path: "/files/upload",
+      query: { entity: "product", entity_id: "", company_id: "c1" },
     });
   });
 

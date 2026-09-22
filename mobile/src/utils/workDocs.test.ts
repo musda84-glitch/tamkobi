@@ -55,6 +55,7 @@ import {
   hydrateWorkItem,
   itemStripe,
   workItemLineKind,
+  workGalleryWithoutLinePhotos,
   QUOTE_ITEM_THUMB,
   QUOTE_SERVICE_THUMB,
   QUOTE_ITEM_THUMB_SIZE,
@@ -167,6 +168,7 @@ describe("workDocs", () => {
     const body = quoteLineProductPayload({ name: "a", unit_price: 236.36, vat_rate: 10, unit: "Adet", image_url: "blob:x" }, "comp_1", "A-1");
     expect(body).toMatchObject({ company_id: "comp_1", name: "a", sku: "A-1", sale_price: 236.36, vat_rate: 10, type: "product" });
     expect(body.image_url).toBeUndefined();
+    expect(quoteLineProductPayload({ name: "Raf", unit_price: 10, vat_rate: 20, unit: "Adet", image_url: "/api/files/raf.jpg" }, "comp_1", "RAF-1").image_url).toBe("/api/files/raf.jpg");
     expect(attachProductToWorkItem({ ...emptyItem(), name: "a" }, { id: "p9", image_url: "raf.jpg" }).product_id).toBe("p9");
   });
 
@@ -334,6 +336,14 @@ describe("workDocs", () => {
     expect(workItemLineKind("quote")).toBe("quote");
     expect(workItemLineKind("survey")).toBe("quote");
     expect(workItemLineKind("project")).toBeNull();
+  });
+
+  it("keeps line photos off the quote gallery", () => {
+    expect(workGalleryWithoutLinePhotos(
+      ["/api/files/line.jpg", "/api/files/gallery.jpg", ""],
+      [{ image_url: "/api/files/line.jpg" }],
+    )).toEqual(["/api/files/gallery.jpg"]);
+    expect(workGalleryWithoutLinePhotos(["/api/files/a.jpg"], [])).toEqual(["/api/files/a.jpg"]);
   });
 
   it("summarizes project tasks and assignee options like the web card", () => {

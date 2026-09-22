@@ -781,3 +781,17 @@ export function itemStripe(index: number): { backgroundColor: string } {
 export function workItemLineKind(kind: WorkKind): "quote" | null {
   return kind === "project" ? null : "quote";
 }
+
+/** Satır görselleri teklif / keşif galerisinde durmaz. */
+export function workGalleryWithoutLinePhotos(
+  images: string[] | null | undefined,
+  items: Array<Pick<WorkItem, "image_url" | "thumbnail_url">> | null | undefined,
+): string[] {
+  const line = new Set(
+    (items || []).flatMap((it) => [it.image_url, it.thumbnail_url].map((u) => String(u || "").trim()).filter(Boolean)),
+  );
+  return (images || []).filter((url) => {
+    const key = String(url || "").trim();
+    return key && !line.has(key);
+  });
+}

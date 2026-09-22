@@ -33,6 +33,7 @@ import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
   imageUploadRequest,
+  lineItemImageUploadRequest,
   pickBrowserImage,
   resolveUploadBlob,
   uploadedImageUrl,
@@ -88,6 +89,7 @@ import {
   workItemNoteOpen,
   workItemTotals,
   itemStripe,
+  workGalleryWithoutLinePhotos,
   workItemLineKind,
   type ProjectDoc,
   type QuoteDoc,
@@ -128,6 +130,7 @@ function quoteDraftSig(
       vat_rate: Number(it.vat_rate) || 0,
       is_service: !!it.is_service,
       description: it.description || "",
+      image_url: it.image_url || it.thumbnail_url || "",
     })),
   });
 }
@@ -219,11 +222,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setNotes(q.notes || "");
         setStatus(q.status || "draft");
         setLinkedProjectId(q.project_id || "");
-        setPhotos(q.images || []);
         const its = (q.items || []).filter((i) => i?.name);
         const nextItems = its.length
           ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 }))
           : [emptyItem()];
+        setPhotos(workGalleryWithoutLinePhotos(q.images || [], nextItems));
         setItems(nextItems);
         quoteBaseline.current = quoteDraftSig(
           q.title || "",
@@ -271,10 +274,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setSurveyDate(String(s.survey_date || todayIso()).slice(0, 10));
         setNotes(s.notes || "");
         setLocation({ url: s.location_url || "", lat: coordText(s.latitude), lng: coordText(s.longitude) });
-        setPhotos(s.images || []);
         setStatus(s.status || "planned");
         const ms = s.measurements || [];
-        setItems(ms.length ? ms.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0 })) : [emptyItem()]);
+        const nextItems = ms.length ? ms.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0 })) : [emptyItem()];
+        setPhotos(workGalleryWithoutLinePhotos(s.images || [], nextItems));
+        setItems(nextItems);
       }
       setError(null);
       await loadRefs();
@@ -334,23 +338,25 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         asset = picked.assets[0];
       }
       if (!asset) return;
-      if (docId) {
-        const formData = new FormData();
-        const compact = await compressPickerAsset(asset);
-        const { blob, name: fileName } = await resolveUploadBlob(compact);
-        appendUploadBlob(formData, blob, fileName);
-        const { path, query } = imageUploadRequest("quote", docId, companyId);
-        const uploaded = await upload<unknown>(client, path, formData, query);
-        const url = uploadedImageUrl(uploaded);
-        if (!url) {
-          setError("Fotoğraf yüklendi ama adres dönmedi.");
-          return;
-        }
-        setItems((rows) => rows.map((row, idx) => (idx === i ? { ...row, image_url: url, thumbnail_url: url } : row)));
+      const current = items[i];
+      const formData = new FormData();
+      const compact = await compressPickerAsset(asset);
+      const { blob, name: fileName } = await resolveUploadBlob(compact);
+      appendUploadBlob(formData, blob, fileName);
+      const req = current?.product_id
+        ? imageUploadRequest("product", current.product_id)
+        : lineItemImageUploadRequest(companyId);
+      const uploaded = await upload<unknown>(client, req.path, formData, req.query);
+      const url = uploadedImageUrl(uploaded);
+      if (!url) {
+        setError("Fotoğraf yüklendi ama adres dönmedi.");
         return;
       }
-      const uri = String(asset.uri || "").trim();
-      if (uri) setItems((rows) => rows.map((row, idx) => (idx === i ? { ...row, image_url: uri, thumbnail_url: uri } : row)));
+      const next = items.map((row, idx) => (idx === i ? { ...row, image_url: url, thumbnail_url: url } : row));
+      setItems(next);
+      if (kind === "quote" && !current?.is_service) {
+        void ensureQuoteStockCards(next).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
+      }
     } catch (err) {
       setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
     }
@@ -1122,7 +1128,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <ImageUploader
           entity={kind}
           entityId={docId}
-          images={photos}
+          images={workGalleryWithoutLinePhotos(photos, items)}
           onUploaded={(url) => setPhotos((prev) => [...prev, url])}
           editable={canEdit}
           testID="work-photos"

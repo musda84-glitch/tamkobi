@@ -92,6 +92,14 @@ export async function resolveUploadBlob(
   return { blob: await readFile(uri), name };
 }
 
+/** Satır görseli: dosya kaydı oluşur, teklif/keşif/proje galerisine yazılmaz. */
+export function lineItemImageUploadRequest(companyId?: string) {
+  return {
+    path: "/files/upload",
+    query: { entity: "product", entity_id: "", company_id: companyId || "" } as Record<string, string>,
+  };
+}
+
 export function imageUploadRequest(
   entity: ImageEntity,
   entityId: string,
