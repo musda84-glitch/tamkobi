@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
@@ -643,6 +643,24 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   return (
     <Screen>
+      {kind === "quote" ? (
+        <Stack.Screen
+          options={{
+            title: "Teklif",
+            headerTitle: () => (
+              <View testID="quote-header-title" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="create" size={22} color={colors.warning} />
+                <View>
+                  <Text style={{ fontWeight: "800", fontSize: 17, color: colors.text }}>Teklif</Text>
+                  {!isNew && quote?.quote_number ? (
+                    <Text style={{ fontWeight: "700", fontSize: 12, color: colors.muted }}>{quote.quote_number}</Text>
+                  ) : null}
+                </View>
+              </View>
+            ),
+          }}
+        />
+      ) : null}
       <H1>{heading}</H1>
       <Muted>{kind === "quote" ? "Cari ve kalemlerle fiyat teklifi." : kind === "project" ? "İş / saha projesi, bütçe ve cari." : "Keşif, ölçü ve teklife dönüştürme."}</Muted>
       <ErrorBanner message={error} />
