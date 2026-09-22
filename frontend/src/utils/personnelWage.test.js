@@ -1,12 +1,17 @@
 import {
+  attendanceYevmiyeCoveredDays,
   dailyWageOf,
   employeePayActionTitle,
   isDailyWage,
+  referenceDailyWage,
   ledgerPayPayload,
   parseYevmiyeDays,
   yevmiyeAddHint,
   yevmiyeDaysOf,
+  yevmiyeAdjustedAmount,
+  yevmiyeAdjustmentNeeded,
   yevmiyePayPayload,
+  yevmiyeStatusLine,
   monthlyLoad,
   payrollWageLine,
   periodWage,
@@ -54,5 +59,22 @@ describe("personnel wage", () => {
     expect(employeePayActionTitle("salary", { pay_type: "daily" })).toBe("Bakiye öde");
     expect(employeePayActionTitle("bonus", { pay_type: "daily" })).toBe("Yevmiye günü");
     expect(employeePayActionTitle("salary", { pay_type: "monthly" })).toBe("Maaş");
+  });
+
+  it("prorates yevmiye from card wage and late/early minutes", () => {
+    expect(referenceDailyWage({ daily_wage: 1500, salary: 39000 })).toBe(1500);
+    expect(referenceDailyWage({ daily_wage: 0, salary: 26000 })).toBe(1000);
+    expect(yevmiyeAdjustedAmount(1600, 48, 0, 480)).toBe(1440);
+    expect(yevmiyeAdjustedAmount(1600, 0, 96, 480)).toBe(1280);
+    expect(yevmiyeAdjustmentNeeded(0, 0)).toBe(false);
+    expect(yevmiyeAdjustmentNeeded(5, 0)).toBe(true);
+    expect(attendanceYevmiyeCoveredDays([
+      { type: "yevmiye", source: "attendance", worked_days: 1 },
+      { type: "yevmiye", source: "manual", worked_days: 4 },
+    ])).toBe(1);
+    expect(yevmiyeStatusLine({
+      yevmiye_full_amount: 1500,
+      yevmiye_adjustment_request: { status: "pending", proposed_amount: 1200 },
+    })).toMatch(/1200/);
   });
 });

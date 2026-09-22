@@ -8,6 +8,7 @@ import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
+import { yevmiyeStatusLine } from "../utils/personnelWage";
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -32,6 +33,7 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
         {r.early_leave_minutes > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${r.early_leave_approved || r.early_leave_request?.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.early_leave_minutes} dk erken çıkış{r.early_leave_approved || r.early_leave_request?.status === "approved" ? " (onaylı)" : ""}</span>}{r.early_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">erken çıkış talebi</span>}
         {(r.intraday_leave_minutes > 0 || r.intraday_leave_request?.status === "approved" || r.intraday_leave_approved) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">{r.intraday_leave_minutes || 0} dk gün içi izin{(r.intraday_leave_request?.out_time && r.intraday_leave_request?.return_time) ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>}
         {r.intraday_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">gün içi izin talebi</span>}
+        {yevmiyeStatusLine(r) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800" data-testid={`my-att-yevmiye-${r.id}`}>{yevmiyeStatusLine(r)}</span> : null}
         <span className="ml-auto flex items-center gap-2">
           {r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Onaylandı</span>
             : <>
@@ -150,13 +152,14 @@ export default function MyAttendancePage() {
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}<span className="text-lg sm:text-base">Çıkış Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">{t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? "çıkış bekleniyor" : "önce giriş yapın"}</span>
             </button>
           </div>
-          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes) ? (
+          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes || t?.yevmiye_full_amount || t?.yevmiye_adjustment_request) ? (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
               {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
               {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || sch.end}</span> : null}
               {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
               {t?.intraday_leave_minutes ? <span className="px-2.5 py-1 rounded-lg bg-sky-500/30 text-sky-100 font-bold" data-testid="my-att-intraday-mins">{t.intraday_leave_minutes} dk gün içi izin düşüldü</span> : null}
+              {yevmiyeStatusLine(t) ? <span className="px-2.5 py-1 rounded-lg bg-amber-500/30 text-amber-100 font-bold" data-testid="my-att-yevmiye">{yevmiyeStatusLine(t)}</span> : null}
             </div>
           ) : null}
           {!t?.check_out && (

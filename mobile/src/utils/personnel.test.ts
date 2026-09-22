@@ -53,7 +53,11 @@ import {
   validateYevmiyeWage,
   yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
+  yevmiyeAdjustedAmount,
+  yevmiyeAdjustmentNeeded,
   yevmiyePayPayload,
+  yevmiyeStatusLine,
+  referenceDailyWage,
   hasEmployeeDetails,
   employeeStatusLabel,
   requestKindLabel,
@@ -116,6 +120,7 @@ describe("employee draft", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
+    expect(requestKindLabel("yevmiye_adjustment")).toBe("Yevmiye");
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
@@ -366,6 +371,13 @@ describe("employee card actions", () => {
     expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
     expect(yevmiyeAddHint(6, 3)).toBe("6 gün + 3 gün = 9 gün");
     expect(yevmiyeAddHint(6, 0)).toBe("Mevcut 6 gün · yazılan gün artı olarak eklenir");
+    expect(referenceDailyWage({ daily_wage: 0, salary: 26000 })).toBe(1000);
+    expect(yevmiyeAdjustedAmount(1600, 48, 0, 480)).toBe(1440);
+    expect(yevmiyeAdjustmentNeeded(0, 10)).toBe(true);
+    expect(yevmiyeStatusLine({
+      yevmiye_full_amount: 1500,
+      yevmiye_adjustment_request: { status: "pending", proposed_amount: 1200 },
+    })).toMatch(/1200/);
     expect(ledgerPayPayload("e1", "alacak", "2500", "2026-09", "", "fazla")).toMatchObject({
       employee_id: "e1", type: "bakiye", amount: 2500, account_id: null, note: "fazla",
     });

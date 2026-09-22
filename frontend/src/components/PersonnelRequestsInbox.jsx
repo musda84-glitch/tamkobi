@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, Clock, Loader2, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
+import { Bell, CalendarDays, Check, Clock, Coins, Loader2, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
@@ -12,6 +12,7 @@ export const KIND_META = {
   intraday_leave: { label: "Gün içi izin", Icon: ArrowLeftRight, chip: "bg-sky-50 text-sky-800 border-sky-100" },
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
+  yevmiye_adjustment: { label: "Yevmiye", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
@@ -24,6 +25,7 @@ export function EmployeeRequestChips({
   onDecideEarly,
   onDecideIntraday,
   onDecideAdvance,
+  onDecideYevmiye,
   onViewDispute,
   maxVisible = 3,
 }) {
@@ -88,6 +90,16 @@ export function EmployeeRequestChips({
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideAdvance?.(it.id, "rejected")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-advance-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "yevmiye_adjustment" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-yevmiye-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-yevmiye-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Kart ücreti
                   </button>
                 </>
               )}
@@ -175,6 +187,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
+  const decideYevmiye = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const decideIntraday = async (id, decision) => {
     setBusyId(id);
     try {
@@ -225,7 +251,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, avans, erken çıkış, gün içi izin veya puantaj itirazı yok.
+          Şu an onay bekleyen izin, avans, yevmiye, erken çıkış, gün içi izin veya puantaj itirazı yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
@@ -283,6 +309,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideAdvance(it.id, "rejected")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-advance-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "yevmiye_adjustment" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-yevmiye-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-yevmiye-${it.id}`}>
+                        <X className="w-3 h-3" /> Kart ücreti
                       </button>
                     </>
                   )}

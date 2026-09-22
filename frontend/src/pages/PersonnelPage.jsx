@@ -464,6 +464,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideYevmiye = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideAdvance = async (id, status) => {
     setBusyReqId(id);
     try {
@@ -613,6 +626,7 @@ export default function PersonnelPage() {
               onDecideEarly={decideEarly}
               onDecideIntraday={decideIntraday}
               onDecideAdvance={decideAdvance}
+              onDecideYevmiye={decideYevmiye}
               onViewDispute={() => setTab("attendance")}
             />
 

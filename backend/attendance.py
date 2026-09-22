@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+import personnel_wage
+
 router = APIRouter(prefix="/api")
 _db = None
 _current_user = None
@@ -865,7 +867,173 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             msg += f" (firma konumuna {geo['distance_m']} m)"
     elif workplace and workplace.get("kind") == "task":
         msg += f" (dış görev: {workplace_place_label(workplace)})"
-    return {"status": "success", "record": rec, "message": msg, "workplace": workplace}
+    yev = None
+    try:
+        if action == "check_in":
+            yev = await accrue_task_yevmiye(emp, rec, workplace, schedule)
+            if yev:
+                rec["yevmiye_bonus_id"] = yev.get("_id") or yev.get("id")
+                rec["yevmiye_full_amount"] = yev.get("amount")
+                msg += f" Yevmiye eklendi: {yev.get('amount')} ₺ (kart ücreti)."
+            if rec.get("yevmiye_bonus_id") and personnel_wage.yevmiye_adjustment_needed(rec.get("late_minutes") or 0, 0):
+                yev = await sync_yevmiye_adjustment(emp, rec, schedule) or yev
+        elif action == "check_out":
+            yev = await sync_yevmiye_adjustment(emp, rec, schedule)
+        adj = (rec.get("yevmiye_adjustment_request") or {})
+        if adj.get("status") == "pending":
+            msg += f" Geç/erken için yevmiye {adj.get('proposed_amount')} ₺ önerildi — yönetici onayı bekleniyor."
+    except Exception:
+        yev = None
+    return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+
+
+async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], schedule: dict) -> Optional[dict]:
+    """Görev konumunda giriş: kart ücretinden 1 günlük yevmiye (ödenmemiş)."""
+    if (workplace or {}).get("kind") != "task":
+        return None
+    wage = personnel_wage.reference_daily_wage(emp)
+    if wage <= 0:
+        return None
+    if personnel_wage.pay_type_of(emp) != "daily" and personnel_wage.daily_wage_of(emp) <= 0:
+        return None
+    att_id = rec.get("id") or rec.get("_id")
+    date = rec.get("date")
+    if rec.get("yevmiye_bonus_id"):
+        existing = await _db.bonus_payments.find_one({"_id": rec["yevmiye_bonus_id"]})
+        if existing:
+            return existing
+    if date:
+        existing = await _db.bonus_payments.find_one({
+            "employee_id": emp["_id"], "type": "yevmiye", "source": "attendance", "date": date,
+        })
+        if existing:
+            await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_bonus_id": existing["_id"], "yevmiye_full_amount": existing.get("daily_wage") or existing.get("amount")}})
+            return existing
+    bonus_id = str(uuid.uuid4())
+    period = (date or "")[:7] or datetime.now(timezone.utc).strftime("%Y-%m")
+    doc = {
+        "_id": bonus_id,
+        "company_id": emp["company_id"],
+        "employee_id": emp["_id"],
+        "employee_name": emp.get("full_name"),
+        "type": "yevmiye",
+        "type_label": "Yevmiye",
+        "period": period,
+        "date": date,
+        "amount": wage,
+        "daily_wage": wage,
+        "worked_days": 1,
+        "note": f"Görev girişi · {personnel_wage.wage_line(1, wage)}",
+        "status": "pending",
+        "source": "attendance",
+        "attendance_id": att_id,
+        "is_official": False,
+        "created_at": _now(),
+    }
+    await _db.bonus_payments.insert_one(doc)
+    await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_bonus_id": bonus_id, "yevmiye_full_amount": wage}})
+    rec["yevmiye_bonus_id"] = bonus_id
+    rec["yevmiye_full_amount"] = wage
+    return doc
+
+
+async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optional[dict]:
+    """Geç giriş / erken çıkış yevmiyeyi düşürür; ücret değişimi yönetici onayına düşer."""
+    bid = rec.get("yevmiye_bonus_id")
+    if not bid:
+        return None
+    bonus = await _db.bonus_payments.find_one({"_id": bid})
+    if not bonus or bonus.get("status") == "paid":
+        return bonus
+    wage = float(rec.get("yevmiye_full_amount") or bonus.get("daily_wage") or personnel_wage.reference_daily_wage(emp) or 0)
+    late = int(rec.get("late_minutes") or 0)
+    early = int(rec.get("early_leave_minutes") or 0)
+    sched_m = personnel_wage.scheduled_work_minutes(schedule)
+    proposed = personnel_wage.yevmiye_adjusted_amount(wage, late, early, sched_m)
+    if not personnel_wage.yevmiye_adjustment_needed(late, early) or proposed >= wage:
+        return bonus
+    prev = rec.get("yevmiye_adjustment_request") or {}
+    if prev.get("status") in ("approved", "rejected") and int(prev.get("late_minutes") or 0) == late and int(prev.get("early_leave_minutes") or 0) == early:
+        return bonus
+    req = {
+        "status": "pending",
+        "full_amount": wage,
+        "proposed_amount": proposed,
+        "late_minutes": late,
+        "early_leave_minutes": early,
+        "requested_at": prev.get("requested_at") or _now(),
+    }
+    await _db.attendance.update_one({"_id": rec.get("id") or rec.get("_id")}, {"$set": {"yevmiye_adjustment_request": req}})
+    rec["yevmiye_adjustment_request"] = req
+    await notify_managers(
+        emp["company_id"],
+        "yevmiye_adjustment",
+        f"Yevmiye düzeltmesi: {emp.get('full_name')}",
+        f"{emp.get('full_name')} {rec.get('date')}: kart {wage} ₺ → önerilen {proposed} ₺"
+        + (f" · {late} dk geç" if late else "")
+        + (f" · {early} dk erken" if early else ""),
+        link="/personnel?tab=attendance",
+        dedupe_key=f"yev:{emp['_id']}:{rec.get('date')}",
+    )
+    return bonus
+
+
+@router.post("/personnel/attendance/{att_id}/yevmiye-decision")
+async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Yevmiye onaylamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    adj = rec.get("yevmiye_adjustment_request") or {}
+    if adj.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen yevmiye düzeltmesi yok.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
+    approved = decision in ("approve", "approved")
+    full_amt = float(adj.get("full_amount") or rec.get("yevmiye_full_amount") or 0)
+    proposed = float(adj.get("proposed_amount") or full_amt)
+    final_amt = proposed if approved else full_amt
+    adj = {
+        **adj,
+        "status": "approved" if approved else "rejected",
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "final_amount": final_amt,
+    }
+    await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_adjustment_request": adj, "updated_at": _now()}})
+    bid = rec.get("yevmiye_bonus_id")
+    if bid:
+        note = f"Görev yevmiye · {personnel_wage.wage_line(1, final_amt)}"
+        if approved:
+            note += f" (kart {full_amt} ₺, geç/erken düşüldü)"
+        await _db.bonus_payments.update_one(
+            {"_id": bid, "status": {"$ne": "paid"}},
+            {"$set": {"amount": final_amt, "daily_wage": final_amt if approved else (rec.get("yevmiye_full_amount") or full_amt), "note": note}},
+        )
+    import notify as _notify
+    emp_row = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    await _notify.insert_notification(_db, {
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": emp_row.get("user_id") or rec.get("employee_id"),
+        "type": "yevmiye_adjustment",
+        "title": "Yevmiye " + ("onaylandı" if approved else "kart ücreti kaldı"),
+        "message": f"{rec.get('employee_name')} — {final_amt} ₺",
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+        "roles": [],
+        "employee_id": rec.get("employee_id"),
+    })
+    return {
+        "status": "success",
+        "message": f"Yevmiye {final_amt} ₺ olarak " + ("onaylandı." if approved else "kart ücretiyle bırakıldı."),
+        "amount": final_amt,
+        "approved": approved,
+    }
 
 
 @router.post("/personnel/attendance/early-leave-request")

@@ -101,3 +101,47 @@ export function employeePayActionTitle(key, emp) {
   if (key === "bonus") return isDailyWage(emp) ? "Yevmiye günü" : "Prim öde";
   return "";
 }
+
+export function referenceDailyWage(emp) {
+  const wage = dailyWageOf(emp);
+  if (wage > 0) return wage;
+  const salary = Number(emp?.salary) || 0;
+  if (salary > 0) return Math.round((salary / WORKDAYS_PER_MONTH) * 100) / 100;
+  return 0;
+}
+
+export function yevmiyeAdjustedAmount(dailyWage, lateMinutes = 0, earlyMinutes = 0, scheduledMinutes = 480) {
+  const wage = Number(dailyWage) || 0;
+  const sched = Math.max(1, Math.trunc(Number(scheduledMinutes) || 480));
+  const cut = Math.max(0, Math.trunc(Number(lateMinutes) || 0)) + Math.max(0, Math.trunc(Number(earlyMinutes) || 0));
+  const worked = Math.max(0, sched - cut);
+  return Math.round((wage * worked / sched) * 100) / 100;
+}
+
+export function yevmiyeAdjustmentNeeded(lateMinutes = 0, earlyMinutes = 0) {
+  return (Number(lateMinutes) || 0) > 0 || (Number(earlyMinutes) || 0) > 0;
+}
+
+export function attendanceYevmiyeCoveredDays(bonuses) {
+  return (bonuses || []).reduce((sum, b) => {
+    if (String(b?.type || "") !== "yevmiye" || String(b?.source || "") !== "attendance") return sum;
+    return sum + Math.max(0, Math.trunc(Number(b?.worked_days) || 1));
+  }, 0);
+}
+
+export function yevmiyeStatusLine(rec) {
+  const adj = rec?.yevmiye_adjustment_request || {};
+  const full = Number(rec?.yevmiye_full_amount ?? adj.full_amount) || 0;
+  const proposed = Number(adj.proposed_amount ?? adj.final_amount) || 0;
+  if (adj.status === "pending" && proposed) {
+    return `Yevmiye ${proposed} ₺ önerildi — yönetici onayı bekleniyor`;
+  }
+  if (adj.status === "approved") {
+    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (geç/erken onaylandı)`;
+  }
+  if (adj.status === "rejected" && full) {
+    return `Yevmiye ${full} ₺ (kart ücreti)`;
+  }
+  if (full) return `Yevmiye ${full} ₺ (kart ücreti)`;
+  return "";
+}

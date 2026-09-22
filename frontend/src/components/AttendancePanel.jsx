@@ -8,7 +8,7 @@ import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSetti
 import { ShiftPlanner } from "./ShiftPlanner";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { formatTrAmount } from "../utils/money";
-import { isDailyWage } from "../utils/personnelWage";
+import { isDailyWage, yevmiyeStatusLine } from "../utils/personnelWage";
 import { workplaceShort } from "../utils/workplace";
 
 export const AttendancePanel = ({ companyId }) => {
@@ -48,6 +48,13 @@ export const AttendancePanel = ({ companyId }) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision }, { withCredentials: true });
       toast.success(r.data.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
+  const decideYevmiye = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
@@ -101,6 +108,19 @@ export const AttendancePanel = ({ companyId }) => {
           )}
           {(r.intraday_leave_minutes > 0 || r.intraday_leave_approved || r.intraday_leave_request?.status === "approved") && (
             <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">{r.intraday_leave_minutes || 0} dk gün içi izin{r.intraday_leave_request?.out_time ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>
+          )}
+          {(r.yevmiye_full_amount || r.yevmiye_adjustment_request) && (
+            <span className="inline-flex items-center gap-1.5 text-[10px]" data-testid={`att-yevmiye-adj-${r.id}`}>
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${r.yevmiye_adjustment_request?.status === "pending" ? "bg-amber-100 text-amber-800" : "bg-amber-50 text-amber-700"}`}>
+                {yevmiyeStatusLine(r) || "Yevmiye"}
+              </span>
+              {r.yevmiye_adjustment_request?.status === "pending" ? (
+                <>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-yevmiye-approve-${r.id}`}>Onayla</button>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Kart ücreti</button>
+                </>
+              ) : null}
+            </span>
           )}
           {r.intraday_leave_request?.status === "pending" && (
             <span className="inline-flex items-center gap-1.5 text-[10px]" data-testid={`att-intraday-pending-${r.id}`}>
