@@ -687,11 +687,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {!isNew ? (
         <View>
-          <Row style={{ gap: 6, marginBottom: 2 }}>
+          <Row style={{ gap: 8, marginBottom: 4, alignItems: "center" }}>
             <Muted>Durum</Muted>
             <View
               testID={`${kind}-status-dot`}
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: workStatusDotColor(kind, status) }}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: workStatusDotColor(kind, status),
+              }}
             />
             <Badge label={statusTr(status)} tone={workStatusTone(kind, status)} />
           </Row>
@@ -702,6 +707,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             onChange={(v) => canEdit && setStatus(v)}
             groups={statusGroups}
             emptyLabel="Durum seçin"
+            swatchColor={workStatusDotColor(kind, status)}
           />
         </View>
       ) : null}
