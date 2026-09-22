@@ -1,12 +1,12 @@
 /** Shared orders list column layout (resizable, persisted under "orders-fit"). */
 
 export const ORDER_COL_DEFAULTS = {
-  order_number: 150,
-  customer_name: 200,
-  items: 240,
-  total_amount: 96,
-  order_status: 140,
-  actions: 220,
+  order_number: 145,
+  customer_name: 190,
+  items: 220,
+  total_amount: 90,
+  order_status: 130,
+  actions: 210,
 };
 
 export const ORDER_COL_LIMITS = {
