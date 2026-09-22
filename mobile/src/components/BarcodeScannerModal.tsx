@@ -26,10 +26,12 @@ export function BarcodeScannerModal({
   visible,
   onClose,
   onScan,
+  continuous = false,
 }: {
   visible: boolean;
   onClose: () => void;
   onScan: (code: string) => void;
+  continuous?: boolean;
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [manual, setManual] = useState("");
@@ -41,22 +43,27 @@ export function BarcodeScannerModal({
     }
   }, [visible, permission, requestPermission]);
 
+  useEffect(() => {
+    if (!visible) setLocked(false);
+  }, [visible]);
+
   const emit = (code: string) => {
     const value = normalizeScanText(code);
     if (!value || locked) return;
     setLocked(true);
     onScan(value);
     setManual("");
-    setTimeout(() => setLocked(false), 800);
-    onClose();
+    setTimeout(() => setLocked(false), continuous ? 900 : 800);
+    if (!continuous) onClose();
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.wrap} testID="barcode-scanner-modal">
-        <Text style={styles.title}>Barkod okut</Text>
+        <Text style={styles.title}>{continuous ? "Seri barkod okut" : "Barkod okut"}</Text>
+        {continuous ? <Text style={styles.hint}>Okuttukça açık kalır. Bitince Kapat.</Text> : null}
         {Platform.OS === "web" ? (
-          visible ? <WebBarcodeCamera active={visible} onScan={emit} /> : null
+          visible ? <WebBarcodeCamera active={visible} continuous={continuous} onScan={emit} /> : null
         ) : permission?.granted ? (
           <CameraView
             style={styles.camera}

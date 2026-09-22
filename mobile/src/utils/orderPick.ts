@@ -134,6 +134,16 @@ export function adjustPayload(line: PickLine, nextQty: number) {
   };
 }
 
+/** Web kiosk ile aynı: virgül/nokta, boş/geçersiz → mevcut, fazla → sipariş adedi. */
+export function parsePickedQtyDraft(raw: string | undefined, current: number, ordered: number): number | null {
+  if (raw === undefined || raw === "") return null;
+  const cleaned = String(raw).trim().replace(",", ".");
+  if (!cleaned) return null;
+  let next = Number(cleaned);
+  if (!Number.isFinite(next)) next = current;
+  return Math.max(0, Math.min(next, num(ordered)));
+}
+
 type OverscanDetail = { code?: string; message?: string; product_name?: string; ordered_qty?: number; picked_qty?: number };
 
 /** Sunucu fazla okutmayı 409 + detay nesnesiyle bildirir; kullanıcıya tek satır mesaj gösterilir. */

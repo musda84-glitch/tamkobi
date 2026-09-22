@@ -1,6 +1,6 @@
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { Text, View } from "react-native";
+import { Text, TextInput, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
@@ -14,6 +14,7 @@ import {
   adjustPayload,
   canShip,
   lineRemaining,
+  parsePickedQtyDraft,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
@@ -30,15 +31,17 @@ export function SevkPickScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<PickSession | null>(null);
   const [code, setCode] = useState("");
-  const [scan, setScan] = useState(false);
+  const [scan, setScan] = useState<null | "once" | "serial">(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
       const s = await get<PickSession>(client, `/order-picks/${id}`);
       setSession(s);
+      setQtyDrafts({});
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Toplama oturumu açılamadı."));
@@ -49,8 +52,11 @@ export function SevkPickScreen() {
 
   const apply = (s: PickSession) => {
     setSession(s);
+    setQtyDrafts({});
     if (s.message) setMessage(s.message);
   };
+
+  const lineKey = (line: PickLine, idx: number) => String(line.line_index ?? idx);
 
   const submitScan = async (barcode: string) => {
     const value = barcode.trim();
@@ -72,13 +78,31 @@ export function SevkPickScreen() {
     setBusy(true);
     try {
       const s = await post<PickSession>(client, `/order-picks/${id}/adjust`, adjustPayload(line, nextQty));
-      setSession(s);
+      apply(s);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Kalem güncellenemedi."));
     } finally {
       setBusy(false);
     }
+  };
+
+  const commitQty = (line: PickLine, idx: number) => {
+    const key = lineKey(line, idx);
+    const picked = Number(line.picked_qty) || 0;
+    const ordered = Number(line.ordered_qty) || 0;
+    const raw = qtyDrafts[key];
+    setQtyDrafts((d) => {
+      const next = { ...d };
+      delete next[key];
+      return next;
+    });
+    const parsed = parsePickedQtyDraft(raw, picked, ordered);
+    if (parsed == null || Math.abs(parsed - picked) < 1e-9) return;
+    if (Number(String(raw || "").trim().replace(",", ".")) > ordered) {
+      setError(`${line.product_name || "Kalem"}: siparişte ${ordered} adet var, ${picked} okutuldu.`);
+    }
+    adjust(line, parsed);
   };
 
   const runAction = async (path: string, body: Record<string, unknown>, fallback: string) => {
@@ -134,7 +158,10 @@ export function SevkPickScreen() {
           />
           <Row>
             <View style={{ flex: 1 }}>
-              <PrimaryButton title="Okut" onPress={() => setScan(true)} color={colors.indigo} testID="sevk-scan-btn" />
+              <PrimaryButton title="Okut" onPress={() => setScan("once")} color={colors.indigo} testID="sevk-scan-btn" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <PrimaryButton title="Seri okut" onPress={() => setScan("serial")} color={colors.indigo} testID="sevk-scan-serial-btn" />
             </View>
             <View style={{ flex: 1 }}>
               <PrimaryButton title="Ekle" onPress={() => submitScan(code)} loading={busy} color={colors.primary} testID="sevk-add-btn" />
@@ -158,6 +185,31 @@ export function SevkPickScreen() {
               <Row>
                 <View style={{ flex: 1 }}>
                   <PrimaryButton title="−" onPress={() => adjust(line, picked - 1)} disabled={busy || picked <= 0} color={colors.secondary} testID={`sevk-minus-${line.line_index ?? idx}`} />
+                </View>
+                <View style={{ width: 76, alignItems: "center" }}>
+                  <TextInput
+                    testID={`sevk-qty-${line.line_index ?? idx}`}
+                    accessibilityLabel="Toplanan miktar"
+                    value={qtyDrafts[lineKey(line, idx)] ?? String(picked)}
+                    keyboardType="decimal-pad"
+                    selectTextOnFocus
+                    editable={!busy}
+                    onFocus={() => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: String(picked) }))}
+                    onChangeText={(v) => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: v }))}
+                    onBlur={() => commitQty(line, idx)}
+                    onSubmitEditing={() => commitQty(line, idx)}
+                    style={{
+                      width: "100%",
+                      minHeight: 44,
+                      textAlign: "center",
+                      fontWeight: "800",
+                      fontSize: 18,
+                      color: done ? colors.primary : colors.text,
+                      borderBottomWidth: 2,
+                      borderBottomColor: colors.border,
+                      padding: 0,
+                    }}
+                  />
                 </View>
                 <View style={{ flex: 1 }}>
                   <PrimaryButton title="+" onPress={() => adjust(line, picked + 1)} disabled={busy || done} color={colors.primary} testID={`sevk-plus-${line.line_index ?? idx}`} />
@@ -196,7 +248,12 @@ export function SevkPickScreen() {
         <PrimaryButton title="Siparişi aç" color={colors.secondary} testID="sevk-open-order" onPress={() => go("OrderDetail", { id: session.order_id || idOf(session) })} />
       ) : null}
 
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={submitScan} />
+      <BarcodeScannerModal
+        visible={!!scan}
+        continuous={scan === "serial"}
+        onClose={() => setScan(null)}
+        onScan={submitScan}
+      />
     </Screen>
   );
 }
