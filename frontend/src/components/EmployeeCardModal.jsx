@@ -151,10 +151,26 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         return;
       } finally { setBusyPay(false); }
     }
+    const emp = card?.employee || employee;
+    if (String(emp?.sgk_number || "").trim()) {
+      const bank = (accounts || []).find((a) => String(a.type || "").toLowerCase() === "bank" && !a.is_integrated);
+      setPayAccountId(bank ? (bank.id || bank._id) : "");
+    }
     setPayItem(item);
   };
   const confirmSalaryPay = async () => {
     if (!payItem) return;
+    const emp = card?.employee || employee;
+    if (String(emp?.sgk_number || "").trim()) {
+      if (!payAccountId || String(payAccountId).startsWith("partner:")) {
+        toast.error("SGK’lı personelin maaşı yalnız banka hesabından ödenir.");
+        return;
+      }
+      if (!String(emp.iban || "").trim()) {
+        toast.error("SGK’lı personel için önce personel kartına IBAN girin.");
+        return;
+      }
+    }
     setBusyPay(true);
     try {
       const res = await axios.post(`${API_URL}/personnel/payrolls/${payItem.id || payItem._id}/pay`, { ...splitPaymentTarget(payAccountId) });
@@ -297,7 +313,10 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         onDone={afterMoney}
       />}
       {taskOpen ? <AssignEmployeeTaskModal employee={e} companyId={companyId} onClose={() => setTaskOpen(false)} /> : null}
-      {payItem && (
+      {payItem && (() => {
+        const sgkPay = Boolean(String((card?.employee || e)?.sgk_number || "").trim());
+        const empIban = (card?.employee || e)?.iban;
+        return (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
             <div className="flex items-center justify-between border-b pb-2">
@@ -306,9 +325,24 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             </div>
             <div className="text-xs text-slate-700 space-y-3">
               <p><strong>{payItem.employee_name || e.full_name}</strong> için <strong>{payItem.period}</strong> dönemi <strong>{fmt(payItem.final_payable ?? payItem.net_salary)} ₺</strong> maaş ödemesi yapılacaktır.</p>
+              {sgkPay && (
+                <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sky-900" data-testid="emp-card-sgk-bank-hint">
+                  SGK sicil no kayıtlı — ana maaş yalnız <b>banka hesabı</b>ndan ödenir.
+                  {empIban ? <div className="mt-1 font-mono text-[11px]">Personel IBAN: {empIban}</div> : <div className="mt-1 text-rose-700 font-semibold">Personel IBAN eksik.</div>}
+                </div>
+              )}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
-                <PaymentTargetSelect companyId={companyId} accounts={accounts} value={payAccountId} onChange={setPayAccountId} testId="emp-card-salary-account" />
+                <label className="block font-semibold text-slate-700 mb-1">{sgkPay ? "Banka hesabı" : "Ödemenin yapılacağı hesap"}</label>
+                <PaymentTargetSelect
+                  companyId={companyId}
+                  accounts={accounts}
+                  value={payAccountId}
+                  onChange={setPayAccountId}
+                  testId="emp-card-salary-account"
+                  allowedTypes={sgkPay ? ["bank"] : null}
+                  includePartners={!sgkPay}
+                  includeCreditCards={!sgkPay}
+                />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
@@ -317,7 +351,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {termOpen && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setTermOpen(false); setTermOk(false); }} data-testid="emp-terminate-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
