@@ -510,6 +510,7 @@ export default function QuickSalePage() {
         company_name: data.receipt?.company_name || activeCompany?.name || "İşletme",
         payment_method: pay,
         sector: activeSection?.name || "Hızlı Satış",
+        currency: data.receipt?.currency || activeCompany?.currency || "TRY",
       };
       setLastReceipt(receipt);
       printThermalReceipt(receipt);

@@ -8,7 +8,7 @@ import { API_URL } from "../context/AuthContext";
 import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, moneySuffix } from "../utils/money";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -80,7 +80,7 @@ const valueOf = (el, p, company) => {
   const vat = Number(p.vat_rate ?? 20);
   const base = Number(p.sale_price || 0);
   const price = el.vat === "excl" ? (p.price_includes_vat ? base / (1 + vat / 100) : base) : (p.price_includes_vat ? base : base * (1 + vat / 100));
-  return { name: p.name, price: `${el.prefix || ""}${fmt(price)} ${el.currency || "₺"}${el.vat === "excl" ? " +KDV" : ""}`, sku: p.sku, barcode_text: p.barcode, variant: p.variant_name || (p.variants?.length ? `${p.variants.length} varyant` : ""), category: p.category, company: company?.name, text: el.text || "" }[el.field] ?? "";
+  return { name: p.name, price: `${el.prefix || ""}${fmt(price)} ${el.currency || moneySuffix(p.currency)}${el.vat === "excl" ? " +KDV" : ""}`, sku: p.sku, barcode_text: p.barcode, variant: p.variant_name || (p.variants?.length ? `${p.variants.length} varyant` : ""), category: p.category, company: company?.name, text: el.text || "" }[el.field] ?? "";
 };
 
 const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
@@ -124,7 +124,7 @@ const PrintModal = ({ tpl, products, company, onClose, initialSel = {}, template
         </div>
         <div className="relative"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün ara (ad, SKU, barkod)…" className="pl-8 pr-3 py-2 bg-slate-50 border rounded-xl w-full" data-testid="label-product-search" /></div>
         <div className="border rounded-xl max-h-64 overflow-y-auto divide-y">{list.map((p) => { const id = p.id || p._id; return (
-          <div key={id} className="flex items-center gap-3 px-3 py-1.5" data-testid={`label-prod-${p.sku || id}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{p.name}</div><div className="text-[10px] text-slate-400 font-mono">{p.sku} · {p.barcode} · {fmt(p.sale_price)} ₺</div></div>
+          <div key={id} className="flex items-center gap-3 px-3 py-1.5" data-testid={`label-prod-${p.sku || id}`}><div className="flex-1 min-w-0"><div className="font-semibold truncate">{p.name}</div><div className="text-[10px] text-slate-400 font-mono">{p.sku} · {p.barcode} · {fmt(p.sale_price)} {moneySuffix(p.currency)}</div></div>
             <input type="number" min="0" value={sel[id] || ""} onChange={(e) => setSel({ ...sel, [id]: Number(e.target.value) })} placeholder="adet" className="w-16 border rounded-lg p-1 text-right" data-testid={`label-qty-${p.sku || id}`} />
             <button onClick={() => setSel({ ...sel, [id]: Math.max(1, Math.round(Number(p.stock_quantity) || 1)) })} className="px-2 py-1 border rounded-lg text-[10px]" title="Stok adedi kadar">stok</button></div>); })}</div>
         <div className="flex flex-wrap gap-2 bg-slate-50 p-3 rounded-xl overflow-x-auto" data-testid="label-preview-strip">{jobs.slice(0, 6).map((p, i) => <div key={i} className="shadow border"><LabelCanvas tpl={tpl} product={p} company={company} scale={0.6} /></div>)}{jobs.length > 6 && <div className="self-center text-slate-400">+{jobs.length - 6} daha</div>}</div>

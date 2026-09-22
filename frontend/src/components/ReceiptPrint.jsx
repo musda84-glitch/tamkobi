@@ -1,9 +1,6 @@
-
 import React from "react";
 import { X, Printer } from "lucide-react";
-import { formatTrAmount } from "../utils/money";
-
-const fmt = (n) => formatTrAmount((n || 0));
+import { fmtMoney } from "../utils/money";
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
   const isCollection = tx.type === "inflow";
@@ -13,6 +10,8 @@ export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
   const partyLabel = isCollection ? "Sayın (Ödeyen)" : isTransfer ? "Karşı hesap / cari" : "Sayın (Alan)";
   const partyName = contact?.name || tx.contact_name || tx.target_account_name || "—";
   const totalLabel = isCollection ? "Yalnız tahsil edilen" : isTransfer ? "Yalnız virman tutarı" : "Yalnız ödenen";
+  const ccy = tx.currency || contact?.currency || company?.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl" data-testid="receipt-print-modal">
@@ -34,9 +33,9 @@ export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
               <div><div className="text-[10px] uppercase text-slate-400 font-bold">{isTransfer ? "Hesap" : "Ödeme Şekli"}</div><div className="font-semibold">{tx.account_name}</div><div className="text-slate-500">{tx.category}{tx.target_account_name ? ` → ${tx.target_account_name}` : ""}</div></div>
             </div>
             <table className="w-full border border-slate-300"><thead><tr className="bg-slate-100"><th className="text-left p-2 border-b border-slate-300">Açıklama</th><th className="text-right p-2 border-b border-slate-300">Tutar</th></tr></thead>
-              <tbody><tr><td className="p-2">{tx.description}</td><td className="p-2 text-right font-bold">{fmt(tx.amount)} ₺</td></tr></tbody>
-              <tfoot><tr className="bg-slate-900 text-white"><td className="p-2 font-bold">{totalLabel} toplam</td><td className="p-2 text-right text-base font-black">{fmt(tx.amount)} ₺</td></tr></tfoot></table>
-            {typeof contact?.balance === "number" && <div className="text-slate-600">İşlem sonrası cari bakiye: <b>{fmt(Math.abs(contact.balance || 0))} ₺ {contact.balance > 0 ? "borç" : contact.balance < 0 ? "alacak" : ""}</b></div>}
+              <tbody><tr><td className="p-2">{tx.description}</td><td className="p-2 text-right font-bold">{money(tx.amount)}</td></tr></tbody>
+              <tfoot><tr className="bg-slate-900 text-white"><td className="p-2 font-bold">{totalLabel} toplam</td><td className="p-2 text-right text-base font-black">{money(tx.amount)}</td></tr></tfoot></table>
+            {typeof contact?.balance === "number" && <div className="text-slate-600">İşlem sonrası cari bakiye: <b>{money(Math.abs(contact.balance || 0))} {contact.balance > 0 ? "borç" : contact.balance < 0 ? "alacak" : ""}</b></div>}
             <div className="grid grid-cols-2 gap-8 pt-6">
               <div className="text-center"><div className="border-b border-slate-400 h-12"></div><div className="text-slate-500 mt-1">{isCollection ? "Teslim Eden" : "Teslim Alan"} (Kaşe / İmza)</div></div>
               <div className="text-center"><div className="border-b border-slate-400 h-12"></div><div className="text-slate-500 mt-1">{isCollection ? "Teslim Alan" : "Teslim Eden"} — {company?.name}</div></div>

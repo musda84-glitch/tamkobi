@@ -7,9 +7,7 @@ import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2, Link2, FileDown }
 import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
-import { formatTrAmount } from "../utils/money";
-
-const fmt = (n) => formatTrAmount((n || 0));
+import { fmtMoney } from "../utils/money";
 
 export const buildStatementRows = (data) => {
   const rows = [];
@@ -21,10 +19,12 @@ export const buildStatementRows = (data) => {
 };
 
 export const statementText = (contact, rows, company) => {
+  const ccy = contact?.currency || company?.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   const last = rows.slice(-12);
-  const lines = last.map((r) => `${r.date}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + fmt(r.debit) : "Alacak " + fmt(r.credit)} ₺`);
+  const lines = last.map((r) => `${r.date}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + money(r.debit) : "Alacak " + money(r.credit)}`);
   const bal = rows.length ? rows[rows.length - 1].balance : contact.balance || 0;
-  return `${company?.name || "Firmamız"} - Cari Hesap Ekstresi\nSayın ${contact.name}\nTarih: ${new Date().toLocaleDateString("tr-TR")}\n\n${lines.join("\n")}\n\nGüncel Bakiye: ${fmt(Math.abs(bal))} ₺ ${bal > 0 ? "(Borcunuz)" : bal < 0 ? "(Alacağınız)" : ""}\n\nBilgilerinize sunarız.`;
+  return `${company?.name || "Firmamız"} - Cari Hesap Ekstresi\nSayın ${contact.name}\nTarih: ${new Date().toLocaleDateString("tr-TR")}\n\n${lines.join("\n")}\n\nGüncel Bakiye: ${money(Math.abs(bal))} ${bal > 0 ? "(Borcunuz)" : bal < 0 ? "(Alacağınız)" : ""}\n\nBilgilerinize sunarız.`;
 };
 
 const pdfNote = (contact, pdfUrl) => `Sayın ${contact.name}, cari hesap ekstreniz PDF olarak hazırlanmıştır.${pdfUrl ? `\nEkstre PDF: ${pdfUrl}` : ""}`;
@@ -162,6 +162,8 @@ export const StatementPrint = ({ contact, rows, company, onClose }) => {
   useEscape(onClose);
   const bal = rows.length ? rows[rows.length - 1].balance : contact.balance || 0;
   const totD = rows.reduce((s, r) => s + (r.debit || 0), 0), totC = rows.reduce((s, r) => s + (r.credit || 0), 0);
+  const ccy = contact?.currency || company?.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" onClick={onClose}>
       <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid="statement-print-modal">
@@ -177,10 +179,10 @@ export const StatementPrint = ({ contact, rows, company, onClose }) => {
           <div className="mt-5"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div><div className="font-bold text-base">{contact.name}</div><div className="text-slate-500">VKN/TCKN: {contact.tax_number_or_id} {contact.tax_office && `• ${contact.tax_office}`}</div>{contact.address && <div className="text-slate-500">{contact.address} {contact.city}</div>}</div>
           <table className="w-full mt-6 border-collapse">
             <thead><tr className="bg-slate-900 text-white"><th className="text-left p-2 rounded-l">Tarih</th><th className="text-left p-2">Belge / Açıklama</th><th className="text-right p-2">Borç</th><th className="text-right p-2">Alacak</th><th className="text-right p-2 rounded-r">Bakiye</th></tr></thead>
-            <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{r.date}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? fmt(r.debit) + " ₺" : ""}</td><td className="p-2 text-right">{r.credit ? fmt(r.credit) + " ₺" : ""}</td><td className="p-2 text-right font-semibold">{fmt(r.balance)} ₺</td></tr>)}</tbody>
-            <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right">{fmt(totD)} ₺</td><td className="p-2 text-right">{fmt(totC)} ₺</td><td className="p-2 text-right">{fmt(bal)} ₺</td></tr></tfoot>
+            <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{r.date}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
+            <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right">{money(totD)}</td><td className="p-2 text-right">{money(totC)}</td><td className="p-2 text-right">{money(bal)}</td></tr></tfoot>
           </table>
-          <div className="mt-6 flex justify-end"><div className={`rounded-xl px-4 py-3 text-right ${bal > 0 ? "bg-rose-50" : "bg-emerald-50"}`}><div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div><div className={`text-xl font-black ${bal > 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmt(Math.abs(bal))} ₺ <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div></div></div>
+          <div className="mt-6 flex justify-end"><div className={`rounded-xl px-4 py-3 text-right ${bal > 0 ? "bg-rose-50" : "bg-emerald-50"}`}><div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div><div className={`text-xl font-black ${bal > 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div></div></div>
           <div className="mt-10 text-slate-400 italic">Bu ekstre {company?.name} tarafından {new Date().toLocaleString("tr-TR")} tarihinde oluşturulmuştur. Mutabakat için lütfen 7 gün içinde geri dönüş yapınız.</div>
         </div>
       </div>

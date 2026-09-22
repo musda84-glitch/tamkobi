@@ -4,9 +4,7 @@ import { useParams } from "react-router-dom";
 import { Loader2, Building2, AlertTriangle, FileDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { formatTrAmount } from "../utils/money";
-
-const fmt = (n) => formatTrAmount((Number(n) || 0));
+import { fmtMoney } from "../utils/money";
 
 export default function StatementPublicPage() {
   const { token } = useParams();
@@ -23,6 +21,8 @@ export default function StatementPublicPage() {
   const who = data.contact || {};
   const rows = data.rows || [];
   const bal = Number(data.balance) || 0;
+  const ccy = who.currency || c.currency || data.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   return (
     <div className="min-h-screen bg-slate-100 py-6 px-3 sm:px-6" data-testid="public-statement-page">
       <div className="max-w-3xl mx-auto space-y-4">
@@ -48,7 +48,7 @@ export default function StatementPublicPage() {
             </div>
             <div className={`rounded-xl px-3 py-2 text-right ${bal > 0 ? "bg-rose-50" : bal < 0 ? "bg-emerald-50" : "bg-slate-50"}`} data-testid="public-statement-balance">
               <div className="text-[10px] uppercase font-bold text-slate-400">Güncel bakiye</div>
-              <div className={`text-lg font-black ${bal > 0 ? "text-rose-700" : bal < 0 ? "text-emerald-700" : "text-slate-800"}`}>{fmt(Math.abs(bal))} ₺ <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div>
+              <div className={`text-lg font-black ${bal > 0 ? "text-rose-700" : bal < 0 ? "text-emerald-700" : "text-slate-800"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -62,9 +62,9 @@ export default function StatementPublicPage() {
                   <tr key={`${r.date}-${i}`} data-testid={`public-statement-row-${i}`}>
                     <td className="py-2 px-2 font-mono text-slate-500">{r.date}</td>
                     <td className="py-2 px-2 font-semibold text-slate-800">{r.doc}</td>
-                    <td className="py-2 px-2 text-right text-rose-700">{r.debit ? fmt(r.debit) : "—"}</td>
-                    <td className="py-2 px-2 text-right text-emerald-700">{r.credit ? fmt(r.credit) : "—"}</td>
-                    <td className="py-2 px-2 text-right font-bold">{fmt(r.balance)}</td>
+                    <td className="py-2 px-2 text-right text-rose-700">{r.debit ? money(r.debit) : "—"}</td>
+                    <td className="py-2 px-2 text-right text-emerald-700">{r.credit ? money(r.credit) : "—"}</td>
+                    <td className="py-2 px-2 text-right font-bold">{money(r.balance)}</td>
                   </tr>
                 ))}
               </tbody>
