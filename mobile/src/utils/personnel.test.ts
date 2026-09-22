@@ -36,6 +36,10 @@ import {
   validateSelfLeave,
   validateOvertime,
   validateTaskAssign,
+  parseYevmiyeDays,
+  validateYevmiyeDays,
+  yevmiyeDaysLine,
+  yevmiyePayPayload,
 } from "./personnel";
 
 describe("employee initials", () => {
@@ -206,8 +210,22 @@ describe("employee card actions", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
-      "Avans", "Yevmiye öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai",
+      "Avans", "Yevmiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
     ]);
+    expect(parseYevmiyeDays("12")).toBe(12);
+    expect(parseYevmiyeDays("2,5")).toBe(2);
+    expect(parseYevmiyeDays("0")).toBeNull();
+    expect(validateYevmiyeDays("")).toBe("1–31 arası gün sayısı girin.");
+    expect(yevmiyeDaysLine({ pay_type: "daily", daily_wage: 1500 }, 6)).toBe("6 gün × 1500 ₺");
+    expect(yevmiyePayPayload("e1", { pay_type: "daily", daily_wage: 1500 }, "6", "2026-09", "acc1", "")).toMatchObject({
+      employee_id: "e1",
+      type: "yevmiye",
+      amount: 9000,
+      period: "2026-09",
+      note: "6 gün × 1500 ₺",
+      worked_days: 6,
+      account_id: "acc1",
+    });
     expect(employeeCardActionsByGroup("work").map((a) => a.title)).toEqual(["Görev ata", "+ Mesai"]);
     expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport", "bonus", "otpay"]);
     expect(titles).not.toContain("Düzenle");

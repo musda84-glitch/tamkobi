@@ -103,6 +103,7 @@ const BONUS_TYPE_TR: Record<string, string> = {
   advance: "Avans",
   expense: "Masraf Ödemesi",
   overtime: "Fazla Mesai",
+  yevmiye: "Yevmiye",
 };
 
 export function bonusTypeTr(type?: string | null, fallback?: string | null): string {
@@ -305,6 +306,43 @@ export function dailyEarned(emp?: Employee | null, daysPresent = 0): number {
   if (!isDailyWage(emp)) return 0;
   const days = Math.max(0, Math.trunc(Number(daysPresent) || 0));
   return Math.round((Number(emp?.daily_wage) || 0) * days * 100) / 100;
+}
+
+/** Yevmiye günü: 1–31 tam sayı. */
+export function parseYevmiyeDays(raw: string): number | null {
+  const n = Math.trunc(Number(String(raw || "").trim().replace(",", ".")));
+  if (!Number.isFinite(n) || n < 1 || n > 31) return null;
+  return n;
+}
+
+export function validateYevmiyeDays(raw: string): string | null {
+  return parseYevmiyeDays(raw) == null ? "1–31 arası gün sayısı girin." : null;
+}
+
+export function yevmiyeDaysLine(emp?: Employee | null, days = 0): string {
+  const d = Math.max(0, Math.trunc(Number(days) || 0));
+  const wage = Number(emp?.daily_wage) || 0;
+  return `${d} gün × ${wage} ₺`;
+}
+
+export function yevmiyePayPayload(
+  employeeId: string,
+  emp: Employee | null | undefined,
+  daysRaw: string,
+  period: string,
+  accountId: string,
+  note: string,
+) {
+  const days = parseYevmiyeDays(daysRaw) || 0;
+  return {
+    employee_id: employeeId,
+    type: "yevmiye" as const,
+    amount: dailyEarned(emp, days),
+    period,
+    note: note.trim() || yevmiyeDaysLine(emp, days),
+    worked_days: days,
+    ...splitPaymentTarget(accountId),
+  };
 }
 
 export function payrollWageLine(p?: Payroll | null): string {
@@ -691,6 +729,7 @@ export function employeeCardActionTitle(
   emp?: Pick<Employee, "pay_type"> | null,
 ): string {
   if (action.key === "salary" && isDailyWage(emp)) return "Yevmiye öde";
+  if (action.key === "bonus" && isDailyWage(emp)) return "Yevmiye günü";
   return action.title;
 }
 

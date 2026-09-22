@@ -8301,8 +8301,8 @@ async def create_bonus(req: Dict[str, Any]):
     amount = float(req.get("amount", 0))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime
-    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai"}
+    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime, yevmiye
+    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai", "yevmiye": "Yevmiye"}
     if b_type not in labels:
         raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
