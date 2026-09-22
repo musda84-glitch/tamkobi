@@ -1945,6 +1945,37 @@ async def delete_survey(survey_id: str):
     await trash.soft_delete("surveys", s, "survey", f"{s.get('survey_number')} · {s.get('contact_name') or s.get('address')}")
     return {"status": "success", "message": "Keşif çöp kutusuna taşındı."}
 
+def _survey_line_to_quote_item(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Keşif ölçüsünü teklif satırına çevir — ürün/hizmet, görsel, KDV korunur."""
+    is_service = bool(m.get("is_service"))
+    image = str(m.get("image_url") or "").strip()
+    thumb = str(m.get("thumbnail_url") or "").strip()
+    print_img = str(m.get("print_image_url") or "").strip()
+    try:
+        vat_rate = float(m.get("vat_rate") if m.get("vat_rate") not in (None, "") else 20)
+    except (TypeError, ValueError):
+        vat_rate = 20.0
+    try:
+        discount = float(m.get("discount_rate") or 0)
+    except (TypeError, ValueError):
+        discount = 0.0
+    return {
+        "name": m.get("name") or "Kalem",
+        "quantity": float(m.get("quantity", 1) or 1),
+        "unit": m.get("unit") or "Adet",
+        "unit_price": float(m.get("unit_price", 0) or 0),
+        "vat_rate": vat_rate,
+        "discount_rate": discount,
+        "description": m.get("description") or "",
+        "is_service": is_service,
+        "product_id": "" if is_service else (m.get("product_id") or ""),
+        "image_url": "" if is_service else image,
+        "thumbnail_url": "" if is_service else thumb,
+        "print_image_url": print_img or (image or thumb if is_service else ""),
+        "price_includes_vat": bool(m.get("price_includes_vat")),
+    }
+
+
 @api_router.post("/surveys/{survey_id}/convert-to-quote")
 async def convert_survey_to_quote(survey_id: str):
     s = await db.surveys.find_one({"_id": survey_id})
@@ -1952,8 +1983,7 @@ async def convert_survey_to_quote(survey_id: str):
         raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
     if s.get("quote_id"):
         raise HTTPException(status_code=400, detail="Bu keşif zaten teklife çevrildi.")
-    items = [{"name": m.get("name") or "Kalem", "quantity": float(m.get("quantity", 1) or 1), "unit": m.get("unit", "Adet"), "unit_price": float(m.get("unit_price", 0) or 0), "vat_rate": 20, "discount_rate": 0}
-             for m in s.get("measurements", [])] or [{"name": "Keşif sonrası işçilik/malzeme", "quantity": 1, "unit": "Adet", "unit_price": 0, "vat_rate": 20, "discount_rate": 0}]
+    items = [_survey_line_to_quote_item(m) for m in s.get("measurements", [])] or [{"name": "Keşif sonrası işçilik/malzeme", "quantity": 1, "unit": "Adet", "unit_price": 0, "vat_rate": 20, "discount_rate": 0}]
     quote = await create_quote({"company_id": s["company_id"], "contact_id": s.get("contact_id"), "contact_name": s.get("contact_name"), "title": f"{s['survey_number']} keşfine dayalı teklif",
                                 "items": items, "notes": s.get("notes", ""), "project_id": s.get("project_id"), "survey_id": survey_id})
     await db.quotes.update_one({"_id": quote["id"]}, {"$set": {"images": s.get("images", [])}})

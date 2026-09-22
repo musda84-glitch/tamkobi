@@ -568,6 +568,36 @@ export function projectPayload(companyId: string, form: { name: string; contact_
   };
 }
 
+/** Keşif ölçüsü = teklif satırı (ürün/hizmet, görsel, KDV, stok). */
+export function workItemPersistFields(item: WorkItem): WorkItem {
+  const is_service = !!item.is_service;
+  const image = String(item.image_url || "").trim();
+  const thumb = String(item.thumbnail_url || "").trim();
+  const printImg = String(item.print_image_url || "").trim();
+  return {
+    name: String(item.name || "").trim(),
+    quantity: Number(item.quantity) || 1,
+    unit: item.unit || "Adet",
+    unit_price: Number(item.unit_price) || 0,
+    vat_rate: Number(item.vat_rate) || 20,
+    description: item.description || "",
+    is_service,
+    product_id: is_service ? "" : String(item.product_id || ""),
+    image_url: is_service ? "" : image,
+    thumbnail_url: is_service ? "" : thumb,
+    print_image_url: printImg || (is_service ? (image || thumb) : ""),
+    price_includes_vat: !!item.price_includes_vat,
+    ...(item.unit_price_incl != null ? { unit_price_incl: item.unit_price_incl } : {}),
+  };
+}
+
+export function surveyItemsFromMeasurements(
+  ms: Array<Partial<WorkItem>> | null | undefined,
+): WorkItem[] {
+  const rows = (ms || []).map((i) => workItemPersistFields({ ...emptyItem(), ...i }));
+  return rows.length ? rows : [emptyItem()];
+}
+
 export function surveyPayload(companyId: string, form: { contact_id: string; contact_name: string; address: string; survey_date: string; notes: string; location_url: string; latitude?: string; longitude?: string }, items: WorkItem[]) {
   return {
     company_id: companyId,
@@ -579,12 +609,7 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
     location_url: form.location_url || null,
     latitude: coordValue(form.latitude || ""),
     longitude: coordValue(form.longitude || ""),
-    measurements: namedItems(items).map((i) => ({
-      name: i.name,
-      quantity: Number(i.quantity) || 1,
-      unit: i.unit || "Adet",
-      unit_price: Number(i.unit_price) || 0,
-    })),
+    measurements: namedItems(items).map((i) => workItemPersistFields(i)),
   };
 }
 

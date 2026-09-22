@@ -75,6 +75,7 @@ import {
   quoteToProjectAction,
   quoteUpdateBody,
   shouldAttachQuoteDraftInvoice,
+  surveyItemsFromMeasurements,
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
@@ -292,8 +293,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setNotes(s.notes || "");
         setLocation({ url: s.location_url || "", lat: coordText(s.latitude), lng: coordText(s.longitude) });
         setStatus(s.status || "planned");
-        const ms = s.measurements || [];
-        const nextItems = ms.length ? ms.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0 })) : [emptyItem()];
+        const nextItems = surveyItemsFromMeasurements(s.measurements);
         setPhotos(workGalleryWithoutLinePhotos(s.images || [], nextItems));
         setItems(nextItems);
       }
@@ -375,7 +375,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         return { ...row, image_url: url, thumbnail_url: url };
       });
       setItems(next);
-      if (kind === "quote" && !current?.is_service) {
+      if (workItemLineKind(kind) && !current?.is_service) {
         void ensureQuoteStockCards(next).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
       }
     } catch (err) {
@@ -389,7 +389,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   };
 
   const ensureQuoteStockCards = useCallback(async (rows: WorkItem[]): Promise<WorkItem[]> => {
-    if (kind !== "quote" || !canEdit) return rows;
+    if (!workItemLineKind(kind) || !canEdit) return rows;
     let catalog = products;
     let next = rows;
     let changed = false;
@@ -517,13 +517,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           setMessage("Proje güncellendi.");
           await loadDoc();
         }
-      } else if (isNew) {
-        const created = await post<SurveyDoc>(client, "/surveys", surveyPayload(companyId, form, items));
-        router.replace({ pathname: "/surveys/[id]", params: { id: idOf(created) } });
       } else {
-        await put(client, `/surveys/${docId}`, { ...surveyPayload(companyId, form, items), status });
-        setMessage("Keşif güncellendi.");
-        await loadDoc();
+        const linked = await ensureQuoteStockCards(items);
+        if (isNew) {
+          const created = await post<SurveyDoc>(client, "/surveys", surveyPayload(companyId, form, linked));
+          router.replace({ pathname: "/surveys/[id]", params: { id: idOf(created) } });
+        } else {
+          await put(client, `/surveys/${docId}`, { ...surveyPayload(companyId, form, linked), status });
+          setMessage("Keşif güncellendi.");
+          await loadDoc();
+        }
       }
       setError(null);
     } catch (err) {
@@ -990,7 +993,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               value={it.name}
                               onChangeText={(v) => patchItem(i, "name", v)}
                               onBlur={() => {
-                                if (kind !== "quote" || it.is_service) return;
+                                if (!workItemLineKind(kind) || it.is_service) return;
                                 const rows = items.map((row, idx) => (idx === i ? { ...row, name: it.name } : row));
                                 void ensureQuoteStockCards(rows).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
                               }}
