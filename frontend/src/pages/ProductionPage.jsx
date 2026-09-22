@@ -272,7 +272,10 @@ export default function ProductionPage() {
                   Bekleyen eksik ürün bildirimi yok. Depo sevkiyatında “Eksikleri bildir” ile buraya düşer.
                 </td></tr>
               )}
-              {!missingLoading && missingItems.map((it) => {
+              {!missingLoading && missingItems.filter((it) => {
+                const n = String(it.product_name || "").trim().toLowerCase();
+                return n && !n.startsWith("depo eksik");
+              }).map((it) => {
                 const fromHighlight = highlightOrder && (it.order_ids || []).includes(highlightOrder);
                 const pickSources = (it.sources || []).filter((s) => s.type === "order_pick");
                 const lowSources = (it.sources || []).filter((s) => s.type === "low_stock");
@@ -282,7 +285,9 @@ export default function ProductionPage() {
                       <input type="checkbox" checked={!!selected[it.key]} onChange={(e) => setSelected({ ...selected, [it.key]: e.target.checked })} className="rounded border-slate-300" data-testid={`missing-check-${it.product_id || it.key}`} />
                     </td>
                     <td className="px-3 py-2">
-                      <div className="font-semibold text-slate-900">{it.product_name}</div>
+                      <div className="font-semibold text-slate-900" data-testid={`missing-product-name-${it.product_id || it.key}`}>
+                        {it.product_name || "Ürün"}
+                      </div>
                       <div className="text-[10px] text-slate-400 flex flex-wrap gap-1.5 mt-0.5">
                         {it.sku && <span className="font-mono">{it.sku}</span>}
                         {it.has_recipe ? <span className="text-emerald-700 font-semibold">Reçeteli</span> : <span className="text-amber-700 font-semibold">Reçetesiz</span>}
@@ -292,7 +297,7 @@ export default function ProductionPage() {
                     <td className="px-3 py-2 text-slate-600">
                       {pickSources.map((s, i) => (
                         <div key={i} className="text-[11px]">
-                          <span className="font-semibold text-slate-800">{s.order_number || "Sipariş"}</span>
+                          <span className="font-semibold text-slate-800">Sipariş {s.order_number || "—"}</span>
                           {s.customer_name && <span className="text-slate-400"> · {s.customer_name}</span>}
                           {s.missing_qty != null && <span className="text-rose-600"> · {Number(s.missing_qty)} eksik</span>}
                         </div>
@@ -300,6 +305,7 @@ export default function ProductionPage() {
                       {lowSources.map((s, i) => (
                         <div key={`l${i}`} className="text-[11px] text-amber-800 font-semibold">Kritik stok{s.detail ? ` · ${s.detail}` : ""}</div>
                       ))}
+                      {!pickSources.length && !lowSources.length && <span className="text-slate-400">—</span>}
                     </td>
                     <td className="px-3 py-2 text-right font-bold text-rose-700">{Number(it.missing_qty)} <span className="text-slate-400 font-normal">{it.unit}</span></td>
                     <td className="px-3 py-2 text-right">{Number(it.stock_quantity)}</td>
