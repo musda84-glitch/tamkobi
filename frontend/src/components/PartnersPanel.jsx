@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
+import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
@@ -10,6 +10,7 @@ import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { compressImageFile } from "../utils/compressImage";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
@@ -184,6 +185,25 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     catch (err) { toast.error(err.response?.data?.detail || "Ortak silinemedi."); }
   };
 
+  const uploadPartnerPhoto = async (partnerId, ev) => {
+    const raw = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!raw || !partnerId) return;
+    try {
+      const file = await compressImageFile(raw);
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/files/upload?entity=partner_photo&entity_id=${encodeURIComponent(partnerId)}&company_id=${encodeURIComponent(companyId || "")}`,
+        fd,
+      );
+      toast.success(r.data?.saved_pct ? `Fotoğraf yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Fotoğraf yüklendi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Fotoğraf yüklenemedi.");
+    }
+  };
+
   return (
     <div className="space-y-5" data-testid="partners-panel">
       <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${txs[0]?.id || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} />
@@ -219,11 +239,27 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 shadow-sm" data-testid={`partner-card-${p.name}`}>
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-3 min-w-0">
-                {p.photo_url ? (
-                  <img src={resolveImageUrl(p.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover bg-white border border-slate-200 shrink-0" data-testid={`partner-photo-${p.id}`} />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-sm shrink-0">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
-                )}
+                <label
+                  className="relative w-12 h-12 rounded-full shrink-0 cursor-pointer group"
+                  title="Fotoğraf yükle"
+                  data-testid={`partner-photo-${p.id}`}
+                >
+                  {p.photo_url ? (
+                    <img src={resolveImageUrl(p.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover bg-white border border-slate-200" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-sm">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
+                  )}
+                  <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-sm group-hover:bg-slate-900">
+                    <Camera className="w-3 h-3" />
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(ev) => uploadPartnerPhoto(p.id, ev)}
+                    data-testid={`partner-photo-input-${p.id}`}
+                  />
+                </label>
                 <div className="min-w-0">
                 <div className="font-bold text-slate-900 text-sm">{p.name}</div>
                 <div className="text-[11px] text-slate-500">{p.email || p.phone || "—"}</div>
