@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
@@ -28,6 +29,13 @@ import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
 import { fmtMoney, getPriceDecimals, idOf, todayIso } from "../utils/money";
+import { compressPickerAsset } from "../utils/compressUploadImage";
+import {
+  appendUploadBlob,
+  imageUploadRequest,
+  resolveUploadBlob,
+  uploadedImageUrl,
+} from "../utils/formDataFile";
 import { filterProducts } from "../utils/productDisplay";
 import {
   emptyProjectExpenseDraft,
@@ -300,6 +308,39 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const toggleLineKind = (i: number) => {
     if (!canEdit) return;
     setItems((rows) => rows.map((it, idx) => (idx === i ? toggleWorkItemService(it) : it)));
+  };
+
+  const pickLineImage = async (i: number) => {
+    if (!canEdit) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== "granted") {
+        setError("Galeri izni verilmedi.");
+        return;
+      }
+      const picked = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+      if (picked.canceled || !picked.assets?.length) return;
+      const asset = picked.assets[0];
+      if (docId) {
+        const formData = new FormData();
+        const compact = await compressPickerAsset(asset);
+        const { blob, name: fileName } = await resolveUploadBlob(compact);
+        appendUploadBlob(formData, blob, fileName);
+        const { path, query } = imageUploadRequest("quote", docId, companyId);
+        const uploaded = await upload<unknown>(client, path, formData, query);
+        const url = uploadedImageUrl(uploaded);
+        if (!url) {
+          setError("Fotoğraf yüklendi ama adres dönmedi.");
+          return;
+        }
+        setItems((rows) => rows.map((row, idx) => (idx === i ? { ...row, image_url: url, thumbnail_url: url } : row)));
+        return;
+      }
+      const uri = String(asset.uri || "").trim();
+      if (uri) setItems((rows) => rows.map((row, idx) => (idx === i ? { ...row, image_url: uri, thumbnail_url: uri } : row)));
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    }
   };
 
   const removeItem = (i: number) => {
@@ -820,18 +861,24 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   )}
                   {kind === "quote" ? (
                     <Row style={{ alignItems: "stretch", gap: 8 }}>
-                      <View style={{ justifyContent: "center" }}>
+                      <Pressable
+                        onPress={() => pickLineImage(i)}
+                        disabled={!canEdit}
+                        accessibilityLabel="Satır görseli ekle"
+                        testID={`q-item-thumb-pick-${i}`}
+                        style={{ justifyContent: "center" }}
+                      >
                         <ProductThumb
                           uri={workItemImage(it, prod)}
                           width={QUOTE_SERVICE_THUMB.width}
                           height={QUOTE_SERVICE_THUMB.height}
                           testID={`q-item-thumb-${i}`}
                         />
-                      </View>
+                      </Pressable>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                         <View>
                           <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>
-                            {trUpper(it.is_service ? "Hizmet adı" : "Ürün")}
+                            {trUpper(it.is_service ? "Hizmet adı" : "Ürün adı")}
                           </Text>
                           <View
                             style={{
