@@ -38,8 +38,10 @@ import {
   validateTaskAssign,
   parseYevmiyeDays,
   parseYevmiyeWage,
+  pendingYevmiyeBonus,
   validateYevmiyeDays,
   validateYevmiyeWage,
+  yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
   yevmiyePayPayload,
 } from "./personnel";
@@ -286,6 +288,13 @@ describe("employee card actions", () => {
     });
     expect(daily[0].title).toBe("Yevmiye");
     expect(daily[0].subtitle).toContain("12 gün × 1500 ₺");
+    const yev = employeePayMoves({
+      bonuses: [{ id: "y1", type: "yevmiye", amount: 9000, period: "2026-09", status: "pending", note: "6 gün × 1500 ₺", worked_days: 6, daily_wage: 1500 }],
+    });
+    expect(yev[0].editable).toBe(true);
+    expect(yev[0].worked_days).toBe(6);
+    expect(pendingYevmiyeBonus([{ type: "yevmiye", status: "pending", period: "2026-09", id: "a" }, { type: "yevmiye", status: "paid", id: "b" }], "2026-09")?.id).toBe("a");
+    expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
   });
 });
 

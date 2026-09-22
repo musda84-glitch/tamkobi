@@ -78,6 +78,8 @@ export type EmployeeBonus = {
   account_name?: string;
   status?: string;
   created_at?: string;
+  worked_days?: number;
+  daily_wage?: number;
 };
 
 export type EmployeeCard = {
@@ -97,7 +99,35 @@ export type EmployeePayMove = {
   amount: number;
   date: string;
   status?: string;
+  type?: string;
+  worked_days?: number;
+  daily_wage?: number;
+  note?: string;
+  editable?: boolean;
 };
+
+export function isUnpaidYevmiye(b?: EmployeeBonus | null): boolean {
+  return String(b?.type || "") === "yevmiye" && String(b?.status || "") !== "paid";
+}
+
+export function pendingYevmiyeBonus(bonuses?: EmployeeBonus[] | null, period?: string): EmployeeBonus | null {
+  const rows = (bonuses || []).filter(isUnpaidYevmiye);
+  if (!rows.length) return null;
+  if (period) {
+    const same = rows.find((b) => String(b.period || "") === period);
+    if (same) return same;
+  }
+  return rows[0];
+}
+
+export function yevmiyeDaysFromBonus(b?: EmployeeBonus | null): number | null {
+  const days = Math.trunc(Number(b?.worked_days) || 0);
+  if (days > 0) return days;
+  const m = String(b?.note || "").match(/(\d+)\s*gün/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n > 0 ? n : null;
+}
 
 const BONUS_TYPE_TR: Record<string, string> = {
   bonus: "Prim",
@@ -138,14 +168,20 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
     });
   }
   for (const b of card?.bonuses || []) {
+    const days = yevmiyeDaysFromBonus(b);
     rows.push({
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
       amount: Number(b.amount) || 0,
       date: String(b.created_at || b.period || ""),
       status: b.status,
+      type: b.type,
+      worked_days: days || undefined,
+      daily_wage: Number(b.daily_wage) || undefined,
+      note: b.note,
+      editable: isUnpaidYevmiye(b),
     });
   }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));

@@ -33,8 +33,10 @@ import {
   employeeCardActionTitle,
   parseYevmiyeDays,
   parseYevmiyeWage,
+  pendingYevmiyeBonus,
   validateYevmiyeDays,
   validateYevmiyeWage,
+  yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
   yevmiyePayPayload,
   allowanceDue,
@@ -60,6 +62,7 @@ import {
   type Employee,
   type EmployeeBalance,
   type EmployeeDraft,
+  type EmployeeBonus,
   type EmployeeCard,
   type EmployeePayMove,
   type LeaveRequest,
@@ -120,6 +123,7 @@ export function PersonnelScreen() {
   const [yevmiyeDays, setYevmiyeDays] = useState("");
   const [yevmiyeWage, setYevmiyeWage] = useState("");
   const [yevmiyeNote, setYevmiyeNote] = useState("");
+  const [yevmiyeEditId, setYevmiyeEditId] = useState("");
   const [empOpen, setEmpOpen] = useState(false);
   const [empDraft, setEmpDraft] = useState<EmployeeDraft>(() => emptyEmployeeDraft(todayIso()));
 
@@ -308,15 +312,43 @@ export function PersonnelScreen() {
       .catch(() => undefined);
   };
 
-  const openYevmiyeDays = (emp: Employee) => {
+  const fillYevmiyeForm = (emp: Employee, bonus?: EmployeeBonus | null) => {
     setYevmiyeEmp(emp);
-    setYevmiyeDays("");
-    setYevmiyeWage(emp.daily_wage ? String(emp.daily_wage) : "");
-    setYevmiyeNote("");
     setPayAccount("");
+    if (bonus) {
+      setYevmiyeEditId(idOf(bonus));
+      setYevmiyeDays(String(yevmiyeDaysFromBonus(bonus) || ""));
+      setYevmiyeWage(String(bonus.daily_wage || emp.daily_wage || ""));
+      setYevmiyeNote(bonus.note || "");
+    } else {
+      setYevmiyeEditId("");
+      setYevmiyeDays("");
+      setYevmiyeWage(emp.daily_wage ? String(emp.daily_wage) : "");
+      setYevmiyeNote("");
+    }
+  };
+
+  const openYevmiyeDays = async (emp: Employee, existing?: EmployeeBonus | null) => {
+    fillYevmiyeForm(emp, existing);
     get<Partner[]>(client, "/banking/partners", { company_id: companyId })
       .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
       .catch(() => undefined);
+    if (existing) return;
+    try {
+      const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
+      const pending = pendingYevmiyeBonus(card?.bonuses, month);
+      if (pending) fillYevmiyeForm({ ...emp, daily_wage: card?.employee?.daily_wage ?? emp.daily_wage }, pending);
+    } catch {
+      /* yeni kayıt olarak aç */
+    }
+  };
+
+  const closeYevmiyeDays = () => {
+    setYevmiyeEmp(null);
+    setYevmiyeDays("");
+    setYevmiyeWage("");
+    setYevmiyeNote("");
+    setYevmiyeEditId("");
   };
 
   const saveYevmiyeDays = async () => {
@@ -331,7 +363,7 @@ export function PersonnelScreen() {
       if (wage !== (Number(yevmiyeEmp.daily_wage) || 0)) {
         await put(client, `/personnel/employees/${idOf(yevmiyeEmp)}`, { daily_wage: wage });
       }
-      await post(client, "/personnel/bonuses", yevmiyePayPayload(
+      const payload = yevmiyePayPayload(
         idOf(yevmiyeEmp),
         { ...yevmiyeEmp, daily_wage: wage },
         yevmiyeDays,
@@ -339,12 +371,11 @@ export function PersonnelScreen() {
         payAccount,
         yevmiyeNote,
         yevmiyeWage,
-      ));
+      );
+      if (yevmiyeEditId) await put(client, `/personnel/bonuses/${yevmiyeEditId}`, payload);
+      else await post(client, "/personnel/bonuses", payload);
       const days = parseYevmiyeDays(yevmiyeDays) || 0;
-      setYevmiyeEmp(null);
-      setYevmiyeDays("");
-      setYevmiyeWage("");
-      setYevmiyeNote("");
+      closeYevmiyeDays();
       const line = yevmiyeDaysLine({ ...yevmiyeEmp, daily_wage: wage }, days, wage);
       setMessage(payAccount
         ? `${yevmiyeEmp.full_name} için ${line} ödendi.`
@@ -792,9 +823,24 @@ export function PersonnelScreen() {
             key={row.id}
             testID={`emp-pay-move-${row.id}`}
             title={row.title}
-            subtitle={row.subtitle}
+            subtitle={row.editable ? `${row.subtitle} · düzenle` : row.subtitle}
             right={fmtMoney(row.amount)}
             rightColor={row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text}
+            onPress={row.editable && movesEmp ? () => {
+              const emp = movesEmp;
+              setMovesEmp(null);
+              setMoves([]);
+              openYevmiyeDays(emp, {
+                id: row.id,
+                type: row.type,
+                amount: row.amount,
+                period: month,
+                note: row.note,
+                status: row.status,
+                worked_days: row.worked_days,
+                daily_wage: row.daily_wage,
+              });
+            } : undefined}
           />
         ))}
       </B2BSheet>
@@ -860,9 +906,9 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!yevmiyeEmp}
-        title="Yevmiye günü"
+        title={yevmiyeEditId ? "Yevmiye günü düzenle" : "Yevmiye günü"}
         subtitle={yevmiyeEmp ? `${yevmiyeEmp.full_name} · personel alacağı` : undefined}
-        onClose={() => { setYevmiyeEmp(null); setYevmiyeDays(""); setYevmiyeWage(""); setYevmiyeNote(""); }}
+        onClose={closeYevmiyeDays}
         testID="yevmiye-days-sheet"
       >
         <Field
@@ -902,7 +948,7 @@ export function PersonnelScreen() {
           emptyLabel="Ödeme yok — personel alacağına yaz"
         />
         <PrimaryButton
-          title={payAccount ? "Kaydet & Öde" : "Alacağa yaz"}
+          title={payAccount ? "Kaydet & Öde" : (yevmiyeEditId ? "Alacağı güncelle" : "Alacağa yaz")}
           testID="yevmiye-days-submit"
           color={colors.primaryHover}
           loading={busy}
