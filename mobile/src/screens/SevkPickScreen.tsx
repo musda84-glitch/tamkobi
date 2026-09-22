@@ -207,7 +207,6 @@ export function SevkPickScreen() {
                       padding: 0,
                     }}
                   />
-                  <Muted>/ {ordered}</Muted>
                 </View>
                 <View style={{ flex: 1 }}>
                   <PrimaryButton title="+" onPress={() => adjust(line, picked + 1)} disabled={busy || done} color={colors.primary} testID={`sevk-plus-${line.line_index ?? idx}`} />
