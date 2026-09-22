@@ -4,10 +4,11 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { confirmAction } from "../components/chips";
 import { ImageUploader } from "../components/ImageUploader";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
-import { colors } from "../theme";
+import { colors, spacing } from "../theme";
 import type { Product } from "../types";
 import { idOf } from "../utils/money";
 import { productGalleryUrls } from "../utils/productDisplay";
@@ -108,6 +109,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+  const [scan, setScan] = useState(false);
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -201,10 +203,30 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
 
       <Field label="Ürün adı" testID="stock-name" value={draft.name} onChangeText={(v) => set("name", v)} editable={canEdit} />
       <Field label="SKU" testID="stock-sku" value={draft.sku} onChangeText={(v) => set("sku", v)} autoCapitalize="none" editable={canEdit} />
-      <Row>
-        <View style={{ flex: 1 }}>
+      <Row style={{ alignItems: "flex-end" }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <Field label="Barkod" testID="stock-barcode" value={draft.barcode} onChangeText={(v) => set("barcode", v)} autoCapitalize="none" keyboardType="number-pad" editable={canEdit} />
         </View>
+        {canEdit ? (
+          <Pressable
+            testID="stock-scan-barcode"
+            accessibilityLabel="Kamera ile barkod okut"
+            onPress={() => setScan(true)}
+            style={{
+              minWidth: 72,
+              minHeight: 44,
+              marginBottom: spacing.md,
+              paddingHorizontal: 10,
+              borderRadius: 12,
+              backgroundColor: colors.indigo,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <Ionicons name="camera-outline" size={22} color="#fff" />
+            <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>Okut</Text>
+          </Pressable>
+        ) : null}
       </Row>
       {canEdit ? (
         <PrimaryButton
@@ -214,6 +236,14 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
           testID="stock-gen-barcode"
         />
       ) : null}
+      <LazyBarcodeScanner
+        visible={scan}
+        onClose={() => setScan(false)}
+        onScan={(code) => {
+          set("barcode", code);
+          setScan(false);
+        }}
+      />
 
       <Muted>Tür</Muted>
       <Row style={{ flexWrap: "wrap" }}>
