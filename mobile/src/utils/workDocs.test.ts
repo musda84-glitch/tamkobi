@@ -130,7 +130,7 @@ describe("workDocs", () => {
     expect(fromSvc.is_service).toBe(true);
     expect(fromSvc.product_id).toBe("");
     expect(QUOTE_ITEM_THUMB.width).toBeLessThan(QUOTE_ITEM_THUMB.height);
-    expect(QUOTE_ITEM_THUMB.height).toBeGreaterThan(80);
+    expect(QUOTE_ITEM_THUMB.height).toBeGreaterThan(104);
     expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.height);
     expect(workItemNoteOpen({ description: "" })).toBe(false);
     expect(workItemNoteOpen({ description: "Kesim notu" })).toBe(true);
