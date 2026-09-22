@@ -221,6 +221,33 @@ export function accountGroupTone(key?: string | null): AccountGroupTone {
   return ACCOUNT_GROUP_TONES[String(key || "")] || ACCOUNT_GROUP_TONES.other;
 }
 
+export function filterPartners<T extends { name?: string; phone?: string; email?: string }>(
+  partners: T[] | null | undefined,
+  q: string,
+): T[] {
+  const list = partners || [];
+  const s = q.trim().toLowerCase();
+  if (!s) return list;
+  return list.filter((p) => [p.name, p.phone, p.email].some((v) => String(v || "").toLowerCase().includes(s)));
+}
+
+/** Tümü + Banka + Ortaklar önde, sonra kasa / POS / kart. */
+export function bankingListFilterKeys(groupKeys: string[], hasPartners: boolean): string[] {
+  const keys = groupKeys || [];
+  const rest = keys.filter((k) => k !== "bank");
+  const out = ["all"];
+  if (keys.includes("bank")) out.push("bank");
+  if (hasPartners) out.push("partners");
+  out.push(...rest);
+  return out;
+}
+
+export function bankingFilterLabel(key: string): string {
+  if (key === "all") return "Tümü";
+  if (key === "partners") return "Ortaklar";
+  return ACCOUNT_TYPE_TR[key] || key;
+}
+
 export function groupedAccounts<T extends { type?: string }>(accounts: T[]): { key: string; label: string; items: T[] }[] {
   const list = accounts || [];
   const groups: { key: string; label: string; items: T[] }[] = ACCOUNT_TYPES.map((g) => ({

@@ -12,6 +12,9 @@ import {
   accountBalance,
   accountGroupTone,
   accountTypeTr,
+  bankingFilterLabel,
+  bankingListFilterKeys,
+  filterPartners,
   groupedAccounts,
   isBankingBankAccount,
   totalLiquidity,
@@ -116,9 +119,17 @@ export function BankingScreen() {
   }, [q, pool]);
 
   const groups = useMemo(() => groupedAccounts(searched), [searched]);
+  const poolGroups = useMemo(() => groupedAccounts(pool), [pool]);
   const visibleGroups = groupF === "all" ? groups : groupF === "partners" ? [] : groups.filter((g) => g.key === groupF);
   const liquidity = totalLiquidity(rows);
   const activePartners = useMemo(() => (partners || []).filter((p) => p.is_active !== false), [partners]);
+  const searchedPartners = useMemo(() => filterPartners(activePartners, q), [activePartners, q]);
+  const showPartnersInList = groupF === "all" || groupF === "partners";
+  const listPartners = showPartnersInList ? searchedPartners : [];
+  const filterKeys = useMemo(
+    () => bankingListFilterKeys(poolGroups.map((g) => g.key), activePartners.length > 0),
+    [activePartners.length, poolGroups],
+  );
   const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
   const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
@@ -220,37 +231,26 @@ export function BankingScreen() {
             ) : null}
           </View>
           <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" />
-          <Row style={{ flexWrap: "wrap" }}>
-            <Chip label="Tümü" active={groupF === "all"} testID="bank-filter-all" onPress={() => setGroupF("all")} />
-            {groups.map((g) => (
-              <Chip key={g.key} label={g.label} active={groupF === g.key} testID={`bank-filter-${g.key}`} onPress={() => setGroupF(g.key)} />
+          <Row style={{ flexWrap: "wrap" }} testID="bank-filter-row">
+            {filterKeys.map((key) => (
+              <Chip
+                key={key}
+                label={bankingFilterLabel(key)}
+                active={groupF === key}
+                testID={`bank-filter-${key}`}
+                color={key === "partners" ? accountGroupTone("partners").accent : key === "bank" ? accountGroupTone("bank").accent : undefined}
+                onPress={() => setGroupF(groupF === key && key !== "all" ? "all" : key)}
+              />
             ))}
-            {activePartners.length ? (
-              <Chip label="Ortaklar" active={groupF === "partners"} testID="bank-filter-partners" color="#B45309" onPress={() => setGroupF(groupF === "partners" ? "all" : "partners")} />
-            ) : null}
           </Row>
           <ErrorBanner message={error} />
-          {groupF === "partners" ? (
-            !activePartners.length ? (
-              <Empty icon="people-outline" title="Ortak yok" />
-            ) : (
-              <>
-                <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }} testID="bank-group-label-partners">Ortaklar Hesabı</Text>
-                {activePartners.map((p) => (
-                  <ListRow
-                    key={idOf(p)}
-                    testID={`bank-partner-row-${idOf(p)}`}
-                    title={p.name || "Ortak"}
-                    subtitle={[`%${p.share_percent ?? 0}`, p.phone, p.email].filter(Boolean).join(" · ")}
-                    right={fmtMoney(p.balance)}
-                    onPress={() => setTab("partners")}
-                  />
-                ))}
-              </>
-            )
-          ) : !visibleGroups.length ? (
-            <Empty icon="wallet-outline" title="Hesap yok" hint={canEdit ? "Banka, kasa, POS veya kart ekleyin." : undefined} />
-          ) : visibleGroups.map((g) => {
+          {groupF === "partners" && !listPartners.length ? (
+            <Empty icon="people-outline" title="Ortak yok" />
+          ) : !visibleGroups.length && !listPartners.length ? (
+            <Empty icon="wallet-outline" title="Hesap yok" hint={canEdit ? "Banka, kasa, POS, kart veya ortak ekleyin." : undefined} />
+          ) : (
+            <>
+          {visibleGroups.map((g) => {
             const tone = accountGroupTone(g.key);
             const isCash = g.key === "cash_box";
             return (
@@ -287,6 +287,37 @@ export function BankingScreen() {
               </React.Fragment>
             );
           })}
+              {listPartners.length ? (
+                <>
+                  <Text style={{ fontWeight: "800", color: accountGroupTone("partners").label, marginTop: 8 }} testID="bank-group-label-partners">Ortaklar Hesabı</Text>
+                  {listPartners.map((p) => {
+                    const tone = accountGroupTone("partners");
+                    return (
+                      <View
+                        key={idOf(p)}
+                        style={{
+                          backgroundColor: tone.bg,
+                          borderRadius: 12,
+                          borderWidth: 1,
+                          borderColor: tone.border,
+                          paddingHorizontal: 8,
+                        }}
+                      >
+                        <ListRow
+                          testID={`bank-partner-row-${idOf(p)}`}
+                          leading={<View style={{ width: 8, height: 36, borderRadius: 4, backgroundColor: tone.accent }} />}
+                          title={p.name || "Ortak"}
+                          subtitle={[`%${p.share_percent ?? 0}`, p.phone, p.email].filter(Boolean).join(" · ")}
+                          right={fmtMoney(p.balance)}
+                          onPress={() => setTab("partners")}
+                        />
+                      </View>
+                    );
+                  })}
+                </>
+              ) : null}
+            </>
+          )}
         </>
       )}
     </Screen>

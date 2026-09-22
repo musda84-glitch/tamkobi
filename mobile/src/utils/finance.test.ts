@@ -8,6 +8,9 @@ import {
   expenseCategoryGroups,
   expensePayload,
   accountGroupTone,
+  bankingFilterLabel,
+  bankingListFilterKeys,
+  filterPartners,
   groupedAccounts,
   paymentTargetGroups,
   splitPaymentTarget,
@@ -176,6 +179,10 @@ describe("finance drafts", () => {
     expect(accountGroupTone("bank").bg).toBe("#EFF6FF");
     expect(accountGroupTone("partners").label).toBe("#B45309");
     expect(accountGroupTone("yok").accent).toBe("#64748B");
+    expect(bankingListFilterKeys(keys, true)).toEqual(["all", "bank", "partners", "cash_box", "credit_card"]);
+    expect(bankingFilterLabel("all")).toBe("Tümü");
+    expect(bankingFilterLabel("partners")).toBe("Ortaklar");
+    expect(filterPartners([{ name: "Ali BAL" }, { name: "Veli" }], "ali")).toHaveLength(1);
     expect(keys).toEqual(["bank", "cash_box", "credit_card"]);
     expect(groups.find((g) => g.key === "cash_box")?.items).toHaveLength(2);
     expect(totalLiquidity([
