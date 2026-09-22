@@ -8396,8 +8396,78 @@ async def create_bonus(req: Dict[str, Any]):
     doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
            "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
            "status": status_val, "created_at": datetime.now(timezone.utc).isoformat()}
+    if req.get("worked_days") not in (None, ""):
+        try:
+            doc["worked_days"] = max(0, int(float(req.get("worked_days"))))
+        except (TypeError, ValueError):
+            pass
+    if req.get("daily_wage") not in (None, ""):
+        try:
+            doc["daily_wage"] = round(float(req.get("daily_wage")), 2)
+        except (TypeError, ValueError):
+            pass
     await db.bonus_payments.insert_one(doc)
     return clean_doc(doc)
+
+
+@api_router.put("/personnel/bonuses/{bonus_id}")
+async def update_bonus(bonus_id: str, req: Dict[str, Any]):
+    """Ödenmemiş prim/yevmiye kaydını düzenle; hesap seçilirse o anda ödenir."""
+    rec = await db.bonus_payments.find_one({"_id": bonus_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if rec.get("status") == "paid":
+        raise HTTPException(status_code=400, detail="Ödenmiş kayıt düzenlenemez.")
+    emp = await db.employees.find_one({"_id": rec.get("employee_id")})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    upd: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if req.get("amount") not in (None, ""):
+        try:
+            amount = float(req.get("amount"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Tutar sayısal olmalı.")
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+        upd["amount"] = amount
+    if "note" in req:
+        upd["note"] = req.get("note") or ""
+    if req.get("period"):
+        upd["period"] = req["period"]
+    if req.get("worked_days") not in (None, ""):
+        try:
+            upd["worked_days"] = max(0, int(float(req.get("worked_days"))))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Gün sayısı geçersiz.")
+    if req.get("daily_wage") not in (None, ""):
+        try:
+            upd["daily_wage"] = round(float(req.get("daily_wage")), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Yevmiye ücreti geçersiz.")
+    amount = float(upd.get("amount", rec.get("amount") or 0))
+    account_id = req.get("account_id") or None
+    partner_id = req.get("partner_id") or None
+    if account_id and partner_id:
+        raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    label = rec.get("type_label") or rec.get("type") or "Ödeme"
+    period = upd.get("period") or rec.get("period")
+    if partner_id:
+        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra={"bonus_id": bonus_id})
+        upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid"})
+    elif account_id:
+        acc = await db.bank_accounts.find_one({"_id": account_id})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+        await bank_guard.assert_manual_allowed(db, account_id)
+        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+        await db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
+                                               "type": "outflow", "category": f"Personel {label} (Gayri Resmi)", "amount": amount, "currency": "TRY",
+                                               "description": f"{emp['full_name']} - {period} {label}", "source": "manual",
+                                               "date": today, "created_at": datetime.now(timezone.utc).isoformat()})
+        upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid"})
+    await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
+    return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
 @api_router.post("/personnel/bonuses/{bonus_id}/decide")
 async def decide_bonus(bonus_id: str, req: Dict[str, Any]):
