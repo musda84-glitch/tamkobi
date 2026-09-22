@@ -729,7 +729,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   ) : null}
                   <Field
                     dense
-                    label={it.is_service ? "Hizmet adı" : "Ad"}
+                    label={it.is_service ? "Hizmet adı" : "Ürün"}
                     testID={`q-item-name-${i}`}
                     value={it.name}
                     onChangeText={(v) => patchItem(i, "name", v)}
