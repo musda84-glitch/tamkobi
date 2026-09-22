@@ -1,9 +1,9 @@
-
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { LogIn, ShoppingCart, FileSpreadsheet, Truck, Wallet, KeyRound, ArrowLeft } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { REMEMBER_B2B_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function B2BLoginPage() {
   const [f, setF] = useState({ email: "", password: "" });
@@ -11,9 +11,32 @@ export default function B2BLoginPage() {
   const [err, setErr] = useState("");
   const [mode, setMode] = useState("login");
   const [resetInfo, setResetInfo] = useState(null);
+  const [remember, setRemember] = useState(true);
+
+  useEffect(() => {
+    const saved = loadRememberedEmail(REMEMBER_B2B_KEY);
+    if (saved) {
+      setF((cur) => ({ ...cur, email: saved }));
+      setRemember(true);
+    }
+  }, []);
+
+  const forgetMe = () => {
+    clearRememberedEmail(REMEMBER_B2B_KEY);
+    setF({ email: "", password: "" });
+    setRemember(false);
+    toast.message("Kayıtlı giriş bilgisi temizlendi.");
+  };
+
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr("");
-    try { const r = await axios.post(`${API_URL}/public/b2b/login`, f); toast.success(`Hoş geldiniz, ${r.data.name}`); window.location.href = r.data.redirect; } catch (e2) { setErr(e2.response?.data?.detail || "Giriş yapılamadı."); } finally { setBusy(false); }
+    try {
+      const r = await axios.post(`${API_URL}/public/b2b/login`, f);
+      if (remember) saveRememberedEmail(REMEMBER_B2B_KEY, f.email);
+      else clearRememberedEmail(REMEMBER_B2B_KEY);
+      toast.success(`Hoş geldiniz, ${r.data.name}`);
+      window.location.href = r.data.redirect;
+    } catch (e2) { setErr(e2.response?.data?.detail || "Giriş yapılamadı."); } finally { setBusy(false); }
   };
   const forgot = async (e) => {
     e.preventDefault(); setBusy(true); setErr(""); setResetInfo(null);
@@ -56,6 +79,13 @@ export default function B2BLoginPage() {
             <div><div className="text-[10px] uppercase tracking-[0.2em] text-emerald-600 font-semibold">B2B Müşteri Girişi</div><h2 className="text-xl font-bold mt-1">Hesabınıza giriş yapın</h2><p className="text-xs text-slate-500 mt-1">Tedarikçinizin size verdiği e-posta / VKN ve şifre ile.</p></div>
             <div><label className="block text-xs font-semibold mb-1">E-posta veya VKN</label><input required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-email" /></div>
             <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-password" /></div>
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="b2b-remember-row">
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" data-testid="b2b-remember" />
+                Beni hatırla
+              </label>
+              <button type="button" onClick={forgetMe} className="text-xs text-slate-600 hover:text-rose-700 font-semibold underline-offset-2 hover:underline px-1.5 py-0.5" data-testid="b2b-forget">Beni unut</button>
+            </div>
             {err && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="b2b-login-error">{err}</div>}
             <button disabled={busy} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Portala Giriş"}</button>
             <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-[11px] text-emerald-700 font-semibold" data-testid="b2b-forgot-open">Şifremi unuttum</button>

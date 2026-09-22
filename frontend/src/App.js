@@ -60,6 +60,7 @@ const PaymentResultPage = page(() => import("./pages/PaymentResultPage"));
 const RenewPage = page(() => import("./pages/RenewPage"));
 const B2BLoginPage = page(() => import("./pages/B2BLoginPage"));
 const B2BResetPage = page(() => import("./pages/B2BResetPage"));
+const ResetPasswordPage = page(() => import("./pages/ResetPasswordPage"));
 const B2BAdminPage = page(() => import("./pages/B2BAdminPage"));
 const FieldSalesPage = page(() => import("./pages/FieldSalesPage"));
 const TradePage = page(() => import("./pages/TradePage"));
@@ -152,6 +153,7 @@ export default function App() {
                   <Route path="/yenile/:token" element={<RenewPage />} />
                   <Route path="/b2b/giris" element={<B2BLoginPage />} />
                   <Route path="/b2b/sifre/:token" element={<B2BResetPage />} />
+                  <Route path="/sifre/:token" element={<ResetPasswordPage />} />
                   <Route path="/b2b-yonetim" element={<B2BAdminPage />} />
                   <Route path="/login" element={<LoginPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
