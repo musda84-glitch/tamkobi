@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
@@ -13,9 +13,11 @@ import {
   appendUploadBlob,
   imageUploadRequest,
   imageUploaderCopy,
+  pickBrowserImages,
   resolveUploadBlob,
   uploadedImageUrl,
   type ImageEntity,
+  type PickerAssetLike,
 } from "../utils/formDataFile";
 
 /** Keşif/proje/teklif: /files/upload. Stok kartı: /products/:id/image. Expo fetch Blob ister. */
@@ -45,22 +47,35 @@ export function ImageUploader({
   const title = label ?? copy.label;
   const help = hint ?? copy.hint;
 
-  const send = async (asset: ImagePicker.ImagePickerAsset) => {
+  const sendAll = async (assets: PickerAssetLike[]) => {
     if (!entityId) { setError("Önce kaydı oluşturun, sonra fotoğraf ekleyin."); return; }
+    if (!assets.length) return;
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      const compact = await compressPickerAsset(asset);
-      const { blob, name } = await resolveUploadBlob(compact);
-      appendUploadBlob(form, blob, name);
-      const { path, query } = imageUploadRequest(entity, entityId, companyId);
-      const res = await upload<unknown>(client, path, form, query);
-      const url = uploadedImageUrl(res);
-      if (url) onUploaded(url);
-      else setError("Fotoğraf yüklendi ama adres dönmedi.");
-    } catch (err) {
-      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+      let ok = 0;
+      let lastErr = "";
+      for (const asset of assets) {
+        try {
+          const form = new FormData();
+          const compact = await compressPickerAsset(asset);
+          const { blob, name } = await resolveUploadBlob(compact);
+          appendUploadBlob(form, blob, name);
+          const { path, query } = imageUploadRequest(entity, entityId, companyId);
+          const res = await upload<unknown>(client, path, form, query);
+          const url = uploadedImageUrl(res);
+          if (url) {
+            onUploaded(url);
+            ok += 1;
+          } else {
+            lastErr = "Fotoğraf yüklendi ama adres dönmedi.";
+          }
+        } catch (err) {
+          lastErr = apiErrorMessage(err, "Fotoğraf yüklenemedi.");
+        }
+      }
+      if (!ok && lastErr) setError(lastErr);
+      else if (lastErr) setError(`${ok} fotoğraf yüklendi. ${lastErr}`);
     } finally {
       setBusy(false);
     }
@@ -68,15 +83,25 @@ export function ImageUploader({
 
   const pick = async (fromCamera: boolean) => {
     try {
+      if (!fromCamera && Platform.OS === "web") {
+        const assets = await pickBrowserImages();
+        await sendAll(assets);
+        return;
+      }
       const perm = fromCamera
         ? await ImagePicker.requestCameraPermissionsAsync()
         : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") { setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi."); return; }
       const res = fromCamera
         ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
-        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+        : await ImagePicker.launchImageLibraryAsync({
+          quality: 0.8,
+          exif: false,
+          mediaTypes: ["images"],
+          allowsMultipleSelection: true,
+        });
       if (res.canceled || !res.assets?.length) return;
-      await send(res.assets[0]);
+      await sendAll(res.assets);
     } catch (err) {
       setError(apiErrorMessage(err, "Fotoğraf seçilemedi."));
     }
@@ -108,7 +133,7 @@ export function ImageUploader({
       {editable && entityId ? (
         <>
           <PrimaryButton title={busy ? "Yükleniyor…" : "Fotoğraf çek"} onPress={() => pick(true)} loading={busy} color={colors.indigo} testID={`${testID}-camera`} />
-          <PrimaryButton title="Galeriden seç" onPress={() => pick(false)} disabled={busy} color={colors.primary} testID={`${testID}-gallery`} />
+          <PrimaryButton title={busy ? "Yükleniyor…" : "Galeriden seç"} onPress={() => pick(false)} disabled={busy} color={colors.primary} testID={`${testID}-gallery`} />
         </>
       ) : null}
     </Card>

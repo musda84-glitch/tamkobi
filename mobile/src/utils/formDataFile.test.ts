@@ -4,6 +4,7 @@ import {
   imageUploaderCopy,
   isExpoFetchFilePart,
   pickBrowserImage,
+  pickBrowserImages,
   pickerFileMeta,
   resolveUploadBlob,
   uploadedImageUrl,
@@ -15,6 +16,7 @@ describe("pickBrowserImage", () => {
     const input = {
       type: "",
       accept: "",
+      multiple: true,
       files: [file],
       onchange: null as (() => void) | null,
       click() {
@@ -26,6 +28,25 @@ describe("pickBrowserImage", () => {
     expect(input.accept).toBe("image/*");
     expect(picked?.fileName).toBe("koltuk.jpg");
     expect(picked?.file).toBe(file);
+    expect(input.multiple).toBe(false);
+  });
+
+  it("lets the gallery input choose several images", async () => {
+    const a = { name: "a.jpg", type: "image/jpeg" } as File;
+    const b = { name: "b.jpg", type: "image/jpeg" } as File;
+    const input = {
+      type: "",
+      accept: "",
+      multiple: false,
+      files: [a, b],
+      onchange: null as (() => void) | null,
+      click() {
+        this.onchange?.();
+      },
+    };
+    const picked = await pickBrowserImages(() => input as unknown as HTMLInputElement);
+    expect(input.multiple).toBe(true);
+    expect(picked.map((x) => x.fileName)).toEqual(["a.jpg", "b.jpg"]);
   });
 });
 

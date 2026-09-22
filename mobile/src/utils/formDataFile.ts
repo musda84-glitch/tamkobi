@@ -9,36 +9,45 @@ export type PickerAssetLike = {
   file?: Blob;
 };
 
+function fileToPickerAsset(f: File): PickerAssetLike {
+  let uri = "";
+  try {
+    uri = typeof URL !== "undefined" && URL.createObjectURL ? URL.createObjectURL(f) : "";
+  } catch {
+    uri = "";
+  }
+  return {
+    uri,
+    file: f,
+    fileName: f.name,
+    mimeType: f.type || "image/jpeg",
+  };
+}
+
 /** Web Glass / RNW: expo-image-picker izni takılabiliyor; gizli file input kullan. */
-export function pickBrowserImage(
+export function pickBrowserImages(
   createInput: () => HTMLInputElement | null = () => (typeof document !== "undefined" ? document.createElement("input") : null),
-): Promise<PickerAssetLike | null> {
+  multiple = true,
+): Promise<PickerAssetLike[]> {
   const input = createInput();
-  if (!input) return Promise.resolve(null);
+  if (!input) return Promise.resolve([]);
   return new Promise((resolve) => {
     input.type = "file";
     input.accept = "image/*";
+    input.multiple = multiple;
     input.onchange = () => {
-      const f = input.files?.[0];
-      if (!f) {
-        resolve(null);
-        return;
-      }
-      let uri = "";
-      try {
-        uri = typeof URL !== "undefined" && URL.createObjectURL ? URL.createObjectURL(f) : "";
-      } catch {
-        uri = "";
-      }
-      resolve({
-        uri,
-        file: f,
-        fileName: f.name,
-        mimeType: f.type || "image/jpeg",
-      });
+      const files = Array.from(input.files || []);
+      resolve(files.map(fileToPickerAsset));
     };
     input.click();
   });
+}
+
+export async function pickBrowserImage(
+  createInput: () => HTMLInputElement | null = () => (typeof document !== "undefined" ? document.createElement("input") : null),
+): Promise<PickerAssetLike | null> {
+  const rows = await pickBrowserImages(createInput, false);
+  return rows[0] || null;
 }
 
 export function pickerFileMeta(asset: PickerAssetLike, fallbackName = "photo.jpg") {
