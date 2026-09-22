@@ -28,6 +28,7 @@ import {
   PROJECT_QUOTE_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   PROJECT_MAPS_ACTION,
+  SURVEY_MAPS_ACTION,
   projectQuoteNavParams,
   canCompleteProject,
   applyTaskAssignee,
@@ -219,6 +220,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           subtitle={r.subtitle}
           right={r.right || undefined}
           onPress={() => go(meta.goDetail, { id: r.id })}
+          action={r.survey ? <SurveyMapsLink survey={r.survey} /> : undefined}
         />
       ))}
       <ProjectTeamSheet
@@ -355,13 +357,32 @@ function ActionBtn({
   );
 }
 
-function openProjectLocation(project: ProjectDoc) {
-  const href = mapsLink(project);
+function openWorkLocation(row: { location_url?: string | null; latitude?: number | null; longitude?: number | null; address?: string | null }, emptyMsg: string) {
+  const href = mapsLink(row);
   if (!href) {
-    Alert.alert("Konum yok", "Bu projeye konum veya adres eklenmemiş.");
+    Alert.alert("Konum yok", emptyMsg);
     return;
   }
   Linking.openURL(href).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
+}
+
+function openProjectLocation(project: ProjectDoc) {
+  openWorkLocation(project, "Bu projeye konum veya adres eklenmemiş.");
+}
+
+function SurveyMapsLink({ survey }: { survey: SurveyDoc }) {
+  const href = mapsLink(survey);
+  if (!href) return null;
+  return (
+    <Pressable
+      testID={`survey-maps-${idOf(survey)}`}
+      onPress={() => openWorkLocation(survey, "Bu keşfe konum veya adres eklenmemiş.")}
+      hitSlop={8}
+      style={{ flexShrink: 0, paddingHorizontal: 2 }}
+    >
+      <Text style={{ fontWeight: "800", color: "#9F1239", fontSize: 12 }}>{SURVEY_MAPS_ACTION}</Text>
+    </Pressable>
+  );
 }
 
 function ProjectCard({

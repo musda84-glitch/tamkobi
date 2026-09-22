@@ -545,6 +545,7 @@ export function newButtonLabel(kind: WorkKind): string {
 export const PROJECT_QUOTE_ACTION = "Projeyi Tamamla";
 export const PROJECT_NEW_QUOTE_ACTION = "Yeni Teklif";
 export const PROJECT_MAPS_ACTION = "Konuma Git";
+export const SURVEY_MAPS_ACTION = PROJECT_MAPS_ACTION;
 
 /** Karttan teklif formuna proje + cariyi taşır. */
 export function projectQuoteNavParams(p: ProjectDoc) {
