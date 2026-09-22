@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { Pressable, ScrollView, Text, useWindowDimensions, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -26,12 +26,108 @@ import {
 } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
+function PartnerCard({
+  partner,
+  open,
+  docked,
+  txs,
+  canExp,
+  onToggle,
+  onExpense,
+}: {
+  partner: Partner;
+  open: boolean;
+  docked?: boolean;
+  txs: PartnerTx[];
+  canExp: boolean;
+  onToggle: () => void;
+  onExpense: () => void;
+}) {
+  const { height } = useWindowDimensions();
+  const pid = idOf(partner);
+  const tone = partnerCardTone(pid || partner.name || "");
+  const mine = filterPartnerTxs(txs, pid);
+  const moves = open ? (
+    <View testID={`partner-moves-${pid}`} style={{ borderTopWidth: 1, borderTopColor: tone.border, paddingTop: 8, gap: 4 }}>
+      <Text style={{ fontWeight: "800", color: tone.label }}>Hareketler</Text>
+      {!mine.length ? (
+        <Muted>Hareket yok.</Muted>
+      ) : mine.slice(0, 40).map((tx) => (
+        <ListRow
+          key={idOf(tx)}
+          testID={`partner-tx-${idOf(tx)}`}
+          title={partnerTxTr(tx.type)}
+          subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
+          right={fmtMoney(tx.amount)}
+          rightColor={tx.type === "withdrawal" ? colors.danger : colors.primary}
+        />
+      ))}
+    </View>
+  ) : null;
+
+  return (
+    <View
+      testID={`partner-card-${partner.name}`}
+      style={{
+        backgroundColor: tone.bg,
+        borderColor: open ? tone.accent : tone.border,
+        borderWidth: 1,
+        borderRadius: 16,
+        padding: 14,
+        gap: 8,
+        maxHeight: docked ? Math.round(height * 0.52) : undefined,
+      }}
+    >
+      <Pressable
+        onPress={onToggle}
+        testID={`partner-card-toggle-${partner.name}`}
+        style={{ gap: 8 }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <PartnerAvatar
+            name={partner.name}
+            photoUrl={partner.photo_url}
+            tone={tone}
+            size={56}
+            testID={`partner-avatar-${pid}`}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ fontWeight: "800", color: tone.label }}>{partner.name}</Text>
+            <Muted>{[partner.email, partner.phone, `%${partner.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
+          </View>
+        </View>
+        <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(partner.balance)}</Text>
+        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çekiş {fmtMoney(partner.total_withdrawn)} · kâr {fmtMoney(partner.total_profit_share)}</Muted>
+      </Pressable>
+      {canExp ? (
+        <PrimaryButton
+          title="Masraf ekle"
+          onPress={onExpense}
+          color={colors.danger}
+          testID={`partner-expense-btn-${pid}`}
+        />
+      ) : null}
+      {open && docked ? (
+        <ScrollView
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+          style={{ maxHeight: Math.round(height * 0.28) }}
+        >
+          {moves}
+        </ScrollView>
+      ) : moves}
+    </View>
+  );
+}
+
 export function BankingPartnersPanel({
   accounts: _accounts,
   onChanged,
+  onSelectedDock,
 }: {
   accounts: BankAccount[];
   onChanged: () => void;
+  onSelectedDock?: (node: React.ReactNode | null) => void;
 }) {
   const { client, companyId, can } = useAuth();
   const canExp = can("/expenses", "edit");
@@ -65,7 +161,7 @@ export function BankingPartnersPanel({
 
   useEffect(() => { load(); }, [load]);
 
-  const openPartnerExpense = (pid: string, name: string) => {
+  const openPartnerExpense = useCallback((pid: string, name: string) => {
     if (!canExp || !pid) return;
     setExpPartner({ id: pid, name });
     setExpDraft({ ...emptyProjectExpenseDraft(todayIso()), account_id: `partner:${pid}` });
@@ -73,7 +169,29 @@ export function BankingPartnersPanel({
     get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId })
       .then((cats) => setExpCats(Array.isArray(cats) ? cats : []))
       .catch(() => undefined);
-  };
+  }, [canExp, client, companyId]);
+
+  const selected = partners.find((p) => idOf(p) === openPartner) || null;
+  const listed = selected ? partners.filter((p) => idOf(p) !== openPartner) : partners;
+
+  useLayoutEffect(() => {
+    if (!onSelectedDock) return;
+    onSelectedDock(selected ? (
+      <View testID="partners-selected-dock">
+        <PartnerCard
+          partner={selected}
+          open
+          docked
+          txs={txs}
+          canExp={canExp}
+          onToggle={() => setOpenPartner(null)}
+          onExpense={() => openPartnerExpense(idOf(selected), selected.name || "Ortak")}
+        />
+      </View>
+    ) : null);
+  }, [onSelectedDock, selected, txs, canExp, openPartnerExpense]);
+
+  useEffect(() => () => onSelectedDock?.(null), [onSelectedDock]);
 
   const savePartnerExpense = async () => {
     if (!expPartner || !canExp) return;
@@ -114,71 +232,18 @@ export function BankingPartnersPanel({
 
       {!partners.length ? (
         <Empty icon="people-outline" title="Henüz ortak yok" hint="Ortak eklemek için web panelini kullanın." />
-      ) : partners.map((p) => {
+      ) : listed.map((p) => {
         const pid = idOf(p);
-        const tone = partnerCardTone(pid || p.name || "");
-        const open = openPartner === pid;
-        const mine = filterPartnerTxs(txs, pid);
         return (
-          <View
+          <PartnerCard
             key={pid}
-            testID={`partner-card-${p.name}`}
-            style={{
-              backgroundColor: tone.bg,
-              borderColor: open ? tone.accent : tone.border,
-              borderWidth: 1,
-              borderRadius: 16,
-              padding: 14,
-              gap: 8,
-            }}
-          >
-            <Pressable
-              onPress={() => setOpenPartner(open ? null : pid)}
-              testID={`partner-card-toggle-${p.name}`}
-              style={{ gap: 8 }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <PartnerAvatar
-                  name={p.name}
-                  photoUrl={p.photo_url}
-                  tone={tone}
-                  size={56}
-                  testID={`partner-avatar-${pid}`}
-                />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontWeight: "800", color: tone.label }}>{p.name}</Text>
-                  <Muted>{[p.email, p.phone, `%${p.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
-                </View>
-              </View>
-              <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(p.balance)}</Text>
-              <Muted>Giriş {fmtMoney(p.total_capital_in)} · çekiş {fmtMoney(p.total_withdrawn)} · kâr {fmtMoney(p.total_profit_share)}</Muted>
-            </Pressable>
-            {canExp ? (
-              <PrimaryButton
-                title="Masraf ekle"
-                onPress={() => openPartnerExpense(pid, p.name || "Ortak")}
-                color={colors.danger}
-                testID={`partner-expense-btn-${pid}`}
-              />
-            ) : null}
-            {open ? (
-              <View testID={`partner-moves-${pid}`} style={{ borderTopWidth: 1, borderTopColor: tone.border, paddingTop: 8, gap: 4 }}>
-                <Text style={{ fontWeight: "800", color: tone.label }}>Hareketler</Text>
-                {!mine.length ? (
-                  <Muted>Hareket yok.</Muted>
-                ) : mine.slice(0, 40).map((tx) => (
-                  <ListRow
-                    key={idOf(tx)}
-                    testID={`partner-tx-${idOf(tx)}`}
-                    title={partnerTxTr(tx.type)}
-                    subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-                    right={fmtMoney(tx.amount)}
-                    rightColor={tx.type === "withdrawal" ? colors.danger : colors.primary}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </View>
+            partner={p}
+            open={false}
+            txs={txs}
+            canExp={canExp}
+            onToggle={() => setOpenPartner(pid)}
+            onExpense={() => openPartnerExpense(pid, p.name || "Ortak")}
+          />
         );
       })}
 
