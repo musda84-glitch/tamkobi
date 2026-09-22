@@ -763,11 +763,31 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 borderRadius: 12,
                 padding: 6,
                 gap: 6,
+                position: "relative",
               }}
             >
+              {kind === "quote" && canEdit ? (
+                <Pressable
+                  onPress={() => removeItem(i)}
+                  testID={`q-item-del-${i}`}
+                  accessibilityLabel="Kalemi sil"
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    right: 4,
+                    zIndex: 2,
+                    width: 28,
+                    height: 28,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                </Pressable>
+              ) : null}
               <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
-                    <Row style={{ alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                    <Row style={{ alignItems: "flex-start", gap: 8, paddingRight: 28 }}>
                       <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
                         <Chip
                           compact
@@ -786,16 +806,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           onPress={() => !it.is_service && toggleLineKind(i)}
                         />
                       </Row>
-                      {canEdit ? (
-                        <Pressable
-                          onPress={() => removeItem(i)}
-                          testID={`q-item-del-${i}`}
-                          accessibilityLabel="Kalemi sil"
-                          style={{ width: 24, height: 28, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                        >
-                          <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                        </Pressable>
-                      ) : null}
                     </Row>
                   ) : (
                     <Field
