@@ -713,8 +713,36 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     })
     : null;
 
+  const stockSearch = workItemLineKind(kind) ? (
+    <View
+      testID="q-stock-search"
+      style={{
+        backgroundColor: colors.slate50,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 12,
+        padding: 8,
+        gap: 6,
+      }}
+    >
+      <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
+      {prodHits.length ? (
+        <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
+          {prodHits.map((p) => (
+            <ProductPickRow
+              key={idOf(p)}
+              product={p}
+              testID={`q-prod-${idOf(p)}`}
+              onPress={() => addProductFromSearch(p)}
+            />
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
-    <Screen>
+    <Screen stickyTop={stockSearch}>
       {kind === "quote" ? (
         <Stack.Screen
           options={{
@@ -861,31 +889,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {workItemLineKind(kind) ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
-          <View
-            testID="q-stock-search"
-            style={{
-              backgroundColor: colors.slate50,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: 12,
-              padding: 8,
-              gap: 6,
-            }}
-          >
-            <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-            {prodHits.length ? (
-              <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
-                {prodHits.map((p) => (
-                  <ProductPickRow
-                    key={idOf(p)}
-                    product={p}
-                    testID={`q-prod-${idOf(p)}`}
-                    onPress={() => addProductFromSearch(p)}
-                  />
-                ))}
-              </ScrollView>
-            ) : null}
-          </View>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
             const noteShown = workItemNoteOpen(it, noteOpen[i]);
