@@ -391,7 +391,7 @@ describe("project task assign", () => {
       { id: "t2", title: "Keşif", done: true },
     ]);
     expect(groups[0].label).toBe("Yapılacak işler");
-    expect(groups[0].options[0].label).toBe("Montaj · Ali");
+    expect(groups[0].options[0].label).toBe("Montaj");
     expect(groups[1].label).toBe("Biten işler");
   });
 });

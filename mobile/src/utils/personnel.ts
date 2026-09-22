@@ -899,7 +899,7 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
       label: "Yapılacak işler",
       options: open.map((t) => ({
         value: t.id || "",
-        label: t.assignee_name ? `${t.title} · ${t.assignee_name}` : String(t.title || ""),
+        label: String(t.title || ""),
       })),
     });
   }

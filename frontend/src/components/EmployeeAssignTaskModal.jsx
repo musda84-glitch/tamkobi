@@ -239,7 +239,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     <option value="">{form.project_id ? "Listeden iş seçin" : "Önce proje seçin"}</option>
                     {projectTasks.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.title}{t.assignee_name ? ` · ${t.assignee_name}` : ""}{t.done ? " (bitti)" : ""}
+                        {t.title}{t.done ? " (bitti)" : ""}
                       </option>
                     ))}
                   </select>
