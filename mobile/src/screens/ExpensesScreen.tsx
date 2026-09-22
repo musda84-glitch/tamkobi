@@ -54,7 +54,11 @@ export function ExpensesScreen() {
   const s = data.summary;
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" testID="exp-search" value={q} onChangeText={setQ} placeholder="Açıklama / no / kategori" />}
+    >
       {canEdit ? (
         <PrimaryButton title="Yeni masraf" onPress={() => go("ExpenseNew")} color={colors.danger} testID="exp-new-btn" />
       ) : null}
@@ -72,7 +76,6 @@ export function ExpensesScreen() {
           <Chip key={k} label={l} active={status === k} onPress={() => setStatus(k)} testID={`exp-status-${k}`} />
         ))}
       </Row>
-      <Field label="Ara" testID="exp-search" value={q} onChangeText={setQ} placeholder="Açıklama / no / kategori" />
       <ErrorBanner message={error} />
       {!rows.length ? (
         <Empty icon="receipt-outline" title="Masraf yok" hint={canEdit ? "Kira, yakıt, yemek gibi gider ekleyin." : undefined} />

@@ -96,7 +96,11 @@ export function ChequesScreen() {
   };
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" testID="cheque-search" value={q} onChangeText={setQ} placeholder="No, seri, cari, banka" />}
+    >
       <StatRows
         testID="cheques-summary"
         items={[
@@ -122,7 +126,6 @@ export function ChequesScreen() {
           ]}
         />
       ) : null}
-      <Field label="Ara" testID="cheque-search" value={q} onChangeText={setQ} placeholder="No, seri, cari, banka" />
       <Row style={{ flexWrap: "wrap" }}>
         {CHEQUE_FILTERS.map((f) => (
           <Chip key={f.key} label={f.label} active={filter === f.key} testID={`cheque-filter-${f.key}`} onPress={() => setFilter(f.key)} />

@@ -96,7 +96,11 @@ export function EdocInboxScreen() {
   );
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="Tedarikçi / fatura no" testID="edoc-search" />}
+    >
       <ActionTiles
         items={[
           { key: "sync", label: "Kutuyu çek", icon: "cloud-download", tone: "indigo", testID: "edoc-sync", busy: busy === "sync", onPress: syncInbox },
@@ -118,7 +122,6 @@ export function EdocInboxScreen() {
           />
         ))}
       </Row>
-      <Field label="Ara" value={q} onChangeText={setQ} placeholder="Tedarikçi / fatura no" testID="edoc-search" />
       <ErrorBanner message={error} />
       {message ? <Muted testID="edoc-message">{message}</Muted> : null}
       {!filtered.length ? (

@@ -55,7 +55,11 @@ export function InvoicesScreen() {
   }, [q, rows]);
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" testID="inv-search" />}
+    >
       {canEdit ? (
         <PrimaryButton
           title={createInvoiceButtonLabel(type)}
@@ -95,7 +99,6 @@ export function InvoicesScreen() {
           );
         })}
       </View>
-      <Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" testID="inv-search" />
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty

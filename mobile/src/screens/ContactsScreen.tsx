@@ -107,11 +107,14 @@ export function ContactsScreen() {
   }, [amountOf, rows]);
 
   return (
-    <Screen onRefresh={() => load(true)} refreshing={refreshing}>
+    <Screen
+      onRefresh={() => load(true)}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" testID="contacts-search" value={q} onChangeText={setQ} placeholder="Ad, telefon, VKN" />}
+    >
       {canEdit ? (
         <PrimaryButton title="Yeni cari ekle" onPress={() => go("ContactNew")} color={colors.primary} testID="add-contact-btn" />
       ) : null}
-      <Field label="Ara" testID="contacts-search" value={q} onChangeText={setQ} placeholder="Ad, telefon, VKN" />
       <View testID="contacts-filter-row" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
         {CONTACT_LIST_CHIPS.map((t) => {
           const count = t.balance === "receivable" ? chipCounts.receivable : t.balance === "payable" ? chipCounts.payable : undefined;

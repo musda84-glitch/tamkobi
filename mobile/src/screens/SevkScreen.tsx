@@ -47,7 +47,11 @@ export function SevkScreen() {
   }, [q, rows]);
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" testID="sevk-search" value={q} onChangeText={setQ} placeholder="Sipariş no, müşteri, şehir" />}
+    >
       <ActionTiles
         columns={3}
         items={[
@@ -56,7 +60,6 @@ export function SevkScreen() {
           { key: "stock", label: "Stok", icon: "cube", tone: "indigo", testID: "sevk-stock", onPress: () => go("Stock") },
         ]}
       />
-      <Field label="Ara" testID="sevk-search" value={q} onChangeText={setQ} placeholder="Sipariş no, müşteri, şehir" />
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty icon="cube-outline" title="Toplanacak sipariş yok" hint="Yeni siparişler geldiğinde burada listelenir." />

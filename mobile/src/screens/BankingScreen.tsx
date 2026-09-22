@@ -195,7 +195,11 @@ export function BankingScreen() {
   };
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={showAccountList ? <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" /> : undefined}
+    >
       <TabStrip
         testID="banking-tab"
         variant="icons"
@@ -289,7 +293,6 @@ export function BankingScreen() {
               ) : null}
             </View>
           ) : null}
-          {showAccountList ? <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" /> : null}
           <ErrorBanner message={error} />
           {!showAccountList ? (
             !overviewGroups.length && !activePartners.length ? (

@@ -125,11 +125,14 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   );
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />}
+    >
       {canEdit ? (
         <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
       ) : null}
-      <Field label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />
       {kind === "project" && completedProjectCount ? (
         <>
           <PrimaryButton

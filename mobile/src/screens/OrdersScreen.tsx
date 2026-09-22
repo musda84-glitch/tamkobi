@@ -39,8 +39,11 @@ export function OrdersScreen() {
   }, [q, rows]);
 
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
-      <Field label="Ara" value={q} onChangeText={setQ} placeholder="Sipariş no / müşteri" />
+    <Screen
+      onRefresh={load}
+      refreshing={refreshing}
+      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="Sipariş no / müşteri" />}
+    >
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       {!filtered.length ? <Empty icon="cart-outline" title="Sipariş yok" /> : filtered.map((o) => (
