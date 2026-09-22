@@ -261,16 +261,43 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
                   <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={card.balance?.month ? `Dönem ${card.balance.month}` : undefined} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
                   <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(card.balance?.overtime_due ?? ot.amount ?? 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
-                  <Stat label={isDailyWage(e) ? "Yevmiye günü" : "Prim hakedişi"} value={isDailyWage(e) ? `${card.attendance.days_present || 0} gün` : `${fmt(card.balance?.bonus_pending || 0)} ₺`} sub={isDailyWage(e) ? `${fmt(periodWage(e, card.attendance.days_present))} ₺ · ${fmt(e.daily_wage)} ₺ / gün` : undefined} testid="emp-stat-bonus-due" />
+                  {(() => {
+                    const unpaidYev = (card.bonuses || []).filter((b) => b.type === "yevmiye" && b.status !== "paid");
+                    const yevDays = unpaidYev.reduce((s, b) => s + (Number(b.worked_days) || 0), 0) || (card.attendance.days_present || 0);
+                    const yevAmt = unpaidYev.reduce((s, b) => s + (Number(b.amount) || 0), 0) || periodWage(e, yevDays);
+                    return (
+                      <Stat
+                        label={isDailyWage(e) ? "Yevmiye günü" : "Prim hakedişi"}
+                        value={isDailyWage(e) ? `${yevDays} gün` : `${fmt(card.balance?.bonus_pending || 0)} ₺`}
+                        sub={isDailyWage(e) ? `${fmt(yevAmt)} ₺ · ${fmt(e.daily_wage)} ₺ / gün` : undefined}
+                        testid="emp-stat-bonus-due"
+                      />
+                    );
+                  })()}
                   <Stat label="İşe Giriş" value={formatTrDate(e.start_date)} testid="emp-stat-start" />
                   <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {empStatusLabel(e.status)}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
-                {card.workplace?.kind === "task" ? (
-                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3 text-indigo-900" data-testid="emp-card-workplace">
-                    <div className="font-bold">Dış görev — giriş/çıkış görev yerinden</div>
-                    <div className="text-[11px] mt-0.5">{workplaceHint(card.workplace, true)}</div>
-                    {card.workplace.address ? <div className="text-[11px] text-indigo-700 mt-0.5">{card.workplace.address}</div> : null}
+                {card.workplace?.kind === "task" || (card.tasks || []).some((t) => !t.done) ? (
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3 text-indigo-900 space-y-1.5" data-testid="emp-card-workplace">
+                    <div className="font-bold">Görev / çalıştığı yer</div>
+                    {card.workplace?.kind === "task" ? (
+                      <>
+                        <div className="text-[11px]">{workplaceHint(card.workplace, true)}</div>
+                        {card.workplace.address ? <div className="text-[11px] text-indigo-700">{card.workplace.address}</div> : null}
+                      </>
+                    ) : null}
+                    {(card.tasks || []).filter((t) => !t.done).length ? (
+                      <ul className="text-[11px] space-y-0.5" data-testid="emp-card-tasks">
+                        {(card.tasks || []).filter((t) => !t.done).slice(0, 8).map((t, i) => (
+                          <li key={t.id || i}>
+                            {t.title || "Görev"}
+                            {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
+                            {t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="border border-slate-100 rounded-xl p-3 space-y-3" data-testid="emp-performance">
@@ -413,6 +440,7 @@ function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
   const [projectId, setProjectId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [title, setTitle] = useState("");
+  const [durationDays, setDurationDays] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } })
@@ -430,7 +458,11 @@ function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
     e.preventDefault();
     const invalid = validateEmployeeTaskAssign(projectId, taskId, title);
     if (invalid) { toast.error(invalid); return; }
-    const next = nextTasksAfterAssign(project?.tasks, employee, { taskId, title });
+    const days = Math.trunc(Number(durationDays));
+    const due = days > 0 ? new Date(Date.now() + (days - 1) * 86400000).toISOString().slice(0, 10) : undefined;
+    const next = nextTasksAfterAssign(project?.tasks, employee, {
+      taskId, title, durationDays: days > 0 ? days : undefined, dueDate: due,
+    });
     if (next.error) { toast.error(next.error); return; }
     setBusy(true);
     try {
@@ -473,6 +505,10 @@ function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
             <input value={title} onChange={(ev) => setTitle(ev.target.value)} placeholder="Örn: Keşif, montaj" className="w-full border rounded-lg p-2" data-testid="emp-card-task-title" />
           </div>
         ) : null}
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1">Dış görev gün sayısı</label>
+          <input value={durationDays} onChange={(ev) => setDurationDays(ev.target.value)} type="number" min="1" max="366" placeholder="Örn: 3" className="w-full border rounded-lg p-2" data-testid="emp-card-task-days" />
+        </div>
         <div className="flex justify-end gap-2 pt-2 border-t">
           <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
           <button type="submit" disabled={busy} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-card-task-save">Personeli ata</button>

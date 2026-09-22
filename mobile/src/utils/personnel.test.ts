@@ -39,6 +39,9 @@ import {
   parseYevmiyeDays,
   parseYevmiyeWage,
   pendingYevmiyeBonus,
+  unpaidYevmiyeTotals,
+  dueDateFromDays,
+  parseTaskDays,
   validateYevmiyeDays,
   validateYevmiyeWage,
   yevmiyeDaysFromBonus,
@@ -124,6 +127,14 @@ describe("payroll helpers", () => {
     expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, null, { daysPresent: 6 }).find((r) => r.key === "bonus")).toEqual({
       key: "bonus", label: "Yevmiye günü", value: 9000, hint: "6 gün",
     });
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, { bonus_pending: 10500 }, { daysPresent: 1, yevmiyeDays: 7, yevmiyeAmount: 10500 }).find((r) => r.key === "bonus")).toEqual({
+      key: "bonus", label: "Yevmiye günü", value: 10500, hint: "7 gün",
+    });
+    expect(unpaidYevmiyeTotals([
+      { type: "yevmiye", status: "pending", worked_days: 6, amount: 9000 },
+      { type: "yevmiye", status: "pending", worked_days: 1, amount: 1500 },
+      { type: "yevmiye", status: "paid", worked_days: 2, amount: 3000 },
+    ])).toEqual({ days: 7, amount: 10500 });
     expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
     expect(overtimeDue({ overtime_pay: 1800, overtime_due: 600 })).toBe(600);
     expect(enrichEmployeeBalance({
@@ -292,6 +303,7 @@ describe("employee card actions", () => {
       bonuses: [{ id: "y1", type: "yevmiye", amount: 9000, period: "2026-09", status: "pending", note: "6 gün × 1500 ₺", worked_days: 6, daily_wage: 1500 }],
     });
     expect(yev[0].editable).toBe(true);
+    expect(yev[0].payable).toBe(true);
     expect(yev[0].worked_days).toBe(6);
     expect(pendingYevmiyeBonus([{ type: "yevmiye", status: "pending", period: "2026-09", id: "a" }, { type: "yevmiye", status: "paid", id: "b" }], "2026-09")?.id).toBe("a");
     expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
@@ -311,6 +323,10 @@ describe("project task assign", () => {
     expect(created.error).toBeNull();
     expect(created.tasks).toHaveLength(2);
     expect(created.tasks[1]).toMatchObject({ id: "t_new", title: "Keşif", assignee_id: "e1", done: false });
+    const withDays = assignEmployeeToTasks(tasks, { id: "e1", full_name: "Ali" }, { title: "Montaj", newId: "t_d", durationDays: 3, dueDate: dueDateFromDays("2026-09-22", 3) });
+    expect(withDays.tasks[1]).toMatchObject({ duration_days: 3, due_date: "2026-09-24" });
+    expect(parseTaskDays("3")).toBe(3);
+    expect(dueDateFromDays("2026-09-22", 1)).toBe("2026-09-22");
     expect(assignEmployeeToTasks(tasks, { id: "e1" }, {}).error).toBe("Görev adı girin.");
   });
 
