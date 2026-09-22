@@ -46,6 +46,7 @@ import {
   newButtonLabel,
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
+  SURVEY_MAPS_ACTION,
   projectMetricSectionOrder,
   projectQuoteNavParams,
   quoteListSubtitle,
@@ -547,6 +548,21 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             const href = mapsLink(project);
             if (!href) {
               Alert.alert("Konum yok", "Bu projeye konum veya adres eklenmemiş.");
+              return;
+            }
+            Linking.openURL(href).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
+          }}
+        />
+      ) : null}
+      {!isNew && kind === "survey" && survey ? (
+        <PrimaryButton
+          title={SURVEY_MAPS_ACTION}
+          color="#9F1239"
+          testID="survey-maps-btn"
+          onPress={() => {
+            const href = mapsLink(survey);
+            if (!href) {
+              Alert.alert("Konum yok", "Bu keşfe konum veya adres eklenmemiş.");
               return;
             }
             Linking.openURL(href).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));

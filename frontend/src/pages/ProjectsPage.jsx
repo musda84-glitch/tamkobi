@@ -24,6 +24,7 @@ import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 import { formatTrAmount } from "../utils/money";
+import { workMapsLink } from "../utils/mapsLink";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -680,7 +681,7 @@ export default function ProjectsPage({ section } = {}) {
             {visibleSurveys.map((s) => (
               <div key={s.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`survey-row-${s.survey_number}`}>
                 <div className="flex justify-between gap-2 items-start">
-                  <div className="min-w-0"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date}{s.assigned_to ? ` • ${s.assigned_to}` : ""}</div><div className="font-semibold mt-0.5">{s.contact_name || "—"}</div><div className="text-slate-500 truncate">{s.address}{s.location_url && <> · <a href={s.location_url} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold">Konum</a></>}</div></div>
+                  <div className="min-w-0"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date}{s.assigned_to ? ` • ${s.assigned_to}` : ""}</div><div className="font-semibold mt-0.5">{s.contact_name || "—"}</div><div className="text-slate-500 truncate">{s.address}{workMapsLink(s) ? <> · <a href={workMapsLink(s)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold" data-testid={`survey-maps-${s.id}`}>Konuma Git</a></> : null}</div></div>
                   <Badge s={s.status} />
                 </div>
                 {(s.measurements || []).length > 0 && <div className="text-slate-600 bg-slate-50 rounded-lg p-2">{(s.measurements || []).map((m, i) => <div key={i}>{m.name}: {m.quantity} {m.unit}</div>)}</div>}
@@ -699,7 +700,7 @@ export default function ProjectsPage({ section } = {}) {
               {visibleSurveys.map((s) => (
                 <tr key={s.id} data-testid={`survey-row-desk-${s.survey_number}`}>
                   <td className="px-4 py-2"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date} {s.assigned_to && `• ${s.assigned_to}`}</div></td>
-                  <td className="px-4 py-2"><div className="font-semibold">{s.contact_name || "—"}</div><div className="text-slate-500">{s.address} {s.location_url && <a href={s.location_url} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold">• Konum</a>}</div>{s.notes && <div className="text-slate-400 italic">{s.notes}</div>}</td>
+                  <td className="px-4 py-2"><div className="font-semibold">{s.contact_name || "—"}</div><div className="text-slate-500">{s.address} {workMapsLink(s) ? <a href={workMapsLink(s)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold" data-testid={`survey-maps-desk-${s.id}`}>• Konuma Git</a> : null}</div>{s.notes && <div className="text-slate-400 italic">{s.notes}</div>}</td>
                   <td className="px-4 py-2 text-slate-600">{(s.measurements || []).map((m, i) => <div key={i}>{m.name}: {m.quantity} {m.unit}</div>)}</td>
                   <td className="px-4 py-2"><ImageStrip entity="survey" doc={s} onUpdated={load} /></td>
                   <td className="px-4 py-2"><Badge s={s.status} /></td>

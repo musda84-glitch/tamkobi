@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { formatTrAmount } from "../utils/money";
+import { workMapsLink } from "../utils/mapsLink";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUSES = [["planned", "Planlandı"], ["done", "Yapıldı"], ["quoted", "Teklif Verildi"], ["cancelled", "İptal"]];
@@ -57,7 +58,7 @@ export const SurveyDetailModal = ({ survey, onClose, onChanged }) => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2"><Calendar className="w-4 h-4 text-slate-400" /><div><div className="text-[10px] uppercase text-slate-400 font-semibold">Tarih</div><div className="font-semibold">{survey.survey_date}</div></div></div>
           <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2"><User className="w-4 h-4 text-slate-400" /><div><div className="text-[10px] uppercase text-slate-400 font-semibold">Görevli</div><div className="font-semibold">{survey.assigned_to || "—"}</div></div></div>
-          <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2 sm:col-span-2"><MapPin className="w-4 h-4 text-slate-400 shrink-0" /><div className="min-w-0"><div className="text-[10px] uppercase text-slate-400 font-semibold">Adres</div><div className="font-semibold">{survey.address || "—"} {survey.location_url && <a href={survey.location_url} target="_blank" rel="noreferrer" className="text-rose-600 inline-flex items-center gap-0.5 ml-1 hover:underline"><Navigation className="w-3 h-3" /> Konum</a>}</div></div></div>
+          <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2 sm:col-span-2"><MapPin className="w-4 h-4 text-slate-400 shrink-0" /><div className="min-w-0"><div className="text-[10px] uppercase text-slate-400 font-semibold">Adres</div><div className="font-semibold">{survey.address || "—"} {workMapsLink(survey) ? <a href={workMapsLink(survey)} target="_blank" rel="noreferrer" className="text-rose-600 inline-flex items-center gap-0.5 ml-1 hover:underline" data-testid="survey-detail-maps"><Navigation className="w-3 h-3" /> Konuma Git</a> : null}</div></div></div>
         </div>
         <div>
           <div className="text-[10px] uppercase text-slate-400 font-semibold mb-1">Ölçüler / Metraj ({ms.length})</div>

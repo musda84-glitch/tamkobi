@@ -172,6 +172,7 @@ export function ListRow({
   compactRight,
   onPress,
   showChevron,
+  action,
   testID,
 }: {
   title: React.ReactNode;
@@ -188,11 +189,11 @@ export function ListRow({
   compactRight?: boolean;
   onPress?: () => void;
   showChevron?: boolean;
+  action?: React.ReactNode;
   testID?: string;
 }) {
-  const Row = onPress ? Pressable : View;
-  return (
-    <Row testID={testID} onPress={onPress} style={styles.listRow}>
+  const body = (
+    <>
       {leading || image != null ? (
         <View style={{ flexShrink: 0 }}>{leading || <ProductThumb uri={image || ""} size={56} />}</View>
       ) : null}
@@ -209,6 +210,25 @@ export function ListRow({
           {rightSub ? <Text style={[styles.muted, { fontWeight: "700", color: rightSubColor || colors.muted }]} numberOfLines={1}>{listRowText(rightSub)}</Text> : null}
         </View>
       ) : null}
+    </>
+  );
+  if (action) {
+    return (
+      <View testID={testID} style={styles.listRow}>
+        {onPress ? (
+          <Pressable onPress={onPress} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
+            {body}
+          </Pressable>
+        ) : body}
+        {action}
+        {onPress || showChevron ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
+      </View>
+    );
+  }
+  const Row = onPress ? Pressable : View;
+  return (
+    <Row testID={testID} onPress={onPress} style={styles.listRow}>
+      {body}
       {onPress || showChevron ? <Ionicons name="chevron-forward" size={18} color={colors.muted} /> : null}
     </Row>
   );

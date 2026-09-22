@@ -1077,6 +1077,15 @@ export function ContactDetailScreen() {
               title={s.survey_number || s.address || "Keşif"}
               subtitle={[statusTr(s.status), fmtDate(s.survey_date)].filter(Boolean).join(" · ")}
               onPress={() => go("SurveyDetail", { id: idOf(s) })}
+              action={mapsLink(s) ? (
+                <Pressable
+                  testID={`detail-surv-maps-${idOf(s) || idx}`}
+                  onPress={() => Linking.openURL(String(mapsLink(s)))}
+                  hitSlop={8}
+                >
+                  <Text style={{ fontWeight: "800", color: "#9F1239", fontSize: 12 }}>Konuma Git</Text>
+                </Pressable>
+              ) : undefined}
             />
           ))}
         </>

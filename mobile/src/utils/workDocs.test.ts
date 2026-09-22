@@ -9,6 +9,7 @@ import {
   PROJECT_QUOTE_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   PROJECT_MAPS_ACTION,
+  SURVEY_MAPS_ACTION,
   projectQuoteNavParams,
   canCompleteProject,
   PROJECT_STATUSES,
@@ -187,6 +188,7 @@ describe("workDocs", () => {
     expect(PROJECT_QUOTE_ACTION).toBe("Projeyi Tamamla");
     expect(PROJECT_NEW_QUOTE_ACTION).toBe("Yeni Teklif");
     expect(PROJECT_MAPS_ACTION).toBe("Konuma Git");
+    expect(SURVEY_MAPS_ACTION).toBe("Konuma Git");
     expect(projectQuoteNavParams({
       id: "4de8de86-b709-4ff5-9371-09280e82a39b",
       name: "Aa",
