@@ -271,9 +271,30 @@ export function workItemNeedsStockCard(it: Pick<WorkItem, "name" | "is_service" 
 }
 
 export function matchProductByName<T extends { name?: string }>(products: T[] | null | undefined, name: string): T | undefined {
-  const key = String(name || "").trim().toLocaleLowerCase("tr-TR");
+  const key = stockCardNameKey(name);
   if (!key) return undefined;
-  return (products || []).find((p) => String(p.name || "").trim().toLocaleLowerCase("tr-TR") === key);
+  return (products || []).find((p) => stockCardNameKey(p.name) === key);
+}
+
+export function stockCardNameKey(name?: string | null): string {
+  return String(name || "").trim().toLocaleLowerCase("tr-TR");
+}
+
+/** Aynı isim için eşzamanlı POST'ları tek karta indirir. */
+export function rememberStockCreate<T>(
+  inflight: Map<string, Promise<T>>,
+  name: string,
+  factory: () => Promise<T>,
+): Promise<T> | null {
+  const key = stockCardNameKey(name);
+  if (!key) return null;
+  const existing = inflight.get(key);
+  if (existing) return existing;
+  const pending = factory().finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, pending);
+  return pending;
 }
 
 export function quoteLineSku(name: string, uniq: string): string {
