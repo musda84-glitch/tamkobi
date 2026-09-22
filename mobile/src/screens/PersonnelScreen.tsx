@@ -35,7 +35,7 @@ import {
   parseYevmiyeWage,
   pendingYevmiyeBonus,
   parseTaskDays,
-  unpaidYevmiyeTotals,
+  yevmiyeAccrual,
   dueDateFromDays,
   validateTaskDays,
   validateYevmiyeDays,
@@ -152,7 +152,7 @@ export function PersonnelScreen() {
       setProjects(Array.isArray(projs) ? projs : []);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, unpaidYevmiyeTotals(card?.bonuses)] as const;
+        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, yevmiyeAccrual({ bonuses: card?.bonuses, payrolls: card?.payrolls, employeeId: idOf(e) })] as const;
       }));
       setBalances(Object.fromEntries(pairs.filter((row) => !!row[1]).map(([id, bal]) => [id, bal as EmployeeBalance] as const)));
       const photos = Object.fromEntries(pairs.flatMap(([id, , url]) => (url ? [[id, url] as const] : [])));
@@ -162,13 +162,17 @@ export function PersonnelScreen() {
         const eid = idOf(e);
         const attWp = (att?.summary || []).find((s) => s.employee_id === eid)?.workplace;
         const wp = pickEmployeeWorkplace(e.workplace, cardWp[eid], attWp, fieldWorkplaceFromProjects(projs || [], eid));
-        const yev = yevFromCard[eid];
+        const cardYev = yevFromCard[eid] || { days: 0, amount: 0 };
+        const fromPays = yevmiyeAccrual({
+          payrolls: (pays || []).filter((p) => p.employee_id === eid),
+          employeeId: eid,
+        });
         return {
           ...e,
           photo_url: e.photo_url || photos[eid],
           workplace: wp,
-          yevmiye_days: yev?.days || e.yevmiye_days,
-          yevmiye_due: yev?.amount || e.yevmiye_due,
+          yevmiye_days: Math.max(cardYev.days || 0, Number(e.yevmiye_days) || 0, fromPays.days),
+          yevmiye_due: Math.max(cardYev.amount || 0, Number(e.yevmiye_due) || 0, fromPays.amount),
         };
       }));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
@@ -661,10 +665,11 @@ export function PersonnelScreen() {
             const due = remainingDue(balances[eid], unpaid);
             const bal = balances[eid];
             const daysPresent = (attendance?.summary || []).find((s) => s.employee_id === eid)?.days_present || 0;
+            const fromPays = yevmiyeAccrual({ payrolls: payrolls.filter((p) => p.employee_id === eid), employeeId: eid });
             const comp = employeeCompRows(emp, bal, {
               daysPresent,
-              yevmiyeDays: emp.yevmiye_days,
-              yevmiyeAmount: emp.yevmiye_due,
+              yevmiyeDays: Math.max(Number(emp.yevmiye_days) || 0, fromPays.days),
+              yevmiyeAmount: Math.max(Number(emp.yevmiye_due) || 0, fromPays.amount),
             });
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
@@ -704,7 +709,15 @@ export function PersonnelScreen() {
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {comp.map((row) => (
                     <View key={row.key} style={{ minWidth: 140, flexGrow: 1, flexBasis: "46%", paddingRight: 8, paddingBottom: 4 }}>
-                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}{row.hint ? ` · ${row.hint}` : ""}</Muted>
+                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}</Muted>
+                      {row.key === "bonus" && row.days != null ? (
+                        <Text
+                          testID={`emp-comp-bonus-days-${eid}`}
+                          style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}
+                        >
+                          {row.days} gün
+                        </Text>
+                      ) : null}
                       <Text
                         testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
                         style={{ fontWeight: "800", color: row.key === "total" ? colors.primary : colors.text }}
@@ -885,38 +898,53 @@ export function PersonnelScreen() {
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
         {!movesBusy && !moves.length ? <Muted>Bu personel için ödeme hareketi yok.</Muted> : null}
         {moves.map((row) => (
-          <ListRow
+          <View
             key={row.id}
             testID={`emp-pay-move-${row.id}`}
-            title={row.title}
-            subtitle={row.editable ? `${row.subtitle} · düzenle` : row.subtitle}
-            right={fmtMoney(row.amount)}
-            rightColor={row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text}
-            onPress={row.editable && movesEmp ? () => {
-              const emp = movesEmp;
-              setMovesEmp(null);
-              setMoves([]);
-              openYevmiyeDays(emp, {
-                id: row.id,
-                type: row.type,
-                amount: row.amount,
-                period: month,
-                note: row.note,
-                status: row.status,
-                worked_days: row.worked_days,
-                daily_wage: row.daily_wage,
-              });
-            } : undefined}
-            action={row.payable && canEdit && movesEmp ? (
-              <PayChip
-                title="Öde"
-                color={colors.primaryHover}
-                bg={colors.emerald50}
+            style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}
+          >
+            <Pressable
+              style={{ flex: 1, minWidth: 0 }}
+              onPress={row.editable && movesEmp ? () => {
+                const emp = movesEmp;
+                setMovesEmp(null);
+                setMoves([]);
+                openYevmiyeDays(emp, {
+                  id: row.id,
+                  type: row.type,
+                  amount: row.amount,
+                  period: month,
+                  note: row.note,
+                  status: row.status,
+                  worked_days: row.worked_days,
+                  daily_wage: row.daily_wage,
+                });
+              } : undefined}
+            >
+              <Text style={{ fontWeight: "800", color: colors.text }}>{row.title}</Text>
+              <Muted>{row.editable ? `${row.subtitle} · düzenle` : row.subtitle}</Muted>
+              <Text style={{ fontWeight: "800", color: row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text }}>
+                {fmtMoney(row.amount)}
+              </Text>
+            </Pressable>
+            {row.payable && canEdit ? (
+              <Pressable
                 testID={`emp-pay-move-pay-${row.id}`}
                 onPress={() => payUnpaidMove(row)}
-              />
-            ) : undefined}
-          />
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  backgroundColor: colors.emerald50,
+                  borderWidth: 1,
+                  borderColor: "#6EE7B7",
+                  flexShrink: 0,
+                }}
+              >
+                <Text style={{ fontWeight: "800", fontSize: 13, color: colors.primaryHover }}>Öde</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ))}
       </B2BSheet>
 
@@ -1111,10 +1139,25 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!taskEmp}
         title="Görev ata"
-        subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
+        subtitle={taskEmp ? `${taskEmp.full_name} · dış görev gününü yazın, proje seçin` : undefined}
         onClose={() => { setTaskEmp(null); setTaskDays(""); }}
         testID="task-assign-sheet"
       >
+        <Field
+          label="Dış görev kaç gün?"
+          testID="task-assign-days"
+          value={taskDays}
+          onChangeText={setTaskDays}
+          keyboardType="number-pad"
+          placeholder="Örn: 3"
+        />
+        {parseTaskDays(taskDays) ? (
+          <Muted testID="task-assign-days-hint">
+            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
+          </Muted>
+        ) : (
+          <Muted testID="task-assign-days-hint">Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır.</Muted>
+        )}
         <GroupedSelect
           label="Proje"
           testID="task-project-select"
@@ -1134,29 +1177,20 @@ export function PersonnelScreen() {
         {!taskId ? (
           <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
         ) : null}
-        <Field
-          label="Dış görev gün sayısı"
-          testID="task-assign-days"
-          value={taskDays}
-          onChangeText={setTaskDays}
-          keyboardType="number-pad"
-          placeholder="Örn: 3"
-        />
-        {parseTaskDays(taskDays) ? (
-          <Muted testID="task-assign-days-hint">
-            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
-          </Muted>
-        ) : null}
         <Muted testID="task-assign-field-hint">
           {(() => {
             const proj = projects.find((p) => idOf(p) === taskProjectId);
-            if (!proj) return "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır.";
-            return workplaceHint({
-              kind: "task",
-              task_title: taskTitle || "Görev",
-              project_name: proj.name,
-              has_coords: proj.latitude != null && proj.longitude != null,
-            }, true);
+            const days = parseTaskDays(taskDays);
+            const hint = !proj
+              ? "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır."
+              : workplaceHint({
+                kind: "task",
+                task_title: taskTitle || "Görev",
+                project_name: proj.name,
+                has_coords: proj.latitude != null && proj.longitude != null,
+                duration_days: days || undefined,
+              }, true);
+            return days ? `${hint} · ${days} gün` : hint;
           })()}
         </Muted>
         <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
