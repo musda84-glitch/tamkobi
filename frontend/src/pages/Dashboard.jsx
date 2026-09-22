@@ -24,7 +24,7 @@ import {
   Layers,
   ArrowRight
 } from "lucide-react";
-import { fmtMoney, formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 import {
   AreaChart,
   Area,
