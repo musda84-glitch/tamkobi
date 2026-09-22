@@ -41,8 +41,16 @@ import {
   Bell,
   Upload,
   Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+
+const hasSgk = (emp) => Boolean(String(emp?.sgk_number || "").trim());
+const isBankAcc = (a) => {
+  const t = String(a?.type || "").toLowerCase();
+  return t === "bank" || (!t && (a?.iban || a?.bank_name));
+};
 
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
@@ -83,12 +91,22 @@ export default function PersonnelPage() {
     daily_wage: "",
     start_date: new Date().toISOString().split("T")[0],
     photo_url: "",
+    sgk_number: "",
+    iban: "",
+    meal_allowance: "",
+    transport_allowance: "",
+    birth_date: "",
+    address: "",
+    emergency_contact: "",
+    notes: "",
   };
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
+  const [showEmpDetails, setShowEmpDetails] = useState(false);
 
   const openAddEmployee = () => {
     setEditingEmp(null);
     setNewEmployee({ ...emptyEmployee, start_date: new Date().toISOString().split("T")[0] });
+    setShowEmpDetails(false);
     setShowAddModal(true);
   };
   const openEditEmployee = (emp) => {
@@ -105,7 +123,16 @@ export default function PersonnelPage() {
       daily_wage: emp.daily_wage ?? "",
       start_date: emp.start_date || new Date().toISOString().split("T")[0],
       photo_url: emp.photo_url || "",
+      sgk_number: emp.sgk_number || "",
+      iban: emp.iban || "",
+      meal_allowance: emp.meal_allowance ?? "",
+      transport_allowance: emp.transport_allowance ?? "",
+      birth_date: emp.birth_date || "",
+      address: emp.address || "",
+      emergency_contact: emp.emergency_contact || "",
+      notes: emp.notes || "",
     });
+    setShowEmpDetails(Boolean(emp.sgk_number || emp.iban || emp.meal_allowance || emp.transport_allowance || emp.address || emp.birth_date || emp.emergency_contact || emp.notes));
     setShowAddModal(true);
   };
   const closeEmployeeModal = () => {
@@ -170,6 +197,13 @@ export default function PersonnelPage() {
       toast.error("Lütfen ad soyad ve TC kimlik no girin.");
       return;
     }
+    const sgk = String(newEmployee.sgk_number || "").trim();
+    const iban = String(newEmployee.iban || "").trim();
+    if (sgk && !iban) {
+      setShowEmpDetails(true);
+      toast.error("SGK sicil numarası girildiğinde IBAN zorunludur — maaş yalnız bankadan ödenir.");
+      return;
+    }
     const daily = Number(newEmployee.daily_wage || 0);
     const monthly = Number(newEmployee.salary || 0);
     const isDaily = newEmployee.pay_type === "daily";
@@ -178,6 +212,14 @@ export default function PersonnelPage() {
       pay_type: isDaily ? "daily" : "monthly",
       daily_wage: isDaily ? daily : 0,
       salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
+      sgk_number: sgk || null,
+      iban: iban || null,
+      meal_allowance: Number(newEmployee.meal_allowance || 0) || 0,
+      transport_allowance: Number(newEmployee.transport_allowance || 0) || 0,
+      birth_date: newEmployee.birth_date || null,
+      address: String(newEmployee.address || "").trim() || null,
+      emergency_contact: String(newEmployee.emergency_contact || "").trim() || null,
+      notes: String(newEmployee.notes || "").trim() || null,
     };
     try {
       if (editingEmp) {
@@ -224,6 +266,22 @@ export default function PersonnelPage() {
 
   const handleExecuteSalaryPayment = async () => {
     if (!payPayrollItem) return;
+    const emp = employees.find((x) => empIdOf(x) === String(payPayrollItem.employee_id || ""));
+    if (hasSgk(emp)) {
+      if (!selectedBankId || String(selectedBankId).startsWith("partner:")) {
+        toast.error("SGK’lı personelin maaşı yalnız banka hesabından ödenir.");
+        return;
+      }
+      const acc = bankAccounts.find((a) => (a.id || a._id) === selectedBankId);
+      if (!acc || !isBankAcc(acc)) {
+        toast.error("SGK’lı personelin maaşı yalnız banka hesabından ödenir.");
+        return;
+      }
+      if (!String(emp.iban || "").trim()) {
+        toast.error("SGK’lı personel için önce personel kartına IBAN girin.");
+        return;
+      }
+    }
     try {
       const res = await axios.post(`${API_URL}/personnel/payrolls/${payPayrollItem.id || payPayrollItem._id}/pay`, {
         ...splitPaymentTarget(selectedBankId)
@@ -233,8 +291,19 @@ export default function PersonnelPage() {
       setPayPayrollItem(null);
       loadPersonnelData();
     } catch (err) {
-      toast.error("Maaş ödemesi gerçekleştirilemedi.");
+      toast.error(err.response?.data?.detail || "Maaş ödemesi gerçekleştirilemedi.");
     }
+  };
+
+  const openSalaryPayModal = (p) => {
+    const emp = employees.find((x) => empIdOf(x) === String(p.employee_id || ""));
+    if (hasSgk(emp)) {
+      const bank = bankAccounts.find((a) => isBankAcc(a) && !a.is_integrated);
+      setSelectedBankId(bank ? (bank.id || bank._id) : "");
+    } else if (bankAccounts[0]) {
+      setSelectedBankId(bankAccounts[0].id || bankAccounts[0]._id);
+    }
+    setPayPayrollItem(p);
   };
 
   const payrollStubFor = (emp) => {
@@ -644,7 +713,7 @@ export default function PersonnelPage() {
                     <button onClick={() => printPayslip(p, activeCompany)} className="px-2.5 py-1 mr-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold" title="Maaş bordrosu PDF (yazdır / kaydet)" data-testid={`payslip-btn-${p.id || p._id}`}>Bordro PDF</button>
                     {p.status !== 'paid' ? (
                       <button
-                        onClick={() => setPayPayrollItem(p)}
+                        onClick={() => openSalaryPayModal(p)}
                         className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm"
                         data-testid={`pay-salary-btn-${p.employee_name}`}
                       >
@@ -664,9 +733,12 @@ export default function PersonnelPage() {
       </>)}
 
       {/* SALARY PAYMENT MODAL */}
-      {payPayrollItem && (
+      {payPayrollItem && (() => {
+        const payEmp = employees.find((x) => empIdOf(x) === String(payPayrollItem.employee_id || ""));
+        const sgkPay = hasSgk(payEmp);
+        return (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="salary-pay-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">Maaş Ödemesi Onayı</h3>
               <button onClick={() => setPayPayrollItem(null)} className="text-slate-400">
@@ -677,14 +749,23 @@ export default function PersonnelPage() {
               <p>
                 <strong>{payPayrollItem.employee_name}</strong> için <strong>{payPayrollItem.period}</strong> dönemi <strong>{payPayrollItem.final_payable?.toLocaleString('tr-TR')} ₺</strong> maaş ödemesi yapılacaktır.
               </p>
+              {sgkPay && (
+                <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sky-900" data-testid="salary-sgk-bank-hint">
+                  SGK sicil no kayıtlı — ana maaş yalnız <b>banka hesabı</b>ndan ödenir.
+                  {payEmp?.iban ? <div className="mt-1 font-mono text-[11px]">Personel IBAN: {payEmp.iban}</div> : <div className="mt-1 text-rose-700 font-semibold">Personel IBAN eksik — önce kartı güncelleyin.</div>}
+                </div>
+              )}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Ödemenin yapılacağı hesap</label>
+                <label className="block font-semibold text-slate-700 mb-1">{sgkPay ? "Banka hesabı" : "Ödemenin yapılacağı hesap"}</label>
                 <PaymentTargetSelect
                   companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
                   accounts={bankAccounts}
                   value={selectedBankId}
                   onChange={setSelectedBankId}
-                                    testId="salary-pay-account"
+                  testId="salary-pay-account"
+                  allowedTypes={sgkPay ? ["bank"] : null}
+                  includePartners={!sgkPay}
+                  includeCreditCards={!sgkPay}
                 />
               </div>
             </div>
@@ -705,12 +786,13 @@ export default function PersonnelPage() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ADD / EDIT EMPLOYEE MODAL */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="employee-form-modal">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto" data-testid="employee-form-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">{editingEmp ? "Personeli Düzenle" : "Yeni Personel Ekle"}</h3>
               <button onClick={closeEmployeeModal} className="text-slate-400">
@@ -832,6 +914,129 @@ export default function PersonnelPage() {
                   />
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowEmpDetails((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800"
+                data-testid="employee-details-toggle"
+              >
+                <span>Ayrıntılar {String(newEmployee.sgk_number || "").trim() ? "· SGK" : ""}</span>
+                {showEmpDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+
+              {showEmpDetails && (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3" data-testid="employee-details-section">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">SGK Sicil No</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="13 haneli"
+                        value={newEmployee.sgk_number}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, sgk_number: e.target.value.replace(/\D/g, "").slice(0, 13) })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
+                        data-testid="employee-sgk-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">İşe giriş</label>
+                      <input
+                        type="date"
+                        value={newEmployee.start_date}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, start_date: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-start-date-input"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">IBAN {String(newEmployee.sgk_number || "").trim() ? <span className="text-rose-600">(zorunlu)</span> : null}</label>
+                    <input
+                      type="text"
+                      placeholder="TR.."
+                      value={newEmployee.iban}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, iban: e.target.value.toUpperCase() })}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
+                      data-testid="employee-iban-input"
+                    />
+                    {String(newEmployee.sgk_number || "").trim() ? (
+                      <p className="text-[10px] text-sky-800 mt-1" data-testid="employee-sgk-bank-hint">SGK sicili girildiğinde ana maaş yalnız banka hesabından ödenir.</p>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Yemek ücreti (aylık ₺)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={newEmployee.meal_allowance}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, meal_allowance: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-meal-allowance-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Yol ödemesi (aylık ₺)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={newEmployee.transport_allowance}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, transport_allowance: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-transport-allowance-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Doğum tarihi</label>
+                      <input
+                        type="date"
+                        value={newEmployee.birth_date}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, birth_date: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-birth-date-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Acil durum iletişim</label>
+                      <input
+                        type="text"
+                        placeholder="Ad · telefon"
+                        value={newEmployee.emergency_contact}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, emergency_contact: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-emergency-input"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Adres</label>
+                    <input
+                      type="text"
+                      value={newEmployee.address}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, address: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                      data-testid="employee-address-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Notlar</label>
+                    <textarea
+                      rows={2}
+                      value={newEmployee.notes}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, notes: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 resize-none"
+                      data-testid="employee-notes-input"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
                   type="button"
