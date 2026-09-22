@@ -570,12 +570,47 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
   return groups;
 }
 
+export const EMPLOYEE_MEAL_CATEGORY = "Yemek";
+export const EMPLOYEE_TRANSPORT_CATEGORY = "Yol / Ulaşım";
+
 export const EMPLOYEE_CARD_ACTIONS = [
   { key: "advance", title: "Avans" },
   { key: "salary", title: "Maaş öde" },
   { key: "task", title: "Görev ata" },
   { key: "overtime", title: "+ Mesai" },
+  { key: "meal", title: "Yemek" },
+  { key: "transport", title: "Yol" },
 ] as const;
+
+export type EmployeeCardActionKey = (typeof EMPLOYEE_CARD_ACTIONS)[number]["key"];
+
+export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
+  if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
+  return Number(balance?.transport_due ?? emp?.transport_allowance ?? 0) || 0;
+}
+
+export function personnelExpensePayload(
+  employeeId: string,
+  kind: "meal" | "transport",
+  amount: string,
+  accountId: string,
+  note: string,
+  companyId: string,
+  date = "",
+) {
+  const meal = kind === "meal";
+  return {
+    company_id: companyId,
+    employee_id: employeeId,
+    category: meal ? EMPLOYEE_MEAL_CATEGORY : EMPLOYEE_TRANSPORT_CATEGORY,
+    description: note.trim() || (meal ? "Yemek ücreti" : "Yol / ulaşım ödemesi"),
+    amount: num(amount),
+    vat_rate: 0,
+    date: (date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    notes: note.trim(),
+    ...splitPaymentTarget(accountId),
+  };
+}
 
 export function employeeCardActionTitles(): string[] {
   return EMPLOYEE_CARD_ACTIONS.map((a) => a.title);

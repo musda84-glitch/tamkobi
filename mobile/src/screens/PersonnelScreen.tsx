@@ -27,6 +27,8 @@ import {
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_ACTIONS,
+  allowanceDue,
+  personnelExpensePayload,
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
@@ -72,6 +74,10 @@ export function PersonnelScreen() {
   const [advanceEmp, setAdvanceEmp] = useState<Employee | null>(null);
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
+  const [allowanceEmp, setAllowanceEmp] = useState<Employee | null>(null);
+  const [allowanceKind, setAllowanceKind] = useState<"meal" | "transport">("meal");
+  const [allowanceAmount, setAllowanceAmount] = useState("");
+  const [allowanceNote, setAllowanceNote] = useState("");
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [movesEmp, setMovesEmp] = useState<Employee | null>(null);
   const [moves, setMoves] = useState<EmployeePayMove[]>([]);
@@ -175,6 +181,45 @@ export function PersonnelScreen() {
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Avans kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAllowance = (emp: Employee, kind: "meal" | "transport") => {
+    setAllowanceEmp(emp);
+    setAllowanceKind(kind);
+    const due = allowanceDue(emp, balances[idOf(emp)], kind);
+    setAllowanceAmount(due > 0 ? String(due) : "");
+    setAllowanceNote("");
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+  };
+
+  const saveAllowance = async () => {
+    if (!allowanceEmp) return;
+    const invalid = validateAdvance(allowanceAmount);
+    if (invalid) { setError(invalid === "Avans tutarı girin." ? "Tutar girin." : invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/expenses", personnelExpensePayload(
+        idOf(allowanceEmp),
+        allowanceKind,
+        allowanceAmount,
+        payAccount,
+        allowanceNote,
+        companyId,
+        todayIso(),
+      ));
+      const label = allowanceKind === "meal" ? "Yemek" : "Yol";
+      setAllowanceEmp(null);
+      setAllowanceAmount("");
+      setAllowanceNote("");
+      setMessage(`${allowanceEmp.full_name} için ${label.toLowerCase()} ödemesi kaydedildi.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Ödeme kaydedilemedi."));
     } finally {
       setBusy(false);
     }
@@ -394,6 +439,7 @@ export function PersonnelScreen() {
                     bg="#F1F5F9"
                     testID={`emp-card-moves-btn-${eid}`}
                     onPress={() => openMoves(emp)}
+                    wide
                   />
                   {canEdit ? EMPLOYEE_CARD_ACTIONS.map((action) => {
                       const press = {
@@ -408,12 +454,16 @@ export function PersonnelScreen() {
                         salary: () => openSalaryPay(emp),
                         task: () => openTaskAssign(emp),
                         overtime: () => openOvertime(emp),
+                        meal: () => openAllowance(emp, "meal"),
+                        transport: () => openAllowance(emp, "transport"),
                       }[action.key];
                       const tone = {
                         advance: { color: "#B45309", bg: colors.amber50 },
                         salary: { color: colors.primaryHover, bg: colors.emerald50 },
                         task: { color: colors.indigo, bg: colors.indigo50 },
                         overtime: { color: "#6D28D9", bg: colors.indigo50 },
+                        meal: { color: "#C2410C", bg: "#FFF7ED" },
+                        transport: { color: "#0E7490", bg: "#ECFEFF" },
                       }[action.key];
                       return (
                         <PayChip
@@ -589,6 +639,45 @@ export function PersonnelScreen() {
       </B2BSheet>
 
       <B2BSheet
+        visible={!!allowanceEmp}
+        title={allowanceKind === "meal" ? "Yemek ücreti" : "Yol ödemesi"}
+        subtitle={allowanceEmp ? `${allowanceEmp.full_name} · masraf olarak kaydedilir` : undefined}
+        onClose={() => setAllowanceEmp(null)}
+        testID="allowance-pay-sheet"
+      >
+        <Field
+          label="Tutar (₺)"
+          testID="allowance-pay-amount"
+          value={allowanceAmount}
+          onChangeText={setAllowanceAmount}
+          keyboardType="numeric"
+          placeholder={allowanceKind === "meal" ? "Örn: 5000" : "Örn: 2500"}
+        />
+        <Field
+          label="Açıklama"
+          testID="allowance-pay-note"
+          value={allowanceNote}
+          onChangeText={setAllowanceNote}
+          placeholder={allowanceKind === "meal" ? "Yemek ücreti" : "Yol / ulaşım"}
+        />
+        <GroupedSelect
+          label="Kasa / Banka / Ortak"
+          testID="allowance-pay-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Şimdi ödenmeyecek (borç olarak kaydet)"
+        />
+        <PrimaryButton
+          title={payAccount ? "Kaydet & Öde" : "Kaydet"}
+          testID="allowance-pay-submit"
+          color={allowanceKind === "meal" ? "#C2410C" : "#0E7490"}
+          loading={busy}
+          onPress={saveAllowance}
+        />
+      </B2BSheet>
+
+      <B2BSheet
         visible={!!payItem}
         title="Maaş ödemesi onayı"
         subtitle={payItem ? `${payItem.employee_name} · ${payItem.period} · ${fmtMoney(payItem.final_payable)}` : undefined}
@@ -664,27 +753,36 @@ function PayChip({
   bg,
   onPress,
   testID,
+  wide,
 }: {
   title: string;
   color: string;
   bg: string;
   onPress: () => void;
   testID: string;
+  wide?: boolean;
 }) {
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
       style={{
+        flexGrow: 1,
+        flexBasis: wide ? "100%" : "47%",
+        minWidth: wide ? "100%" : "47%",
+        maxWidth: wide ? "100%" : "48.5%",
+        minHeight: 40,
         paddingVertical: 8,
-        paddingHorizontal: 12,
+        paddingHorizontal: 8,
         borderRadius: 10,
         backgroundColor: bg,
         borderWidth: 1,
         borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <Text style={{ fontWeight: "800", fontSize: 12, color }}>{title}</Text>
+      <Text style={{ fontWeight: "800", fontSize: 12, color, textAlign: "center" }}>{title}</Text>
     </Pressable>
   );
 }
