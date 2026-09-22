@@ -27,7 +27,7 @@ import { normalizeProjectStages, type ProjectStage } from "../utils/projectStage
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
-import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { fmtMoney, getPriceDecimals, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
 import {
   emptyProjectExpenseDraft,
@@ -82,6 +82,12 @@ import {
 } from "../utils/workDocs";
 
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
+
+function quotePriceText(v: unknown): string {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "";
+  return x.toFixed(getPriceDecimals());
+}
 
 function quoteDraftSig(
   title: string,
@@ -837,7 +843,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                   </Pressable>
                                 </View>
                               </View>
-                              <View style={{ flex: 1, minWidth: 72 }}>
+                              <View style={{ flex: 1, minWidth: 0 }}>
                                 <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
                                 <View
                                   style={{
@@ -850,17 +856,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                     minHeight: 32,
                                     paddingHorizontal: 8,
                                     gap: 4,
+                                    overflow: "hidden",
+                                    minWidth: 0,
                                   }}
                                 >
                                   <TextInput
                                     testID={`q-item-price-${i}`}
-                                    value={String(it.unit_price)}
+                                    value={quotePriceText(it.unit_price)}
                                     onChangeText={(v) => patchItem(i, "unit_price", n(v))}
                                     keyboardType="decimal-pad"
                                     editable={canEdit}
-                                    style={{ flex: 1, fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                    numberOfLines={1}
+                                    style={{ flex: 1, minWidth: 0, fontWeight: "700", fontSize: 12, color: colors.text, padding: 0, minHeight: 32 }}
                                   />
-                                  <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
+                                  <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12, flexShrink: 0 }}>₺</Text>
                                 </View>
                               </View>
                             </Row>
@@ -937,7 +946,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 </Pressable>
                               </View>
                             </View>
-                            <View>
+                            <View style={{ minWidth: 0 }}>
                               <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
                               <View
                                 style={{
@@ -950,17 +959,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                   minHeight: 32,
                                   paddingHorizontal: 8,
                                   gap: 4,
+                                  overflow: "hidden",
+                                  maxWidth: 88,
                                 }}
                               >
                                 <TextInput
                                   testID={`q-item-price-${i}`}
-                                  value={String(it.unit_price)}
+                                  value={quotePriceText(it.unit_price)}
                                   onChangeText={(v) => patchItem(i, "unit_price", n(v))}
                                   keyboardType="decimal-pad"
                                   editable={canEdit}
-                                  style={{ width: 56, fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                  numberOfLines={1}
+                                  style={{ flex: 1, minWidth: 0, width: 56, fontWeight: "700", fontSize: 12, color: colors.text, padding: 0, minHeight: 32 }}
                                 />
-                                <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
+                                <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12, flexShrink: 0 }}>₺</Text>
                               </View>
                             </View>
                           </View>
