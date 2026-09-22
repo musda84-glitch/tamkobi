@@ -102,7 +102,21 @@ export function HomeScreen() {
       <ErrorBanner message={error} />
 
       <View testID="home-quick-menu">
-        <ActionTiles size="md" items={quickItems} />
+        <ActionTiles
+          size="md"
+          items={[
+            ...quickItems,
+            {
+              key: "refresh",
+              label: "Yenile",
+              icon: "refresh",
+              tone: "slate",
+              testID: "home-quick-refresh",
+              onPress: load,
+              busy: refreshing,
+            },
+          ]}
+        />
         {showMessages ? (
           <View style={{ marginTop: 8 }}>
             <StaffMessagesPanel client={client} onChanged={refreshBadges} />
