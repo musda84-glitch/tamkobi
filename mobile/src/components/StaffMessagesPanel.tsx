@@ -23,8 +23,11 @@ import {
   peerSelectGroups,
   previewStaffMessages,
   requireManagerId,
+  announceAudienceLabel,
+  announcementUnread,
   validateMessageBody,
   type PeerRef,
+  type StaffAnnouncement,
   type StaffMessage,
   type StaffMessagesPayload,
 } from "../utils/staffMessages";
@@ -100,6 +103,12 @@ export function StaffMessagesPanel({
   const [groupTitle, setGroupTitle] = useState("");
   const [groupUsers, setGroupUsers] = useState<string[]>([]);
   const [groupEmps, setGroupEmps] = useState<string[]>([]);
+  const [announceOpen, setAnnounceOpen] = useState(false);
+  const [announceTitle, setAnnounceTitle] = useState("");
+  const [announceBody, setAnnounceBody] = useState("");
+  const [announceEmps, setAnnounceEmps] = useState<string[]>([]);
+  const [announceAll, setAnnounceAll] = useState(true);
+  const [openAnnounce, setOpenAnnounce] = useState<StaffAnnouncement | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem(MESSAGES_HIDDEN_KEY).then((raw) => setHidden(parseHiddenFlag(raw))).catch(() => null);
@@ -246,6 +255,43 @@ export function StaffMessagesPanel({
     }
   };
 
+  const createAnnounce = async () => {
+    const invalid = validateMessageBody(announceBody);
+    if (invalid) { setError(invalid); return; }
+    if (!announceAll && !announceEmps.length) {
+      setError("Duyuru için personel seçin.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/messages/announce", {
+        title: announceTitle,
+        body: announceBody,
+        employee_ids: announceAll ? [] : announceEmps,
+      });
+      setAnnounceOpen(false);
+      setAnnounceTitle("");
+      setAnnounceBody("");
+      setAnnounceEmps([]);
+      setAnnounceAll(true);
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Duyuru gönderilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAnnouncement = async (row: StaffAnnouncement) => {
+    setOpenAnnounce(row);
+    if (row.id) {
+      await post(client, "/personnel/messages/announce/read", { id: row.id }).catch(() => null);
+      await load();
+      onChanged?.();
+    }
+  };
+
   const mode = data?.mode || "";
   const showStaff = mode === "staff" || mode === "both";
   const showInbox = mode === "manager" || mode === "both";
@@ -259,10 +305,12 @@ export function StaffMessagesPanel({
     [data?.directory, managers, selfId],
   );
   const groups = data?.group_inbox || [];
+  const announcements = data?.announcements || [];
   const badge = inboxUnreadTotal([
     ...(showInbox ? conversations : []),
     ...managerRows,
     ...groups,
+    { unread: announcementUnread(announcements, selfId) },
   ]);
   const selectedName = managerRows.find((r) => r.user_id === selectedManager)?.name
     || managers.find((m) => m.id === selectedManager)?.name
@@ -370,24 +418,25 @@ export function StaffMessagesPanel({
           {showInbox ? (
             <View style={{ gap: 6 }}>
               <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12 }}>Tüm yazışmalar</Text>
-              {pickGroups.length ? (
-                <GroupedSelect
-                  label="Personel veya yönetici seç"
-                  testID="home-message-pick"
-                  value={pickPeer}
-                  onChange={(v) => {
-                    setPickPeer(v);
-                    const peer = parsePeerValue(v);
-                    if (!peer) return;
-                    const name = peer.kind === "manager"
-                      ? (managers.find((m) => m.id === peer.id)?.name || "Yönetici")
-                      : (conversations.find((r) => r.employee_id === peer.id)?.employee_name || "Personel");
-                    openThread(peer, name);
-                  }}
-                  groups={pickGroups}
-                  emptyLabel="Yeni yazışma başlat"
-                  dense
-                />
+              <GroupedSelect
+                label="Personel seç"
+                testID="home-message-pick"
+                value={pickPeer}
+                onChange={(v) => {
+                  setPickPeer(v);
+                  const peer = parsePeerValue(v);
+                  if (!peer) return;
+                  const name = peer.kind === "manager"
+                    ? (managers.find((m) => m.id === peer.id)?.name || "Yönetici")
+                    : (conversations.find((r) => r.employee_id === peer.id)?.employee_name || "Personel");
+                  openThread(peer, name);
+                }}
+                groups={pickGroups}
+                emptyLabel="Personel veya yönetici seçin"
+                dense
+              />
+              {!pickGroups.length ? (
+                <Text style={{ color: colors.muted, fontSize: 12 }}>Seçilecek personel yok.</Text>
               ) : null}
               {managerRows.filter((r) => r.user_id !== "_all").length ? (
                 <View style={{ gap: 6 }}>
@@ -420,7 +469,7 @@ export function StaffMessagesPanel({
           ) : null}
 
           <View style={{ gap: 6 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12, flex: 1 }}>Grup yazışmaları</Text>
               <Pressable
                 testID="home-group-new"
@@ -429,6 +478,15 @@ export function StaffMessagesPanel({
               >
                 <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Yeni grup</Text>
               </Pressable>
+              {showInbox ? (
+                <Pressable
+                  testID="home-announce-new"
+                  onPress={() => setAnnounceOpen(true)}
+                  style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: "#fff", borderWidth: 1, borderColor: tone.border }}
+                >
+                  <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Duyuru</Text>
+                </Pressable>
+              ) : null}
             </View>
             {!groups.length ? (
               <Text style={{ color: colors.muted, fontSize: 12 }}>Henüz grup yok. Personel ve yöneticileri ekleyerek başlatın.</Text>
@@ -443,6 +501,24 @@ export function StaffMessagesPanel({
               />
             ))}
           </View>
+
+          {announcements.length || showInbox ? (
+            <View style={{ gap: 6 }}>
+              <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12 }}>Duyurular</Text>
+              {!announcements.length ? (
+                <Text style={{ color: colors.muted, fontSize: 12 }}>Henüz duyuru yok.</Text>
+              ) : announcements.map((row) => (
+                <InboxRow
+                  key={row.id}
+                  title={row.title || "Duyuru"}
+                  last={{ body: `${row.from_name || "Yönetici"} · ${announceAudienceLabel(row)} · ${messagePreview(row)}` }}
+                  unread={(row.read_by || []).includes(selfId) ? 0 : 1}
+                  testID={`home-announce-${row.id}`}
+                  onPress={() => openAnnouncement(row)}
+                />
+              ))}
+            </View>
+          ) : null}
 
           {error && data ? <Text style={{ color: colors.danger, fontSize: 12 }}>{error}</Text> : null}
         </>
@@ -523,6 +599,69 @@ export function StaffMessagesPanel({
           <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 10 }}>Eklenecek personel yok.</Text>
         )}
         <PrimaryButton title={busy ? "Oluşturuluyor…" : "Grup oluştur"} onPress={createGroup} disabled={busy} testID="home-group-create" />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={announceOpen}
+        title="Yeni duyuru"
+        subtitle="Tüm personele veya seçtiklerinize"
+        onClose={() => setAnnounceOpen(false)}
+        testID="home-announce-form"
+      >
+        <TextInput
+          testID="home-announce-title"
+          value={announceTitle}
+          onChangeText={setAnnounceTitle}
+          placeholder="Başlık"
+          placeholderTextColor={colors.muted}
+          style={{ minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 10, marginBottom: 10, color: colors.text, fontWeight: "700" }}
+        />
+        <TextInput
+          testID="home-announce-body"
+          value={announceBody}
+          onChangeText={setAnnounceBody}
+          placeholder="Duyuru metni"
+          placeholderTextColor={colors.muted}
+          multiline
+          style={{ minHeight: 80, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10, color: colors.text }}
+        />
+        <Chip
+          label="Tüm personel"
+          selected={announceAll}
+          testID="home-announce-all"
+          onPress={() => setAnnounceAll(true)}
+        />
+        <View style={{ height: 8 }} />
+        {(data.directory || []).length ? (
+          <View style={{ gap: 6, marginBottom: 10 }}>
+            <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>Veya personel seç</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {(data.directory || []).filter((e) => e.id).map((e) => (
+                <Chip
+                  key={e.id}
+                  label={e.full_name || "Personel"}
+                  selected={!announceAll && announceEmps.includes(String(e.id))}
+                  testID={`home-announce-emp-${e.id}`}
+                  onPress={() => {
+                    setAnnounceAll(false);
+                    toggleId(announceEmps, String(e.id), setAnnounceEmps);
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+        <PrimaryButton title={busy ? "Gönderiliyor…" : "Duyuru gönder"} onPress={createAnnounce} disabled={busy} testID="home-announce-send" />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!openAnnounce}
+        title={openAnnounce?.title || "Duyuru"}
+        subtitle={`${openAnnounce?.from_name || "Yönetici"} · ${announceAudienceLabel(openAnnounce)}`}
+        onClose={() => setOpenAnnounce(null)}
+        testID="home-announce-view"
+      >
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20 }}>{openAnnounce?.body}</Text>
       </B2BSheet>
     </View>
   );

@@ -264,6 +264,36 @@ def group_inbox_from_rows(rows: List[Dict[str, Any]], groups: List[Dict[str, Any
     return out
 
 
+def announce_title(title: Any) -> str:
+    return str(title or "").strip()[:80] or "Duyuru"
+
+
+def announce_visible(doc: Optional[Dict[str, Any]], employee_id: str = "", manager: bool = False) -> bool:
+    if not doc:
+        return False
+    if manager:
+        return True
+    targets = [str(x) for x in (doc.get("employee_ids") or []) if x]
+    if not targets:
+        return True
+    return str(employee_id or "") in targets
+
+
+def public_announce(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not doc:
+        return None
+    return {
+        "id": str(doc.get("_id") or doc.get("id") or ""),
+        "title": doc.get("title") or "Duyuru",
+        "body": doc.get("body") or "",
+        "from_user_id": doc.get("from_user_id") or "",
+        "from_name": doc.get("from_name") or "Yönetici",
+        "employee_ids": list(doc.get("employee_ids") or []),
+        "created_at": doc.get("created_at") or "",
+        "read_by": list(doc.get("read_by") or []),
+    }
+
+
 def merge_manager_directory(inbox: List[Dict[str, Any]], managers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     by = {str(r.get("user_id")): r for r in inbox or [] if r.get("user_id")}
     for m in managers or []:
@@ -419,6 +449,7 @@ async def _list_messages(
     managers = await _manager_directory(company_id)
     groups = await _groups_for(company_id, uid, own_id)
     pub_groups = [public_group(g) for g in groups if public_group(g)]
+    announcements = await _list_announcements(company_id, own_id, manager)
 
     if gid:
         group = next((g for g in groups if str(g.get("_id")) == gid), None)
@@ -520,6 +551,7 @@ async def _list_messages(
             "manager_inbox": staff_inbox,
             "groups": pub_groups,
             "group_inbox": group_inbox,
+            "announcements": announcements,
             "self_user_id": uid,
         }
     if manager:
@@ -537,6 +569,7 @@ async def _list_messages(
             "managers": [m for m in managers if str(m.get("id")) != uid],
             "groups": pub_groups,
             "group_inbox": group_inbox,
+            "announcements": announcements,
             "self_user_id": uid,
         }
     raise HTTPException(status_code=403, detail="Mesajları görmek için personel kartı veya yönetici yetkisi gerekir.")
@@ -657,6 +690,74 @@ async def _read_messages(req: Dict[str, Any], user: dict):
     return {"status": "success", "updated": int(getattr(result, "modified_count", 0) or 0)}
 
 
+async def _list_announcements(company_id: str, employee_id: str = "", manager: bool = False) -> List[Dict[str, Any]]:
+    rows = await _db.staff_announcements.find({"company_id": company_id}).sort("created_at", -1).to_list(40)
+    return [public_announce(r) for r in rows if announce_visible(r, employee_id, manager) and public_announce(r)]
+
+
+async def _create_announce(req: Dict[str, Any], user: dict):
+    if not is_manager(user):
+        raise HTTPException(status_code=403, detail="Duyuru göndermek için yönetici yetkisi gerekir.")
+    body, err = validate_body((req or {}).get("body"))
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    company_id = user_company_id(user)
+    uid = user_id_of(user)
+    title = announce_title((req or {}).get("title"))
+    wanted = unique_ids((req or {}).get("employee_ids") or [])
+    directory = await _employee_directory(company_id)
+    valid = {str(e.get("id")) for e in directory if e.get("id")}
+    employee_ids = [eid for eid in wanted if eid in valid]
+    if wanted and not employee_ids:
+        raise HTTPException(status_code=400, detail="Duyuru için personel seçin.")
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "title": title,
+        "body": body,
+        "from_user_id": uid,
+        "from_name": str(user.get("name") or user.get("full_name") or "Yönetici"),
+        "employee_ids": employee_ids,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "read_by": [uid] if uid else [],
+    }
+    await _db.staff_announcements.insert_one(doc)
+    targets = employee_ids or [str(e.get("id")) for e in directory if e.get("id")]
+    if targets:
+        emps = await _db.employees.find({"company_id": company_id, "_id": {"$in": targets}}).to_list(400)
+        for emp in emps:
+            try:
+                await _notify.insert_notification(_db, _notify.notification_doc(
+                    company_id, "staff_announcement",
+                    title,
+                    body[:140],
+                    link="/",
+                    user_id=emp.get("user_id") or None,
+                    employee_id=emp.get("_id") or emp.get("id"),
+                    roles=(),
+                    ref_type="staff_announcement",
+                    ref_id=doc.get("_id"),
+                ))
+            except Exception:
+                pass
+    return {"status": "success", "announcement": public_announce(doc)}
+
+
+async def _read_announce(req: Dict[str, Any], user: dict):
+    company_id = user_company_id(user)
+    uid = user_id_of(user)
+    aid = str((req or {}).get("id") or "").strip()
+    if not aid or not uid:
+        raise HTTPException(status_code=400, detail="Duyuru bulunamadı.")
+    result = await _db.staff_announcements.update_one(
+        {"_id": aid, "company_id": company_id},
+        {"$addToSet": {"read_by": uid}},
+    )
+    if not int(getattr(result, "matched_count", 0) or 0):
+        raise HTTPException(status_code=404, detail="Duyuru bulunamadı.")
+    return {"status": "success"}
+
+
 async def _create_group(req: Dict[str, Any], user: dict):
     company_id = user_company_id(user)
     own = await attendance.employee_for_user(user)
@@ -731,3 +832,11 @@ def init(db, current_user_dep):
     @router.post("/personnel/messages/groups")
     async def create_group(req: Dict[str, Any], user: dict = Depends(current_user_dep)):
         return await _create_group(req, user)
+
+    @router.post("/personnel/messages/announce")
+    async def create_announce(req: Dict[str, Any], user: dict = Depends(current_user_dep)):
+        return await _create_announce(req, user)
+
+    @router.post("/personnel/messages/announce/read")
+    async def read_announce(req: Dict[str, Any], user: dict = Depends(current_user_dep)):
+        return await _read_announce(req, user)

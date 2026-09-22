@@ -57,6 +57,16 @@ export type GroupInboxRow = {
   unread?: number;
 };
 
+export type StaffAnnouncement = {
+  id?: string;
+  title?: string;
+  body?: string;
+  from_name?: string;
+  employee_ids?: string[];
+  created_at?: string;
+  read_by?: string[];
+};
+
 export type StaffMessagesPayload = {
   mode?: "staff" | "manager" | "both" | "thread" | "group" | string;
   employee?: { id?: string; full_name?: string } | null;
@@ -68,6 +78,7 @@ export type StaffMessagesPayload = {
   groups?: StaffGroup[];
   group_inbox?: GroupInboxRow[];
   group?: StaffGroup | null;
+  announcements?: StaffAnnouncement[];
   to_user?: StaffManager | null;
   unread?: number;
   self_user_id?: string;
@@ -235,6 +246,17 @@ export function peerQuery(peer: PeerRef | null | undefined): Record<string, stri
   if (peer.kind === "manager") return { to_user_id: peer.id };
   if (peer.kind === "group") return { group_id: peer.id };
   return { employee_id: peer.id };
+}
+
+export function announceAudienceLabel(row?: { employee_ids?: string[] } | null): string {
+  const n = (row?.employee_ids || []).length;
+  if (!n) return "Tüm personel";
+  return n === 1 ? "1 personel" : `${n} personel`;
+}
+
+export function announcementUnread(rows?: StaffAnnouncement[] | null, selfId?: string | null): number {
+  const me = String(selfId || "");
+  return (rows || []).filter((a) => !(a.read_by || []).includes(me)).length;
 }
 
 export function peerPostBody(peer: PeerRef | null | undefined, extra?: Record<string, unknown>): Record<string, unknown> {

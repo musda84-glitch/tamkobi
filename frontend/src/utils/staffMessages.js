@@ -116,6 +116,17 @@ export function peerQuery(peer) {
   return { employee_id: peer.id };
 }
 
+export function announceAudienceLabel(row) {
+  const n = (row?.employee_ids || []).length;
+  if (!n) return "Tüm personel";
+  return n === 1 ? "1 personel" : `${n} personel`;
+}
+
+export function announcementUnread(rows, selfId) {
+  const me = String(selfId || "");
+  return (rows || []).filter((a) => !(a.read_by || []).includes(me)).length;
+}
+
 export function peerPostBody(peer, extra) {
   const body = { ...(extra || {}) };
   if (!peer?.id) return body;

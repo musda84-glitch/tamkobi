@@ -403,6 +403,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "title", "member_user_ids", "member_employee_ids"),
         "refs": ("companies._id", "users._id", "employees._id"),
     },
+    "staff_announcements": {
+        "scope": SCOPE_TENANT,
+        "description": "Yönetici personel duyuruları.",
+        "keys": ("_id", "company_id", "title", "body", "from_user_id", "employee_ids", "created_at"),
+        "refs": ("companies._id", "users._id", "employees._id"),
+    },
     "bonus_payments": {
         "scope": SCOPE_TENANT,
         "description": "Prim / avans / yan ödeme.",
