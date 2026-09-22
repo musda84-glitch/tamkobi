@@ -26,6 +26,7 @@ import {
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
+  closedProjectCount,
   taskSelectGroups,
   advancePayload,
   advanceRequestPayload,
@@ -363,6 +364,18 @@ describe("project task assign", () => {
       value: "p1",
       label: "Villa · PRJ-1",
     });
+    expect(projectSelectGroups([
+      { id: "p1", name: "Villa", project_number: "PRJ-1" },
+      { id: "p2", name: "Bitti", status: "completed" },
+    ]).map((g) => g.label)).toEqual(["Açık projeler"]);
+    expect(projectSelectGroups([
+      { id: "p1", name: "Villa" },
+      { id: "p2", name: "Bitti", status: "completed" },
+    ], { includeCompleted: true }).map((g) => [g.label, g.options.map((o) => o.value)])).toEqual([
+      ["Açık projeler", ["p1"]],
+      ["Tamamlanan", ["p2"]],
+    ]);
+    expect(closedProjectCount([{ status: "completed" }, { status: "active" }])).toBe(1);
     const groups = taskSelectGroups([
       { id: "t1", title: "Montaj", assignee_name: "Ali" },
       { id: "t2", title: "Keşif", done: true },

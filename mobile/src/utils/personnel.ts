@@ -834,14 +834,32 @@ export function validateTaskAssign(projectId: string, taskId: string, title: str
   return null;
 }
 
-export function projectSelectGroups(projects: ProjectWithTasks[]) {
-  return [{
-    label: "Projeler",
-    options: (projects || []).map((p) => ({
-      value: idOf(p),
-      label: `${p.name || "Proje"}${p.project_number ? ` · ${p.project_number}` : ""}`,
-    })),
-  }];
+export function isClosedProject(p?: Pick<ProjectWithTasks, "status"> | null): boolean {
+  const s = String(p?.status || "").toLocaleLowerCase("tr-TR");
+  return s === "completed" || s === "tamamlandı" || s === "tamamlandi" || s === "done";
+}
+
+export function closedProjectCount(projects?: ProjectWithTasks[] | null): number {
+  return (projects || []).filter(isClosedProject).length;
+}
+
+export function projectSelectGroups(
+  projects: ProjectWithTasks[],
+  opts?: { includeCompleted?: boolean; keepId?: string },
+) {
+  const keep = String(opts?.keepId || "");
+  const rows = (projects || []).filter((p) => opts?.includeCompleted || !isClosedProject(p) || idOf(p) === keep);
+  const open = rows.filter((p) => !isClosedProject(p));
+  const done = rows.filter((p) => isClosedProject(p));
+  const labelOf = (p: ProjectWithTasks) => `${p.name || "Proje"}${p.project_number ? ` · ${p.project_number}` : ""}`;
+  const groups: { label: string; options: { value: string; label: string }[] }[] = [];
+  if (open.length) {
+    groups.push({ label: "Açık projeler", options: open.map((p) => ({ value: idOf(p), label: labelOf(p) })) });
+  }
+  if (done.length) {
+    groups.push({ label: "Tamamlanan", options: done.map((p) => ({ value: idOf(p), label: labelOf(p) })) });
+  }
+  return groups;
 }
 
 export function taskSelectGroups(tasks?: ProjectTask[] | null) {

@@ -16,6 +16,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ project_id: "", title: "", due_date: "", duration_days: "" });
+  const [showCompleted, setShowCompleted] = useState(false);
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -48,8 +49,9 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
       })),
   );
   const openTasks = myTasks.filter((t) => !(t.done || t.status === "done" || t.status === "completed"));
-  const assignable = projects.filter((p) => p.status !== "completed");
-  const projectOptions = assignable.length ? assignable : projects;
+  const closed = projects.filter((p) => p.status === "completed" || p.status === "tamamlandı");
+  const assignable = projects.filter((p) => p.status !== "completed" && p.status !== "tamamlandı");
+  const projectOptions = showCompleted ? [...assignable, ...closed] : assignable;
   const selected = projects.find((p) => (p.id || p._id) === form.project_id);
   const selectedHasLoc = selected && selected.latitude != null && selected.longitude != null;
 
@@ -157,15 +159,26 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Proje</label>
+                  {closed.length ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCompleted((v) => !v)}
+                      className="mb-1 text-[11px] font-semibold text-indigo-700"
+                      data-testid="emp-task-show-completed"
+                    >
+                      {showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${closed.length})`}
+                    </button>
+                  ) : null}
                   <select
                     value={form.project_id}
                     onChange={(e) => setForm({ ...form, project_id: e.target.value })}
                     className={inputCls}
                     data-testid="emp-task-project"
                   >
+                    <option value="">Proje seçin</option>
                     {projectOptions.map((p) => (
                       <option key={p.id || p._id} value={p.id || p._id}>
-                        {p.project_number ? `${p.project_number} · ` : ""}{p.name}
+                        {p.status === "completed" ? "Tamamlandı · " : ""}{p.project_number ? `${p.project_number} · ` : ""}{p.name}
                       </option>
                     ))}
                   </select>
