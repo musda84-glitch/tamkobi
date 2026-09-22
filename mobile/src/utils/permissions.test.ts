@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeFinanceSummary, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -107,5 +107,12 @@ describe("permissions", () => {
     expect(showHomeFinanceSummary({ role: "sales", employee_id: null })).toBe(true);
     expect(showHomeFinanceSummary({ role: "admin", employee_id: "emp_1" })).toBe(false);
     expect(showHomeFinanceSummary({ role: "personel", employee_id: "e2" })).toBe(false);
+  });
+
+  it("shows the home Yenile tile only on personnel login", () => {
+    expect(showHomeRefreshTile({ role: "admin" })).toBe(false);
+    expect(showHomeRefreshTile({ role: "sales", employee_id: null })).toBe(false);
+    expect(showHomeRefreshTile({ role: "admin", employee_id: "emp_1" })).toBe(true);
+    expect(showHomeRefreshTile({ role: "personel", employee_id: "e2" })).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
-import { hasSelfPersonnelRecord, showHomeFinanceSummary } from "../utils/permissions";
+import { hasSelfPersonnelRecord, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
@@ -28,6 +28,7 @@ export function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const showFinance = showHomeFinanceSummary(user);
+  const showRefresh = showHomeRefreshTile(user);
   const role = (user?.role || "").toLowerCase();
   const showMessages = hasSelfPersonnelRecord(user) || role === "admin" || role === "manager";
   const { tiles, notifications } = useMemo(
@@ -106,15 +107,15 @@ export function HomeScreen() {
           size="md"
           items={[
             ...quickItems,
-            {
+            ...(showRefresh ? [{
               key: "refresh",
               label: "Yenile",
-              icon: "refresh",
-              tone: "slate",
+              icon: "refresh" as const,
+              tone: "slate" as const,
               testID: "home-quick-refresh",
               onPress: load,
               busy: refreshing,
-            },
+            }] : []),
           ]}
         />
         {showMessages ? (
