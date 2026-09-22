@@ -4,16 +4,15 @@ import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
-import { Chip, confirmAction } from "../components/chips";
+import { confirmAction } from "../components/chips";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { TabStrip } from "../components/TabStrip";
 import { go } from "../nav";
 import { colors } from "../theme";
 import {
   accountBalance,
   accountGroupTone,
   accountTypeTr,
-  bankingFilterLabel,
-  bankingListFilterKeys,
   filterPartners,
   groupedAccounts,
   isBankingBankAccount,
@@ -119,17 +118,12 @@ export function BankingScreen() {
   }, [q, pool]);
 
   const groups = useMemo(() => groupedAccounts(searched), [searched]);
-  const poolGroups = useMemo(() => groupedAccounts(pool), [pool]);
   const visibleGroups = groupF === "all" ? groups : groupF === "partners" ? [] : groups.filter((g) => g.key === groupF);
   const liquidity = totalLiquidity(rows);
   const activePartners = useMemo(() => (partners || []).filter((p) => p.is_active !== false), [partners]);
   const searchedPartners = useMemo(() => filterPartners(activePartners, q), [activePartners, q]);
   const showPartnersInList = groupF === "all" || groupF === "partners";
   const listPartners = showPartnersInList ? searchedPartners : [];
-  const filterKeys = useMemo(
-    () => bankingListFilterKeys(poolGroups.map((g) => g.key), activePartners.length > 0),
-    [activePartners.length, poolGroups],
-  );
   const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
   const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
@@ -154,12 +148,18 @@ export function BankingScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <Row style={{ flexWrap: "wrap" }}>
-        <Chip label="Hesaplar" active={tab === "accounts"} testID="banking-tab-accounts" onPress={() => { setTab("accounts"); setGroupF("all"); }} />
-        <Chip label={`Bankalar${bankCount ? ` (${bankCount})` : ""}`} active={tab === "banks"} testID="banking-tab-banks" onPress={() => { setTab("banks"); setGroupF("all"); }} />
-        <Chip label={`Ortaklar${partnerSummary?.partner_count ? ` (${partnerSummary.partner_count})` : ""}`} active={tab === "partners"} testID="banking-tab-partners" color="#B45309" onPress={() => setTab("partners")} />
-        <Chip label={`Eşleşme${unmatchedCount ? ` (${unmatchedCount})` : ""}`} active={tab === "match"} testID="banking-tab-match" color="#7C3AED" onPress={() => setTab("match")} />
-      </Row>
+      <TabStrip
+        testID="banking-tab"
+        variant="icons"
+        value={tab}
+        onChange={(key) => { setTab(key); setGroupF("all"); }}
+        items={[
+          { key: "accounts", label: "Hesaplar", icon: "wallet", color: colors.primary },
+          { key: "banks", label: "Bankalar", icon: "business", color: accountGroupTone("bank").accent, count: bankCount || undefined },
+          { key: "partners", label: "Ortaklar", icon: "people", color: accountGroupTone("partners").accent, count: partnerSummary?.partner_count || undefined },
+          { key: "match", label: "Eşleşme", icon: "git-compare", color: "#7C3AED", count: unmatchedCount || undefined },
+        ]}
+      />
 
       {tab === "partners" ? (
         <BankingPartnersPanel accounts={rows} onChanged={load} />
@@ -231,18 +231,6 @@ export function BankingScreen() {
             ) : null}
           </View>
           <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" />
-          <Row style={{ flexWrap: "wrap" }} testID="bank-filter-row">
-            {filterKeys.map((key) => (
-              <Chip
-                key={key}
-                label={bankingFilterLabel(key)}
-                active={groupF === key}
-                testID={`bank-filter-${key}`}
-                color={key === "partners" ? accountGroupTone("partners").accent : key === "bank" ? accountGroupTone("bank").accent : undefined}
-                onPress={() => setGroupF(groupF === key && key !== "all" ? "all" : key)}
-              />
-            ))}
-          </Row>
           <ErrorBanner message={error} />
           {groupF === "partners" && !listPartners.length ? (
             <Empty icon="people-outline" title="Ortak yok" />
