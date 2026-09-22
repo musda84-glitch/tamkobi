@@ -25,6 +25,12 @@ export type Employee = {
   workplace?: Workplace | null;
   yevmiye_days?: number;
   yevmiye_due?: number;
+  sgk_number?: string | null;
+  iban?: string | null;
+  birth_date?: string | null;
+  address?: string | null;
+  emergency_contact?: string | null;
+  notes?: string | null;
 };
 
 export function employeeInitials(name?: string | null): string {
@@ -73,6 +79,8 @@ export type EmployeeBalance = {
 export type EmployeeBonus = {
   id?: string;
   _id?: string;
+  employee_id?: string;
+  employee_name?: string;
   type?: string;
   type_label?: string;
   amount?: number;
@@ -92,6 +100,15 @@ export type EmployeeCard = {
   balance?: EmployeeBalance;
   overtime?: { hours?: number; amount?: number };
   workplace?: Workplace | null;
+  leave_balance?: { remaining?: number; annual?: number };
+  attendance?: { days_present?: number; total_hours?: number; overtime_hours?: number };
+  performance?: {
+    overall?: number;
+    check_in?: { pct?: number; ok?: number; expected?: number };
+    check_out?: { pct?: number; ok?: number; expected?: number };
+    leave?: { pct?: number; approved_days?: number; absent_days?: number };
+    task?: { pct?: number; done?: number; total?: number };
+  };
   tasks?: Array<{
     id?: string;
     title?: string;
@@ -100,8 +117,46 @@ export type EmployeeCard = {
     due_date?: string | null;
     duration_days?: number | null;
     done?: boolean;
+    kind?: string;
+    park_name?: string;
   }>;
 };
+
+export type PendingRequest = {
+  id?: string;
+  kind?: string;
+  employee_id?: string;
+  title?: string;
+  detail?: string;
+};
+
+export const REQUEST_KIND_TR: Record<string, string> = {
+  leave: "İzin",
+  early_leave: "Erken çıkış",
+  intraday_leave: "Gün içi izin",
+  dispute: "İtiraz",
+  advance: "Avans",
+};
+
+export function requestKindLabel(kind?: string | null): string {
+  return REQUEST_KIND_TR[String(kind || "")] || "Talep";
+}
+
+export function requestsForEmployee(items: PendingRequest[] | null | undefined, empId: string): PendingRequest[] {
+  const id = String(empId || "");
+  if (!id) return [];
+  return (items || []).filter((it) => String(it.employee_id || "") === id);
+}
+
+export function employeeStatusLabel(status?: string | null): string {
+  if (status === "terminated") return "İşten çıktı";
+  if (status === "passive" || status === "inactive") return "Pasif";
+  return "Aktif";
+}
+
+export function openEmployeeTasks(card?: EmployeeCard | null) {
+  return (card?.tasks || []).filter((t) => !t.done);
+}
 
 export type EmployeePayMove = {
   id: string;
@@ -262,6 +317,16 @@ export type EmployeeDraft = {
   email: string;
   salary: string;
   start_date: string;
+  pay_type: "monthly" | "daily";
+  daily_wage: string;
+  sgk_number: string;
+  iban: string;
+  meal_allowance: string;
+  transport_allowance: string;
+  birth_date: string;
+  address: string;
+  emergency_contact: string;
+  notes: string;
 };
 
 export type LeaveRequest = {
@@ -356,6 +421,16 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
     email: "",
     salary: "35000",
     start_date: today,
+    pay_type: "monthly",
+    daily_wage: "",
+    sgk_number: "",
+    iban: "",
+    meal_allowance: "",
+    transport_allowance: "",
+    birth_date: "",
+    address: "",
+    emergency_contact: "",
+    notes: "",
   };
 }
 
@@ -370,11 +445,38 @@ export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
     email: emp.email || "",
     salary: emp.salary == null ? "" : String(emp.salary),
     start_date: String(emp.start_date || today).slice(0, 10),
+    pay_type: isDailyWage(emp) ? "daily" : "monthly",
+    daily_wage: emp.daily_wage == null ? "" : String(emp.daily_wage),
+    sgk_number: emp.sgk_number || "",
+    iban: emp.iban || "",
+    meal_allowance: emp.meal_allowance == null ? "" : String(emp.meal_allowance),
+    transport_allowance: emp.transport_allowance == null ? "" : String(emp.transport_allowance),
+    birth_date: emp.birth_date ? String(emp.birth_date).slice(0, 10) : "",
+    address: emp.address || "",
+    emergency_contact: emp.emergency_contact || "",
+    notes: emp.notes || "",
   };
+}
+
+export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" | "meal_allowance" | "transport_allowance" | "birth_date" | "address" | "emergency_contact" | "notes">): boolean {
+  return Boolean(
+    String(d.sgk_number || "").trim()
+    || String(d.iban || "").trim()
+    || String(d.meal_allowance || "").trim()
+    || String(d.transport_allowance || "").trim()
+    || String(d.birth_date || "").trim()
+    || String(d.address || "").trim()
+    || String(d.emergency_contact || "").trim()
+    || String(d.notes || "").trim()
+  );
 }
 
 export function validateEmployee(d: EmployeeDraft): string | null {
   if (!d.full_name.trim() || !d.tc_kimlik.trim()) return "Lütfen ad soyad ve TC kimlik no girin.";
+  if (d.pay_type === "daily" && parseYevmiyeWage(d.daily_wage) == null) return "Yevmiye ücreti girin.";
+  if (String(d.sgk_number || "").trim() && !String(d.iban || "").trim()) {
+    return "SGK sicil numarası girildiğinde IBAN zorunludur — maaş yalnız bankadan ödenir.";
+  }
   return null;
 }
 
@@ -384,6 +486,11 @@ function num(v: string): number {
 }
 
 export function employeePayload(d: EmployeeDraft, companyId?: string) {
+  const daily = parseYevmiyeWage(d.daily_wage) || 0;
+  const monthly = num(d.salary);
+  const isDaily = d.pay_type === "daily";
+  const sgk = String(d.sgk_number || "").trim();
+  const iban = String(d.iban || "").trim();
   const body: Record<string, unknown> = {
     full_name: d.full_name.trim(),
     tc_kimlik: d.tc_kimlik.trim(),
@@ -391,8 +498,18 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
     position: d.position.trim(),
     phone: d.phone.trim(),
     email: d.email.trim(),
-    salary: num(d.salary),
+    pay_type: isDaily ? "daily" : "monthly",
+    daily_wage: isDaily ? daily : 0,
+    salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
     start_date: d.start_date,
+    sgk_number: sgk || null,
+    iban: iban || null,
+    meal_allowance: num(d.meal_allowance) || 0,
+    transport_allowance: num(d.transport_allowance) || 0,
+    birth_date: String(d.birth_date || "").trim() || null,
+    address: String(d.address || "").trim() || null,
+    emergency_contact: String(d.emergency_contact || "").trim() || null,
+    notes: String(d.notes || "").trim() || null,
   };
   if (companyId) body.company_id = companyId;
   return body;
@@ -940,7 +1057,7 @@ export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | 
 
 export function personnelExpensePayload(
   employeeId: string,
-  kind: "meal" | "transport",
+  kind: "meal" | "transport" | "expense",
   amount: string,
   accountId: string,
   note: string,
@@ -948,17 +1065,50 @@ export function personnelExpensePayload(
   date = "",
 ) {
   const meal = kind === "meal";
+  const generic = kind === "expense";
   return {
     company_id: companyId,
     employee_id: employeeId,
-    category: meal ? EMPLOYEE_MEAL_CATEGORY : EMPLOYEE_TRANSPORT_CATEGORY,
-    description: note.trim() || (meal ? "Yemek ücreti" : "Yol / ulaşım ödemesi"),
+    category: generic ? "Personel masrafı" : meal ? EMPLOYEE_MEAL_CATEGORY : EMPLOYEE_TRANSPORT_CATEGORY,
+    description: note.trim() || (generic ? "Personel masrafı" : meal ? "Yemek ücreti" : "Yol / ulaşım ödemesi"),
     amount: num(amount),
     vat_rate: 0,
     date: (date || new Date().toISOString().slice(0, 10)).slice(0, 10),
     notes: note.trim(),
     ...splitPaymentTarget(accountId),
   };
+}
+
+export const COMPANY_BONUS_TYPES = [
+  { key: "bonus", label: "Prim" },
+  { key: "overtime", label: "Mesai" },
+  { key: "second_salary", label: "2. Maaş" },
+  { key: "advance", label: "Avans" },
+  { key: "bakiye", label: "Bakiye" },
+  { key: "alacak", label: "Alacak" },
+  { key: "borc", label: "Borç" },
+] as const;
+
+export function companyBonusPayload(
+  employeeId: string,
+  type: string,
+  amount: string,
+  period: string,
+  accountId: string,
+  note: string,
+) {
+  return {
+    employee_id: employeeId,
+    type,
+    amount: num(amount),
+    period,
+    note: note.trim(),
+    ...splitPaymentTarget(accountId),
+  };
+}
+
+export function bonusesPeriodTotal(rows: EmployeeBonus[] | null | undefined, period: string): number {
+  return (rows || []).filter((b) => b.period === period).reduce((s, b) => s + (Number(b.amount) || 0), 0);
 }
 
 export function employeeCardActionTitle(

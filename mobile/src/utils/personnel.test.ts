@@ -54,6 +54,12 @@ import {
   yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
   yevmiyePayPayload,
+  hasEmployeeDetails,
+  employeeStatusLabel,
+  requestKindLabel,
+  requestsForEmployee,
+  companyBonusPayload,
+  bonusesPeriodTotal,
 } from "./personnel";
 
 describe("employee initials", () => {
@@ -79,10 +85,40 @@ describe("employee draft", () => {
     expect(d.full_name).toBe("Ali");
     expect(d.salary).toBe("42000");
     expect(d.department).toBe("Üretim");
+    expect(d.pay_type).toBe("monthly");
     const body = employeePayload(d, "comp_1");
     expect(body.company_id).toBe("comp_1");
     expect(body.salary).toBe(42000);
+    expect(body.pay_type).toBe("monthly");
     expect(body.full_name).toBe("Ali");
+  });
+
+  it("requires IBAN when SGK is set and daily wage when yevmiye", () => {
+    const d = emptyEmployeeDraft("2026-09-18");
+    d.full_name = "Ayşe";
+    d.tc_kimlik = "123";
+    d.sgk_number = "111222333";
+    expect(validateEmployee(d)).toContain("IBAN");
+    expect(hasEmployeeDetails(d)).toBe(true);
+    d.iban = "TR00";
+    expect(validateEmployee(d)).toBeNull();
+    d.pay_type = "daily";
+    expect(validateEmployee(d)).toBe("Yevmiye ücreti girin.");
+    d.daily_wage = "1500";
+    expect(validateEmployee(d)).toBeNull();
+    const body = employeePayload(d);
+    expect(body.pay_type).toBe("daily");
+    expect(body.daily_wage).toBe(1500);
+    expect(body.salary).toBe(39000);
+  });
+
+  it("labels requests and sums period bonuses", () => {
+    expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
+    expect(employeeStatusLabel("active")).toBe("Aktif");
+    expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
+    expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
+    expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
+    expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
   });
 });
 
