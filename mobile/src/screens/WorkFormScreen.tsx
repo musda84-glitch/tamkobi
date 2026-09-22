@@ -706,14 +706,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 gap: 6,
               }}
             >
-              <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                <ProductThumb
-                  uri={workItemImage(it, prod)}
-                  width={QUOTE_ITEM_THUMB.width}
-                  height={QUOTE_ITEM_THUMB.height}
-                  testID={`q-item-thumb-${i}`}
-                />
-                <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+              <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
                     <Row style={{ flexWrap: "wrap", gap: 4 }}>
                       <Chip
@@ -751,6 +744,12 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       onPress={() => applyLineProduct(i, p)}
                     />
                   ))}
+                  <ProductThumb
+                    uri={workItemImage(it, prod)}
+                    width={QUOTE_ITEM_THUMB.width}
+                    height={QUOTE_ITEM_THUMB.height}
+                    testID={`q-item-thumb-${i}`}
+                  />
                   <Row style={{ alignItems: "flex-end", gap: 6 }}>
                     <View style={{ width: 52, flexShrink: 0 }}>
                       <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
@@ -812,8 +811,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       ) : null}
                     </>
                   ) : null}
-                </View>
-              </Row>
+              </View>
             </View>
             );
           })}
