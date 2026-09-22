@@ -11,6 +11,8 @@ describe("employee task assign", () => {
     const created = nextTasksAfterAssign(tasks, { id: "e1", full_name: "Ali" }, { title: "Keşif", newId: "t_new" });
     expect(created.tasks).toHaveLength(2);
     expect(created.tasks[1]).toMatchObject({ id: "t_new", title: "Keşif", assignee_id: "e1", done: false });
+    const withDays = nextTasksAfterAssign(tasks, { id: "e1", full_name: "Ali" }, { title: "Saha", newId: "t_d", durationDays: 4, dueDate: "2026-09-25" });
+    expect(withDays.tasks[1]).toMatchObject({ duration_days: 4, due_date: "2026-09-25" });
   });
 
   it("requires a project and a task or title", () => {

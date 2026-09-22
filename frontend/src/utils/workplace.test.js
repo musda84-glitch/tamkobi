@@ -7,6 +7,7 @@ describe("workplace labels", () => {
     expect(workplaceHint(w, true)).toContain("görev yeri iş yeri");
     expect(workplaceHint(w, true)).toContain("300 m");
     expect(workplaceShort(w)).toBe("Montaj · Villa");
+    expect(workplaceShort({ ...w, duration_days: 3 })).toBe("Montaj · Villa · 3 gün");
   });
 
   it("allows check-in without company geo when the task has no coords", () => {

@@ -11542,19 +11542,41 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     for x in expenses:
         emap.setdefault(x.get("employee_id"), []).append(x)
     company = await db.companies.find_one({"_id": company_id}) or {}
+    today_s = attendance._today(attendance.merge_schedule(company))
+    workplaces = await attendance.workplaces_by_employee(company_id, ids, today_s, company.get("location"))
     out = []
     for e in employees:
         eid = e["_id"]
         ot = await attendance.overtime_pay_for_period(company, e, month)
+        emp_bonuses = bmap.get(eid) or []
         bal = await _employee_receivable(
             {**e, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
             pmap.get(eid) or [],
-            bmap.get(eid) or [],
+            emp_bonuses,
             month,
             expenses=emap.get(eid) or [],
         )
         doc = clean_doc(e)
         doc["balance"] = bal
+        doc["workplace"] = workplaces.get(eid)
+        yev_days, yev_amt = 0, 0.0
+        for b in emp_bonuses:
+            if b.get("type") != "yevmiye" or b.get("status") == "paid":
+                continue
+            try:
+                yev_amt += float(b.get("amount") or 0)
+            except (TypeError, ValueError):
+                pass
+            try:
+                d = int(float(b.get("worked_days") or 0))
+            except (TypeError, ValueError):
+                d = 0
+            if d <= 0:
+                m = re.search(r"(\d+)\s*gün", str(b.get("note") or ""))
+                d = int(m.group(1)) if m else 0
+            yev_days += max(0, d)
+        doc["yevmiye_days"] = yev_days
+        doc["yevmiye_due"] = round(yev_amt, 2)
         out.append(doc)
     return out
 
