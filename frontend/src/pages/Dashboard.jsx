@@ -54,6 +54,7 @@ export default function Dashboard() {
       setStats(res.data);
     } catch (err) {
       console.error(err);
+      setStats((prev) => prev || {});
     } finally {
       if (!silent) setLoading(false);
     }
@@ -62,14 +63,42 @@ export default function Dashboard() {
   const refreshStatsSilent = useCallback(() => fetchStats({ silent: true }), [fetchStats]);
   useDataRefresh(refreshStatsSilent, { companyId, scopes: ["cash", "contacts", "invoices", "expenses"] });
 
+  const staffHome = Boolean(user?.employee_id);
+  const staffRow = (
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4" data-testid="dashboard-staff-row">
+      {staffHome ? (
+        <Link
+          to="/personelim?tab=gorevler"
+          className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center gap-3 hover:bg-indigo-100"
+          data-testid="dashboard-my-tasks"
+        >
+          <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+            <ClipboardList className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-slate-900">Görevlerim</div>
+            <div className="text-[11px] text-slate-500">Atanan proje görevlerini aç</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-indigo-600 ml-auto" />
+        </Link>
+      ) : null}
+      <div className={staffHome ? "xl:col-span-2" : "xl:col-span-3"}>
+        <StaffMessagesPanel compact testId="dashboard-messages" />
+      </div>
+    </div>
+  );
+
   if (loading || !stats) {
     return (
-      <div className="space-y-6 animate-pulse" data-testid="dashboard-loading">
-        <div className="h-8 bg-slate-200 rounded w-1/4"></div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-28 bg-slate-200 rounded-xl"></div>
-          ))}
+      <div className="space-y-6" data-testid="dashboard-loading">
+        {staffRow}
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 bg-slate-200 rounded w-1/4"></div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-28 bg-slate-200 rounded-xl"></div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -110,31 +139,8 @@ export default function Dashboard() {
     }
   ];
 
-  const staffHome = Boolean(user?.employee_id);
   const sections = {
-    staff: (
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4" data-testid="dashboard-staff-row">
-        {staffHome ? (
-          <Link
-            to="/personelim?tab=gorevler"
-            className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center gap-3 hover:bg-indigo-100"
-            data-testid="dashboard-my-tasks"
-          >
-            <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-              <ClipboardList className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900">Görevlerim</div>
-              <div className="text-[11px] text-slate-500">Atanan proje görevlerini aç</div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-indigo-600 ml-auto" />
-          </Link>
-        ) : null}
-        <div className={staffHome ? "xl:col-span-2" : "xl:col-span-3"}>
-          <StaffMessagesPanel compact testId="dashboard-messages" />
-        </div>
-      </div>
-    ),
+    staff: staffRow,
     alerts: (
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="dashboard-alerts-row">
         <PersonnelRequestsInbox companyId={companyId} />
