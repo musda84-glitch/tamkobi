@@ -66,6 +66,7 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { workplaceHint, workplaceShort } from "../utils/workplace";
 
 type Tab = "payroll" | "attendance" | "leaves";
 
@@ -578,6 +579,12 @@ export function PersonnelScreen() {
                     </View>
                     <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
                     <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
+                    {(() => {
+                      const wp = (attendance?.summary || []).find((s) => s.employee_id === eid)?.workplace;
+                      return wp?.kind === "task" ? (
+                        <Muted testID={`emp-card-workplace-${eid}`}>Dış görev · {workplaceShort(wp)} — giriş görev yerinden</Muted>
+                      ) : null;
+                    })()}
                   </View>
                 </View>
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
@@ -672,6 +679,9 @@ export function PersonnelScreen() {
                 Bugün {s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}` : "—"}
                 {s.today?.late_minutes ? ` · ${s.today.late_minutes} dk geç` : ""}
               </Muted>
+              {s.workplace?.kind === "task" ? (
+                <Muted testID={`att-workplace-${s.employee_id}`}>Dış görev · {workplaceShort(s.workplace)}</Muted>
+              ) : null}
               <Muted>Gün {s.days_present || 0} · devamsız {s.days_absent || 0} · izin {s.days_leave || 0} · {s.total_hours || 0} sa · mesai {s.overtime_hours || 0} sa</Muted>
               {(() => {
                 const emp = employees.find((e) => idOf(e) === s.employee_id);
@@ -978,6 +988,18 @@ export function PersonnelScreen() {
         {!taskId ? (
           <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
         ) : null}
+        <Muted testID="task-assign-field-hint">
+          {(() => {
+            const proj = projects.find((p) => idOf(p) === taskProjectId);
+            if (!proj) return "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır.";
+            return workplaceHint({
+              kind: "task",
+              task_title: taskTitle || "Görev",
+              project_name: proj.name,
+              has_coords: proj.latitude != null && proj.longitude != null,
+            }, true);
+          })()}
+        </Muted>
         <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
       </B2BSheet>
     </Screen>

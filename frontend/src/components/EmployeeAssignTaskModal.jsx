@@ -50,6 +50,8 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const openTasks = myTasks.filter((t) => !(t.done || t.status === "done" || t.status === "completed"));
   const assignable = projects.filter((p) => p.status !== "completed");
   const projectOptions = assignable.length ? assignable : projects;
+  const selected = projects.find((p) => (p.id || p._id) === form.project_id);
+  const selectedHasLoc = selected && selected.latitude != null && selected.longitude != null;
 
   const save = async (e) => {
     e.preventDefault();
@@ -152,6 +154,10 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     data-testid="emp-task-title"
                   />
                 </div>
+                <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
+                  Dış görevde işe giriş/çıkış görev yerinden yapılır
+                  {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
+                </p>
                 <div>
                   <label className="block font-semibold mb-1">Son tarih (opsiyonel)</label>
                   <input

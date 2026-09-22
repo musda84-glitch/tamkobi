@@ -8,6 +8,7 @@ import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row
 import { colors } from "../theme";
 import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
+import { workplaceHint, type Workplace } from "../utils/workplace";
 
 type AttendancePayload = {
   employee?: { full_name: string } | null;
@@ -24,7 +25,8 @@ type AttendancePayload = {
     intraday_leave_minutes?: number;
     intraday_leave_request?: { status?: string; reason?: string; out_time?: string; return_time?: string; decision_note?: string } | null;
   } | null;
-  location?: { label?: string; radius_m?: number } | null;
+  location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
+  workplace?: Workplace | null;
   schedule?: { require_geo?: boolean; start?: string; end?: string };
   records?: { id?: string; date: string; check_in?: string; check_out?: string; hours?: number; status?: string }[];
   summary?: { days?: number; hours?: number };
@@ -167,6 +169,7 @@ export function AttendanceScreen() {
       <Card>
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
         <Muted>{data?.today_date}</Muted>
+        <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}

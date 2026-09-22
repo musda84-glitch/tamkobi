@@ -268,6 +268,166 @@ def haversine_m(lat1, lon1, lat2, lon2) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def _coords_of(row: Optional[dict]) -> Optional[tuple]:
+    if not isinstance(row, dict):
+        return None
+    try:
+        lat, lng = float(row.get("latitude")), float(row.get("longitude"))
+    except (TypeError, ValueError):
+        return None
+    if lat == 0 and lng == 0:
+        return None
+    return lat, lng
+
+
+def task_is_open(task: Optional[dict]) -> bool:
+    if not isinstance(task, dict):
+        return False
+    if task.get("done"):
+        return False
+    return (task.get("status") or "") not in ("done", "completed", "tamamlandi")
+
+
+def pick_field_assignment(rows: list, today: str) -> Optional[dict]:
+    """Açık proje görevi (dış görev). Bugün bitişli > tarihsiz > ileriki > geçmiş."""
+    today = (today or "")[:10]
+    open_rows = [
+        a for a in (rows or [])
+        if task_is_open(a) and (a.get("project_status") or "") != "completed"
+    ]
+    if not open_rows:
+        return None
+
+    def _score(a: dict):
+        due = str(a.get("due_date") or "")[:10]
+        has_coords = 0 if _coords_of(a) else 1
+        if due == today:
+            due_rank = 0
+        elif not due:
+            due_rank = 1
+        elif due >= today:
+            due_rank = 2
+        else:
+            due_rank = 3
+        return (due_rank, has_coords, due or "9999", a.get("title") or "")
+
+    return min(open_rows, key=_score)
+
+
+def workplace_payload(company_loc: Optional[dict], assignment: Optional[dict] = None, radius_default: int = 300) -> Optional[dict]:
+    """Etkin iş yeri: açık dış görev varsa proje konumu, yoksa firma."""
+    if assignment:
+        coords = _coords_of(assignment)
+        radius = int((company_loc or {}).get("radius_m") or radius_default)
+        title = assignment.get("title") or assignment.get("task_title") or "Görev"
+        project_name = assignment.get("project_name") or ""
+        return {
+            "kind": "task",
+            "label": project_name or title or "Dış görev",
+            "latitude": coords[0] if coords else None,
+            "longitude": coords[1] if coords else None,
+            "radius_m": radius,
+            "has_coords": bool(coords),
+            "address": assignment.get("address") or "",
+            "location_url": assignment.get("location_url") or "",
+            "task_id": assignment.get("id") or assignment.get("task_id"),
+            "task_title": title,
+            "project_id": assignment.get("project_id"),
+            "project_name": project_name,
+            "project_number": assignment.get("project_number") or "",
+            "due_date": assignment.get("due_date"),
+        }
+    coords = _coords_of(company_loc)
+    if not coords:
+        return None
+    return {
+        "kind": "company",
+        "label": (company_loc or {}).get("label") or "Firma",
+        "latitude": coords[0],
+        "longitude": coords[1],
+        "radius_m": int((company_loc or {}).get("radius_m") or radius_default),
+        "has_coords": True,
+        "address": (company_loc or {}).get("address") or "",
+        "location_url": (company_loc or {}).get("location_url") or "",
+    }
+
+
+def geo_target(workplace: Optional[dict]) -> Optional[dict]:
+    """Giriş mesafesi için koordinatı olan iş yeri; dış görevde konum yoksa firma zorunlu değil."""
+    if workplace and workplace.get("has_coords") and workplace.get("latitude") is not None:
+        return workplace
+    return None
+
+
+def workplace_place_label(loc: Optional[dict]) -> str:
+    if not loc:
+        return "iş yeri"
+    if loc.get("kind") == "task":
+        return loc.get("project_name") or loc.get("task_title") or "görev yeri"
+    return loc.get("label") or "firma"
+
+
+def assignment_from_project(proj: dict, task: dict) -> dict:
+    return {
+        "id": task.get("id") or task.get("_id"),
+        "title": task.get("title") or task.get("name") or "Görev",
+        "done": bool(task.get("done") or task.get("status") in ("done", "completed", "tamamlandi")),
+        "status": task.get("status"),
+        "due_date": task.get("due_date"),
+        "project_id": proj.get("_id") or proj.get("id"),
+        "project_name": proj.get("name"),
+        "project_number": proj.get("project_number"),
+        "project_status": proj.get("status"),
+        "latitude": proj.get("latitude"),
+        "longitude": proj.get("longitude"),
+        "address": proj.get("address"),
+        "location_url": proj.get("location_url"),
+    }
+
+
+async def field_assignments_for(emp: dict) -> list:
+    emp_id = str(emp.get("_id") or emp.get("id") or "")
+    company_id = emp.get("company_id")
+    if not emp_id or not company_id or _db is None:
+        return []
+    out = []
+    async for proj in _db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
+    ):
+        for t in (proj.get("tasks") or []):
+            if str(t.get("assignee_id") or "") != emp_id:
+                continue
+            out.append(assignment_from_project(proj, t))
+    return out
+
+
+async def workplace_for_employee(emp: dict, company: Optional[dict] = None, today: Optional[str] = None) -> Optional[dict]:
+    company = company if company is not None else (await _db.companies.find_one({"_id": emp["company_id"]}) or {})
+    schedule = merge_schedule(company, emp)
+    today = today or _today(schedule)
+    picked = pick_field_assignment(await field_assignments_for(emp), today)
+    return workplace_payload(company.get("location"), picked)
+
+
+async def workplaces_by_employee(company_id: str, emp_ids: list, today: str, company_loc: Optional[dict] = None) -> dict:
+    idset = {str(x) for x in (emp_ids or []) if x}
+    by_emp = {eid: [] for eid in idset}
+    if idset and _db is not None:
+        async for proj in _db.projects.find(
+            {"company_id": company_id, "tasks.assignee_id": {"$in": list(idset)}},
+            {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
+             "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
+        ):
+            for t in (proj.get("tasks") or []):
+                aid = str(t.get("assignee_id") or "")
+                if aid not in by_emp:
+                    continue
+                by_emp[aid].append(assignment_from_project(proj, t))
+    return {eid: workplace_payload(company_loc, pick_field_assignment(rows, today)) for eid, rows in by_emp.items()}
+
+
 async def employee_for_user(user: dict):
     uid = str(user.get("_id", user.get("id")))
     return await _db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": uid}]})
@@ -498,15 +658,19 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
-        return {"employee": None, "records": [], "summary": summarize([]), "today": None, "schedule": None, "location": None}
+        return {"employee": None, "records": [], "summary": summarize([]), "today": None, "schedule": None, "location": None, "workplace": None, "company_location": None}
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
     month = month or _today(schedule)[:7]
+    today_s = _today(schedule)
     rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
-    today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": _today(schedule)})
+    today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
+    workplace = await workplace_for_employee(emp, company, today_s)
+    loc = geo_target(workplace)
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
             "month": month, "records": [_clean(r) for r in rows], "summary": summarize(rows), "today": _clean(today) if today else None,
-            "schedule": schedule, "day_labels": DAY_LABELS, "location": company.get("location"), "now": now_hm(schedule), "today_date": _today(schedule)}
+            "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
+            "company_location": company.get("location"), "now": now_hm(schedule), "today_date": today_s}
 
 
 @router.post("/personnel/attendance/self")
@@ -520,19 +684,27 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
-    loc = company.get("location")
+    workplace = await workplace_for_employee(emp, company)
+    loc = geo_target(workplace)
     geo = None
-    # Konum zorunluluğu yalnızca girişte; çıkış her konumdan yapılabilir (panel mesai saatine / atanan fazla mesaiye göre işlenir).
+    # Konum zorunluluğu yalnızca girişte; açık dış görev varsa görev yeri iş yeri sayılır.
+    # Çıkış her konumdan yapılabilir (panel mesai saatine / atanan fazla mesaiye göre işlenir).
     if action == "check_in" and loc and schedule.get("require_geo", True):
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
         except (KeyError, TypeError, ValueError):
+            place = workplace_place_label(loc)
+            if loc.get("kind") == "task":
+                raise HTTPException(status_code=400, detail=f"Konum gerekli: telefon konum iznini açın. Dış görev atandığı için giriş yalnızca görev yeri ({place}) yakınından yapılabilir.")
             raise HTTPException(status_code=400, detail="Konum gerekli: telefon konum iznini açın. Firma konumu tanımlı olduğundan giriş yalnızca firma yakınından yapılabilir.")
         dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
         radius = float(loc.get("radius_m") or 300)
         if dist > radius:
+            place = workplace_place_label(loc)
+            if loc.get("kind") == "task":
+                raise HTTPException(status_code=400, detail=f"Görev yerine ({place}) {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Dış görev girişi görev konumundan yapılmalıdır.")
             raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
-        geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True}
+        geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True, "workplace_kind": loc.get("kind")}
     elif action == "check_out":
         # Çıkışta konum zorunlu değil; gönderilmişse kayda ekle (zorunlu tutulmaz).
         try:
@@ -542,7 +714,7 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         if lat is not None and lng is not None:
             if loc:
                 dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
-                geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False}
+                geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False, "workplace_kind": loc.get("kind")}
             else:
                 geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False}
     today = _today(schedule)
@@ -556,9 +728,15 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     now_s = now_hm(schedule)
     patch = {"status": "present", action: now_s}
     rec = await apply_day(emp, today, patch, source="self", confirmed=True)
+    extra = {}
+    if workplace:
+        extra["workplace"] = workplace
+        rec["workplace"] = workplace
     if geo:
-        await _db.attendance.update_one({"_id": rec["id"]}, {"$set": {f"geo_{action}": geo}})
+        extra[f"geo_{action}"] = geo
         rec[f"geo_{action}"] = geo
+    if extra:
+        await _db.attendance.update_one({"_id": rec["id"]}, {"$set": extra})
     msg = f"{'Giriş' if action == 'check_in' else 'Çıkış'} {now_s} olarak kaydedildi."
     if action == "check_in" and rec.get("late_minutes"):
         msg += f" Mesai başlangıcına göre {rec['late_minutes']} dk geç."
@@ -580,9 +758,16 @@ async def self_attendance(req: Dict[str, Any], request: Request):
                 msg += f" Beklenen çıkış ({end_label}) saatinden {rec['early_leave_minutes']} dk erken çıkış."
         else:
             msg += f" Bugün {rec['hours']} sa çalışıldı."
-    if geo:
-        msg += f" (firma konumuna {geo['distance_m']} m)"
-    return {"status": "success", "record": rec, "message": msg}
+    if geo and geo.get("distance_m") is not None:
+        place = workplace_place_label(loc or workplace)
+        kind = (loc or workplace or {}).get("kind")
+        if kind == "task":
+            msg += f" (görev yeri {place} · {geo['distance_m']} m)"
+        else:
+            msg += f" (firma konumuna {geo['distance_m']} m)"
+    elif workplace and workplace.get("kind") == "task":
+        msg += f" (dış görev: {workplace_place_label(workplace)})"
+    return {"status": "success", "record": rec, "message": msg, "workplace": workplace}
 
 
 @router.post("/personnel/attendance/early-leave-request")
