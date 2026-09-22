@@ -103,7 +103,7 @@ export function previewStaffMessages(rows: StaffMessage[] | null | undefined, li
   return (rows || []).slice(0, Math.max(0, limit));
 }
 
-export function inboxUnreadTotal(inbox: { unread?: number }[] | null | undefined): number {
+export function inboxUnreadTotal<T extends { unread?: number }>(inbox?: T[] | null): number {
   return (inbox || []).reduce((s, r) => s + (Number(r.unread) || 0), 0);
 }
 
