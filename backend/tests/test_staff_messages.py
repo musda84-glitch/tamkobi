@@ -1,4 +1,6 @@
 from staff_messages import (
+    announce_title,
+    announce_visible,
     group_title,
     inbox_from_rows,
     is_manager,
@@ -7,6 +9,7 @@ from staff_messages import (
     message_doc,
     normalize_body,
     preview_messages,
+    public_announce,
     public_message,
     unread_for_reader,
     user_company_id,
@@ -95,3 +98,17 @@ def test_inbox_hides_other_manager_dms():
     inbox = inbox_from_rows(rows, "mgrA")
     assert [r["employee_id"] for r in inbox] == ["e1", "e2"]
     assert inbox[0]["last"]["body"] == "özel"
+
+
+def test_announce_helpers():
+    assert announce_title("  Toplantı  ") == "Toplantı"
+    assert announce_title("") == "Duyuru"
+    all_staff = {"employee_ids": [], "title": "Genel", "body": "yarın tatil"}
+    targeted = {"employee_ids": ["e1"], "title": "Özel", "body": "sen gel"}
+    assert announce_visible(all_staff, "e9")
+    assert announce_visible(targeted, "e1")
+    assert not announce_visible(targeted, "e9")
+    assert announce_visible(targeted, "e9", manager=True)
+    pub = public_announce({"_id": "a1", **all_staff, "from_name": "Mustafa"})
+    assert pub["id"] == "a1"
+    assert pub["title"] == "Genel"

@@ -17,6 +17,7 @@ const TYPE_ROLES: Record<string, string[]> = {
   role_assigned: ["admin", "manager"],
   task_assigned: [],
   staff_message: [],
+  staff_announcement: [],
   overtime_assigned: [],
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
@@ -158,6 +159,7 @@ export function notificationLook(n: Notification): NotificationLook {
   if (type === "role_assigned") return { icon: "people", tone: "violet" };
   if (type === "task_assigned") return { icon: "briefcase", tone: "indigo" };
   if (type === "staff_message") return { icon: "chatbubbles", tone: "violet" };
+  if (type === "staff_announcement") return { icon: "megaphone", tone: "amber" };
   if (type === "overtime_assigned") return { icon: "time", tone: "indigo" };
   if (type.startsWith("attendance") || type.startsWith("order_pick")) return { icon: "alert-circle", tone: "amber" };
   return { icon: "information-circle", tone: "indigo" };
@@ -179,6 +181,7 @@ const REF_ROUTES: Record<string, string> = {
   bank: "/banking",
   employee: "/personnel",
   staff_message: "/",
+  staff_announcement: "/",
 };
 
 /** Web'deki link/ref_type yönlendirmesinin mobilde karşılığı olan rotası. */

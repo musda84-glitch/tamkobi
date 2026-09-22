@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Loader2, MessageSquare, Send, Users } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Megaphone, MessageSquare, Send, Users } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import {
   MESSAGES_HIDDEN_KEY,
@@ -15,6 +15,7 @@ import {
   peerQuery,
   previewStaffMessages,
   requireManagerId,
+  announceAudienceLabel,
   validateMessageBody,
 } from "../utils/staffMessages";
 
@@ -65,6 +66,11 @@ export function StaffMessagesPanel({
   const [groupTitle, setGroupTitle] = useState("");
   const [groupUsers, setGroupUsers] = useState([]);
   const [groupEmps, setGroupEmps] = useState([]);
+  const [showAnnounceForm, setShowAnnounceForm] = useState(false);
+  const [announceTitle, setAnnounceTitle] = useState("");
+  const [announceBody, setAnnounceBody] = useState("");
+  const [announceEmps, setAnnounceEmps] = useState([]);
+  const [announceAll, setAnnounceAll] = useState(true);
 
   const load = useCallback(() => {
     const params = employeeId ? { employee_id: employeeId } : peerQuery(channel);
@@ -153,6 +159,43 @@ export function StaffMessagesPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const createAnnounce = async (e) => {
+    e?.preventDefault?.();
+    const invalid = validateMessageBody(announceBody);
+    if (invalid) { toast.error(invalid); return; }
+    if (!announceAll && !announceEmps.length) {
+      toast.error("Duyuru için personel seçin.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await axios.post(`${API_URL}/personnel/messages/announce`, {
+        title: announceTitle,
+        body: announceBody,
+        employee_ids: announceAll ? [] : announceEmps,
+      }, { withCredentials: true });
+      setShowAnnounceForm(false);
+      setAnnounceTitle("");
+      setAnnounceBody("");
+      setAnnounceEmps([]);
+      setAnnounceAll(true);
+      toast.success("Duyuru gönderildi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Duyuru gönderilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAnnouncement = async (row) => {
+    if (row?.id) {
+      await axios.post(`${API_URL}/personnel/messages/announce/read`, { id: row.id }, { withCredentials: true }).catch(() => {});
+      load();
+    }
+    toast.message(row.title || "Duyuru", { description: row.body });
   };
 
   const toggle = (list, id, set) => {
@@ -260,17 +303,16 @@ export function StaffMessagesPanel({
 
           {showInbox ? (
             <div className="space-y-1.5" data-testid={`${testId}-inbox`}>
-              {(data.directory || []).length || managers.length ? (
-                <select
-                  className="w-full border rounded-xl p-2 text-xs font-semibold"
-                  value=""
-                  onChange={(e) => {
-                    const peer = parsePeerValue(e.target.value);
-                    if (peer) setChannel(peer);
-                  }}
-                  data-testid={`${testId}-pick`}
-                >
-                  <option value="">Personel veya yönetici seç · yeni yazışma</option>
+              <select
+                className="w-full border rounded-xl p-2 text-xs font-semibold"
+                value=""
+                onChange={(e) => {
+                  const peer = parsePeerValue(e.target.value);
+                  if (peer) setChannel(peer);
+                }}
+                data-testid={`${testId}-pick`}
+              >
+                <option value="">Personel seç · yeni yazışma</option>
                   {(data.directory || []).length ? (
                     <optgroup label="Personel">
                       {(data.directory || []).map((emp) => (
@@ -285,8 +327,7 @@ export function StaffMessagesPanel({
                       ))}
                     </optgroup>
                   ) : null}
-                </select>
-              ) : null}
+              </select>
               {managerRows.filter((r) => r.user_id !== "_all").map((row) => (
                 <InboxButton
                   key={`m-${row.user_id}`}
@@ -324,6 +365,16 @@ export function StaffMessagesPanel({
                 >
                   <Users className="w-3.5 h-3.5" /> Yeni grup
                 </button>
+                {showInbox ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAnnounceForm((v) => !v)}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+                    data-testid={`${testId}-announce-new`}
+                  >
+                    <Megaphone className="w-3.5 h-3.5" /> Duyuru
+                  </button>
+                ) : null}
               </div>
               {showGroupForm ? (
                 <form onSubmit={createGroup} className="rounded-xl border border-violet-100 p-2 space-y-2" data-testid={`${testId}-group-form`}>
@@ -369,6 +420,60 @@ export function StaffMessagesPanel({
                   unread={row.unread || 0}
                   testId={`${testId}-inbox-group-${row.group_id || row.id}`}
                   onClick={() => setChannel({ kind: "group", id: row.group_id || row.id })}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {!locked && !channel && (showInbox || (data.announcements || []).length) ? (
+            <div className="space-y-1.5" data-testid={`${testId}-announcements`}>
+              <div className="text-xs font-bold text-slate-800">Duyurular</div>
+              {showAnnounceForm ? (
+                <form onSubmit={createAnnounce} className="rounded-xl border border-violet-100 p-2 space-y-2" data-testid={`${testId}-announce-form`}>
+                  <input
+                    value={announceTitle}
+                    onChange={(e) => setAnnounceTitle(e.target.value)}
+                    placeholder="Başlık"
+                    className="w-full border rounded-xl p-2 text-xs font-semibold"
+                    data-testid={`${testId}-announce-title`}
+                  />
+                  <textarea
+                    value={announceBody}
+                    onChange={(e) => setAnnounceBody(e.target.value)}
+                    placeholder="Duyuru metni"
+                    rows={3}
+                    className="w-full border rounded-xl p-2 text-xs"
+                    data-testid={`${testId}-announce-body`}
+                  />
+                  <label className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full border cursor-pointer ${announceAll ? "bg-violet-50 border-violet-400 text-violet-700" : "border-slate-200 text-slate-600"}`}>
+                    <input type="checkbox" className="sr-only" checked={announceAll} onChange={() => setAnnounceAll((v) => !v)} />
+                    Tüm personel
+                  </label>
+                  {!announceAll && (data.directory || []).length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(data.directory || []).map((emp) => (
+                        <label key={emp.id} className={`text-[11px] font-bold px-2 py-1 rounded-full border cursor-pointer ${announceEmps.includes(emp.id) ? "bg-violet-50 border-violet-400 text-violet-700" : "border-slate-200 text-slate-600"}`}>
+                          <input type="checkbox" className="sr-only" checked={announceEmps.includes(emp.id)} onChange={() => toggle(announceEmps, emp.id, setAnnounceEmps)} />
+                          {emp.full_name || "Personel"}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                  <button type="submit" disabled={busy} className="px-3 py-1.5 rounded-xl bg-violet-600 text-white font-bold text-xs disabled:opacity-50" data-testid={`${testId}-announce-send`}>
+                    Duyuru gönder
+                  </button>
+                </form>
+              ) : null}
+              {!(data.announcements || []).length ? (
+                <div className="text-xs text-slate-400">Henüz duyuru yok.</div>
+              ) : (data.announcements || []).map((row) => (
+                <InboxButton
+                  key={row.id}
+                  title={row.title || "Duyuru"}
+                  last={{ body: `${row.from_name || "Yönetici"} · ${announceAudienceLabel(row)} · ${messagePreview(row)}` }}
+                  unread={(row.read_by || []).includes(selfId) ? 0 : 1}
+                  testId={`${testId}-announce-${row.id}`}
+                  onClick={() => openAnnouncement(row)}
                 />
               ))}
             </div>

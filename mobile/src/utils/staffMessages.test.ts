@@ -12,6 +12,8 @@ import {
   unreadStaffMessages,
   validateMessageBody,
   managerSelectGroups,
+  announceAudienceLabel,
+  announcementUnread,
 } from "./staffMessages";
 
 describe("staffMessages", () => {
@@ -55,5 +57,8 @@ describe("staffMessages", () => {
     expect(parsePeerValue("e1")).toEqual({ kind: "emp", id: "e1" });
     expect(peerPostBody({ kind: "manager", id: "u2" }, { body: "x" })).toEqual({ body: "x", to_user_id: "u2" });
     expect(peerPostBody({ kind: "group", id: "g1" }, { body: "x" })).toEqual({ body: "x", group_id: "g1" });
+    expect(announceAudienceLabel({ employee_ids: [] })).toBe("Tüm personel");
+    expect(announceAudienceLabel({ employee_ids: ["e1", "e2"] })).toBe("2 personel");
+    expect(announcementUnread([{ id: "a", read_by: ["me"] }, { id: "b", read_by: [] }], "me")).toBe(1);
   });
 });
