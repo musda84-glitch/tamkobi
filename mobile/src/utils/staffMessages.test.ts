@@ -12,6 +12,7 @@ import {
   unreadStaffMessages,
   validateMessageBody,
   managerSelectGroups,
+  peerSelectGroups,
   announceAudienceLabel,
   announcementUnread,
 } from "./staffMessages";
@@ -52,6 +53,14 @@ describe("staffMessages", () => {
     expect(mgrs.map((r) => r.user_id)).toEqual(["u1", "u2"]);
     const groups = managerSelectGroups([{ id: "u2", name: "Ayşe" }, { id: "me", name: "Ben" }], [{ user_id: "_all", name: "Tüm yöneticiler" }], "me");
     expect(groups[0].options.map((o) => o.value)).toEqual(["u2", "_all"]);
+    const pick = peerSelectGroups(
+      [{ id: "e1", full_name: "Ali", position: "Usta" }],
+      [{ id: "u2", name: "Ayşe" }, { id: "me", name: "Ben" }],
+      "me",
+      [{ user_id: "u3", name: "Can" }],
+    );
+    expect(pick.map((g) => g.label)).toEqual(["Personel", "Yöneticiler"]);
+    expect(pick[1].options.map((o) => o.value)).toEqual(["m:u2", "m:u3"]);
     expect(parsePeerValue("m:u2")).toEqual({ kind: "manager", id: "u2" });
     expect(parsePeerValue("g:g1")).toEqual({ kind: "group", id: "g1" });
     expect(parsePeerValue("e1")).toEqual({ kind: "emp", id: "e1" });

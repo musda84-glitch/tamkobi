@@ -15,6 +15,11 @@ _db = None
 _bound = False
 
 MANAGER_ROLES = frozenset({"admin", "manager"})
+MANAGER_ROLE_ALIASES = frozenset({
+    "admin", "manager",
+    "yönetici", "yonetici", "yönetıci",
+    "müdür", "mudur",
+})
 MAX_BODY = 2000
 PREVIEW = 4
 
@@ -35,12 +40,53 @@ def user_company_id(user: Optional[Dict[str, Any]]) -> str:
     return str(ids[0]) if ids else ""
 
 
-def is_manager(user: Optional[Dict[str, Any]]) -> bool:
+def is_manager_role(code: Any = None, name: Any = None, permissions: Any = None) -> bool:
+    """Sistem admin/manager + 'Yönetici' adlı veya tam yetkili özel roller."""
+    raw = str(code or "").strip().lower()
+    label = str(name or "").strip().lower()
+    if raw in MANAGER_ROLES or raw in MANAGER_ROLE_ALIASES:
+        return True
+    if label in MANAGER_ROLE_ALIASES:
+        return True
+    perms = permissions if isinstance(permissions, dict) else {}
+    if perms.get("/personnel") == "edit" and perms.get("/settings") == "edit":
+        return True
+    return False
+
+
+def is_manager(user: Optional[Dict[str, Any]], role_doc: Optional[Dict[str, Any]] = None) -> bool:
     if not user:
         return False
     if user.get("is_super_admin"):
         return True
-    return str(user.get("role") or "").lower() in MANAGER_ROLES
+    if is_manager_role(user.get("role"), user.get("role_name"), (role_doc or {}).get("permissions")):
+        return True
+    if role_doc:
+        return is_manager_role(role_doc.get("code"), role_doc.get("name"), role_doc.get("permissions"))
+    return False
+
+
+async def _manager_role_codes(company_id: str) -> set[str]:
+    codes = set(MANAGER_ROLES)
+    if not company_id or _db is None:
+        return codes
+    rows = await _db.roles.find({"company_id": company_id}).to_list(200)
+    for r in rows or []:
+        if is_manager_role(r.get("code"), r.get("name"), r.get("permissions")):
+            code = str(r.get("code") or "").strip()
+            if code:
+                codes.add(code)
+    return codes
+
+
+async def user_is_manager(user: Optional[Dict[str, Any]], company_id: str = "") -> bool:
+    if is_manager(user):
+        return True
+    cid = str(company_id or user_company_id(user) or "")
+    if not user or not cid:
+        return False
+    codes = {c.lower() for c in await _manager_role_codes(cid)}
+    return str(user.get("role") or "").strip().lower() in codes
 
 
 def normalize_body(text: Any) -> str:
@@ -332,14 +378,20 @@ async def _employee_directory(company_id: str, skip_id: Optional[str] = None) ->
 
 async def _manager_directory(company_id: str, skip_id: Optional[str] = None) -> List[Dict[str, Any]]:
     rows = await _db.users.find({
-        "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
+        "$or": [
+            {"active_company_id": company_id},
+            {"company_ids": company_id},
+            {"company_id": company_id},
+        ],
     }).to_list(300)
+    role_codes = {c.lower() for c in await _manager_role_codes(company_id)}
     skip = str(skip_id or "")
     out = []
     for u in rows:
         if u.get("is_active") is False:
             continue
-        if not is_manager(u):
+        role = str(u.get("role") or "").strip().lower()
+        if not is_manager(u) and role not in role_codes:
             continue
         uid = user_id_of(u)
         if skip and uid == skip:
@@ -440,7 +492,7 @@ async def _list_messages(
 ):
     company_id = user_company_id(user)
     own = await attendance.employee_for_user(user)
-    manager = is_manager(user)
+    manager = await user_is_manager(user, company_id)
     uid = user_id_of(user)
     own_id = str((own or {}).get("_id") or "")
     wanted = str(employee_id or "").strip()
@@ -581,7 +633,7 @@ async def _post_message(req: Dict[str, Any], user: dict):
         raise HTTPException(status_code=400, detail=err)
     company_id = user_company_id(user)
     own = await attendance.employee_for_user(user)
-    manager = is_manager(user)
+    manager = await user_is_manager(user, company_id)
     wanted = str((req or {}).get("employee_id") or "").strip()
     peer = str((req or {}).get("to_user_id") or "").strip()
     gid = str((req or {}).get("group_id") or "").strip()
@@ -623,7 +675,7 @@ async def _post_message(req: Dict[str, Any], user: dict):
         side = "manager"
     elif peer and manager and not wanted:
         target = await _db.users.find_one({"_id": peer})
-        if not target or not is_manager(target):
+        if not target or not await user_is_manager(target, company_id):
             raise HTTPException(status_code=404, detail="Yönetici bulunamadı.")
         to_name = str(target.get("name") or "Yönetici")
         emp = own
@@ -633,7 +685,7 @@ async def _post_message(req: Dict[str, Any], user: dict):
         side = "staff"
         if peer and peer != "_all":
             target = await _db.users.find_one({"_id": peer})
-            if not target or not is_manager(target):
+            if not target or not await user_is_manager(target, company_id):
                 raise HTTPException(status_code=404, detail="Yönetici bulunamadı.")
             to_name = str(target.get("name") or "Yönetici")
     else:
@@ -660,7 +712,7 @@ async def _post_message(req: Dict[str, Any], user: dict):
 async def _read_messages(req: Dict[str, Any], user: dict):
     company_id = user_company_id(user)
     own = await attendance.employee_for_user(user)
-    manager = is_manager(user)
+    manager = await user_is_manager(user, company_id)
     wanted = str((req or {}).get("employee_id") or "").strip()
     peer = str((req or {}).get("to_user_id") or "").strip()
     gid = str((req or {}).get("group_id") or "").strip()
@@ -696,7 +748,7 @@ async def _list_announcements(company_id: str, employee_id: str = "", manager: b
 
 
 async def _create_announce(req: Dict[str, Any], user: dict):
-    if not is_manager(user):
+    if not await user_is_manager(user):
         raise HTTPException(status_code=403, detail="Duyuru göndermek için yönetici yetkisi gerekir.")
     body, err = validate_body((req or {}).get("body"))
     if err:
@@ -761,7 +813,7 @@ async def _read_announce(req: Dict[str, Any], user: dict):
 async def _create_group(req: Dict[str, Any], user: dict):
     company_id = user_company_id(user)
     own = await attendance.employee_for_user(user)
-    manager = is_manager(user)
+    manager = await user_is_manager(user, company_id)
     if not manager and not own:
         raise HTTPException(status_code=403, detail="Grup oluşturmak için giriş yapın.")
     uid = user_id_of(user)

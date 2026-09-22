@@ -4,6 +4,7 @@ from staff_messages import (
     group_title,
     inbox_from_rows,
     is_manager,
+    is_manager_role,
     manager_inbox_from_rows,
     merge_manager_directory,
     message_doc,
@@ -27,8 +28,13 @@ def test_normalize_and_validate_body():
 def test_manager_and_company():
     assert is_manager({"role": "admin"})
     assert is_manager({"role": "manager"})
+    assert is_manager({"role": "Yönetici"})
+    assert is_manager({"role": "custom", "role_name": "Yönetici"})
     assert is_manager({"is_super_admin": True, "role": "personel"})
     assert not is_manager({"role": "personel"})
+    assert is_manager_role("rol_x", "Yönetici")
+    assert is_manager_role("lead", None, {"/personnel": "edit", "/settings": "edit"})
+    assert not is_manager_role("sales", "Satış", {"/quotes": "edit"})
     assert user_company_id({"active_company_id": "c1", "company_ids": ["c2"]}) == "c1"
     assert user_company_id({"company_ids": ["c2"]}) == "c2"
 
