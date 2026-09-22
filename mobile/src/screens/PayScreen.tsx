@@ -5,7 +5,6 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
-import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
 import { contactPaymentRequest, paymentTargetGroups, validateContactPayment, type BankAccount, type Partner } from "../utils/finance";
@@ -16,7 +15,6 @@ type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string;
 export function PayScreen() {
   const { client, companyId, can } = useAuth();
   const canPay = can("/banking", "edit");
-  const canPaper = can("/cheques", "edit") || canPay;
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -57,20 +55,6 @@ export function PayScreen() {
     () => paymentTargetGroups(accounts, partners, { collectableOnly: form.type === "inflow", partnersFirst: true }),
     [accounts, partners, form.type],
   );
-
-  const openPaper = (instrument: "cheque" | "promissory") => {
-    if (!picked) return;
-    if (!canPaper) { setError("Çek / senet kaydı yetkiniz yok."); return; }
-    const isCheque = instrument === "cheque";
-    go("ChequeNew", {
-      contact_id: idOf(picked),
-      contact_name: picked.name,
-      instrument,
-      direction: "received",
-      amount: form.amount,
-      notes: isCheque ? "Çek tahsilatı" : "Senet tahsilatı",
-    });
-  };
 
   const pick = (c: Contact) => {
     const first = paymentTargetGroups(accounts, partners, { collectableOnly: true, partnersFirst: true })[0]?.options[0]?.value || "";
@@ -144,8 +128,6 @@ export function PayScreen() {
               color={colors.danger}
               onPress={() => setForm({ ...form, type: "outflow", description: "Cari ödeme" })}
             />
-            <Chip label="Çek tahsilatı" active={false} testID="pay-type-cheque" onPress={() => openPaper("cheque")} />
-            <Chip label="Senet tahsilatı" active={false} testID="pay-type-promissory" onPress={() => openPaper("promissory")} />
           </Row>
           <GroupedSelect
             label={form.type === "inflow" ? "Kasa / banka / POS / ortak — kredi kartı yok" : "Kasa / banka / kart / ortak"}
