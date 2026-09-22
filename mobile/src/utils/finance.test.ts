@@ -7,6 +7,7 @@ import {
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
+  accountGroupTone,
   groupedAccounts,
   paymentTargetGroups,
   splitPaymentTarget,
@@ -171,6 +172,10 @@ describe("finance drafts", () => {
       { type: "credit_card", account_name: "Kart" },
     ]);
     const keys = groups.map((g) => g.key);
+    expect(accountGroupTone("cash_box").accent).toBe("#059669");
+    expect(accountGroupTone("bank").bg).toBe("#EFF6FF");
+    expect(accountGroupTone("partners").label).toBe("#B45309");
+    expect(accountGroupTone("yok").accent).toBe("#64748B");
     expect(keys).toEqual(["bank", "cash_box", "credit_card"]);
     expect(groups.find((g) => g.key === "cash_box")?.items).toHaveLength(2);
     expect(totalLiquidity([

@@ -198,6 +198,29 @@ export function accountBalance(a?: { current_balance?: number; balance?: number 
   return Number(a?.current_balance ?? a?.balance ?? 0) || 0;
 }
 
+export type AccountGroupTone = {
+  bg: string;
+  border: string;
+  label: string;
+  amount: string;
+  accent: string;
+};
+
+/** Web Kasa & Banka grup kartları: banka mavi, kasa yeşil, POS mor, ortak amber. */
+export const ACCOUNT_GROUP_TONES: Record<string, AccountGroupTone> = {
+  bank: { bg: "#EFF6FF", border: "#93C5FD", label: "#1D4ED8", amount: "#1E3A8A", accent: "#2563EB" },
+  cash_box: { bg: "#ECFDF5", border: "#6EE7B7", label: "#047857", amount: "#065F46", accent: "#059669" },
+  pos: { bg: "#F5F3FF", border: "#C4B5FD", label: "#6D28D9", amount: "#4C1D95", accent: "#7C3AED" },
+  okc_pos: { bg: "#F0FDFA", border: "#5EEAD4", label: "#0F766E", amount: "#115E59", accent: "#0D9488" },
+  credit_card: { bg: "#FDF4FF", border: "#F0ABFC", label: "#A21CAF", amount: "#86198F", accent: "#C026D3" },
+  partners: { bg: "#FFFBEB", border: "#FCD34D", label: "#B45309", amount: "#92400E", accent: "#D97706" },
+  other: { bg: "#F8FAFC", border: "#E2E8F0", label: "#475569", amount: "#0F172A", accent: "#64748B" },
+};
+
+export function accountGroupTone(key?: string | null): AccountGroupTone {
+  return ACCOUNT_GROUP_TONES[String(key || "")] || ACCOUNT_GROUP_TONES.other;
+}
+
 export function groupedAccounts<T extends { type?: string }>(accounts: T[]): { key: string; label: string; items: T[] }[] {
   const list = accounts || [];
   const groups: { key: string; label: string; items: T[] }[] = ACCOUNT_TYPES.map((g) => ({

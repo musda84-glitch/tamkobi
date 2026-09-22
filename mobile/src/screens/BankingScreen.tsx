@@ -10,6 +10,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import {
   accountBalance,
+  accountGroupTone,
   accountTypeTr,
   groupedAccounts,
   isBankingBankAccount,
@@ -172,29 +173,29 @@ export function BankingScreen() {
             ) : null}
           </Card>
           <Approvals items={approvals} onAct={actApproval} />
-          <Row style={{ flexWrap: "wrap" }}>
+          <View style={{ gap: 8 }} testID="account-groups-stack">
             {groups.map((g) => {
               const total = g.items.reduce((s, a) => s + accountBalance(a), 0);
               const active = groupF === g.key;
+              const tone = accountGroupTone(g.key);
               return (
                 <Pressable
                   key={g.key}
                   onPress={() => setGroupF(active ? "all" : g.key)}
                   testID={`account-group-${g.key}`}
                   style={{
-                    flexGrow: 1,
-                    flexBasis: "30%",
-                    paddingVertical: 8,
-                    paddingHorizontal: 10,
-                    borderRadius: 12,
+                    width: "100%",
+                    paddingVertical: 12,
+                    paddingHorizontal: 14,
+                    borderRadius: 14,
                     borderWidth: 1,
-                    borderColor: active ? colors.primary : colors.border,
-                    backgroundColor: active ? colors.emerald50 : colors.surface,
+                    borderColor: active ? tone.accent : tone.border,
+                    backgroundColor: tone.bg,
                   }}
                 >
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" }}>{g.label}</Text>
-                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{fmtMoney(total)}</Text>
-                  <Text style={{ fontSize: 11, color: colors.muted }}>{g.items.length} hesap{g.key === "credit_card" ? " · tahsilat kapalı" : ""}</Text>
+                  <Text style={{ fontSize: 10, fontWeight: "800", color: tone.label, textTransform: "uppercase" }}>{g.label}</Text>
+                  <Text style={{ fontWeight: "800", color: tone.amount, fontSize: 18 }}>{fmtMoney(total)}</Text>
+                  <Text style={{ fontSize: 11, color: tone.label, opacity: 0.8 }}>{g.items.length} hesap{g.key === "credit_card" ? " · tahsilat kapalı" : ""}</Text>
                 </Pressable>
               );
             })}
@@ -203,22 +204,21 @@ export function BankingScreen() {
                 onPress={() => setGroupF(groupF === "partners" ? "all" : "partners")}
                 testID="account-group-partners"
                 style={{
-                  flexGrow: 1,
-                  flexBasis: "30%",
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 12,
+                  width: "100%",
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  borderRadius: 14,
                   borderWidth: 1,
-                  borderColor: groupF === "partners" ? "#B45309" : colors.border,
-                  backgroundColor: groupF === "partners" ? colors.amber50 : colors.surface,
+                  borderColor: groupF === "partners" ? accountGroupTone("partners").accent : accountGroupTone("partners").border,
+                  backgroundColor: accountGroupTone("partners").bg,
                 }}
               >
-                <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textTransform: "uppercase" }}>Ortaklar</Text>
-                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{fmtMoney(partnerSummary?.total_balance)}</Text>
-                <Text style={{ fontSize: 11, color: colors.muted }}>{activePartners.length} ortak</Text>
+                <Text style={{ fontSize: 10, fontWeight: "800", color: accountGroupTone("partners").label, textTransform: "uppercase" }}>Ortaklar</Text>
+                <Text style={{ fontWeight: "800", color: accountGroupTone("partners").amount, fontSize: 18 }}>{fmtMoney(partnerSummary?.total_balance)}</Text>
+                <Text style={{ fontSize: 11, color: accountGroupTone("partners").label, opacity: 0.8 }}>{activePartners.length} ortak</Text>
               </Pressable>
             ) : null}
-          </Row>
+          </View>
           <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" />
           <Row style={{ flexWrap: "wrap" }}>
             <Chip label="Tümü" active={groupF === "all"} testID="bank-filter-all" onPress={() => setGroupF("all")} />
@@ -250,26 +250,43 @@ export function BankingScreen() {
             )
           ) : !visibleGroups.length ? (
             <Empty icon="wallet-outline" title="Hesap yok" hint={canEdit ? "Banka, kasa, POS veya kart ekleyin." : undefined} />
-          ) : visibleGroups.map((g) => (
-            <React.Fragment key={g.key}>
-              <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }} testID={`bank-group-label-${g.key}`}>{g.label}</Text>
-              {g.items.map((a) => (
-                <ListRow
-                  key={idOf(a)}
-                  testID={`bank-row-${idOf(a)}`}
-                  title={a.account_name || a.bank_name || "Hesap"}
-                  subtitle={[
-                    accountTypeTr(a.type),
-                    a.iban || a.account_number,
-                    a.bank_name,
-                    a.is_integrated ? (a.integration_provider || "Entegre") : "",
-                  ].filter(Boolean).join(" · ")}
-                  right={fmtMoney(accountBalance(a), a.currency)}
-                  onPress={() => go("BankingAccount", { id: idOf(a), name: a.account_name || "" })}
-                />
-              ))}
-            </React.Fragment>
-          ))}
+          ) : visibleGroups.map((g) => {
+            const tone = accountGroupTone(g.key);
+            const isCash = g.key === "cash_box";
+            return (
+              <React.Fragment key={g.key}>
+                <Text style={{ fontWeight: "800", color: tone.label, marginTop: 8 }} testID={`bank-group-label-${g.key}`}>{g.label}</Text>
+                {g.items.map((a) => (
+                  <View
+                    key={idOf(a)}
+                    style={isCash ? {
+                      backgroundColor: tone.bg,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: tone.border,
+                      paddingHorizontal: 8,
+                    } : undefined}
+                  >
+                    <ListRow
+                      testID={`bank-row-${idOf(a)}`}
+                      leading={isCash ? (
+                        <View style={{ width: 8, height: 36, borderRadius: 4, backgroundColor: tone.accent }} />
+                      ) : undefined}
+                      title={a.account_name || a.bank_name || "Hesap"}
+                      subtitle={[
+                        accountTypeTr(a.type),
+                        a.iban || a.account_number,
+                        a.bank_name,
+                        a.is_integrated ? (a.integration_provider || "Entegre") : "",
+                      ].filter(Boolean).join(" · ")}
+                      right={fmtMoney(accountBalance(a), a.currency)}
+                      onPress={() => go("BankingAccount", { id: idOf(a), name: a.account_name || "" })}
+                    />
+                  </View>
+                ))}
+              </React.Fragment>
+            );
+          })}
         </>
       )}
     </Screen>
