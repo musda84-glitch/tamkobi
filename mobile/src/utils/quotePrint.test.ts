@@ -76,7 +76,7 @@ describe("quotePrint", () => {
         vat_rate: 20,
         unit: "Adet",
         is_service: true,
-        image_url: "/api/files/hizmet.jpg",
+        print_image_url: "/api/files/hizmet.jpg",
       }],
     }, company, { template: mergePrintTemplate({ show_images: true }), mediaBase: "https://tamkobi.com" });
     expect(html).toContain("Montaj");
