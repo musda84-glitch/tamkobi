@@ -44,7 +44,7 @@ import {
   hydrateWorkItem,
   namedItems,
   newButtonLabel,
-  QUOTE_ITEM_THUMB_SIZE,
+  QUOTE_ITEM_THUMB,
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   SURVEY_MAPS_ACTION,
@@ -707,7 +707,12 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               }}
             >
               <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                <ProductThumb uri={workItemImage(it, prod)} size={QUOTE_ITEM_THUMB_SIZE} testID={`q-item-thumb-${i}`} />
+                <ProductThumb
+                  uri={workItemImage(it, prod)}
+                  width={QUOTE_ITEM_THUMB.width}
+                  height={QUOTE_ITEM_THUMB.height}
+                  testID={`q-item-thumb-${i}`}
+                />
                 <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                   {kind === "quote" ? (
                     <Row style={{ flexWrap: "wrap", gap: 4 }}>

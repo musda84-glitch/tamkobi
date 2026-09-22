@@ -52,6 +52,7 @@ import {
   workItemTotals,
   hydrateWorkItem,
   itemStripe,
+  QUOTE_ITEM_THUMB,
   QUOTE_ITEM_THUMB_SIZE,
   toggleWorkItemService,
 } from "./workDocs";
@@ -123,7 +124,9 @@ describe("workDocs", () => {
     const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
     expect(fromSvc.is_service).toBe(true);
     expect(fromSvc.product_id).toBe("");
-    expect(QUOTE_ITEM_THUMB_SIZE).toBeGreaterThan(52);
+    expect(QUOTE_ITEM_THUMB.width).toBeLessThan(QUOTE_ITEM_THUMB.height);
+    expect(QUOTE_ITEM_THUMB.height).toBeGreaterThan(80);
+    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.height);
     expect(workItemNoteOpen({ description: "" })).toBe(false);
     expect(workItemNoteOpen({ description: "Kesim notu" })).toBe(true);
     expect(workItemNoteOpen({ description: "Kesim notu" }, false)).toBe(false);
