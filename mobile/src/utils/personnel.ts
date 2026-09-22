@@ -358,9 +358,11 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
   return body;
 }
 
-export function isDailyWage(emp?: Pick<Employee, "pay_type"> | null): boolean {
-  const t = String(emp?.pay_type || "monthly").toLowerCase();
-  return t === "daily" || t === "yevmiye" || t === "gunluk" || t === "günlük";
+export function isDailyWage(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): boolean {
+  const t = String(emp?.pay_type || "").toLowerCase();
+  if (t === "daily" || t === "yevmiye" || t === "gunluk" || t === "günlük") return true;
+  if (t === "monthly" || t === "aylik" || t === "aylık" || t === "maas" || t === "maaş") return false;
+  return Number(emp?.daily_wage) > 0;
 }
 
 export function isDailyPayroll(p?: Pick<Payroll, "pay_type"> | null): boolean {
@@ -543,17 +545,21 @@ export function employeeCompRows(
   emp?: Employee | null,
   balance?: EmployeeBalance | null,
   opts?: { daysPresent?: number; yevmiyeDays?: number; yevmiyeAmount?: number },
-): { key: string; label: string; value: number; hint?: string }[] {
+): { key: string; label: string; value: number; hint?: string; days?: number }[] {
   const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
   const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
   const daily = isDailyWage(emp);
   const wage = daily ? (Number(emp?.daily_wage) || 0) : (Number(emp?.salary) || 0);
   const recordedDays = Math.max(0, Math.trunc(Number(opts?.yevmiyeDays ?? emp?.yevmiye_days) || 0));
-  const days = recordedDays > 0 ? recordedDays : Math.max(0, Math.trunc(Number(opts?.daysPresent) || 0));
+  const present = Math.max(0, Math.trunc(Number(opts?.daysPresent) || 0));
   const prim = bonusDue(balance);
-  const recordedAmt = Number(opts?.yevmiyeAmount ?? emp?.yevmiye_due);
-  const yevmiyeEarned = recordedAmt > 0 ? recordedAmt : dailyEarned(emp, days);
-  const bonusValue = daily ? yevmiyeEarned : prim;
+  const recordedAmt = Number(opts?.yevmiyeAmount ?? emp?.yevmiye_due) || 0;
+  const bonusValue = daily
+    ? (recordedAmt > 0 ? recordedAmt : prim > 0 ? prim : dailyEarned(emp, recordedDays || present))
+    : prim;
+  const days = recordedDays > 0
+    ? recordedDays
+    : (daily && wage > 0 && bonusValue > 0 ? Math.round(bonusValue / wage) : present);
   const mesai = overtimeDue(balance);
   return [
     { key: "meal", label: "Yemek", value: meal },
@@ -564,6 +570,7 @@ export function employeeCompRows(
       label: daily ? "Yevmiye günü" : "Prim hakedişi",
       value: bonusValue,
       hint: daily ? `${days} gün` : undefined,
+      days: daily ? days : undefined,
     },
     { key: "overtime", label: "Fazla mesai ücreti", value: mesai },
     { key: "total", label: "Toplam", value: meal + yol + wage + bonusValue + mesai },

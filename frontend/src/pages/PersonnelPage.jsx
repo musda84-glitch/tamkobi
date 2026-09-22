@@ -16,7 +16,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { isDailyWage, payrollWageLine, totalMonthlyLoad } from "../utils/personnelWage";
+import { isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { workplaceShort } from "../utils/workplace";
 
 import {
@@ -616,7 +616,7 @@ export default function PersonnelPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-bonus-due-${emp.tc_kimlik || empKey}`}>
-                <span className="text-slate-400">{isDailyWage(emp) ? `Yevmiye hakedişi${emp.yevmiye_days ? ` · ${emp.yevmiye_days} gün` : ""}:` : "Prim hakedişi:"}</span>
+                <span className="text-slate-400">{isDailyWage(emp) ? `Yevmiye günü · ${yevmiyeDaysOf(emp)} gün:` : "Prim hakedişi:"}</span>
                 <span className="text-sm font-bold text-amber-800">{Number((isDailyWage(emp) && emp.yevmiye_due) || emp.balance?.bonus_pending || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>

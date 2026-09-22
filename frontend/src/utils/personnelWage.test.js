@@ -1,6 +1,7 @@
 import {
   dailyWageOf,
   isDailyWage,
+  yevmiyeDaysOf,
   monthlyLoad,
   payrollWageLine,
   periodWage,
@@ -15,6 +16,10 @@ describe("personnel wage", () => {
     expect(isDailyWage({ pay_type: "yevmiye" })).toBe(true);
     expect(isDailyWage({ pay_type: "günlük" })).toBe(true);
     expect(dailyWageOf({ daily_wage: "1500" })).toBe(1500);
+    expect(isDailyWage({ daily_wage: 1500 })).toBe(true);
+    expect(isDailyWage({ pay_type: "monthly", daily_wage: 1500 })).toBe(false);
+    expect(yevmiyeDaysOf({ daily_wage: 1500, yevmiye_days: 6 })).toBe(6);
+    expect(yevmiyeDaysOf({ daily_wage: 1500, balance: { bonus_pending: 10500 } })).toBe(7);
   });
 
   it("computes period and monthly load", () => {

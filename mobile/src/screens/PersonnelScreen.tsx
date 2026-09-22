@@ -704,7 +704,15 @@ export function PersonnelScreen() {
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {comp.map((row) => (
                     <View key={row.key} style={{ minWidth: 140, flexGrow: 1, flexBasis: "46%", paddingRight: 8, paddingBottom: 4 }}>
-                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}{row.hint ? ` · ${row.hint}` : ""}</Muted>
+                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}</Muted>
+                      {row.key === "bonus" && row.days != null ? (
+                        <Text
+                          testID={`emp-comp-bonus-days-${eid}`}
+                          style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}
+                        >
+                          {row.days} gün
+                        </Text>
+                      ) : null}
                       <Text
                         testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
                         style={{ fontWeight: "800", color: row.key === "total" ? colors.primary : colors.text }}

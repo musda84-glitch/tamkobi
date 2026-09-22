@@ -116,19 +116,22 @@ describe("payroll helpers", () => {
       ["total", 35950],
     ]);
     expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200 }).find((r) => r.key === "yol")?.value).toBe(200);
-    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value, r.hint])).toEqual([
-      ["Yemek", 100, undefined],
-      ["Yol", 0, undefined],
-      ["Yevmiye", 1500, undefined],
-      ["Yevmiye günü", 0, "0 gün"],
-      ["Fazla mesai ücreti", 0, undefined],
-      ["Toplam", 1600, undefined],
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value, r.hint, r.days])).toEqual([
+      ["Yemek", 100, undefined, undefined],
+      ["Yol", 0, undefined, undefined],
+      ["Yevmiye", 1500, undefined, undefined],
+      ["Yevmiye günü", 0, "0 gün", 0],
+      ["Fazla mesai ücreti", 0, undefined, undefined],
+      ["Toplam", 1600, undefined, undefined],
     ]);
     expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, null, { daysPresent: 6 }).find((r) => r.key === "bonus")).toEqual({
-      key: "bonus", label: "Yevmiye günü", value: 9000, hint: "6 gün",
+      key: "bonus", label: "Yevmiye günü", value: 9000, hint: "6 gün", days: 6,
     });
-    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, { bonus_pending: 10500 }, { daysPresent: 1, yevmiyeDays: 7, yevmiyeAmount: 10500 }).find((r) => r.key === "bonus")).toEqual({
-      key: "bonus", label: "Yevmiye günü", value: 10500, hint: "7 gün",
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, { bonus_pending: 10500 }, { daysPresent: 1 }).find((r) => r.key === "bonus")).toEqual({
+      key: "bonus", label: "Yevmiye günü", value: 10500, hint: "7 gün", days: 7,
+    });
+    expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
+      label: "Yevmiye günü", value: 3000, days: 2,
     });
     expect(unpaidYevmiyeTotals([
       { type: "yevmiye", status: "pending", worked_days: 6, amount: 9000 },
