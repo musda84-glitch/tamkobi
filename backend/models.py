@@ -657,6 +657,9 @@ class Payroll(BaseDocument):
     period: str  # Örn: "2026-05"
     net_salary: float
     gross_salary: float
+    pay_type: str = "monthly"  # monthly | daily
+    daily_wage: float = 0.0
+    worked_days: int = 0
     bonus: float = 0.0
     deduction: float = 0.0
     advance_payment: float = 0.0

@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
 
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 export const DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -92,7 +93,7 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
-  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
+  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
   const [s, setS] = useState({ start: ws.start || "", end: ws.end || "", break_minutes: ws.break_minutes ?? null, late_tolerance_minutes: ws.late_tolerance_minutes ?? null, overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null, work_days: ws.work_days || [], days: ws.days || {} });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS({ ...s, [k]: v });
@@ -102,7 +103,9 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
     setBusy(true);
     try {
       const schedule = Object.fromEntries(Object.entries(s).filter(([k, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length) && !(k === "days" && !Object.keys(v || {}).length)));
-      const body = { payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary), salary: Number(pay.salary) || 0, second_salary: Number(pay.second_salary) || 0, meal_allowance: Number(pay.meal_allowance) || 0, transport_allowance: Number(pay.transport_allowance) || 0, overtime_method: pay.overtime_method || null, overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate), work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule };
+      const daily = pay.pay_type === "daily";
+      const dailyWage = daily ? Number(pay.daily_wage) || 0 : 0;
+      const body = { payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary), pay_type: daily ? "daily" : "monthly", daily_wage: dailyWage, salary: daily ? monthlyLoad({ pay_type: "daily", daily_wage: dailyWage }) : Number(pay.salary) || 0, second_salary: Number(pay.second_salary) || 0, meal_allowance: Number(pay.meal_allowance) || 0, transport_allowance: Number(pay.transport_allowance) || 0, overtime_method: pay.overtime_method || null, overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate), work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule };
       await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
       toast.success(mode === "clear" ? "Personel firma mesai saatlerine döndü." : "Ücret ve mesai bilgileri kaydedildi."); onSaved?.(); onClose?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -111,9 +114,21 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
     <div className="space-y-4 text-xs" data-testid="employee-compensation-form">
       <div className="border border-slate-200 rounded-xl p-3 space-y-2">
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><Banknote className="w-3.5 h-3.5 text-emerald-600" /> Ücretler</div>
+        <div className="flex gap-1" data-testid="emp-pay-type">
+          <button type="button" onClick={() => setPay({ ...pay, pay_type: "monthly" })} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold border ${pay.pay_type === "daily" ? "bg-white text-slate-600 border-slate-200" : "bg-emerald-600 text-white border-emerald-600"}`} data-testid="emp-pay-monthly">Aylık maaş</button>
+          <button type="button" onClick={() => setPay({ ...pay, pay_type: "daily" })} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold border ${pay.pay_type === "daily" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200"}`} data-testid="emp-pay-daily">Günlük yevmiye</button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Bordro maaşı (brüt, resmi)</label><input type="number" min="0" value={pay.payroll_salary} onChange={(e) => setPay({ ...pay, payroll_salary: e.target.value })} placeholder={`boş = net × 1,4`} className={`${inp} w-full`} data-testid="emp-payroll-salary" /></div>
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Net maaş (ele geçen)</label><input type="number" min="0" value={pay.salary} onChange={(e) => setPay({ ...pay, salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-net-salary" /></div>
+          {pay.pay_type === "daily" ? (
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Günlük yevmiye (₺)</label>
+              <input type="number" min="0" value={pay.daily_wage} onChange={(e) => setPay({ ...pay, daily_wage: e.target.value })} className={`${inp} w-full`} data-testid="emp-daily-wage" placeholder="Örn: 1500" />
+              <p className="text-[10px] text-slate-400 mt-0.5">Bordro = yevmiye × gelen gün. Tahmini ay: {monthlyLoad({ pay_type: "daily", daily_wage: pay.daily_wage }).toLocaleString("tr-TR")} ₺ (26 gün).</p>
+            </div>
+          ) : (
+            <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Net maaş (ele geçen)</label><input type="number" min="0" value={pay.salary} onChange={(e) => setPay({ ...pay, salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-net-salary" /></div>
+          )}
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">2. maaş (aylık, gayri resmi)</label><input type="number" min="0" value={pay.second_salary} onChange={(e) => setPay({ ...pay, second_salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-second-salary" /></div>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yemek (aylık, ₺)</label><input type="number" min="0" value={pay.meal_allowance} onChange={(e) => setPay({ ...pay, meal_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-meal-allowance" /></div>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yol / ulaşım (aylık, ₺)</label><input type="number" min="0" value={pay.transport_allowance} onChange={(e) => setPay({ ...pay, transport_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-transport-allowance" /></div>
@@ -121,7 +136,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Sabit saatlik mesai ücreti (₺)</label><input type="number" min="0" value={pay.overtime_hourly_rate} onChange={(e) => setPay({ ...pay, overtime_hourly_rate: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-rate" /></div>
           <div className="text-[10px] text-slate-500 self-end pb-1">Yasal saatlik mesai: <b className="text-slate-800">{legalRate.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺</b> (brüt {grossForRate.toLocaleString("tr-TR")} / {companySchedule?.monthly_hours_divisor || 225} × {companySchedule?.overtime_multiplier || 1.5})</div>
         </div>
-        <p className="text-[10px] text-slate-500">Bordro: net + mesai + 2. maaş + prim − kesinti − avans. Yemek ve yol karttan belirlenir; ödenmemiş tutar kalan alacağa eklenir, masraf kaydında önerilir.</p>
+        <p className="text-[10px] text-slate-500">{pay.pay_type === "daily" || isDailyWage(employee) ? "Yevmiyeli bordro: gelen gün × günlük ücret + mesai + 2. maaş + prim − kesinti − avans." : "Bordro: net + mesai + 2. maaş + prim − kesinti − avans."} Yemek ve yol karttan belirlenir; ödenmemiş tutar kalan alacağa eklenir, masraf kaydında önerilir.</p>
       </div>
       <div className="border border-slate-200 rounded-xl p-3 space-y-2">
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-indigo-600" /> Kişiye Özel Mesai Saatleri <span className="font-normal text-slate-400">— boş bırakılan alanlar firma ayarından alınır ({companySchedule?.start}–{companySchedule?.end})</span></div>

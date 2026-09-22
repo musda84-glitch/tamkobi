@@ -1,6 +1,7 @@
 
 import { toast } from "sonner";
 import { formatTrAmount } from "./money";
+import { isDailyWage, payrollWageLine } from "./personnelWage";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -12,7 +13,7 @@ export const printPayslip = (p, company = {}) => {
   const ot = p.overtime_rate || {};
   const rows = [
     ["Brüt (bordro) maaş", p.gross_salary, "muted"],
-    ["Net maaş", p.net_salary],
+    [isDailyWage(p) ? `Yevmiye${payrollWageLine(p) ? ` — ${payrollWageLine(p)}` : ""}` : "Net maaş", p.net_salary],
     p.overtime_pay > 0 && [`Fazla mesai ücreti — ${p.overtime_hours} sa (hafta içi ${p.overtime_weekday_hours || 0} sa × ${fmt(ot.weekday_rate)} ₺${p.overtime_holiday_hours ? `, tatil ${p.overtime_holiday_hours} sa × ${fmt(ot.holiday_rate)} ₺` : ""})`, p.overtime_pay],
     p.second_salary > 0 && ["2. maaş", p.second_salary],
     p.bonus > 0 && ["Prim / ikramiye", p.bonus],

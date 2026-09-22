@@ -8,6 +8,7 @@ import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSetti
 import { ShiftPlanner } from "./ShiftPlanner";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { formatTrAmount } from "../utils/money";
+import { isDailyWage } from "../utils/personnelWage";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -66,7 +67,7 @@ export const AttendancePanel = ({ companyId }) => {
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Mesai</th><th className="px-4 py-2">Bugün</th><th className="px-4 py-2 text-right">Gün</th><th className="px-4 py-2 text-right">Devamsız</th><th className="px-4 py-2 text-right">İzin</th><th className="px-4 py-2 text-right">Saat</th><th className="px-4 py-2 text-right">F. Mesai</th><th className="px-4 py-2 text-right">Mesai ₺</th><th className="px-4 py-2 text-right">Geç</th><th className="px-4 py-2 text-right">Onaysız</th><th className="px-4 py-2"></th></tr></thead>
         <tbody className="divide-y divide-slate-100">{data.summary.map((s) => (
           <tr key={s.employee_id} data-testid={`att-row-${s.employee_id}`}>
-            <td className="px-4 py-2 font-semibold text-slate-900">{s.employee_name}</td>
+            <td className="px-4 py-2 font-semibold text-slate-900">{s.employee_name}{isDailyWage(s) ? <span className="ml-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`att-yevmiye-badge-${s.employee_id}`}>Yevmiye</span> : null}{isDailyWage(s) ? <div className="text-[10px] font-semibold text-amber-700" data-testid={`att-yevmiye-${s.employee_id}`}>{(s.days_present || 0)} gün × {formatTrAmount(s.daily_wage || 0)} = {formatTrAmount(s.period_wage || 0)} ₺</div> : null}</td>
             <td className="px-4 py-2"><button onClick={() => setSchedEmp(s)} className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-md border hover:bg-slate-50 ${s.has_override ? "border-indigo-300 text-indigo-700 bg-indigo-50" : "text-slate-500"}`} title="Personele özel mesai saatleri" data-testid={`att-sched-${s.employee_id}`}><Timer className="w-3 h-3" /> {s.schedule.start}–{s.schedule.end}{s.has_override ? " ★" : ""}</button></td>
             <td className="px-4 py-2 font-mono text-slate-600">{s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}${s.today.status !== "present" ? ` (${s.today.status === "absent" ? "Devamsız" : "İzinli"})` : ""}` : "—"}{s.today?.late_minutes ? <span className="ml-1 text-[9px] font-bold text-rose-600">{s.today.late_minutes} dk geç</span> : null}{s.today?.assigned_overtime_hours ? <span className="ml-1 text-[9px] font-bold text-indigo-600" title={`Beklenen çıkış ${s.today.expected_end || ""}`}>+{s.today.assigned_overtime_hours} sa atanan</span> : null}</td>
             <td className="px-4 py-2 text-right font-bold text-emerald-700">{s.days_present}</td><td className="px-4 py-2 text-right text-rose-600">{s.days_absent}</td><td className="px-4 py-2 text-right text-amber-600">{s.days_leave}</td>

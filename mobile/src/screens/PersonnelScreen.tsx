@@ -15,6 +15,8 @@ import {
   leaveDays,
   leaveStatusTr,
   leaveTypeTr,
+  dailyEarned,
+  isDailyWage,
   monthlyPayrollLoad,
   openPayroll,
   advancePayload,
@@ -314,7 +316,7 @@ export function PersonnelScreen() {
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
       <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }} testID="personnel-title">Personel & Bordro</Text>
-      <Muted>Aylık net maaş yükü: {fmtMoney(loadAmount)}</Muted>
+      <Muted>Aylık net maaş yükü: {fmtMoney(loadAmount)}{employees.some(isDailyWage) ? " · yevmiye × 26 gün tahmini" : ""}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
 
@@ -342,14 +344,24 @@ export function PersonnelScreen() {
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
                 <View>
-                  <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                    <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                    {isDailyWage(emp) ? (
+                      <Text
+                        testID={`emp-yevmiye-badge-${eid}`}
+                        style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
+                      >
+                        Yevmiye
+                      </Text>
+                    ) : null}
+                  </View>
                   <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
                   <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
                 </View>
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {comp.map((row) => (
                     <View key={row.key} style={{ minWidth: 72, paddingRight: 8, paddingBottom: 4 }}>
-                      <Muted>{row.label}</Muted>
+                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}</Muted>
                       <Text
                         testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
                         style={{ fontWeight: "800", color: row.key === "total" ? colors.primary : colors.text }}
@@ -446,12 +458,26 @@ export function PersonnelScreen() {
             <Empty icon="time-outline" title="Puantaj yok" hint="Çalışan ekleyince giriş/çıkış burada görünür." />
           ) : (attendance?.summary || []).map((s: AttendanceSummary) => (
             <Card key={s.employee_id} testID={`att-row-${s.employee_id}`}>
-              <Text style={{ fontWeight: "800", color: colors.text }}>{s.employee_name}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <Text style={{ fontWeight: "800", color: colors.text }}>{s.employee_name}</Text>
+                {isDailyWage(s) || isDailyWage(employees.find((e) => idOf(e) === s.employee_id)) ? (
+                  <Text testID={`att-yevmiye-badge-${s.employee_id}`} style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}>Yevmiye</Text>
+                ) : null}
+              </View>
               <Muted>
                 Bugün {s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}` : "—"}
                 {s.today?.late_minutes ? ` · ${s.today.late_minutes} dk geç` : ""}
               </Muted>
               <Muted>Gün {s.days_present || 0} · devamsız {s.days_absent || 0} · izin {s.days_leave || 0} · {s.total_hours || 0} sa · mesai {s.overtime_hours || 0} sa</Muted>
+              {(() => {
+                const emp = employees.find((e) => idOf(e) === s.employee_id);
+                const daily = isDailyWage(s) || isDailyWage(emp);
+                if (!daily) return null;
+                const days = s.days_present || 0;
+                const wage = Number(s.daily_wage ?? emp?.daily_wage) || 0;
+                const earned = s.period_wage != null ? Number(s.period_wage) : dailyEarned(emp || { pay_type: "daily", daily_wage: wage }, days);
+                return <Muted testID={`att-yevmiye-${s.employee_id}`}>Yevmiye: {days} gün × {fmtMoney(wage)} = {fmtMoney(earned)}</Muted>;
+              })()}
               {canEdit ? (
                 <Row style={{ flexWrap: "wrap" }}>
                   <PrimaryButton title="Giriş" color={colors.primary} testID={`att-in-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { action: "check_in" })} />
