@@ -68,6 +68,7 @@ import {
   validateQuoteItems,
   toggleWorkItemService,
   bumpWorkItemQty,
+  workItemPriceFromGross,
   workItemFromProduct,
   workItemImage,
   workItemLineGross,
@@ -157,6 +158,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [noteOpen, setNoteOpen] = useState<Record<number, boolean>>({});
+  const [grossDraft, setGrossDraft] = useState<Record<number, string>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -725,7 +727,17 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
                     <Row style={{ alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <Row style={{ flexWrap: "wrap", gap: 4, flex: 1 }}>
+                      <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
+                        {canEdit ? (
+                          <Pressable
+                            onPress={() => removeItem(i)}
+                            testID={`q-item-del-${i}`}
+                            accessibilityLabel="Kalemi sil"
+                            style={{ width: 24, height: 28, alignItems: "center", justifyContent: "center", flexShrink: 0, marginLeft: -2 }}
+                          >
+                            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                          </Pressable>
+                        ) : null}
                         <Chip
                           compact
                           label="Ürün"
@@ -979,19 +991,46 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         </Row>
                         )}
                         <Row style={{ justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
-                          <Text testID={`q-item-gross-${i}`} style={{ flex: 1, textAlign: "right", fontSize: 15, fontWeight: "800", color: colors.text }}>
-                            {it.name ? fmtMoney(workItemLineGross(it)) : ""}
-                          </Text>
-                          {canEdit ? (
-                            <Pressable
-                              onPress={() => removeItem(i)}
-                              testID={`q-item-del-${i}`}
-                              accessibilityLabel="Kalemi sil"
-                              style={{ width: 24, height: 28, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                            >
-                              <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                            </Pressable>
-                          ) : null}
+                          <View
+                            style={{
+                              flex: 1,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "flex-end",
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                              borderRadius: 999,
+                              backgroundColor: "#fff",
+                              minHeight: 32,
+                              paddingHorizontal: 10,
+                              gap: 4,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <TextInput
+                              testID={`q-item-gross-${i}`}
+                              value={grossDraft[i] ?? (it.name ? quotePriceText(workItemLineGross(it)) : "")}
+                              onFocus={() => setGrossDraft((m) => ({ ...m, [i]: quotePriceText(workItemLineGross(it)) }))}
+                              onBlur={() => setGrossDraft((m) => {
+                                const next = { ...m };
+                                delete next[i];
+                                return next;
+                              })}
+                              onChangeText={(v) => {
+                                if (!canEdit) return;
+                                setGrossDraft((m) => ({ ...m, [i]: v }));
+                                const unit = workItemPriceFromGross(it, n(v));
+                                setItems((rows) => rows.map((row, idx) => (
+                                  idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
+                                )));
+                              }}
+                              keyboardType="decimal-pad"
+                              editable={canEdit}
+                              numberOfLines={1}
+                              style={{ flex: 1, minWidth: 0, textAlign: "right", fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 32 }}
+                            />
+                            <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 13, flexShrink: 0 }}>₺</Text>
+                          </View>
                         </Row>
                       </View>
                   ) : (

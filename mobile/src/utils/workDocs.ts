@@ -318,6 +318,19 @@ export function bumpWorkItemQty(qty: unknown, delta: number): number {
   return rounded < 0 ? 0 : rounded;
 }
 
+export function workItemPriceFromGross(
+  it: Pick<WorkItem, "quantity" | "vat_rate" | "price_includes_vat" | "unit_price_incl">,
+  gross: number,
+): number {
+  const qty = Number(it.quantity) || 0;
+  if (qty <= 0 || !Number.isFinite(gross)) return 0;
+  const rate = Number(it.vat_rate || 0);
+  const inclusive = !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
+  const per = gross / qty;
+  if (inclusive) return Math.round(per * 10000) / 10000;
+  return Math.round((per / (1 + rate / 100)) * 10000) / 10000;
+}
+
 export function workItemLineGross(it: WorkItem): number {
   const qty = Number(it.quantity || 0);
   const rate = Number(it.vat_rate || 0);
