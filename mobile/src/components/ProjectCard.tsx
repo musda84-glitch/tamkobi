@@ -134,6 +134,7 @@ export function ProjectCard({
   onStatus,
   onTeam,
   onTrack,
+  onCollect,
   onPhotos,
   onPreview,
 }: {
@@ -146,6 +147,7 @@ export function ProjectCard({
   onStatus: (status: string) => void;
   onTeam: () => void;
   onTrack: () => void;
+  onCollect?: () => void;
   onPhotos: (id: string, patch: Pick<ProjectDoc, "stage_photos" | "images">) => void;
   onPreview: () => void;
 }) {
@@ -290,17 +292,29 @@ export function ProjectCard({
             ) : null}
           </Row>
         ) : null}
-        {canEdit ? (
+        {canEdit || onCollect ? (
           <Row style={{ flexWrap: "wrap" }}>
-            <ActionBtn
-              title="Takip Linki"
-              testID={`project-track-${id}`}
-              onPress={onTrack}
-              bg={colors.emerald50}
-              border="#A7F3D0"
-              color="#047857"
-            />
-            {canCompleteProject(project.status) ? (
+            {onCollect ? (
+              <ActionBtn
+                title="Tahsilat"
+                testID={`project-collect-${id}`}
+                onPress={onCollect}
+                bg={colors.emerald50}
+                border="#A7F3D0"
+                color="#047857"
+              />
+            ) : null}
+            {canEdit ? (
+              <ActionBtn
+                title="Takip Linki"
+                testID={`project-track-${id}`}
+                onPress={onTrack}
+                bg={colors.indigo50}
+                border="#C7D2FE"
+                color="#3730A3"
+              />
+            ) : null}
+            {canEdit && canCompleteProject(project.status) ? (
               <ActionBtn
                 title={PROJECT_QUOTE_ACTION}
                 testID={`project-quote-${id}`}
@@ -579,6 +593,7 @@ export function ProjectCardsHost({
   baseUrl,
   onPatch,
   onError,
+  onCollect,
 }: {
   projects: ProjectDoc[];
   stages: ProjectStage[];
@@ -590,6 +605,7 @@ export function ProjectCardsHost({
   baseUrl: string;
   onPatch: (id: string, patch: Partial<ProjectDoc>) => void;
   onError: (msg: string) => void;
+  onCollect?: (project: ProjectDoc) => void;
 }) {
   const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
@@ -632,6 +648,7 @@ export function ProjectCardsHost({
             onStatus={(status) => setProjectStatus(id, status)}
             onTeam={() => setTeamProject(project)}
             onTrack={() => setTrackProject(project)}
+            onCollect={onCollect ? () => onCollect(project) : undefined}
             onPhotos={(pid, patch) => applyPatch(pid, patch)}
             onPreview={() => setPreviewProject(project)}
           />

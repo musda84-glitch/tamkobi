@@ -15,7 +15,14 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "Contacts":
       return router.push("/contacts");
     case "ContactDetail":
-      return router.push({ pathname: "/contacts/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
+      return router.push({
+        pathname: "/contacts/[id]",
+        params: {
+          id: String(params?.id || ""),
+          name: String(params?.name || ""),
+          ...(params?.collect ? { collect: String(params.collect) } : {}),
+        },
+      });
     case "ContactNew":
       return router.push("/contacts/new");
     case "ContactEdit":
