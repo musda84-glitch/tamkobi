@@ -1178,7 +1178,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       <Field dense label="Not" value={notes} onChangeText={setNotes} editable={canEdit} />
       {isNew || kind !== "quote" ? (
-        <PrimaryButton title={busy ? "Kaydediliyor…" : "Kaydet"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID={`${kind}-save`} />
+        <PrimaryButton
+          title={busy ? (isNew ? "Kaydediliyor…" : "Güncelleniyor…") : isNew ? "Kaydet" : "Güncelle"}
+          onPress={save}
+          loading={busy}
+          disabled={!canEdit}
+          color={colors.primary}
+          testID={isNew ? `${kind}-save` : `${kind}-update`}
+        />
       ) : null}
 
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
