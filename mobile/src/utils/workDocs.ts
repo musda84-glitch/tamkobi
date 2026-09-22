@@ -218,7 +218,7 @@ export function workItemFromProduct(prod: {
 export function toggleWorkItemService(item: WorkItem): WorkItem {
   const is_service = !item.is_service;
   if (is_service) {
-    return { ...item, is_service: true, product_id: "", image_url: undefined, thumbnail_url: undefined };
+    return { ...item, is_service: true, product_id: "" };
   }
   return { ...item, is_service: false };
 }
@@ -780,4 +780,18 @@ export function itemStripe(index: number): { backgroundColor: string } {
 /** Teklif ve keşif aynı kalem satırını kullanır; projede kalem kartı yok. */
 export function workItemLineKind(kind: WorkKind): "quote" | null {
   return kind === "project" ? null : "quote";
+}
+
+/** Satır görselleri teklif / keşif galerisinde durmaz. */
+export function workGalleryWithoutLinePhotos(
+  images: string[] | null | undefined,
+  items: Array<Pick<WorkItem, "image_url" | "thumbnail_url">> | null | undefined,
+): string[] {
+  const line = new Set(
+    (items || []).flatMap((it) => [it.image_url, it.thumbnail_url].map((u) => String(u || "").trim()).filter(Boolean)),
+  );
+  return (images || []).filter((url) => {
+    const key = String(url || "").trim();
+    return key && !line.has(key);
+  });
 }
