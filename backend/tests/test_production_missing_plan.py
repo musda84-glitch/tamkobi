@@ -184,21 +184,20 @@ class TestProductionMissingPlan:
 
         # Oturum kalemlerini sil — sipariş kalemleri / missing_items / mesaj yedekleri
         try:
-            from pymongo import MongoClient
+            from db import get_sync_database
 
-            mongo = MongoClient(os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017")
-            dbn = os.environ.get("DB_NAME") or "tamkobi"
-            mongo[dbn].order_pick_sessions.update_one(
+            sdb = get_sync_database()
+            sdb.order_pick_sessions.update_one(
                 {"order_id": oid},
                 {"$set": {"items": [], "missing_items": []}},
             )
             # Eski bildirimlerde missing_items olmayabilir
-            mongo[dbn].notifications.update_many(
+            sdb.notifications.update_many(
                 {"ref_id": oid, "type": "order_pick_missing"},
                 {"$unset": {"missing_items": ""}},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print("session clear skipped:", exc)
 
         plan = s.get(f"{API}/production/missing-plan", params={"company_id": COMPANY}, timeout=20)
         assert plan.status_code == 200, plan.text[:300]
