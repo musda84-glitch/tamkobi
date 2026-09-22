@@ -1,7 +1,7 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post, put } from "../api/client";
+import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
@@ -33,9 +33,10 @@ import {
   employeeCardActionTitle,
   parseYevmiyeDays,
   parseYevmiyeWage,
-  pendingYevmiyeBonus,
   parseTaskDays,
   yevmiyeAccrual,
+  yevmiyeAddHint,
+  ledgerPayPayload,
   dueDateFromDays,
   validateTaskDays,
   validateYevmiyeDays,
@@ -69,6 +70,7 @@ import {
   type EmployeeBonus,
   type EmployeeCard,
   type EmployeePayMove,
+  type LedgerSide,
   type LeaveRequest,
   type Payroll,
   type ProjectWithTasks,
@@ -128,6 +130,11 @@ export function PersonnelScreen() {
   const [yevmiyeDays, setYevmiyeDays] = useState("");
   const [yevmiyeWage, setYevmiyeWage] = useState("");
   const [yevmiyeNote, setYevmiyeNote] = useState("");
+  const [yevmiyeHaveDays, setYevmiyeHaveDays] = useState(0);
+  const [ledgerEmp, setLedgerEmp] = useState<Employee | null>(null);
+  const [ledgerSide, setLedgerSide] = useState<LedgerSide>("alacak");
+  const [ledgerAmount, setLedgerAmount] = useState("");
+  const [ledgerNote, setLedgerNote] = useState("");
   const [yevmiyeEditId, setYevmiyeEditId] = useState("");
   const [empOpen, setEmpOpen] = useState(false);
   const [empDraft, setEmpDraft] = useState<EmployeeDraft>(() => emptyEmployeeDraft(todayIso()));
@@ -189,6 +196,18 @@ export function PersonnelScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openSalaryPay = async (emp: Employee) => {
+    if (isDailyWage(emp)) {
+      const due = remainingDue(balances[idOf(emp)], unpaidPayrollTotal(idOf(emp), payrolls));
+      setLedgerEmp(emp);
+      setLedgerSide("alacak");
+      setLedgerAmount(due > 0 ? String(due) : "");
+      setLedgerNote("");
+      setPayAccount("");
+      get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+        .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+        .catch(() => undefined);
+      return;
+    }
     let item = openPayroll(idOf(emp), payrolls);
     if (!item) {
       setBusy(true);
@@ -355,16 +374,21 @@ export function PersonnelScreen() {
 
   const openYevmiyeDays = async (emp: Employee, existing?: EmployeeBonus | null) => {
     fillYevmiyeForm(emp, existing);
+    setYevmiyeHaveDays(Number(emp.yevmiye_days) || 0);
     get<Partner[]>(client, "/banking/partners", { company_id: companyId })
       .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
       .catch(() => undefined);
     if (existing) return;
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
-      const pending = pendingYevmiyeBonus(card?.bonuses, month);
-      if (pending) fillYevmiyeForm({ ...emp, daily_wage: card?.employee?.daily_wage ?? emp.daily_wage }, pending);
+      const fromPays = yevmiyeAccrual({
+        bonuses: card?.bonuses,
+        payrolls: card?.payrolls,
+        employeeId: idOf(emp),
+      });
+      setYevmiyeHaveDays(fromPays.days);
     } catch {
-      /* yeni kayıt olarak aç */
+      /* mevcut gün bilinmese de yeni kayıt açılır */
     }
   };
 
@@ -374,6 +398,69 @@ export function PersonnelScreen() {
     setYevmiyeWage("");
     setYevmiyeNote("");
     setYevmiyeEditId("");
+    setYevmiyeHaveDays(0);
+  };
+
+  const saveLedger = async () => {
+    if (!ledgerEmp) return;
+    const invalid = validateAdvance(ledgerAmount);
+    if (invalid) { setError(invalid === "Avans tutarı girin." ? "Tutar girin." : invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/bonuses", ledgerPayPayload(
+        idOf(ledgerEmp),
+        ledgerSide,
+        ledgerAmount,
+        month,
+        payAccount,
+        ledgerNote,
+      ));
+      const label = ledgerSide === "borc" ? "borç" : "bakiye";
+      setLedgerEmp(null);
+      setLedgerAmount("");
+      setLedgerNote("");
+      setMessage(payAccount
+        ? `${ledgerEmp.full_name} için ${label} ödemesi yapıldı.`
+        : `${ledgerEmp.full_name} için ${label} kaydedildi.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Kayıt yazılamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deletePayMove = async (row: EmployeePayMove) => {
+    if (row.kind !== "bonus") return;
+    setBusy(true);
+    try {
+      await del(client, `/personnel/bonuses/${row.id}`);
+      setMessage("Yevmiye / ödeme kaydı silindi.");
+      if (movesEmp) {
+        const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(movesEmp)}/card`);
+        setMoves(employeePayMoves(card));
+      }
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Kayıt silinemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteYevmiyeEdit = async () => {
+    if (!yevmiyeEditId) return;
+    setBusy(true);
+    try {
+      await del(client, `/personnel/bonuses/${yevmiyeEditId}`);
+      closeYevmiyeDays();
+      setMessage("Yevmiye kaydı silindi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Yevmiye kaydı silinemedi."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const saveYevmiyeDays = async () => {
@@ -927,6 +1014,23 @@ export function PersonnelScreen() {
                 {fmtMoney(row.amount)}
               </Text>
             </Pressable>
+            {row.deletable && canEdit ? (
+              <Pressable
+                testID={`emp-pay-move-del-${row.id}`}
+                onPress={() => deletePayMove(row)}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  backgroundColor: colors.rose50,
+                  borderWidth: 1,
+                  borderColor: "#FECDD3",
+                  flexShrink: 0,
+                }}
+              >
+                <Text style={{ fontWeight: "800", fontSize: 13, color: "#BE123C" }}>Sil</Text>
+              </Pressable>
+            ) : null}
             {row.payable && canEdit ? (
               <Pressable
                 testID={`emp-pay-move-pay-${row.id}`}
@@ -1014,6 +1118,11 @@ export function PersonnelScreen() {
         onClose={closeYevmiyeDays}
         testID="yevmiye-days-sheet"
       >
+        <Muted testID="yevmiye-days-add-hint">
+          {yevmiyeEditId
+            ? "Bu kayıt güncellenir; diğer günler durur."
+            : yevmiyeAddHint(yevmiyeHaveDays, parseYevmiyeDays(yevmiyeDays) || 0)}
+        </Muted>
         <Field
           label="Kaç gün"
           testID="yevmiye-days-input"
@@ -1051,11 +1160,93 @@ export function PersonnelScreen() {
           emptyLabel="Ödeme yok — personel alacağına yaz"
         />
         <PrimaryButton
-          title={payAccount ? "Kaydet & Öde" : (yevmiyeEditId ? "Alacağı güncelle" : "Alacağa yaz")}
+          title={payAccount ? "Kaydet & Öde" : (yevmiyeEditId ? "Alacağı güncelle" : "Alacağa ekle")}
           testID="yevmiye-days-submit"
           color={colors.primaryHover}
           loading={busy}
           onPress={saveYevmiyeDays}
+        />
+        {yevmiyeEditId ? (
+          <PrimaryButton
+            title="Bu yevmiye kaydını sil"
+            testID="yevmiye-days-delete"
+            color={colors.danger}
+            loading={busy}
+            onPress={deleteYevmiyeEdit}
+          />
+        ) : null}
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!ledgerEmp}
+        title="Bakiye ödemesi"
+        subtitle={ledgerEmp ? `${ledgerEmp.full_name} · kalan ${fmtMoney(remainingDue(balances[idOf(ledgerEmp)], unpaidPayrollTotal(idOf(ledgerEmp), payrolls)))}` : undefined}
+        onClose={() => { setLedgerEmp(null); setLedgerAmount(""); setLedgerNote(""); }}
+        testID="emp-ledger-sheet"
+      >
+        <Row>
+          {(["alacak", "borc"] as LedgerSide[]).map((side) => (
+            <Pressable
+              key={side}
+              testID={`emp-ledger-side-${side}`}
+              onPress={() => {
+                setLedgerSide(side);
+                if (!ledgerEmp) return;
+                const due = remainingDue(balances[idOf(ledgerEmp)], unpaidPayrollTotal(idOf(ledgerEmp), payrolls));
+                const debt = Number(balances[idOf(ledgerEmp)]?.advances) || 0;
+                setLedgerAmount(side === "borc" ? (debt > 0 ? String(debt) : "") : (due > 0 ? String(due) : ""));
+              }}
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: ledgerSide === side ? (side === "borc" ? "#FECDD3" : "#6EE7B7") : colors.border,
+                backgroundColor: ledgerSide === side ? (side === "borc" ? colors.rose50 : colors.emerald50) : colors.slate50,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontWeight: "800", color: side === "borc" ? "#BE123C" : colors.primaryHover }}>
+                {side === "borc" ? "Borç" : "Alacak"}
+              </Text>
+            </Pressable>
+          ))}
+        </Row>
+        <Muted testID="emp-ledger-hint">
+          {ledgerSide === "borc"
+            ? "Personel borcunu yazar — kalan alacaktan düşülür."
+            : "Kalan alacak bakiyesini öder — personel alacağı düşer."}
+        </Muted>
+        <Field
+          label="Tutar (₺)"
+          testID="emp-ledger-amount"
+          value={ledgerAmount}
+          onChangeText={setLedgerAmount}
+          keyboardType="decimal-pad"
+          placeholder="Kalan bakiye"
+        />
+        <Field
+          label="Açıklama"
+          testID="emp-ledger-note"
+          value={ledgerNote}
+          onChangeText={setLedgerNote}
+          placeholder={ledgerSide === "borc" ? "Borç açıklaması" : "Bakiye ödemesi"}
+        />
+        <GroupedSelect
+          label="Kasa / Banka / Ortak"
+          testID="emp-ledger-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel={ledgerSide === "borc" ? "Ödeme yok — borca yaz" : "Ödeme yok — bakiyeyi kaydet"}
+        />
+        <PrimaryButton
+          title={payAccount ? "Bakiyeyi öde" : (ledgerSide === "borc" ? "Borcu yaz" : "Bakiyeyi kaydet")}
+          testID="emp-ledger-submit"
+          color={ledgerSide === "borc" ? colors.danger : colors.primaryHover}
+          loading={busy}
+          onPress={saveLedger}
         />
       </B2BSheet>
 

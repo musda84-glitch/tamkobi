@@ -8368,7 +8368,7 @@ async def create_bonus(req: Dict[str, Any]):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
     b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime, yevmiye
-    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai", "yevmiye": "Yevmiye"}
+    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai", "yevmiye": "Yevmiye", "alacak": "Alacak", "borc": "Borç", "bakiye": "Bakiye"}
     if b_type not in labels:
         raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
@@ -11808,11 +11808,12 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
     meal_due = _allowance_due(meal, MEAL_CAT, expenses, month)
     transport_due = _allowance_due(transport, TRANSPORT_CAT, expenses, month)
-    bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") != "advance" and b.get("status") != "paid"), 2)
+    bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") not in ("advance", "borc", "bakiye") and b.get("status") != "paid"), 2)
     payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
     advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
     extra_advance = round(max(0.0, advances - payroll_adv), 2)
-    remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance, 2)
+    bakiye_paid = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") == "bakiye" and b.get("status") != "rejected"), 2)
+    remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance - bakiye_paid, 2)
     ot_earned = round(_emp_num(emp.get("_overtime_pay")), 2)
     ot_hours = round(_emp_num(emp.get("_overtime_hours")), 2)
     ot_paid = round(sum(

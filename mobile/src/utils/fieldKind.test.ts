@@ -13,5 +13,7 @@ describe("field picker routing", () => {
     expect(fieldUsesTimePicker("ot-date-input")).toBe(false);
     expect(fieldUsesTimePicker(undefined, "Saat", "Örn: 2")).toBe(true);
     expect(fieldUsesTimePicker("ot-note-input", "Not", "Opsiyonel")).toBe(false);
+    expect(fieldUsesTimePicker("emp-ledger-amount", "Tutar (₺)", "Örn: 2500")).toBe(false);
+    expect(fieldUsesTimePicker("emp-ledger-amount", "Tutar (₺)", "Kalan bakiye")).toBe(false);
   });
 });

@@ -65,3 +65,44 @@ def test_list_employees_includes_remaining_balance(api, emp):
             assert round(float(bal["remaining"]) - float(before["remaining"]), 2) == delta
     finally:
         api.put(f"{API}/personnel/employees/{eid}", json={"meal_allowance": prev_meal, "transport_allowance": prev_yol}, timeout=30)
+
+
+def test_alacak_and_borc_adjust_remaining(api, emp):
+    eid = emp["id"]
+    created = []
+    try:
+        before = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        a = api.post(f"{API}/personnel/bonuses", json={
+            "employee_id": eid, "type": "alacak", "amount": 400, "note": "TEST_ledger_alacak",
+        }, timeout=30)
+        assert a.status_code == 200, a.text
+        created.append(a.json()["id"])
+        mid = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        assert mid == pytest.approx(before + 400, abs=0.01)
+        b = api.post(f"{API}/personnel/bonuses", json={
+            "employee_id": eid, "type": "borc", "amount": 150, "note": "TEST_ledger_borc",
+        }, timeout=30)
+        assert b.status_code == 200, b.text
+        created.append(b.json()["id"])
+        after = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        assert after == pytest.approx(mid - 150, abs=0.01)
+    finally:
+        for bid in created:
+            api.delete(f"{API}/personnel/bonuses/{bid}", timeout=30)
+
+
+def test_bakiye_payment_reduces_remaining(api, emp):
+    eid = emp["id"]
+    bid = None
+    try:
+        before = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        r = api.post(f"{API}/personnel/bonuses", json={
+            "employee_id": eid, "type": "bakiye", "amount": 275, "note": "TEST_bakiye_pay",
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        bid = r.json()["id"]
+        after = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        assert after == pytest.approx(before - 275, abs=0.01)
+    finally:
+        if bid:
+            api.delete(f"{API}/personnel/bonuses/{bid}", timeout=30)

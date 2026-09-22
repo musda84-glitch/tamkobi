@@ -41,6 +41,8 @@ import {
   pendingYevmiyeBonus,
   unpaidYevmiyeTotals,
   yevmiyeAccrual,
+  yevmiyeAddHint,
+  ledgerPayPayload,
   dueDateFromDays,
   parseTaskDays,
   validateYevmiyeDays,
@@ -240,7 +242,7 @@ describe("employee card actions", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
-      "Avans", "Yevmiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
+      "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
     ]);
     expect(parseYevmiyeDays("12")).toBe(12);
     expect(parseYevmiyeDays("2,5")).toBe(2);
@@ -318,9 +320,18 @@ describe("employee card actions", () => {
     });
     expect(yev[0].editable).toBe(true);
     expect(yev[0].payable).toBe(true);
+    expect(yev[0].deletable).toBe(true);
     expect(yev[0].worked_days).toBe(6);
     expect(pendingYevmiyeBonus([{ type: "yevmiye", status: "pending", period: "2026-09", id: "a" }, { type: "yevmiye", status: "paid", id: "b" }], "2026-09")?.id).toBe("a");
     expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
+    expect(yevmiyeAddHint(6, 3)).toBe("6 gün + 3 gün = 9 gün");
+    expect(yevmiyeAddHint(6, 0)).toBe("Mevcut 6 gün · yazılan gün artı olarak eklenir");
+    expect(ledgerPayPayload("e1", "alacak", "2500", "2026-09", "", "fazla")).toMatchObject({
+      employee_id: "e1", type: "bakiye", amount: 2500, account_id: null, note: "fazla",
+    });
+    expect(ledgerPayPayload("e1", "borc", "800", "2026-09", "acc1", "")).toMatchObject({
+      type: "borc", amount: 800, account_id: "acc1", note: "Borç",
+    });
   });
 });
 
