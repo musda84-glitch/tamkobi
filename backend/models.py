@@ -343,6 +343,7 @@ class Partner(BaseDocument):
     total_withdrawn: float = 0.0
     total_profit_share: float = 0.0
     is_active: bool = True
+    photo_url: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class PartnerTransaction(BaseDocument):

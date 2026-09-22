@@ -20,6 +20,8 @@ def test_area_for_entity_aliases():
     assert sm.area_for_entity("employee_photo") == "employees"
     assert sm.area_for_entity("personnel_photo") == "employees"
     assert sm.area_for_entity("contact") == "contacts"
+    assert sm.area_for_entity("partner_photo") == "partners"
+    assert sm.area_for_entity("partner") == "partners"
     assert sm.area_for_entity("contacts") == "contacts"
     assert sm.area_for_entity("quote") == "quotes"
     assert sm.area_for_entity("purchase_invoice") == "purchase_invoices"

@@ -1,15 +1,23 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post } from "../api/client";
+import * as ImagePicker from "expo-image-picker";
+import { get, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
+import { PartnerAvatar } from "../components/PartnerAvatar";
 import { colors } from "../theme";
+import { compressPickerAsset } from "../utils/compressUploadImage";
+import {
+  appendUploadBlob,
+  imageUploadRequest,
+  resolveUploadBlob,
+  uploadedImageUrl,
+} from "../utils/formDataFile";
 import {
   filterPartnerTxs,
   partnerCardTone,
-  partnerInitials,
   partnerTxTr,
   paymentTargetGroups,
   validatePartner,
@@ -50,6 +58,7 @@ export function BankingPartnersPanel({
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [payNow, setPayNow] = useState(true);
   const [openPartner, setOpenPartner] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const cashAccounts = (accounts || []).filter((a) => String(a.type || "") !== "credit_card");
   const firstCash = cashAccounts[0] ? idOf(cashAccounts[0]) : (accounts[0] ? idOf(accounts[0]) : "");
@@ -145,6 +154,45 @@ export function BankingPartnersPanel({
       setError(apiErrorMessage(err, "Kâr dağıtımı yapılamadı."));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const setPartnerPhoto = (pid: string, url: string) => {
+    setPartners((rows) => rows.map((p) => (idOf(p) === pid ? { ...p, photo_url: url } : p)));
+  };
+
+  const pickPartnerPhoto = async (pid: string, fromCamera: boolean) => {
+    if (!canEdit || !pid) return;
+    try {
+      const perm = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== "granted") {
+        setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi.");
+        return;
+      }
+      const res = fromCamera
+        ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+      if (res.canceled || !res.assets?.length) return;
+      setPhotoBusy(true);
+      const form = new FormData();
+      const compact = await compressPickerAsset(res.assets[0]);
+      const { blob, name } = await resolveUploadBlob(compact);
+      appendUploadBlob(form, blob, name);
+      const { path, query } = imageUploadRequest("partner", pid, companyId);
+      const uploaded = await upload<unknown>(client, path, form, query);
+      const url = uploadedImageUrl(uploaded);
+      if (!url) { setError("Fotoğraf yüklendi ama adres dönmedi."); return; }
+      setPartnerPhoto(pid, url);
+      setError(null);
+      setMessage("Ortak fotoğrafı kaydedildi.");
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    } finally {
+      setPhotoBusy(false);
     }
   };
 
@@ -267,19 +315,14 @@ export function BankingPartnersPanel({
             }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <View
+              <PartnerAvatar
+                name={p.name}
+                photoUrl={p.photo_url}
+                tone={tone}
+                size={56}
                 testID={`partner-avatar-${pid}`}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  backgroundColor: tone.accent,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "900", fontSize: 15 }}>{partnerInitials(p.name)}</Text>
-              </View>
+                onPress={canEdit ? () => pickPartnerPhoto(pid, false) : undefined}
+              />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ fontWeight: "800", color: tone.label }}>{p.name}</Text>
                 <Muted>{[p.email, p.phone, `%${p.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
@@ -289,6 +332,12 @@ export function BankingPartnersPanel({
             <Muted>Giriş {fmtMoney(p.total_capital_in)} · çekiş {fmtMoney(p.total_withdrawn)} · kâr {fmtMoney(p.total_profit_share)}</Muted>
             {open ? (
               <View testID={`partner-moves-${pid}`} style={{ borderTopWidth: 1, borderTopColor: tone.border, paddingTop: 8, gap: 4 }}>
+                {canEdit ? (
+                  <Row>
+                    <PrimaryButton title={photoBusy ? "Yükleniyor…" : "Fotoğraf çek"} onPress={() => pickPartnerPhoto(pid, true)} loading={photoBusy} color={colors.indigo} testID={`partner-photo-camera-${pid}`} />
+                    <PrimaryButton title="Galeriden seç" onPress={() => pickPartnerPhoto(pid, false)} disabled={photoBusy} color={colors.primary} testID={`partner-photo-gallery-${pid}`} />
+                  </Row>
+                ) : null}
                 <Text style={{ fontWeight: "800", color: tone.label }}>Hareketler</Text>
                 {!mine.length ? (
                   <Muted>Hareket yok.</Muted>

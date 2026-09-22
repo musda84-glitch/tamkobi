@@ -105,6 +105,7 @@ export type Partner = {
   total_withdrawn?: number;
   total_profit_share?: number;
   is_active?: boolean;
+  photo_url?: string | null;
 };
 
 export type PartnerSummary = {

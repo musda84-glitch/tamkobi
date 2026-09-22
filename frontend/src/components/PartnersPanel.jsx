@@ -9,6 +9,7 @@ import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
+import { resolveImageUrl } from "../utils/imageUrl";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
@@ -217,9 +218,16 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         {partners.map((p) => (
           <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 shadow-sm" data-testid={`partner-card-${p.name}`}>
             <div className="flex items-start justify-between">
-              <div>
+              <div className="flex items-start gap-3 min-w-0">
+                {p.photo_url ? (
+                  <img src={resolveImageUrl(p.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover bg-white border border-slate-200 shrink-0" data-testid={`partner-photo-${p.id}`} />
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-sm shrink-0">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
+                )}
+                <div className="min-w-0">
                 <div className="font-bold text-slate-900 text-sm">{p.name}</div>
                 <div className="text-[11px] text-slate-500">{p.email || p.phone || "—"}</div>
+                </div>
               </div>
               <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold">%{p.share_percent}</span>
             </div>

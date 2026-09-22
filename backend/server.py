@@ -1010,7 +1010,7 @@ async def upload_generic_file(
     stage: str = Query(""),
     stage_label: str = Query(""),
 ):
-    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
+    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo", "partners": "partner_photo", "partner": "partner_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF, HEIC veya PDF yükleyebilirsiniz.")
@@ -1041,13 +1041,13 @@ async def upload_generic_file(
     }
     await db.files.insert_one(file_doc)
     url = f"/api/files/{result['path']}"
-    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo") and entity_id:
-        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees}[entity]
+    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo", "partner_photo") and entity_id:
+        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees, "partner_photo": db.partners}[entity]
         # Match by id or _id — clients may send either after clean_doc
         q = {"$or": [{"_id": entity_id}, {"id": entity_id}]}
         if entity in ("company", "contact"):
             await coll.update_one(q, {"$set": {"logo_url": url}})
-        elif entity == "employee_photo":
+        elif entity in ("employee_photo", "partner_photo"):
             await coll.update_one(q, {"$set": {"photo_url": url}})
         else:
             stage_key = project_photos.clean_stage_key(stage) if entity == "project" else ""
@@ -6326,7 +6326,7 @@ async def create_partner(partner: Partner):
 
 @api_router.put("/banking/partners/{partner_id}")
 async def update_partner(partner_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active"}}
+    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url"}}
     await db.partners.update_one({"_id": partner_id}, {"$set": allowed})
     res = await db.partners.find_one({"_id": partner_id})
     if not res:
