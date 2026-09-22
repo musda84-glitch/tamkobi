@@ -45,6 +45,7 @@ import {
   Loader2,
   Clock,
   History,
+  Copy,
 } from "lucide-react";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 import {
@@ -249,6 +250,28 @@ export default function StockBarcodePage() {
     } catch (err) {
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : "Stok kartı silinemedi.");
+    }
+  };
+
+  const handleCopyProduct = async (prod) => {
+    const id = prod?.id || prod?._id;
+    if (!id) {
+      toast.error("Ürün kimliği bulunamadı.");
+      return;
+    }
+    try {
+      const r = await axios.post(`${API_URL}/products/${id}/copy`);
+      const created = r.data;
+      toast.success(created.message || "Stok kartı kopyalandı.");
+      if (created?.id || created?._id) {
+        setProducts((prev) => [created, ...prev.filter((p) => productId(p) !== productId(created))]);
+        await patchCached("products", companyId, { [productId(created)]: created }).catch(() => {});
+        openDetail(created, "general");
+      } else {
+        loadProducts();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kopyalanamadı.");
     }
   };
 
@@ -784,25 +807,38 @@ export default function StockBarcodePage() {
                         <button type="button" onClick={() => toggleFlag(prod, "track_stock")} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${prod.track_stock !== false ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-400 border-slate-200"}`} title="Stok takibi aç/kapat" data-testid={`track-toggle-${prod.sku}`}>Takip {prod.track_stock !== false ? "Açık" : "Kapalı"}</button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center w-[210px] min-w-[210px]">
-                      <div className="inline-flex items-center justify-center gap-1">
+                    <td className="px-4 py-3 text-center w-[210px] min-w-[210px] max-w-[210px]">
+                      <div className="inline-flex items-center justify-center gap-0.5 flex-nowrap">
                         {prod.type !== "service" && prod.type !== "raw_material" ? (
-                          <button onClick={() => setProduceProduct(prod)} className={`p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
+                          <button type="button" onClick={() => setProduceProduct(prod)} className={`shrink-0 p-1.5 rounded-lg transition ${prod.track_stock !== false && (prod.stock_quantity || 0) <= 0 ? "text-rose-600 bg-rose-50 hover:bg-rose-100 animate-pulse" : "text-slate-600 hover:text-amber-600 hover:bg-amber-50"}`} title={(prod.stock_quantity || 0) <= 0 ? "Stokta yok — Üretim Emri Ver" : "Üretim Emri Ver"} data-testid={`produce-btn-${prod.sku}`}>
                             <Factory className="w-4 h-4" />
                           </button>
-                        ) : <span className="w-7 h-7 inline-block" aria-hidden="true" />}
+                        ) : <span className="w-7 h-7 shrink-0 inline-block" aria-hidden="true" />}
+                        <button
+                          type="button"
+                          onClick={() => handleCopyProduct(prod)}
+                          className="shrink-0 p-1.5 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition"
+                          title="Stok kartını kopyala"
+                          aria-label="Kopyala"
+                          data-testid={`copy-product-btn-${prod.sku}`}
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
+                              className="shrink-0 p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
                               title="Diğer işlemler"
                               data-testid={`product-more-btn-${prod.sku}`}
                             >
                               <MoreHorizontal className="w-4 h-4" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-52">
+                          <DropdownMenuContent align="end" className="w-52 z-[80]">
+                            <DropdownMenuItem onSelect={() => handleCopyProduct(prod)} data-testid={`copy-product-menu-${prod.sku}`}>
+                              <Copy className="w-4 h-4" /> Kopyala
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => openDetail(prod, "images")} data-testid={`images-btn-${prod.sku}`}>
                               <Images className="w-4 h-4" /> Görseller
                             </DropdownMenuItem>
@@ -818,6 +854,9 @@ export default function StockBarcodePage() {
                             <DropdownMenuItem onSelect={() => openReorder([prod.id || prod._id])} data-testid={`reorder-btn-${prod.sku}`}>
                               <ShoppingCart className="w-4 h-4" /> Tedarikçiden al
                             </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => openMoves(prod)} data-testid={`stock-moves-btn-${prod.sku}`}>
+                              <History className="w-4 h-4" /> Stok hareketleri
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               onSelect={() => handleDeleteProduct(prod)}
@@ -829,22 +868,13 @@ export default function StockBarcodePage() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                         <button
+                          type="button"
                           onClick={() => openDetail(prod, "general")}
-                          className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+                          className="shrink-0 flex items-center gap-1 px-2 py-1.5 bg-slate-900 text-white hover:bg-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap"
                           title="Stok Kartını Düzenle"
                           data-testid={`edit-product-btn-${prod.sku}`}
                         >
                           <Pencil className="w-3 h-3" /> Düzenle
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openMoves(prod)}
-                          className="p-1.5 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg"
-                          title="Stok hareketleri"
-                          aria-label="Stok hareketleri"
-                          data-testid={`stock-moves-btn-${prod.sku}`}
-                        >
-                          <History className="w-4 h-4" />
                         </button>
                       </div>
                     </td>

@@ -4306,6 +4306,72 @@ async def create_product(product: Product):
     await _remember_unit(product.company_id, product.unit)
     return clean_doc(doc)
 
+
+@api_router.post("/products/{product_id}/copy")
+async def copy_product(product_id: str):
+    """Stok kartını kopyala: yeni SKU/barkod, stok 0; görsel ve fiyat alanları korunur."""
+    src = await db.products.find_one({"_id": product_id})
+    if not src:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    company_id = src.get("company_id") or "comp_nexus_main_01"
+    await saas.check_product_limit(company_id)
+    now = datetime.now(timezone.utc).isoformat()
+    new_id = str(uuid.uuid4())
+    used_skus: set = set()
+
+    async def next_sku(base: str) -> str:
+        root = (base or "SKU").strip() or "SKU"
+        if len(root) > 48:
+            root = root[:48]
+        candidate = f"{root}-KOPYA"
+        n = 1
+        while candidate in used_skus or await db.products.find_one({"company_id": company_id, "sku": candidate}, {"_id": 1}):
+            n += 1
+            candidate = f"{root}-KOPYA{n}"
+            if n > 99:
+                candidate = f"{root[:40]}-{str(uuid.uuid4().int)[:6]}"
+                break
+        used_skus.add(candidate)
+        return candidate
+
+    sku = await next_sku(str(src.get("sku") or "SKU"))
+    name = str(src.get("name") or "Ürün").strip()
+    if not name.endswith(" (Kopya)"):
+        name = f"{name} (Kopya)"
+    skip = {
+        "_id", "id", "sku", "barcode", "name", "stock_quantity",
+        "created_at", "updated_at", "variants", "has_recipe",
+        "last_purchase_price", "last_purchase_date", "purchase_costs",
+    }
+    doc = {k: v for k, v in src.items() if k not in skip}
+    variants = []
+    for v in (src.get("variants") or []):
+        vv = dict(v)
+        base_vsku = str(vv.get("sku") or sku)
+        vv["sku"] = await next_sku(base_vsku)
+        vv["barcode"] = f"868{str(uuid.uuid4().int)[:10]}"
+        vv["stock"] = 0
+        vv["variant_id"] = str(uuid.uuid4())[:8]
+        variants.append(vv)
+    doc.update({
+        "_id": new_id,
+        "company_id": company_id,
+        "name": name,
+        "sku": sku,
+        "barcode": f"868{str(uuid.uuid4().int)[:10]}",
+        "stock_quantity": 0.0,
+        "variants": variants,
+        "created_at": now,
+        "updated_at": now,
+        "copied_from": product_id,
+    })
+    await db.products.insert_one(doc)
+    await _remember_category(company_id, doc.get("category"))
+    await _remember_unit(company_id, doc.get("unit"))
+    out = clean_doc(doc)
+    return {**out, "message": f"{out.get('sku')} olarak kopyalandı."}
+
+
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, updated: Dict[str, Any]):
     updated = {**updated, "updated_at": datetime.now(timezone.utc).isoformat()}
