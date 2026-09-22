@@ -6,7 +6,7 @@ import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../c
 import { colors } from "../theme";
 import { passwordChangePayload, validatePasswordChange } from "../utils/account";
 import { getPriceDecimals, idOf } from "../utils/money";
-import { getStoredPushToken, registerDevicePush, type PushStatus } from "../utils/pushRegister";
+import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
 
 export function SettingsScreen() {
   const { client, companies, activeCompany, switchCompany, user, logout } = useAuth();
@@ -61,31 +61,39 @@ export function SettingsScreen() {
         <Text style={{ fontWeight: "800", color: colors.text }}>Telefon bildirimleri</Text>
         <Muted>
           {pushStatus === "ok"
-            ? "Bu cihazda açık. Sipariş, izin, kasa onayı gibi olaylar anında gelir; uygulama ikonu ve ana ekran rozetleri canlı bekleyen işi gösterir."
+            ? "Bu cihazda açık. Uygulama içi bildirimler bildirim çubuğuna da düşer."
             : pushStatus === "web"
-              ? "Tarayıcıda uzak bildirim yok; Android / iOS uygulamasında açılır."
+              ? "Tarayıcıda telefon bildirimi yok; Android / iOS uygulamasında açılır."
               : pushStatus === "denied"
                 ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
-                : "Uygulama açılışında bildirim izni istenir. İzin verirseniz sipariş, onay ve kasa olayları telefona da gelir."}
+                : "İzin açıksa bekleyen ve yeni bildirimler telefona da yazılır. Uygulamayı bir kez açın."}
         </Muted>
         {Platform.OS !== "web" ? (
-          <PrimaryButton
-            title={pushBusy ? "Açılıyor…" : "Bildirimleri aç"}
-            testID="settings-push-enable"
-            onPress={async () => {
-              setPushBusy(true);
-              try {
-                const r = await registerDevicePush(client);
-                setPushStatus(r.status);
-                if (r.status === "ok") setMessage("Telefon bildirimleri açıldı.");
-                else if (r.status === "denied") setError("Bildirim izni verilmedi.");
-              } finally {
-                setPushBusy(false);
-              }
-            }}
-            loading={pushBusy}
-            color={colors.indigo}
-          />
+          <>
+            <PrimaryButton
+              title={pushBusy ? "Açılıyor…" : "Bildirimleri aç"}
+              testID="settings-push-enable"
+              onPress={async () => {
+                setPushBusy(true);
+                try {
+                  const r = await registerDevicePush(client);
+                  setPushStatus(r.status === "ok" ? "ok" : r.status);
+                  const local = await presentLocalNotification({
+                    title: "TamKobi",
+                    body: "Telefon bildirimleri açık. Uygulama içi kayıtlar buraya da düşer.",
+                    data: { link: "/notifications" },
+                  });
+                  if (r.status === "denied") setError("Bildirim izni verilmedi.");
+                  else if (local) setMessage("Telefon bildirimi gönderildi. Bildirim çubuğunu kontrol edin.");
+                  else setError(r.error || "Telefon bildirimi gösterilemedi.");
+                } finally {
+                  setPushBusy(false);
+                }
+              }}
+              loading={pushBusy}
+              color={colors.indigo}
+            />
+          </>
         ) : null}
       </Card>
 
