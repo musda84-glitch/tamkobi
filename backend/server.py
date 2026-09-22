@@ -2191,7 +2191,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
     })
     tasks = [
         {"key": "pending_orders", "label": "Onay bekleyen sipariş", "count": pending_orders, "path": "/orders"},
-        {"key": "pick_missing", "label": "Depo eksik / üretime al bildirimi", "count": pick_missing, "path": "/sevk"},
+        {"key": "pick_missing", "label": "Depo eksik / üretime al bildirimi", "count": pick_missing, "path": "/production?tab=missing"},
         {"key": "due_today", "label": "Bugün vadesi gelen fatura", "count": sum(1 for i in invs if i.get("due_date") == today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "overdue", "label": "Vadesi geçmiş tahsilat", "count": sum(1 for i in invs if i.get("invoice_type") == "sales" and (i.get("due_date") or "9") < today and i.get("payment_status") != "paid" and i.get("status") != "draft"), "path": "/invoices"},
         {"key": "installments", "label": "Bugün vadeli taksit", "count": inst_today, "extra": f"{inst_overdue} gecikmiş" if inst_overdue else None, "path": "/installments"},
@@ -2330,7 +2330,7 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
             "id": str(n.get("_id") or ""),
             "title": n.get("title") or "Depo bildirimi",
             "detail": n.get("message") or "",
-            "path": n.get("link") or "/sevk",
+            "path": n.get("link") or "/production?tab=missing",
         }
         for n in pick_notes
     ]
@@ -2340,7 +2340,7 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
         return f"/orders?status={status_key}" + (f"&q={num}" if num else "")
 
     groups = [
-        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/sevk", "count": int(pick_count or 0), "items": pick_items},
+        {"key": "pick_missing", "label": "Depo eksik / üretime al", "path": "/production?tab=missing", "count": int(pick_count or 0), "items": pick_items},
         {"key": "low_stock", "label": "Eksik / kritik stok", "path": "/stock?status=critical", "count": len(low_sorted), "items": low_sorted[:8]},
         {"key": "production", "label": "Açık üretim emirleri", "path": "/production", "count": int(prod_count or 0), "items": [prod_row(o) for o in prod_orders]},
         {"key": "shipped", "label": "Sevk edilmiş sipariş", "path": "/orders?status=dispatched", "count": int(ship_count or 0), "items": [order_row(o, _order_link(o, "dispatched")) for o in shipped]},
@@ -10607,21 +10607,326 @@ async def production_requirements(recipe_id: str, quantity: float = 1):
     costs = _recipe_costs(r)
     return {"rows": rows, "total_material_cost": round(sum(x["cost"] for x in rows), 2), "estimated_total_cost": round(costs["unit_cost"] * quantity, 2), "has_shortage": any(x["shortage"] > 0 for x in rows), "unit_cost": costs["unit_cost"]}
 
+
+MISSING_PLAN_LINK = "/production?tab=missing"
+
+
+def _missing_plan_link(order_id: Optional[str] = None) -> str:
+    if order_id:
+        return f"{MISSING_PLAN_LINK}&order={order_id}"
+    return MISSING_PLAN_LINK
+
+
+@api_router.get("/production/missing-plan")
+async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Depo eksik bildirimleri + kritik reçeteli stok → üretim planlama kuyruğu."""
+    notes = await db.notifications.find(
+        {
+            "company_id": company_id,
+            "type": "order_pick_missing",
+            "is_read": False,
+        }
+    ).sort("created_at", -1).to_list(80)
+
+    by_product: Dict[str, dict] = {}
+
+    def _ensure(pid: str, name: str) -> dict:
+        key = str(pid or "") or f"name:{name}"
+        row = by_product.get(key)
+        if row:
+            return row
+        row = {
+            "key": key,
+            "product_id": str(pid) if pid else None,
+            "product_name": name or "Ürün",
+            "sku": "",
+            "unit": "Adet",
+            "stock_quantity": 0.0,
+            "min_stock_alert": 0.0,
+            "missing_qty": 0.0,
+            "suggested_qty": 0.0,
+            "has_recipe": False,
+            "recipe_id": None,
+            "recipe_name": None,
+            "open_production_qty": 0.0,
+            "sources": [],
+            "notification_ids": [],
+            "order_ids": [],
+        }
+        by_product[key] = row
+        return row
+
+    order_ids = []
+    for n in notes:
+        oid = n.get("ref_id")
+        if oid and oid not in order_ids:
+            order_ids.append(oid)
+
+    sessions = {}
+    orders_map = {}
+    if order_ids:
+        for ses in await db.order_pick_sessions.find({"order_id": {"$in": order_ids}}).to_list(200):
+            sessions[str(ses.get("order_id"))] = ses
+        for o in await db.orders.find({"_id": {"$in": order_ids}}, {"order_number": 1, "customer_name": 1, "company_id": 1}).to_list(200):
+            orders_map[str(o.get("_id"))] = o
+
+    for n in notes:
+        oid = str(n.get("ref_id") or "")
+        ses = sessions.get(oid) or {}
+        order = orders_map.get(oid) or {}
+        items = ses.get("items") or []
+        missing_lines = [
+            i for i in items
+            if float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0) > 1e-9
+        ]
+        already = {str(c.get("product_id")) for c in (ses.get("production_orders") or []) if c.get("product_id")}
+        if not missing_lines and n.get("message"):
+            # Bildirim var ama oturum kalemi yoksa özet satırı
+            row = _ensure("", n.get("title") or "Depo eksik")
+            if n.get("_id") and str(n["_id"]) not in row["notification_ids"]:
+                row["notification_ids"].append(str(n["_id"]))
+            row["sources"].append({
+                "type": "order_pick",
+                "order_id": oid or None,
+                "order_number": n.get("order_number") or order.get("order_number"),
+                "customer_name": n.get("customer_name") or order.get("customer_name"),
+                "missing_qty": float(n.get("missing_count") or 0) or None,
+                "notification_id": str(n.get("_id") or ""),
+                "detail": (n.get("message") or "")[:200],
+            })
+            continue
+        for i in missing_lines:
+            pid = i.get("product_id")
+            if pid and str(pid) in already:
+                continue
+            miss = float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0)
+            if miss <= 1e-9:
+                continue
+            row = _ensure(pid, i.get("product_name") or "Ürün")
+            row["missing_qty"] = round(row["missing_qty"] + miss, 4)
+            if i.get("sku") and not row["sku"]:
+                row["sku"] = i.get("sku")
+            if oid and oid not in row["order_ids"]:
+                row["order_ids"].append(oid)
+            nid = str(n.get("_id") or "")
+            if nid and nid not in row["notification_ids"]:
+                row["notification_ids"].append(nid)
+            row["sources"].append({
+                "type": "order_pick",
+                "order_id": oid or None,
+                "order_number": n.get("order_number") or order.get("order_number"),
+                "customer_name": n.get("customer_name") or order.get("customer_name"),
+                "missing_qty": round(miss, 4),
+                "notification_id": nid,
+                "detail": f"{float(i.get('picked_qty') or 0):g}/{float(i.get('ordered_qty') or 0):g}",
+            })
+
+    # Kritik stok + reçeteli mamuller (depo bildirimi olmasa da planlanabilir)
+    products = await db.products.find(
+        {"company_id": company_id, "has_recipe": True, "track_stock": {"$ne": False}},
+        {"name": 1, "sku": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "has_recipe": 1},
+    ).to_list(5000)
+    recipes = await db.recipes.find(
+        {"company_id": company_id, "is_active": {"$ne": False}},
+        {"finished_product_id": 1, "name": 1},
+    ).to_list(2000)
+    recipe_by_pid = {}
+    for r in recipes:
+        pid = str(r.get("finished_product_id") or "")
+        if pid and pid not in recipe_by_pid:
+            recipe_by_pid[pid] = r
+
+    open_pos = await db.production_orders.find(
+        {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+        {"finished_product_id": 1, "planned_quantity": 1, "completed_quantity": 1},
+    ).to_list(500)
+    open_by_pid: Dict[str, float] = {}
+    for po in open_pos:
+        pid = str(po.get("finished_product_id") or "")
+        rem = float(po.get("planned_quantity") or 0) - float(po.get("completed_quantity") or 0)
+        if pid and rem > 0:
+            open_by_pid[pid] = round(open_by_pid.get(pid, 0) + rem, 4)
+
+    for p in products:
+        pid = str(p.get("_id") or "")
+        stock = float(p.get("stock_quantity") or 0)
+        amin = _stock_alert_min(p)
+        if stock > amin:
+            continue
+        need = max(0.0, amin - stock)
+        row = _ensure(pid, p.get("name") or "Ürün")
+        row["sku"] = row["sku"] or (p.get("sku") or "")
+        row["unit"] = p.get("unit") or row["unit"] or "Adet"
+        row["stock_quantity"] = stock
+        row["min_stock_alert"] = amin
+        row["has_recipe"] = True
+        rec = recipe_by_pid.get(pid)
+        if rec:
+            row["recipe_id"] = str(rec.get("_id"))
+            row["recipe_name"] = rec.get("name")
+        if need > 0 and not any(s.get("type") == "low_stock" for s in row["sources"]):
+            row["sources"].append({
+                "type": "low_stock",
+                "order_id": None,
+                "order_number": None,
+                "customer_name": None,
+                "missing_qty": round(need, 4),
+                "notification_id": None,
+                "detail": f"Stok {stock:g} · min {amin:g}",
+            })
+            row["missing_qty"] = round(max(row["missing_qty"], need), 4)
+
+    # Zenginleştir: stok / reçete / açık emir (depo kaynaklı satırlar için)
+    pids = [r["product_id"] for r in by_product.values() if r.get("product_id")]
+    prod_map = {}
+    if pids:
+        for p in await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10):
+            prod_map[str(p["_id"])] = p
+
+    items = []
+    for row in by_product.values():
+        pid = row.get("product_id")
+        if pid and pid in prod_map:
+            p = prod_map[pid]
+            row["sku"] = row["sku"] or (p.get("sku") or "")
+            row["unit"] = p.get("unit") or row["unit"] or "Adet"
+            row["stock_quantity"] = float(p.get("stock_quantity") or 0)
+            row["min_stock_alert"] = _stock_alert_min(p)
+            row["has_recipe"] = bool(p.get("has_recipe")) or bool(recipe_by_pid.get(pid))
+        if pid and recipe_by_pid.get(pid):
+            rec = recipe_by_pid[pid]
+            row["has_recipe"] = True
+            row["recipe_id"] = row["recipe_id"] or str(rec.get("_id"))
+            row["recipe_name"] = row["recipe_name"] or rec.get("name")
+        if pid:
+            row["open_production_qty"] = open_by_pid.get(pid, 0.0)
+        gap = max(0.0, row["missing_qty"] - row["open_production_qty"])
+        row["suggested_qty"] = round(gap if gap > 0 else row["missing_qty"], 4) or round(row["missing_qty"], 4)
+        if row["suggested_qty"] <= 0 and row["missing_qty"] > 0:
+            row["suggested_qty"] = round(row["missing_qty"], 4)
+        # Sadece kaynaklı satırlar
+        if row["sources"]:
+            items.append(row)
+
+    items.sort(key=lambda x: (-float(x.get("missing_qty") or 0), x.get("product_name") or ""))
+    notif_count = len(notes)
+    return {
+        "count": len(items),
+        "notification_count": notif_count,
+        "items": items,
+        "link": MISSING_PLAN_LINK,
+    }
+
+
+@api_router.post("/production/missing-plan/create")
+async def production_missing_plan_create(req: Dict[str, Any]):
+    """Seçilen eksik ürünlerden üretim emri oluştur; ilgili bildirimleri okundu işaretle."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    lines = req.get("items") or req.get("lines") or []
+    if not lines:
+        raise HTTPException(status_code=400, detail="Planlanacak kalem yok.")
+    created, skipped = [], []
+    notif_ids = set()
+    for line in lines:
+        pid = line.get("product_id") or line.get("finished_product_id")
+        qty = float(line.get("planned_quantity") or line.get("quantity") or 0)
+        if qty <= 0:
+            skipped.append({"product_id": pid, "product_name": line.get("product_name"), "reason": "miktar geçersiz"})
+            continue
+        if not pid:
+            skipped.append({"product_name": line.get("product_name"), "reason": "ürün kartı yok"})
+            continue
+        for nid in (line.get("notification_ids") or []):
+            if nid:
+                notif_ids.add(str(nid))
+        notes = (line.get("notes") or "").strip()
+        sources = line.get("sources") or []
+        order_refs = [s.get("order_number") for s in sources if s.get("order_number")]
+        if not notes and order_refs:
+            notes = "Sipariş " + ", ".join(order_refs[:4]) + " eksik kaleminden planlandı"
+        try:
+            payload = {
+                "company_id": company_id,
+                "finished_product_id": pid,
+                "finished_product_name": line.get("product_name"),
+                "planned_quantity": qty,
+                "planned_date": line.get("planned_date") or req.get("planned_date"),
+                "source": "order_pick",
+                "allow_without_recipe": True,
+                "notes": notes or "Eksik ürün bildiriminden planlandı",
+            }
+            if line.get("recipe_id"):
+                payload["recipe_id"] = line["recipe_id"]
+            po = await create_production_order(payload)
+            created.append({
+                "product_id": pid,
+                "product_name": line.get("product_name") or po.get("finished_product_name"),
+                "qty": qty,
+                "order_code": po.get("order_code"),
+                "order_id": po.get("id"),
+                "needs_recipe": bool(po.get("needs_recipe")),
+            })
+            # Pick oturumuna üretim kaydı yaz
+            for s in sources:
+                oid = s.get("order_id")
+                if not oid:
+                    continue
+                ses = await db.order_pick_sessions.find_one({"order_id": oid})
+                if not ses:
+                    continue
+                existing = list(ses.get("production_orders") or [])
+                if any(str(c.get("product_id")) == str(pid) for c in existing):
+                    continue
+                existing.append({
+                    "product_id": pid,
+                    "product_name": line.get("product_name"),
+                    "qty": qty,
+                    "order_code": po.get("order_code"),
+                    "needs_recipe": bool(po.get("needs_recipe")),
+                })
+                await db.order_pick_sessions.update_one(
+                    {"_id": ses["_id"]},
+                    {"$set": {"production_orders": existing, "sent_to_production_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                if s.get("notification_id"):
+                    notif_ids.add(str(s["notification_id"]))
+        except HTTPException as e:
+            skipped.append({"product_id": pid, "product_name": line.get("product_name"), "reason": str(e.detail)})
+        except Exception as e:
+            skipped.append({"product_id": pid, "product_name": line.get("product_name"), "reason": str(e)[:160]})
+
+    if notif_ids and req.get("mark_read", True):
+        await db.notifications.update_many(
+            {"_id": {"$in": list(notif_ids)}, "company_id": company_id},
+            {"$set": {"is_read": True}},
+        )
+
+    if not created and skipped:
+        reasons = "; ".join(f"{s.get('product_name') or s.get('product_id')}: {s.get('reason')}" for s in skipped[:5])
+        raise HTTPException(status_code=400, detail=f"Üretim emri açılamadı. {reasons}")
+    if not created:
+        raise HTTPException(status_code=400, detail="Üretim emri oluşturulamadı.")
+    msg = f"{len(created)} üretim emri planlandı." + (f" {len(skipped)} kalem atlandı." if skipped else "")
+    return {"status": "ok", "message": msg, "created": created, "skipped": skipped}
+
+
 @api_router.get("/production/kpis")
 async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"):
     """Hafif sayaçlar — liste filtresinden bağımsız KPI (count_documents + index)."""
     month = datetime.now(timezone.utc).strftime("%Y-%m")
-    open_n, in_prod, done_month, recipes_n = await asyncio.gather(
+    open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
         db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
         db.production_orders.count_documents({"company_id": company_id, "status": "in_production"}),
         db.production_orders.count_documents({"company_id": company_id, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
         db.recipes.count_documents({"company_id": company_id}),
+        db.notifications.count_documents({"company_id": company_id, "type": "order_pick_missing", "is_read": False}),
     )
     return {
         "open": open_n,
         "in_production": in_prod,
         "completed_this_month": done_month,
         "recipes": recipes_n,
+        "missing_notifications": missing_n,
     }
 
 @api_router.get("/production/orders")

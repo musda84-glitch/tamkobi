@@ -299,7 +299,7 @@ async def notify_missing(order_id: str):
     )
     title = f"Depo eksik: {o.get('order_number')}"
     msg = f"{o.get('customer_name')} siparişi {o.get('order_number')} toplanırken eksik: {lines}"
-    link = f"/sevk?order={order_id}"
+    link = f"/production?tab=missing&order={order_id}"
     note = await attendance.notify_managers(o["company_id"], "order_pick_missing", title, msg, link=link)
     await _db.order_pick_sessions.update_one(
         {"_id": ses["_id"]},
@@ -381,7 +381,7 @@ async def send_missing_to_production(order_id: str):
             o["company_id"], "order_pick_production",
             f"Üretime alındı: {o.get('order_number')}",
             f"{len(created)} kalem üretime gönderildi: " + ", ".join(f"{c['product_name']} ({c['qty']:g})" for c in created),
-            link="/atolye",
+            link="/production?tab=orders",
         )
     if not created and not skipped:
         return {"status": "ok", "message": "Eksik kalem yok.", "created": [], "skipped": []}
