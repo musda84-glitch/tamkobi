@@ -24,9 +24,10 @@ import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, slugStageKey } from "../utils/projectStages";
+import { normalizeWorkParks } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "İç görev parkurları", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -404,6 +405,67 @@ const ProjectStagesSettings = ({ companyId }) => {
   );
 };
 
+const WorkParksSettings = ({ companyId }) => {
+  const [parks, setParks] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [newName, setNewName] = useState("");
+  const load = useCallback(() => {
+    axios.get(`${API_URL}/companies/${companyId}/work-parks`)
+      .then((r) => setParks(normalizeWorkParks(r.data?.parks)))
+      .catch(() => setParks([]));
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  const update = (idx, name) => setParks((list) => list.map((p, i) => (i === idx ? { ...p, name } : p)));
+  const remove = (idx) => setParks((list) => list.filter((_, i) => i !== idx));
+  const add = (e) => {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    if (parks.length >= 40) return toast.error("En fazla 40 parkur.");
+    setParks([...parks, { id: `park_${Date.now()}`, name }]);
+    setNewName("");
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/work-parks`, { parks: normalizeWorkParks(parks) });
+      setParks(normalizeWorkParks(r.data.parks));
+      toast.success(r.data.message || "Kaydedildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-2xl" data-testid="work-parks-settings">
+      <div>
+        <div className="text-sm font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-4 h-4 text-indigo-600" /> İç görev parkurları</div>
+        <p className="text-slate-500 mt-1">Personel kartından <b>iç görev</b> atarken bu liste çıkar. Örn: Makina parkuru, Kaynak atölyesi, Montaj hattı.</p>
+      </div>
+      {parks.length === 0 ? (
+        <p className="text-slate-400 bg-slate-50 border border-slate-100 rounded-lg p-3">Henüz parkur yok. Aşağıdan ekleyip kaydedin.</p>
+      ) : (
+        <div className="space-y-2">
+          {parks.map((p, i) => (
+            <div key={p.id} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2" data-testid={`work-park-row-${p.id}`}>
+              <input value={p.name} onChange={(e) => update(i, e.target.value)} className="flex-1 min-w-[140px] bg-white border rounded-lg px-2 py-1.5 font-semibold" data-testid={`work-park-name-${p.id}`} />
+              <button type="button" onClick={() => remove(i)} className="p-1.5 text-slate-400 hover:text-rose-600" data-testid={`work-park-del-${p.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form onSubmit={add} className="flex gap-2">
+        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Örn: Makina parkuru" className="flex-1 bg-slate-50 border rounded-lg p-2" data-testid="work-park-new-input" />
+        <button type="submit" className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="work-park-add"><Plus className="w-3.5 h-3.5" /> Ekle</button>
+      </form>
+      <div className="flex justify-end pt-1 border-t">
+        <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="work-park-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
+      </div>
+    </div>
+  );
+};
+
 export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
@@ -509,6 +571,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "extension" && <BrowserExtensionPanel />}
           {tab === "units" && <UnitsCategories companyId={companyId} />}
           {tab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
+          {tab === "work_parks" && <WorkParksSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}

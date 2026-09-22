@@ -12,6 +12,7 @@ import {
   parseTaskDays,
   validateEmployeeTaskAssign,
 } from "../utils/employeeTaskAssign";
+import { findWorkPark, normalizeWorkParks, officeTaskPayload, validateOfficeTaskAssign } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
@@ -23,20 +24,30 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState("field");
-  const [form, setForm] = useState({ project_id: "", task_id: "", title: "", due_date: "", duration_days: "" });
+  const [form, setForm] = useState({ project_id: "", task_id: "", title: "", due_date: "", duration_days: "", park_id: "" });
+  const [parks, setParks] = useState([]);
   const [showCompleted, setShowCompleted] = useState(false);
 
   const load = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
     try {
-      const r = await axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } });
+      const [r, pr] = await Promise.all([
+        axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } }),
+        axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
+      ]);
       const rows = r.data || [];
       setProjects(rows);
+      const list = normalizeWorkParks(pr.data?.parks);
+      setParks(list);
       setForm((s) => {
-        if (s.project_id) return s;
-        const first = rows.find((p) => !isClosedProject(p)) || rows[0];
-        return { ...s, project_id: first ? (first.id || first._id) : "" };
+        const next = { ...s };
+        if (!s.project_id) {
+          const first = rows.find((p) => !isClosedProject(p)) || rows[0];
+          next.project_id = first ? (first.id || first._id) : "";
+        }
+        if (!s.park_id && list[0]) next.park_id = list[0].id;
+        return next;
       });
     } catch {
       toast.error("Projeler yüklenemedi.");
@@ -67,7 +78,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
     title: t.title || t.name || "",
     done: !!(t.done || t.status === "done" || t.status === "completed"),
     assignee_name: t.assignee_name || "",
-  })).filter((t) => t.title);
+  })).filter((t) => t.title && !t.done);
   const days = kind === "field" ? parseTaskDays(form.duration_days) : null;
 
   const pickProject = async (projectId) => {
@@ -83,6 +94,23 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
 
   const save = async (e) => {
     e.preventDefault();
+    if (kind === "office") {
+      const invalid = validateOfficeTaskAssign(form.park_id);
+      if (invalid) { toast.error(invalid); return; }
+      const park = findWorkPark(parks, form.park_id);
+      setBusy(true);
+      try {
+        await axios.post(`${API_URL}/personnel/employees/${empId}/office-tasks`, officeTaskPayload(park, form.title));
+        toast.success(`${employee.full_name} · ${park?.name || "iç görev"}`);
+        onSaved?.();
+        onClose();
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Görev kaydedilemedi.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const invalid = validateEmployeeTaskAssign(form.project_id, form.task_id, form.title);
     if (invalid) { toast.error(invalid); return; }
     const project = projects.find((p) => (p.id || p._id) === form.project_id);
@@ -100,7 +128,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
     try {
       await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next.tasks });
       const work = (next.tasks.find((t) => t.id === form.task_id)?.title || form.title || "iş").trim();
-      toast.success(`${employee.full_name} · ${work} · ${kind === "office" ? "iç görev" : "dış görev"}`);
+      toast.success(`${employee.full_name} · ${work} · dış görev`);
       onSaved?.();
       onClose();
     } catch (err) {
@@ -167,40 +195,73 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
               )}
             </div>
 
-            {projectOptions.length === 0 && !form.project_id ? (
+            {kind === "office" ? (
+              parks.length === 0 ? (
+                <p className="text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2" data-testid="emp-task-no-parks">
+                  Henüz parkur yok. Firma Ayarları → İç görev parkurları’ndan ekleyin (ör. Makina parkuru).
+                </p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-slate-500" data-testid="emp-task-office-hint">İç görev ofiste / parkurda yapılır; konum kontrolü ücreti etkilemez.</p>
+                  <div>
+                    <label className="block font-semibold mb-1">Parkur</label>
+                    <select
+                      value={form.park_id}
+                      onChange={(e) => setForm({ ...form, park_id: e.target.value })}
+                      className={inputCls}
+                      data-testid="emp-task-park"
+                    >
+                      <option value="">Parkur seçin</option>
+                      {parks.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Yapacağı iş (opsiyonel)</label>
+                    <input
+                      value={form.title}
+                      onChange={(e) => setForm({ ...form, title: e.target.value })}
+                      placeholder="Boş bırakılırsa parkur adı yazılır"
+                      className={inputCls}
+                      data-testid="emp-task-title"
+                    />
+                  </div>
+                  <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
+                    İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez.
+                  </p>
+                </>
+              )
+            ) : projectOptions.length === 0 && !form.project_id ? (
               <p className="text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">
                 Görev atamak için önce Projeler modülünden bir proje oluşturun.
               </p>
             ) : (
               <>
-                {kind === "field" ? (
-                  <div>
-                    <label className="block font-semibold mb-1">Dış görev kaç gün?</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="366"
-                      value={form.duration_days}
-                      onChange={(e) => {
-                        const duration_days = e.target.value;
-                        const n = parseTaskDays(duration_days);
-                        setForm({
-                          ...form,
-                          duration_days,
-                          due_date: n ? dueDateFromDays(new Date().toISOString().slice(0, 10), n) : form.due_date,
-                        });
-                      }}
-                      placeholder="Örn: 3"
-                      className={inputCls}
-                      data-testid="emp-task-days"
-                    />
-                    <p className="mt-1 text-[11px] text-slate-500" data-testid="emp-task-days-hint">
-                      {days ? `${days} gün · bitiş ${form.due_date || dueDateFromDays(new Date().toISOString().slice(0, 10), days)}` : "Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır."}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-[11px] text-slate-500" data-testid="emp-task-office-hint">İç görev ofiste yapılır; konum kontrolü ücreti etkilemez.</p>
-                )}
+                <div>
+                  <label className="block font-semibold mb-1">Dış görev kaç gün?</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="366"
+                    value={form.duration_days}
+                    onChange={(e) => {
+                      const duration_days = e.target.value;
+                      const n = parseTaskDays(duration_days);
+                      setForm({
+                        ...form,
+                        duration_days,
+                        due_date: n ? dueDateFromDays(new Date().toISOString().slice(0, 10), n) : form.due_date,
+                      });
+                    }}
+                    placeholder="Örn: 3"
+                    className={inputCls}
+                    data-testid="emp-task-days"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500" data-testid="emp-task-days-hint">
+                    {days ? `${days} gün · bitiş ${form.due_date || dueDateFromDays(new Date().toISOString().slice(0, 10), days)}` : "Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır."}
+                  </p>
+                </div>
                 <div>
                   <label className="block font-semibold mb-1">Proje</label>
                   <select
@@ -236,10 +297,10 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     disabled={!form.project_id}
                     data-testid="emp-task-job"
                   >
-                    <option value="">{form.project_id ? "Listeden iş seçin" : "Önce proje seçin"}</option>
+                    <option value="">{form.project_id ? "Yapılacak iş seçin" : "Önce proje seçin"}</option>
                     {projectTasks.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.title}{t.done ? " (bitti)" : ""}
+                        {t.title}
                       </option>
                     ))}
                   </select>
@@ -262,15 +323,9 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                   </p>
                 )}
                 <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
-                  {kind === "office"
-                    ? "İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez."
-                    : (
-                      <>
-                        Dış görevde işe giriş/çıkış görev yerinden yapılır
-                        {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
-                        {days ? ` · ${days} gün.` : ""}
-                      </>
-                    )}
+                  Dış görevde işe giriş/çıkış görev yerinden yapılır
+                  {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
+                  {days ? ` · ${days} gün.` : ""}
                 </p>
               </>
             )}
@@ -281,7 +336,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
           <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
           <button
             type="submit"
-            disabled={busy || loading || (!projectOptions.length && !form.project_id)}
+            disabled={busy || loading || (kind === "office" ? !parks.length : (!projectOptions.length && !form.project_id))}
             className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold disabled:opacity-50"
             data-testid="emp-task-save"
           >

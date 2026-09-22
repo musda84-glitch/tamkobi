@@ -423,6 +423,42 @@ async def put_project_stages(company_id: str, req: Dict[str, Any], user: dict = 
     await db.companies.update_one({"_id": company_id}, {"$set": {"project_stages": stages}})
     return {"status": "success", "message": "Proje aşamaları kaydedildi.", "stages": stages, "final_key": ps.final_stage_key(stages)}
 
+@api_router.get("/companies/{company_id}/work-parks")
+async def get_work_parks(company_id: str):
+    import work_parks as wp
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return {"parks": wp.normalize_work_parks(c.get("work_parks"))}
+
+@api_router.put("/companies/{company_id}/work-parks")
+async def put_work_parks(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    import work_parks as wp
+    _require_company_member(user, company_id)
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    parks = wp.normalize_work_parks(req.get("parks"))
+    await db.companies.update_one({"_id": company_id}, {"$set": {"work_parks": parks}})
+    return {"status": "success", "message": "İç görev parkurları kaydedildi.", "parks": parks}
+
+@api_router.post("/personnel/employees/{emp_id}/office-tasks")
+async def assign_office_task(emp_id: str, req: Dict[str, Any]):
+    import work_parks as wp
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    parks = wp.normalize_work_parks(company.get("work_parks"))
+    park = wp.find_park(parks, req.get("park_id"))
+    if not park:
+        raise HTTPException(status_code=400, detail="Parkur seçin.")
+    row = wp.office_task_row(emp, park, req.get("title") or "")
+    tasks = list(emp.get("office_tasks") or [])
+    tasks.append(row)
+    await db.employees.update_one({"_id": emp_id}, {"$set": {"office_tasks": tasks, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"status": "success", "message": "İç görev atandı.", "task": row}
+
 def _require_company_member(user: dict, company_id: str):
     if company_id not in (user.get("company_ids") or []):
         raise HTTPException(status_code=403, detail="Yalnızca bu şirketin kullanıcıları gizlilik ayarını yönetebilir.")
@@ -11840,6 +11876,10 @@ async def _employee_assigned_work(company_id: str, emp_id: str):
             if t.get("assignee_id") != emp_id:
                 continue
             tasks.append(attendance.assignment_from_project(proj, t))
+    emp = await db.employees.find_one({"_id": emp_id}, {"office_tasks": 1}) or {}
+    import work_parks as wp
+    for t in (emp.get("office_tasks") or []):
+        tasks.append(wp.office_assignment_view(t))
     tasks.sort(key=lambda x: (x.get("done", False), x.get("due_date") or "9999", x.get("title") or ""))
     wo_rows = clean_docs(await db.work_orders.find({"company_id": company_id, "assigned_to": emp_id}).sort([("planned_date", 1), ("order_code", 1)]).to_list(200))
     work_orders = [{
