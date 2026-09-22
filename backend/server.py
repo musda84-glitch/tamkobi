@@ -1805,6 +1805,32 @@ async def public_project(token: str):
     return view
 
 
+def _quote_number_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+@api_router.get("/public/projects/{token}/quotes/{quote_number}")
+async def public_project_quote(token: str, quote_number: str):
+    """Takip sayfasından tıklanınca teklif kalemleri — proje tokenı şart; onay tokenı gerekmez."""
+    token = (token or "").strip()
+    want = _quote_number_key(quote_number)
+    if not token or len(token) < 16 or not want:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
+    p = await db.projects.find_one({"tracking.token": token})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    quotes = await db.quotes.find({"project_id": p["_id"]}).to_list(100)
+    q = next((row for row in quotes if _quote_number_key(row.get("quote_number")) == want), None)
+    if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
+    company = await db.companies.find_one({"_id": q["company_id"]}) or {}
+    items = q.get("items") or []
+    await _fill_stock_codes(q["company_id"], items)
+    subtotal, vat_total, grand_total = _calc_items(items)
+    q["items"], q["subtotal"], q["vat_total"], q["grand_total"] = items, subtotal, vat_total, grand_total
+    return _public_quote_view(q, company)
+
+
 @api_router.get("/public/projects/{token}/statement.pdf")
 async def public_project_statement_pdf(token: str):
     token = (token or "").strip()
