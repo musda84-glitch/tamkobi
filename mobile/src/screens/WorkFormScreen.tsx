@@ -84,6 +84,7 @@ import {
   workItemFromProduct,
   workItemNeedsStockCard,
   matchProductByName,
+  rememberStockCreate,
   quoteLineSku,
   quoteLineProductPayload,
   attachProductToWorkItem,
@@ -199,6 +200,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
   const [expBusy, setExpBusy] = useState(false);
   const quoteBaseline = useRef("");
+  const productsRef = useRef(products);
+  productsRef.current = products;
+  const stockCreates = useRef(new Map<string, Promise<Product>>());
 
   const loadRefs = useCallback(async () => {
     try {
@@ -390,7 +394,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   const ensureQuoteStockCards = useCallback(async (rows: WorkItem[]): Promise<WorkItem[]> => {
     if (kind !== "quote" || !canEdit) return rows;
-    let catalog = products;
+    let catalog = productsRef.current;
     let next = rows;
     let changed = false;
     for (let i = 0; i < next.length; i += 1) {
@@ -403,9 +407,15 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         continue;
       }
       if (!canStock) continue;
-      const sku = quoteLineSku(it.name, `${Date.now().toString(36)}${i}`.slice(-6));
-      const created = await post<Product>(client, "/products", quoteLineProductPayload(it, companyId, sku));
-      catalog = [...catalog, created];
+      const created = await rememberStockCreate(stockCreates.current, it.name, async () => {
+        const again = matchProductByName(productsRef.current, it.name);
+        if (again) return again;
+        const sku = quoteLineSku(it.name, `${Date.now().toString(36)}${i}`.slice(-6));
+        return post<Product>(client, "/products", quoteLineProductPayload(it, companyId, sku));
+      });
+      if (!created) continue;
+      if (!matchProductByName(catalog, it.name)) catalog = [...catalog, created];
+      productsRef.current = catalog;
       next = next.map((row, idx) => (idx === i ? attachProductToWorkItem(row, created) : row));
       changed = true;
     }
@@ -414,7 +424,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       setProducts(catalog);
     }
     return next;
-  }, [canEdit, canStock, client, companyId, kind, products]);
+  }, [canEdit, canStock, client, companyId, kind]);
 
   const addProductFromSearch = (p: Product) => {
     setItems((rows) => {
