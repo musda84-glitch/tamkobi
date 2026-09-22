@@ -15,6 +15,8 @@ import {
   unpaidPayrollTotal,
   employeeCardActionTitles,
   employeePayMoves,
+  allowanceDue,
+  personnelExpensePayload,
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
@@ -162,9 +164,27 @@ describe("overtime assign", () => {
 describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
-    expect(titles).toEqual(["Avans", "Maaş öde", "Görev ata", "+ Mesai"]);
+    expect(titles).toEqual(["Avans", "Maaş öde", "Görev ata", "+ Mesai", "Yemek", "Yol"]);
     expect(titles).not.toContain("Düzenle");
     expect(titles).not.toContain("Sil");
+    expect(allowanceDue({ meal_allowance: 5000 }, { meal_due: 3750 }, "meal")).toBe(3750);
+    expect(allowanceDue({ transport_allowance: 2500 }, null, "transport")).toBe(2500);
+    expect(personnelExpensePayload("e1", "meal", "3750", "partner:p1", "", "comp", "2026-09-22")).toMatchObject({
+      company_id: "comp",
+      employee_id: "e1",
+      category: "Yemek",
+      description: "Yemek ücreti",
+      amount: 3750,
+      vat_rate: 0,
+      partner_id: "p1",
+      account_id: null,
+    });
+    expect(personnelExpensePayload("e1", "transport", "2000", "acc1", " yol ", "comp", "2026-09-22")).toMatchObject({
+      category: "Yol / Ulaşım",
+      description: "yol",
+      amount: 2000,
+      account_id: "acc1",
+    });
   });
 
   it("lists maaş and avans as payment moves, newest first", () => {
