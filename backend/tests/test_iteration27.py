@@ -423,6 +423,15 @@ class TestSettlement:
         assert exp.get("payment_status") == "paid"
         assert exp.get("netted_in_settlement") is True
         assert abs(exp.get("total", 0) - 270.99) < 1.0
+        assert exp.get("contact_name") == "Trendyol"
+        assert exp.get("contact_id")
+        # Kesinti kasa satırında değil, pazaryeri carisinde (ledger).
+        all_tx = requests.get(f"{BASE}/banking/transactions", params={"company_id": COMPANY}).json()
+        if isinstance(all_tx, dict):
+            all_tx = all_tx.get("transactions", [])
+        mp_txs = [t for t in all_tx if t.get("order_id") == oid and t.get("category") == "Pazaryeri Kesintisi"]
+        assert mp_txs and mp_txs[0].get("contact_id") == exp.get("contact_id")
+        assert abs(float(mp_txs[0].get("amount") or 0) - 270.99) < 1.0
         # NO bank tx with expense_id for it
         assert not any(t for t in txs if t.get("expense_id") == exp["id"])
 

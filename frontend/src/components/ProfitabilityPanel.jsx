@@ -42,7 +42,7 @@ const SettlementAccount = ({ ch, accounts, companyId, onSaved }) => {
   };
   return (
     <div className="border-t pt-2 space-y-1" data-testid={`settlement-${ch.channel}`}>
-      <div className="flex items-center gap-1 text-[10px] text-slate-400"><Wallet className="w-3 h-3" /> Hakediş / Ödeme Hesabı — faturalanan sipariş net tutarı (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat, kesintiler "Pazaryeri Komisyonu" masrafı olur</div>
+      <div className="flex items-center gap-1 text-[10px] text-slate-400"><Wallet className="w-3 h-3" /> Hakediş / Ödeme Hesabı — faturalanan sipariş net tutarı bu hesaba tahsilat, kesinti pazaryeri carisine ve &quot;Pazaryeri Komisyonu&quot; masrafına işlenir</div>
       <div className="flex items-center gap-2">
         <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={v} onChange={save} disabled={busy} testId={`settlement-select-${ch.channel}`} emptyLabel="Hesap seçilmedi (yalnızca ödendi işaretle)" collectableOnly includePartners={false} className="flex-1 text-xs" />
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
