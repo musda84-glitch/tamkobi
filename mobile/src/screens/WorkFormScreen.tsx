@@ -885,14 +885,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           <View
                             style={{
                               position: "absolute",
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
+                              bottom: 3,
+                              right: 3,
+                              width: 20,
                               height: 20,
-                              backgroundColor: "rgba(79,70,229,0.92)",
+                              borderRadius: 10,
+                              backgroundColor: colors.indigo,
                               alignItems: "center",
                               justifyContent: "center",
-                              flexDirection: "row",
                             }}
                           >
                             <Ionicons name="add" size={14} color="#fff" />

@@ -25,7 +25,7 @@ export type WorkItem = {
 };
 
 export const QUOTE_ITEM_THUMB = { width: 44, height: 44 };
-export const QUOTE_SERVICE_THUMB = { width: 88, height: 52 };
+export const QUOTE_SERVICE_THUMB = { width: 52, height: 76 };
 export const QUOTE_ITEM_THUMB_SIZE = QUOTE_ITEM_THUMB.height;
 
 export type QuoteApproval = {
