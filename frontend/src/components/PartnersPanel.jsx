@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
@@ -14,6 +14,12 @@ import { compressImageFile } from "../utils/compressImage";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
+
+/** Filter partner ledger rows to one partner (or keep all when unselected). */
+export const filterPartnerTxs = (txs, partnerId) => {
+  if (!partnerId) return txs || [];
+  return (txs || []).filter((t) => t.partner_id === partnerId);
+};
 
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);
 const accId = (a) => a?.id || a?._id || "";
@@ -43,6 +49,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [partners, setPartners] = useState([]);
   const [summary, setSummary] = useState(null);
   const [txs, setTxs] = useState([]);
+  const [selectedPartnerId, setSelectedPartnerId] = useState(null);
   const [modal, setModal] = useState(null); // add | tx | profit | virman
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -50,6 +57,15 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
   const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)" });
+
+  const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
+  const visibleTxs = useMemo(() => filterPartnerTxs(txs, selectedPartnerId), [txs, selectedPartnerId]);
+
+  useEffect(() => {
+    if (selectedPartnerId && !partners.some((p) => p.id === selectedPartnerId)) setSelectedPartnerId(null);
+  }, [partners, selectedPartnerId]);
+
+  const selectPartner = (id) => setSelectedPartnerId((cur) => (cur === id ? null : id));
 
   const load = useCallback(async () => {
     try {
@@ -92,7 +108,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const openTxModal = async () => {
     const list = await refreshAccounts();
     const cash = list.filter((a) => !isCard(a));
-    setTxForm({ partner_id: partners[0]?.id || "", type: "capital_in", amount: "", account_id: accId(cash[0]) || accId(list[0]) || "", description: "" });
+    setTxForm({ partner_id: selectedPartnerId || partners[0]?.id || "", type: "capital_in", amount: "", account_id: accId(cash[0]) || accId(list[0]) || "", description: "" });
     setModal("tx");
   };
 
@@ -235,14 +251,26 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {partners.map((p) => (
-          <div key={p.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 shadow-sm" data-testid={`partner-card-${p.name}`}>
+        {partners.map((p) => {
+          const selected = selectedPartnerId === p.id;
+          return (
+          <div
+            key={p.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => selectPartner(p.id)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPartner(p.id); } }}
+            className={`bg-white border rounded-2xl p-4 space-y-2 shadow-sm cursor-pointer transition ${selected ? "border-amber-500 ring-2 ring-amber-200" : "border-slate-200 hover:border-slate-300"}`}
+            data-testid={`partner-card-${p.name}`}
+            aria-pressed={selected}
+          >
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-3 min-w-0">
                 <label
                   className="relative w-12 h-12 rounded-full shrink-0 cursor-pointer group"
                   title="Fotoğraf yükle"
                   data-testid={`partner-photo-${p.id}`}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {p.photo_url ? (
                     <img src={resolveImageUrl(p.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover bg-white border border-slate-200" />
@@ -272,7 +300,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak Bakiyesi</div>
                 <div className="text-lg font-bold text-slate-900">{fmt(p.balance)} ₺</div>
               </div>
-              <button onClick={() => removePartner(p.id)} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
             <div className="grid grid-cols-3 gap-1 text-[10px] text-slate-500">
               <div>Giriş: <b className="text-emerald-700">{fmt(p.total_capital_in)}</b></div>
@@ -280,13 +308,29 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <div>Kâr: <b className="text-indigo-700">{fmt(p.total_profit_share)}</b></div>
             </div>
           </div>
-        ))}
+          );
+        })}
         {partners.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-6 bg-white border border-dashed rounded-2xl">Henüz ortak tanımlanmadı.</div>}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100 text-sm font-bold text-slate-900">Ortak Hareketleri</div>
-        <PartnerTxTable txs={txs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="partner-tx-section">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-sm font-bold text-slate-900">
+            Ortak Hareketleri
+            {selectedPartner && <span className="ml-2 font-semibold text-amber-700" data-testid="partner-tx-filter-label">· {selectedPartner.name}</span>}
+          </div>
+          {selectedPartner && (
+            <button
+              type="button"
+              onClick={() => setSelectedPartnerId(null)}
+              className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg px-2 py-1"
+              data-testid="partner-tx-clear-filter"
+            >
+              Tüm ortaklar
+            </button>
+          )}
+        </div>
+        <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
       </div>
 
       {modal === "add" && (
