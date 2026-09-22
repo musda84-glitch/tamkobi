@@ -1173,9 +1173,29 @@ def _calc_items(items: List[Dict[str, Any]]):
     vat_total = sum(float(it.get("vat_amount") or 0) for it in items)
     return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
 
+async def _company_id_for_list(request: Request, company_id: Optional[str]) -> str:
+    """Liste sorgusunda boş / yabancı company_id gelirse oturumdaki firmayı kullan."""
+    cid = str(company_id or "").strip()
+    auth = request.headers.get("Authorization", "") or ""
+    token = auth[7:] if auth.startswith("Bearer ") else request.cookies.get("access_token")
+    if not token:
+        return cid or "comp_nexus_main_01"
+    try:
+        user = await get_user_from_token(token, db)
+    except Exception:
+        return cid or "comp_nexus_main_01"
+    active = str(user.get("active_company_id") or "").strip()
+    allowed = {str(x) for x in (user.get("company_ids") or []) if x}
+    if active:
+        allowed.add(active)
+    if cid and cid in allowed:
+        return cid
+    return active or cid or "comp_nexus_main_01"
+
 @api_router.get("/quotes")
-async def list_quotes(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, project_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
+async def list_quotes(request: Request, company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, project_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
     """summary=1: liste için hafif payload (kalemler hariç) — Teklif/Proje/Keşif sayfası."""
+    company_id = await _company_id_for_list(request, company_id)
     q = {"company_id": company_id}
     if contact_id:
         q["contact_id"] = contact_id
@@ -1514,8 +1534,9 @@ def _group_by_project(rows):
 
 
 @api_router.get("/projects")
-async def list_projects(company_id: Optional[str] = "comp_nexus_main_01", light: bool = False):
+async def list_projects(request: Request, company_id: Optional[str] = "comp_nexus_main_01", light: bool = False):
     """light=1: kart listesi — teklif özetleri + masraf toplamı; alış faturası taranmaz."""
+    company_id = await _company_id_for_list(request, company_id)
     projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
     pids = [p["_id"] for p in projects]
     quote_proj = {"grand_total": 1, "invoice_id": 1, "project_id": 1} if light else None
@@ -1893,7 +1914,8 @@ async def delete_project(project_id: str):
     return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
 
 @api_router.get("/surveys")
-async def list_surveys(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_surveys(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
+    company_id = await _company_id_for_list(request, company_id)
     return clean_docs(await db.surveys.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
 
 @api_router.post("/surveys")
