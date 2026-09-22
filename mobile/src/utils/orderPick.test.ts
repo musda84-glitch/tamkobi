@@ -2,6 +2,7 @@ import {
   adjustPayload,
   canShip,
   lineRemaining,
+  parsePickedQtyDraft,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
@@ -41,6 +42,17 @@ describe("orderPick", () => {
     expect(adjustPayload(line, -4).picked_qty).toBe(0);
     expect(adjustPayload(line, 3)).toMatchObject({ line_index: 2, product_id: "p1" });
     expect(lineRemaining(line)).toBe(4);
+  });
+
+  it("parses typed pick qty like the web kiosk", () => {
+    expect(parsePickedQtyDraft(undefined, 1, 10)).toBeNull();
+    expect(parsePickedQtyDraft("", 1, 10)).toBeNull();
+    expect(parsePickedQtyDraft("  ", 1, 10)).toBeNull();
+    expect(parsePickedQtyDraft("7", 1, 10)).toBe(7);
+    expect(parsePickedQtyDraft("2,5", 1, 10)).toBe(2.5);
+    expect(parsePickedQtyDraft("15", 1, 10)).toBe(10);
+    expect(parsePickedQtyDraft("-3", 1, 10)).toBe(0);
+    expect(parsePickedQtyDraft("abc", 1, 10)).toBe(1);
   });
 
   it("counts waiting picks for the home Depo Sevkiyat badge", () => {
