@@ -70,6 +70,11 @@ export function showHomeFinanceSummary(user: SessionUser): boolean {
   return !hasSelfPersonnelRecord(user);
 }
 
+/** Ana sayfa Yenile karosu: yalnız personel kartı bağlı girişte. */
+export function showHomeRefreshTile(user: SessionUser): boolean {
+  return hasSelfPersonnelRecord(user);
+}
+
 /** Stok kartı formu: yalnız /stock düzenleme (depo / yönetici). Personel ve üretim giremez. */
 export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
