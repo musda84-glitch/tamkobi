@@ -266,10 +266,16 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
 }
 
 const BANK_TAB_TYPES = new Set(["bank", "pos", "okc_pos"]);
+const POS_TAB_TYPES = new Set(["pos", "okc_pos"]);
 
 /** Kasa & Banka üst sekmesindeki Bankalar: banka + POS + ÖKC. */
 export function isBankingBankAccount(a?: { type?: string } | null): boolean {
   return BANK_TAB_TYPES.has(normalizeAccountType(a?.type));
+}
+
+/** Üst sekmedeki POS: POS + ÖKC. */
+export function isBankingPosAccount(a?: { type?: string } | null): boolean {
+  return POS_TAB_TYPES.has(normalizeAccountType(a?.type));
 }
 
 export type PaymentTargetOption = { value: string; label: string; disabled?: boolean };

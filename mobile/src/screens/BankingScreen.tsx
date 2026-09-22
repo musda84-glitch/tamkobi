@@ -16,6 +16,7 @@ import {
   filterPartners,
   groupedAccounts,
   isBankingBankAccount,
+  isBankingPosAccount,
   totalLiquidity,
   virmanAccounts,
   type BankAccount,
@@ -71,7 +72,7 @@ function Approvals({
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
-  const [tab, setTab] = useState<"accounts" | "banks" | "partners" | "match">("accounts");
+  const [tab, setTab] = useState<"accounts" | "banks" | "partners" | "pos" | "match">("accounts");
   const [rows, setRows] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
@@ -107,10 +108,11 @@ export function BankingScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const pool = useMemo(
-    () => (tab === "banks" ? rows.filter(isBankingBankAccount) : rows),
-    [rows, tab]
-  );
+  const pool = useMemo(() => {
+    if (tab === "banks") return rows.filter(isBankingBankAccount);
+    if (tab === "pos") return rows.filter(isBankingPosAccount);
+    return rows;
+  }, [rows, tab]);
   const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return pool;
@@ -122,15 +124,15 @@ export function BankingScreen() {
   const liquidity = totalLiquidity(rows);
   const activePartners = useMemo(() => (partners || []).filter((p) => p.is_active !== false), [partners]);
   const searchedPartners = useMemo(() => filterPartners(activePartners, q), [activePartners, q]);
-  const showPartnersInList = groupF === "all" || groupF === "partners";
+  const showPartnersInList = tab === "accounts" && (groupF === "all" || groupF === "partners");
   const listPartners = showPartnersInList ? searchedPartners : [];
   const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
+  const posCount = useMemo(() => rows.filter(isBankingPosAccount).length, [rows]);
   const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
   const actions: ActionTile[] = [
     canEdit && { key: "new", label: "Yeni hesap", icon: "add-circle" as const, tone: "emerald" as const, testID: "bank-new", onPress: () => go("BankingNew") },
     canEdit && virmanOk && { key: "virman", label: "Virman", icon: "swap-horizontal" as const, tone: "indigo" as const, testID: "bank-virman", onPress: () => go("BankingVirman") },
-    { key: "partners", label: "Ortaklar", icon: "people" as const, tone: "amber" as const, testID: "bank-partners-tile", onPress: () => setTab("partners") },
     { key: "match", label: "Eşleşme", icon: "git-compare" as const, tone: "violet" as const, testID: "bank-match-tile", badge: unmatchedCount ? String(unmatchedCount) : undefined, onPress: () => setTab("match") },
     { key: "refresh", label: "Yenile", icon: "refresh" as const, tone: "slate" as const, testID: "bank-refresh", onPress: load },
   ].filter(Boolean) as ActionTile[];
@@ -157,7 +159,7 @@ export function BankingScreen() {
           { key: "accounts", label: "Hesaplar", icon: "wallet", color: colors.primary },
           { key: "banks", label: "Bankalar", icon: "business", color: accountGroupTone("bank").accent, count: bankCount || undefined },
           { key: "partners", label: "Ortaklar", icon: "people", color: accountGroupTone("partners").accent, count: partnerSummary?.partner_count || undefined },
-          { key: "match", label: "Eşleşme", icon: "git-compare", color: "#7C3AED", count: unmatchedCount || undefined },
+          { key: "pos", label: "POS", icon: "card", color: accountGroupTone("pos").accent, count: posCount || undefined },
         ]}
       />
 
@@ -210,7 +212,7 @@ export function BankingScreen() {
                 </Pressable>
               );
             })}
-            {activePartners.length ? (
+            {tab === "accounts" && activePartners.length ? (
               <Pressable
                 onPress={() => setGroupF(groupF === "partners" ? "all" : "partners")}
                 testID="account-group-partners"

@@ -24,6 +24,7 @@ import {
   virmanAccounts,
   virmanSelectGroups,
   isBankingBankAccount,
+  isBankingPosAccount,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -151,6 +152,9 @@ describe("finance drafts", () => {
     expect(isBankingBankAccount({ type: "bank" })).toBe(true);
     expect(isBankingBankAccount({ type: "pos" })).toBe(true);
     expect(isBankingBankAccount({ type: "cash_box" })).toBe(false);
+    expect(isBankingPosAccount({ type: "pos" })).toBe(true);
+    expect(isBankingPosAccount({ type: "okc_pos" })).toBe(true);
+    expect(isBankingPosAccount({ type: "bank" })).toBe(false);
     const groups = virmanSelectGroups(
       [
         { id: "k1", type: "cash_box", account_name: "Kasa", current_balance: 10 },
