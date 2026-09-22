@@ -9,6 +9,38 @@ export type PickerAssetLike = {
   file?: Blob;
 };
 
+/** Web Glass / RNW: expo-image-picker izni takılabiliyor; gizli file input kullan. */
+export function pickBrowserImage(
+  createInput: () => HTMLInputElement | null = () => (typeof document !== "undefined" ? document.createElement("input") : null),
+): Promise<PickerAssetLike | null> {
+  const input = createInput();
+  if (!input) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (!f) {
+        resolve(null);
+        return;
+      }
+      let uri = "";
+      try {
+        uri = typeof URL !== "undefined" && URL.createObjectURL ? URL.createObjectURL(f) : "";
+      } catch {
+        uri = "";
+      }
+      resolve({
+        uri,
+        file: f,
+        fileName: f.name,
+        mimeType: f.type || "image/jpeg",
+      });
+    };
+    input.click();
+  });
+}
+
 export function pickerFileMeta(asset: PickerAssetLike, fallbackName = "photo.jpg") {
   const name = (asset.fileName || "").trim() || fallbackName;
   const type = (asset.mimeType || "").trim() || "image/jpeg";

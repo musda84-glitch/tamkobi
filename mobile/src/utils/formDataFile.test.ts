@@ -3,10 +3,31 @@ import {
   imageUploadRequest,
   imageUploaderCopy,
   isExpoFetchFilePart,
+  pickBrowserImage,
   pickerFileMeta,
   resolveUploadBlob,
   uploadedImageUrl,
 } from "./formDataFile";
+
+describe("pickBrowserImage", () => {
+  it("opens a file input and returns the chosen image", async () => {
+    const file = { name: "koltuk.jpg", type: "image/jpeg" } as File;
+    const input = {
+      type: "",
+      accept: "",
+      files: [file],
+      onchange: null as (() => void) | null,
+      click() {
+        this.onchange?.();
+      },
+    };
+    const picked = await pickBrowserImage(() => input as unknown as HTMLInputElement);
+    expect(input.type).toBe("file");
+    expect(input.accept).toBe("image/*");
+    expect(picked?.fileName).toBe("koltuk.jpg");
+    expect(picked?.file).toBe(file);
+  });
+});
 
 describe("isExpoFetchFilePart", () => {
   it("rejects RN {uri,name,type} that Expo fetch throws on", () => {

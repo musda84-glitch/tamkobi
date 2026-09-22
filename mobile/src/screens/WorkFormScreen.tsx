@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -33,6 +33,7 @@ import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
   imageUploadRequest,
+  pickBrowserImage,
   resolveUploadBlob,
   uploadedImageUrl,
 } from "../utils/formDataFile";
@@ -313,14 +314,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const pickLineImage = async (i: number) => {
     if (!canEdit) return;
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (perm.status !== "granted") {
-        setError("Galeri izni verilmedi.");
-        return;
+      let asset: { uri?: string; fileName?: string | null; mimeType?: string | null; file?: Blob } | null = null;
+      if (Platform.OS === "web") {
+        asset = await pickBrowserImage();
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (perm.status !== "granted") {
+          setError("Galeri izni verilmedi.");
+          return;
+        }
+        const picked = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+        if (picked.canceled || !picked.assets?.length) return;
+        asset = picked.assets[0];
       }
-      const picked = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
-      if (picked.canceled || !picked.assets?.length) return;
-      const asset = picked.assets[0];
+      if (!asset) return;
       if (docId) {
         const formData = new FormData();
         const compact = await compressPickerAsset(asset);
@@ -866,7 +873,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         disabled={!canEdit}
                         accessibilityLabel="Satır görseli ekle"
                         testID={`q-item-thumb-pick-${i}`}
-                        style={{ justifyContent: "center" }}
+                        style={{ justifyContent: "center", position: "relative", cursor: "pointer" as const }}
                       >
                         <ProductThumb
                           uri={workItemImage(it, prod)}
@@ -874,6 +881,23 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           height={QUOTE_SERVICE_THUMB.height}
                           testID={`q-item-thumb-${i}`}
                         />
+                        {canEdit ? (
+                          <View
+                            style={{
+                              position: "absolute",
+                              bottom: 3,
+                              right: 3,
+                              width: 20,
+                              height: 20,
+                              borderRadius: 10,
+                              backgroundColor: colors.indigo,
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <Ionicons name="add" size={14} color="#fff" />
+                          </View>
+                        ) : null}
                       </Pressable>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                         <View>
