@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
+import { BankMark } from "../components/BankMark";
 import { confirmAction } from "../components/chips";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
@@ -30,6 +31,7 @@ import {
   type PartnerSummary,
   type PartnerTx,
 } from "../utils/finance";
+import { resolveBankBrand } from "../utils/bankBrand";
 import { fmtMoney, idOf } from "../utils/money";
 import { BankingMatchPanel } from "./BankingMatchPanel";
 import { BankingPartnersPanel } from "./BankingPartnersScreen";
@@ -299,23 +301,28 @@ export function BankingScreen() {
             visibleGroups.map((g) => {
               const tone = accountGroupTone(g.key);
               const isCash = g.key === "cash_box";
-              return g.items.map((a) => (
+              return g.items.map((a) => {
+                const brand = resolveBankBrand(a);
+                const branded = !isCash;
+                return (
                 <View
                   key={idOf(a)}
                   testID={`bank-group-item-${g.key}`}
-                  style={isCash ? {
-                    backgroundColor: tone.bg,
+                  style={{
+                    backgroundColor: branded ? brand.bg : tone.bg,
                     borderRadius: 12,
                     borderWidth: 1,
-                    borderColor: tone.border,
+                    borderColor: branded ? brand.border : tone.border,
                     paddingHorizontal: 8,
-                  } : undefined}
+                  }}
                 >
                   <ListRow
                     testID={`bank-row-${idOf(a)}`}
                     leading={isCash ? (
                       <View style={{ width: 8, height: 36, borderRadius: 4, backgroundColor: tone.accent }} />
-                    ) : undefined}
+                    ) : (
+                      <BankMark brand={brand} />
+                    )}
                     title={a.account_name || a.bank_name || "Hesap"}
                     subtitle={[
                       accountTypeTr(a.type),
@@ -324,10 +331,12 @@ export function BankingScreen() {
                       a.is_integrated ? (a.integration_provider || "Entegre") : "",
                     ].filter(Boolean).join(" · ")}
                     right={fmtMoney(accountBalance(a), a.currency)}
+                    rightColor={branded ? brand.text : undefined}
                     onPress={() => go("BankingAccount", { id: idOf(a), name: a.account_name || "" })}
                   />
                 </View>
-              ));
+                );
+              });
             })
           )}
         </>
