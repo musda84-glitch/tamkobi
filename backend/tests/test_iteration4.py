@@ -367,6 +367,32 @@ class TestSurveys:
         assert client.delete(f"{BASE}/surveys/{sid}", timeout=30).status_code == 200
         assert all(x["id"] != sid for x in client.get(f"{BASE}/surveys", timeout=30).json())
 
+    def test_survey_convert_keeps_line_features(self, client):
+        r = client.post(f"{BASE}/surveys", json={
+            "contact_id": "cnt_01", "contact_name": "TEST_M", "address": "TEST_Adres",
+            "measurements": [
+                {
+                    "name": "Profil", "quantity": 2, "unit": "Adet", "unit_price": 100,
+                    "vat_rate": 10, "is_service": False, "product_id": "p_1",
+                    "image_url": "/api/files/a.jpg", "description": "Keşif notu",
+                },
+                {
+                    "name": "Montaj", "quantity": 1, "unit": "Adet", "unit_price": 50,
+                    "vat_rate": 20, "is_service": True, "print_image_url": "/api/files/b.jpg",
+                },
+            ],
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        sid = r.json()["id"]
+        conv = client.post(f"{BASE}/surveys/{sid}/convert-to-quote", timeout=30)
+        assert conv.status_code == 200, conv.text
+        items = conv.json()["quote"]["items"]
+        assert items[0]["name"] == "Profil" and items[0]["vat_rate"] == 10
+        assert items[0]["image_url"] == "/api/files/a.jpg" and items[0]["description"] == "Keşif notu"
+        assert items[1]["is_service"] is True and items[1]["print_image_url"] == "/api/files/b.jpg"
+        client.delete(f"{BASE}/quotes/{conv.json()['quote']['id']}", timeout=30)
+        client.delete(f"{BASE}/surveys/{sid}", timeout=30)
+
     def test_update_missing_survey_404(self, client):
         assert client.put(f"{BASE}/surveys/nope_x", json={"status": "done"}, timeout=30).status_code == 404
 

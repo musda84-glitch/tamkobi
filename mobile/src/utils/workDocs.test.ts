@@ -39,7 +39,9 @@ import {
   asWorkList,
   quoteProjectSyncPayload,
   quoteToProjectAction,
+  surveyItemsFromMeasurements,
   surveyPayload,
+  workItemPersistFields,
   trackingAbsoluteLink,
   trackingBadgeLabel,
   trackingShareMessage,
@@ -259,6 +261,49 @@ describe("workDocs", () => {
     expect(p.latitude).toBeNull();
     const s = surveyPayload("comp", { contact_id: "c1", contact_name: "Acme", address: "Kadıköy", survey_date: "2026-09-16", notes: "", location_url: "" }, items);
     expect(s.measurements[0].unit).toBe("m2");
+  });
+
+  it("keeps quote line features on survey measurements", () => {
+    const items = [
+      {
+        ...emptyItem(),
+        name: "Profil",
+        quantity: 2,
+        unit_price: 100,
+        vat_rate: 10,
+        description: "Keşif notu",
+        product_id: "p1",
+        image_url: "/api/files/a.jpg",
+        thumbnail_url: "/api/files/a.jpg",
+      },
+      {
+        ...emptyItem(),
+        name: "Montaj",
+        is_service: true,
+        vat_rate: 20,
+        print_image_url: "/api/files/b.jpg",
+      },
+    ];
+    const s = surveyPayload("comp", { contact_id: "c1", contact_name: "Acme", address: "Kadıköy", survey_date: "2026-09-16", notes: "", location_url: "" }, items);
+    expect(s.measurements[0]).toMatchObject({
+      name: "Profil",
+      vat_rate: 10,
+      description: "Keşif notu",
+      product_id: "p1",
+      image_url: "/api/files/a.jpg",
+      is_service: false,
+    });
+    expect(s.measurements[1]).toMatchObject({
+      name: "Montaj",
+      is_service: true,
+      print_image_url: "/api/files/b.jpg",
+      product_id: "",
+      image_url: "",
+    });
+    const loaded = surveyItemsFromMeasurements(s.measurements);
+    expect(loaded[0].image_url).toBe("/api/files/a.jpg");
+    expect(loaded[1].is_service).toBe(true);
+    expect(workItemPersistFields({ ...emptyItem(), name: "X", is_service: true, image_url: "h.jpg" }).print_image_url).toBe("h.jpg");
   });
 
   it("sends marked coordinates with project and survey", () => {
