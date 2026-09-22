@@ -16,6 +16,7 @@ const TYPE_ROLES: Record<string, string[]> = {
   intraday_leave_decision: [],
   role_assigned: ["admin", "manager"],
   task_assigned: [],
+  staff_message: [],
   overtime_assigned: [],
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
@@ -156,6 +157,7 @@ export function notificationLook(n: Notification): NotificationLook {
   if (type.startsWith("quote")) return { icon: "create", tone: "amber" };
   if (type === "role_assigned") return { icon: "people", tone: "violet" };
   if (type === "task_assigned") return { icon: "briefcase", tone: "indigo" };
+  if (type === "staff_message") return { icon: "chatbubbles", tone: "violet" };
   if (type === "overtime_assigned") return { icon: "time", tone: "indigo" };
   if (type.startsWith("attendance") || type.startsWith("order_pick")) return { icon: "alert-circle", tone: "amber" };
   return { icon: "information-circle", tone: "indigo" };
@@ -176,6 +178,7 @@ const REF_ROUTES: Record<string, string> = {
   cash_approval: "/banking",
   bank: "/banking",
   employee: "/personnel",
+  staff_message: "/",
 };
 
 /** Web'deki link/ref_type yönlendirmesinin mobilde karşılığı olan rotası. */

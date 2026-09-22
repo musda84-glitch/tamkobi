@@ -26,6 +26,7 @@ TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "advance_request": ("admin", "manager", "accountant"),
     "role_assigned": ("admin", "manager"),
     "task_assigned": (),
+    "staff_message": (),
     "overtime_assigned": (),
     "b2b_order": ("admin", "manager", "sales"),
     "quote_response": ("admin", "manager", "sales"),

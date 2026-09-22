@@ -4,6 +4,7 @@ test("normalizeLayout keeps known ids, drops junk, appends missing defaults", ()
   expect(normalizeLayout(["charts", "alerts", "bogus", "charts"])).toEqual([
     "charts",
     "alerts",
+    "staff",
     "overview",
     "decision",
     "demo",

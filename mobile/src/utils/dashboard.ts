@@ -35,7 +35,7 @@ export function visibleHomeTasks(
   if (staff) {
     const openTasks = Number(mine?.openTasks || 0);
     const openWorkOrders = Number(mine?.openWorkOrders || 0);
-    if (openTasks) personal.push({ key: "my_tasks", label: "Bana atanan görev", count: openTasks, path: "/personelim" });
+    if (openTasks) personal.push({ key: "my_tasks", label: "Bana atanan görev", count: openTasks, path: "/personelim?tab=gorevler" });
     if (openWorkOrders) personal.push({ key: "my_work_orders", label: "Bana atanan iş emri", count: openWorkOrders, path: "/atolye" });
   }
   return [...personal, ...company];

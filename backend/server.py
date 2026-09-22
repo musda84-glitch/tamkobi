@@ -107,6 +107,7 @@ import project_photos
 applog.setup_logging()
 import addons
 import support_tickets
+import staff_messages
 import data_export
 import legal_docs
 import ubl_export
@@ -12797,6 +12798,7 @@ storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 addons.init(db)
 support_tickets.init(db, get_current_user)
+staff_messages.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
@@ -12894,6 +12896,7 @@ app.include_router(company_reset.router)
 app.include_router(storage_manager.router)
 app.include_router(addons.router)
 app.include_router(support_tickets.router)
+app.include_router(staff_messages.router)
 app.include_router(saas_billing.router)
 app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)

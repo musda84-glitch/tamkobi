@@ -16,7 +16,7 @@ describe("QUICK_TONE_COLORS", () => {
 describe("visibleQuickTiles", () => {
   it("shows licensed modules for admin", () => {
     const tiles = visibleQuickTiles({ role: "admin" }, null);
-    expect(tiles.map((t) => t.id)).toEqual(QUICK_TILES.map((t) => t.id));
+    expect(tiles.map((t) => t.id)).toEqual(QUICK_TILES.filter((t) => !t.self).map((t) => t.id));
   });
 
   it("hides modules the role or license blocks", () => {
@@ -108,6 +108,20 @@ describe("visibleQuickTiles", () => {
     const warehouse = { role: "warehouse", permissions: { "/edoc-inbox": "none", "/invoices": "none" } };
     expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).not.toContain("edoc");
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/edoc-inbox": false } }).map((t) => t.id)).not.toContain("edoc");
+  });
+
+  it("places Görevlerim after Atölye for linked staff", () => {
+    const ids = QUICK_TILES.map((t) => t.id);
+    expect(ids.indexOf("my_tasks")).toBe(ids.indexOf("atolye") + 1);
+    expect(QUICK_TILES.find((t) => t.id === "my_tasks")).toMatchObject({
+      label: "Görevlerim",
+      href: "/personelim?tab=gorevler",
+      self: true,
+    });
+    const staff = { role: "personel", employee_id: "e1", permissions: { "/mesai": "edit", "/atolye": "edit" } };
+    expect(visibleQuickTiles(staff, { modules: { "/mesai": true } }).map((t) => t.id)).toContain("my_tasks");
+    expect(visibleQuickTiles({ role: "personel", permissions: { "/mesai": "edit" } }, null).map((t) => t.id)).not.toContain("my_tasks");
+    expect(visibleQuickTiles({ role: "admin" }, null).map((t) => t.id)).not.toContain("my_tasks");
   });
 
   it("places Atölye Ekranı after Sevkiyat and gates it on /atolye", () => {
