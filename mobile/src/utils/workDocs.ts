@@ -57,6 +57,7 @@ export type QuoteDoc = {
   grand_total?: number;
   items?: WorkItem[];
   project_id?: string;
+  project_number?: string;
   invoice_id?: string;
   survey_id?: string;
   approval?: QuoteApproval;
@@ -524,6 +525,30 @@ export function quoteToProjectAction(quote?: Pick<QuoteDoc, "project_id"> | null
     confirmTitle: "Proje",
     confirmMessage: "Teklif projeye dönüştürülsün mü?",
   };
+}
+
+/** Bağlı projeye tekliften yazılacak alanlar (kalemler teklifte kalır, bütçe toplama gider). */
+export function quoteProjectSyncPayload(quote: {
+  title?: string;
+  quote_number?: string;
+  contact_id?: string;
+  contact_name?: string;
+  notes?: string;
+  grand_total?: number;
+  images?: string[] | null;
+}): Record<string, unknown> {
+  const number = String(quote.quote_number || "").trim();
+  const name = String(quote.title || "").trim() || `${number || "Teklif"} projesi`;
+  const images = (quote.images || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const payload: Record<string, unknown> = {
+    name,
+    contact_id: quote.contact_id || null,
+    contact_name: quote.contact_name || "",
+    budget: Number(quote.grand_total) || 0,
+    description: quote.notes || "",
+  };
+  if (images.length) payload.images = images;
+  return payload;
 }
 
 export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string }) {
