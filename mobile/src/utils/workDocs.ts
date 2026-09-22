@@ -24,8 +24,8 @@ export type WorkItem = {
   description?: string;
 };
 
-export const QUOTE_ITEM_THUMB = { width: 36, height: 36 };
-export const QUOTE_ITEM_THUMB_SIZE = QUOTE_ITEM_THUMB.width;
+export const QUOTE_ITEM_THUMB = { width: 44, height: 44 };
+export const QUOTE_ITEM_THUMB_SIZE = QUOTE_ITEM_THUMB.height;
 
 export type QuoteApproval = {
   status?: string;

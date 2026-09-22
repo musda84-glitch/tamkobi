@@ -717,41 +717,22 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             >
               <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
-                    <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                        <Row style={{ flexWrap: "wrap", gap: 4 }}>
-                          <Chip
-                            compact
-                            label="Ürün"
-                            active={!it.is_service}
-                            color={colors.primary}
-                            testID={`q-item-kind-product-${i}`}
-                            onPress={() => it.is_service && toggleLineKind(i)}
-                          />
-                          <Chip
-                            compact
-                            label="Hizmet"
-                            active={!!it.is_service}
-                            color={colors.indigo}
-                            testID={`q-item-kind-service-${i}`}
-                            onPress={() => !it.is_service && toggleLineKind(i)}
-                          />
-                        </Row>
-                        <Field
-                          dense
-                          label={it.is_service ? "Hizmet adı" : "Ürün"}
-                          testID={`q-item-name-${i}`}
-                          value={it.name}
-                          onChangeText={(v) => patchItem(i, "name", v)}
-                          editable={canEdit}
-                          placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
-                        />
-                      </View>
-                      <ProductThumb
-                        uri={workItemImage(it, prod)}
-                        width={QUOTE_ITEM_THUMB.width}
-                        height={QUOTE_ITEM_THUMB.height}
-                        testID={`q-item-thumb-${i}`}
+                    <Row style={{ flexWrap: "wrap", gap: 4 }}>
+                      <Chip
+                        compact
+                        label="Ürün"
+                        active={!it.is_service}
+                        color={colors.primary}
+                        testID={`q-item-kind-product-${i}`}
+                        onPress={() => it.is_service && toggleLineKind(i)}
+                      />
+                      <Chip
+                        compact
+                        label="Hizmet"
+                        active={!!it.is_service}
+                        color={colors.indigo}
+                        testID={`q-item-kind-service-${i}`}
+                        onPress={() => !it.is_service && toggleLineKind(i)}
                       />
                     </Row>
                   ) : (
@@ -768,6 +749,30 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   {kind === "quote" ? (
                     <View style={{ gap: 4 }}>
                         <Row style={{ alignItems: "flex-end", gap: 6 }}>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper(it.is_service ? "Hizmet adı" : "Ürün")}</Text>
+                            <View
+                              style={{
+                                borderWidth: 1,
+                                borderColor: colors.border,
+                                borderRadius: 999,
+                                backgroundColor: "#fff",
+                                minHeight: 32,
+                                paddingHorizontal: 8,
+                                justifyContent: "center",
+                              }}
+                            >
+                              <TextInput
+                                testID={`q-item-name-${i}`}
+                                value={it.name}
+                                onChangeText={(v) => patchItem(i, "name", v)}
+                                editable={canEdit}
+                                placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
+                                placeholderTextColor={colors.muted}
+                                style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                              />
+                            </View>
+                          </View>
                           <View style={{ flexShrink: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
                             <View
@@ -810,7 +815,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               </Pressable>
                             </View>
                           </View>
-                          <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ width: 84, flexShrink: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
                             <View
                               style={{
@@ -836,6 +841,12 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
                             </View>
                           </View>
+                          <ProductThumb
+                            uri={workItemImage(it, prod)}
+                            width={QUOTE_ITEM_THUMB.width}
+                            height={QUOTE_ITEM_THUMB.height}
+                            testID={`q-item-thumb-${i}`}
+                          />
                         </Row>
                         <Row style={{ justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
                           <Text testID={`q-item-gross-${i}`} style={{ flex: 1, textAlign: "right", fontSize: 15, fontWeight: "800", color: colors.text }}>

@@ -134,9 +134,9 @@ describe("workDocs", () => {
     const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
     expect(fromSvc.is_service).toBe(true);
     expect(fromSvc.product_id).toBe("");
-    expect(QUOTE_ITEM_THUMB.width).toBe(36);
-    expect(QUOTE_ITEM_THUMB.height).toBe(36);
-    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.width);
+    expect(QUOTE_ITEM_THUMB.width).toBe(44);
+    expect(QUOTE_ITEM_THUMB.height).toBe(44);
+    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.height);
     expect(workItemNoteOpen({ description: "" })).toBe(false);
     expect(workItemNoteOpen({ description: "Kesim notu" })).toBe(true);
     expect(workItemNoteOpen({ description: "Kesim notu" }, false)).toBe(false);
