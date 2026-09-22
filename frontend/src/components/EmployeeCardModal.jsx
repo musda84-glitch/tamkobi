@@ -261,7 +261,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
                   <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={card.balance?.month ? `Dönem ${card.balance.month}` : undefined} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
                   <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(card.balance?.overtime_due ?? ot.amount ?? 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
-                  <Stat label="Prim hakedişi" value={`${fmt(card.balance?.bonus_pending || 0)} ₺`} testid="emp-stat-bonus-due" />
+                  <Stat label={isDailyWage(e) ? "Yevmiye günü" : "Prim hakedişi"} value={isDailyWage(e) ? `${card.attendance.days_present || 0} gün` : `${fmt(card.balance?.bonus_pending || 0)} ₺`} sub={isDailyWage(e) ? `${fmt(periodWage(e, card.attendance.days_present))} ₺ · ${fmt(e.daily_wage)} ₺ / gün` : undefined} testid="emp-stat-bonus-due" />
                   <Stat label="İşe Giriş" value={formatTrDate(e.start_date)} testid="emp-stat-start" />
                   <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>
