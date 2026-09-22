@@ -136,6 +136,7 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   intraday_leave: "Gün içi izin",
   dispute: "İtiraz",
   advance: "Avans",
+  yevmiye_adjustment: "Yevmiye",
 };
 
 export function requestKindLabel(kind?: string | null): string {
@@ -383,6 +384,15 @@ export type AttendanceRecord = {
   early_leave_request?: { status?: string; planned_time?: string; reason?: string };
   intraday_leave_minutes?: number;
   intraday_leave_request?: { status?: string; out_time?: string; return_time?: string; reason?: string };
+  yevmiye_full_amount?: number;
+  yevmiye_adjustment_request?: {
+    status?: string;
+    full_amount?: number;
+    proposed_amount?: number;
+    final_amount?: number;
+    late_minutes?: number;
+    early_leave_minutes?: number;
+  };
 };
 
 export type AttendancePayload = {
@@ -530,6 +540,56 @@ export function dailyEarned(emp?: Employee | null, daysPresent = 0): number {
   if (!isDailyWage(emp)) return 0;
   const days = Math.max(0, Math.trunc(Number(daysPresent) || 0));
   return Math.round((Number(emp?.daily_wage) || 0) * days * 100) / 100;
+}
+
+export function referenceDailyWage(emp?: Pick<Employee, "daily_wage" | "salary"> | null): number {
+  const wage = Number(emp?.daily_wage) || 0;
+  if (wage > 0) return wage;
+  const salary = Number(emp?.salary) || 0;
+  if (salary > 0) return Math.round((salary / 26) * 100) / 100;
+  return 0;
+}
+
+export function yevmiyeAdjustedAmount(
+  dailyWage: number,
+  lateMinutes = 0,
+  earlyMinutes = 0,
+  scheduledMinutes = 480,
+): number {
+  const wage = Number(dailyWage) || 0;
+  const sched = Math.max(1, Math.trunc(Number(scheduledMinutes) || 480));
+  const cut = Math.max(0, Math.trunc(Number(lateMinutes) || 0)) + Math.max(0, Math.trunc(Number(earlyMinutes) || 0));
+  const worked = Math.max(0, sched - cut);
+  return Math.round((wage * worked / sched) * 100) / 100;
+}
+
+export function yevmiyeAdjustmentNeeded(lateMinutes = 0, earlyMinutes = 0): boolean {
+  return (Number(lateMinutes) || 0) > 0 || (Number(earlyMinutes) || 0) > 0;
+}
+
+export function yevmiyeStatusLine(rec?: {
+  yevmiye_full_amount?: number;
+  yevmiye_adjustment_request?: {
+    status?: string;
+    full_amount?: number;
+    proposed_amount?: number;
+    final_amount?: number;
+  } | null;
+} | null): string {
+  const adj = rec?.yevmiye_adjustment_request || {};
+  const full = Number(rec?.yevmiye_full_amount ?? adj.full_amount) || 0;
+  const proposed = Number(adj.proposed_amount ?? adj.final_amount) || 0;
+  if (adj.status === "pending" && proposed) {
+    return `Yevmiye ${proposed} ₺ önerildi — yönetici onayı bekleniyor`;
+  }
+  if (adj.status === "approved") {
+    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (geç/erken onaylandı)`;
+  }
+  if (adj.status === "rejected" && full) {
+    return `Yevmiye ${full} ₺ (kart ücreti)`;
+  }
+  if (full) return `Yevmiye ${full} ₺ (kart ücreti)`;
+  return "";
 }
 
 /** Yevmiye günü: 1–31 tam sayı. */

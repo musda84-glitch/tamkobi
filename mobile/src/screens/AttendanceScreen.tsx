@@ -9,6 +9,7 @@ import { colors } from "../theme";
 import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 import { workplaceHint, type Workplace } from "../utils/workplace";
+import { yevmiyeStatusLine } from "../utils/personnel";
 
 type AttendancePayload = {
   employee?: { full_name: string } | null;
@@ -24,6 +25,8 @@ type AttendancePayload = {
     intraday_leave_approved?: boolean;
     intraday_leave_minutes?: number;
     intraday_leave_request?: { status?: string; reason?: string; out_time?: string; return_time?: string; decision_note?: string } | null;
+    yevmiye_full_amount?: number;
+    yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
@@ -159,6 +162,7 @@ export function AttendanceScreen() {
   const checkedOut = Boolean(today?.check_out);
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
+  const yevLine = yevmiyeStatusLine(today);
 
   return (
     <Screen onRefresh={load}>
@@ -174,6 +178,7 @@ export function AttendanceScreen() {
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}
           {today?.late_minutes ? <Badge label={`${today.late_minutes} dk geç`} tone="red" /> : null}
+          {yevLine ? <Badge label={yevLine} tone="amber" /> : null}
         </Row>
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />

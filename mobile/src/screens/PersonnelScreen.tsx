@@ -44,6 +44,7 @@ import {
   yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
   yevmiyePayPayload,
+  yevmiyeStatusLine,
   allowanceDue,
   bonusDue,
   bonusPayPayload,
@@ -798,12 +799,18 @@ export function PersonnelScreen() {
         await post(client, `/personnel/attendance/${id}/early-leave-decision`, { decision: approved ? "approve" : "reject" });
       } else if (it.kind === "intraday_leave") {
         await post(client, `/personnel/attendance/${id}/intraday-leave-decision`, { decision: approved ? "approve" : "reject" });
+      } else if (it.kind === "yevmiye_adjustment") {
+        await post(client, `/personnel/attendance/${id}/yevmiye-decision`, { decision: approved ? "approve" : "reject" });
       } else {
         setTab("attendance");
         setMessage("İtirazı puantaj kaydından inceleyin.");
         return;
       }
-      setMessage(approved ? `${requestKindLabel(it.kind)} onaylandı.` : `${requestKindLabel(it.kind)} reddedildi.`);
+      setMessage(
+        it.kind === "yevmiye_adjustment"
+          ? (approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.")
+          : (approved ? `${requestKindLabel(it.kind)} onaylandı.` : `${requestKindLabel(it.kind)} reddedildi.`),
+      );
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -1239,6 +1246,8 @@ export function PersonnelScreen() {
           {(attendance?.records || []).slice(0, 30).map((r) => {
             const early = r.early_leave_request?.status === "pending";
             const intra = r.intraday_leave_request?.status === "pending";
+            const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
+            const yevLine = yevmiyeStatusLine(r);
             return (
               <Card key={idOf(r)} testID={`att-rec-${idOf(r)}`}>
                 <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>
@@ -1249,7 +1258,8 @@ export function PersonnelScreen() {
                 </Muted>
                 {early ? <Muted testID={`att-early-${idOf(r)}`}>Erken çıkış talebi {r.early_leave_request?.planned_time || ""} {r.early_leave_request?.reason ? `· ${r.early_leave_request.reason}` : ""}</Muted> : null}
                 {intra ? <Muted testID={`att-intra-${idOf(r)}`}>Gün içi izin {r.intraday_leave_request?.out_time || ""}–{r.intraday_leave_request?.return_time || ""} {r.intraday_leave_request?.reason ? `· ${r.intraday_leave_request.reason}` : ""}</Muted> : null}
-                {canEdit && (early || intra) ? (
+                {yevLine ? <Muted testID={`att-yevmiye-adj-${idOf(r)}`}>{yevLine}</Muted> : null}
+                {canEdit && (early || intra || yevAdj) ? (
                   <Row>
                     {early ? (
                       <>
@@ -1261,6 +1271,12 @@ export function PersonnelScreen() {
                       <>
                         <PrimaryButton title="Gün içi onayla" color={colors.primary} testID={`att-intra-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "intraday_leave" }, true)} />
                         <PrimaryButton title="Reddet" color={colors.danger} testID={`att-intra-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "intraday_leave" }, false)} />
+                      </>
+                    ) : null}
+                    {yevAdj ? (
+                      <>
+                        <PrimaryButton title="Yevmiye onayla" color={colors.primary} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
+                        <PrimaryButton title="Kart ücreti" color={colors.danger} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
                       </>
                     ) : null}
                   </Row>

@@ -8295,7 +8295,7 @@ _LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid":
 
 @api_router.get("/personnel/pending-requests")
 async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_main_01"):
-    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış, gün içi izin ve puantaj itirazları."""
+    """Yönetici bildirim kutusu: bekleyen izin, erken çıkış, gün içi izin, yevmiye ve puantaj itirazları."""
     leaves = await db.leave_requests.find({"company_id": company_id, "status": "pending"}).sort("created_at", -1).to_list(200)
     early = await db.attendance.find(
         {"company_id": company_id, "early_leave_request.status": "pending"}
@@ -8367,6 +8367,38 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "created_at": att.get("disputed_at") or att.get("updated_at") or "",
             "link": "/personnel?tab=attendance",
             "meta": {"date": att.get("date"), "dispute_note": att.get("dispute_note")},
+        })
+    yev_adj = await db.attendance.find(
+        {"company_id": company_id, "yevmiye_adjustment_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    for att in yev_adj:
+        adj = att.get("yevmiye_adjustment_request") or {}
+        late = adj.get("late_minutes") or att.get("late_minutes") or 0
+        early = adj.get("early_leave_minutes") or att.get("early_leave_minutes") or 0
+        bits = []
+        if late:
+            bits.append(f"{late} dk geç")
+        if early:
+            bits.append(f"{early} dk erken")
+        full_amt = adj.get("full_amount") or att.get("yevmiye_full_amount") or 0
+        proposed = adj.get("proposed_amount") or 0
+        items.append({
+            "kind": "yevmiye_adjustment",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Yevmiye düzeltmesi",
+            "detail": f"{att.get('date') or ''} · kart {float(full_amt):,.2f} ₺ → önerilen {float(proposed):,.2f} ₺"
+                      + (f" · {' · '.join(bits)}" if bits else ""),
+            "created_at": adj.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {
+                "date": att.get("date"),
+                "full_amount": full_amt,
+                "proposed_amount": proposed,
+                "late_minutes": late,
+                "early_leave_minutes": early,
+            },
         })
     advances = await db.bonus_payments.find({
         "company_id": company_id, "type": "advance", "source": "self", "status": "pending",
@@ -12417,6 +12449,16 @@ async def generate_payroll(req: Dict[str, Any]):
     for emp in employees:
         att_rows = await db.attendance.find({"employee_id": str(emp.get("_id")), "date": {"$regex": f"^{period}"}}).to_list(40)
         days_present = attendance.summarize(att_rows).get("days_present") or 0
+        if personnel_wage.pay_type_of(emp) == "daily":
+            att_yev = await db.bonus_payments.find({
+                "employee_id": emp.get("_id"),
+                "type": "yevmiye",
+                "source": "attendance",
+                "date": {"$regex": f"^{period}"},
+            }).to_list(40)
+            days_present = personnel_wage.payroll_days_minus_attendance_yevmiye(
+                days_present, personnel_wage.attendance_yevmiye_covered_days(att_yev)
+            )
         net = personnel_wage.period_wage(emp, days_present)
         gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
         second = float(emp.get("second_salary") or 0)
