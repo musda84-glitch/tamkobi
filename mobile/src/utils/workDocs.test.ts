@@ -54,6 +54,7 @@ import {
   workItemTotals,
   hydrateWorkItem,
   itemStripe,
+  workItemLineKind,
   QUOTE_ITEM_THUMB,
   QUOTE_SERVICE_THUMB,
   QUOTE_ITEM_THUMB_SIZE,
@@ -327,6 +328,12 @@ describe("workDocs", () => {
     expect(itemStripe(0).backgroundColor).toBe("#F1F5F9");
     expect(itemStripe(1).backgroundColor).toBe("#EEF2FF");
     expect(itemStripe(2).backgroundColor).not.toBe(itemStripe(1).backgroundColor);
+  });
+
+  it("uses the quote item line for both quote and survey", () => {
+    expect(workItemLineKind("quote")).toBe("quote");
+    expect(workItemLineKind("survey")).toBe("quote");
+    expect(workItemLineKind("project")).toBeNull();
   });
 
   it("summarizes project tasks and assignee options like the web card", () => {

@@ -776,3 +776,8 @@ export function canCompleteProject(status?: string | null, stages?: ProjectStage
 export function itemStripe(index: number): { backgroundColor: string } {
   return { backgroundColor: index % 2 === 0 ? "#F1F5F9" : "#EEF2FF" };
 }
+
+/** Teklif ve keşif aynı kalem satırını kullanır; projede kalem kartı yok. */
+export function workItemLineKind(kind: WorkKind): "quote" | null {
+  return kind === "project" ? null : "quote";
+}
