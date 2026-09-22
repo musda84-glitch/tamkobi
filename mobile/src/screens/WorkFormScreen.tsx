@@ -3,7 +3,7 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -555,18 +555,36 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   return (
     <Screen
       stickyTop={kind !== "project" ? (
-        <Card testID="q-stock-search">
-          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Stok ara</Text>
+        <View
+          testID="q-stock-search"
+          style={{
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 12,
+            padding: 8,
+            gap: 6,
+            shadowColor: "#0F172A",
+            shadowOpacity: 0.1,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 6,
+          }}
+        >
           <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-          {prodHits.map((p) => (
-            <ProductPickRow
-              key={idOf(p)}
-              product={p}
-              testID={`q-prod-${idOf(p)}`}
-              onPress={() => addProductFromSearch(p)}
-            />
-          ))}
-        </Card>
+          {prodHits.length ? (
+            <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
+              {prodHits.map((p) => (
+                <ProductPickRow
+                  key={idOf(p)}
+                  product={p}
+                  testID={`q-prod-${idOf(p)}`}
+                  onPress={() => addProductFromSearch(p)}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+        </View>
       ) : undefined}
     >
       <H1>{heading}</H1>
