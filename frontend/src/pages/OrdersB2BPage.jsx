@@ -40,7 +40,7 @@ import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
 import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
-import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, orderTableMinWidth } from "../utils/orderTableLayout";
+import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -537,7 +537,7 @@ export default function OrdersB2BPage() {
                     <col style={{ width: colW.items }} />
                     <col style={{ width: colW.total_amount }} />
                     <col style={{ width: colW.order_status }} />
-                    <col style={{ width: colW.actions }} />
+                    <col style={{ width: ORDER_ACTIONS_COL }} />
                   </colgroup>
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
@@ -547,13 +547,13 @@ export default function OrdersB2BPage() {
                   <SortTh k="items">Ürünler</SortTh>
                   <SortTh k="total_amount" className="text-right">Tutar</SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
-                  <th className="group/th relative px-4 py-3 text-center" style={{ width: colW.actions }}>İşlemler<ColResize k="actions" /></th>
+                  <th className="relative px-3 py-3 text-center bg-slate-50 sticky right-0 z-[1]" style={{ width: ORDER_ACTIONS_COL }} data-testid="ord-actions-header">İşlemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {visibleOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden">
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
@@ -609,7 +609,7 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 text-center overflow-hidden">
+                    <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(ord.id) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
