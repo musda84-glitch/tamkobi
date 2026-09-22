@@ -47,7 +47,7 @@ import {
 } from "../utils/installments";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
-import { projectsForContact, type ProjectDoc } from "../utils/workDocs";
+import { mergeContactProjects, projectsForContact, type ProjectDoc } from "../utils/workDocs";
 import type { BankAccount } from "../utils/finance";
 import { canDeleteInvoice, canEditInvoiceItems } from "../utils/invoiceDraft";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
@@ -196,7 +196,7 @@ export function ContactDetailScreen() {
   const orders = data?.orders || [];
   const quotes = data?.quotes || [];
   const overlayProjects = (data?.projects || []) as ProjectDoc[];
-  const projects = lightProjects ?? overlayProjects;
+  const projects = mergeContactProjects(overlayProjects, lightProjects);
   const surveys = data?.surveys || [];
   const comms = data?.communications || [];
   const cheques = data?.cheques || [];
