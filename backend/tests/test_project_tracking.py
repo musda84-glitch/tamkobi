@@ -88,6 +88,18 @@ class TestProjectTracking:
         assert "9999" not in blob
         assert "grand_total" not in body
         assert any(x.get("quote_number") == q.json()["quote_number"] for x in body["quotes"])
+
+        detail = api.get(f"{BASE}/public/projects/{token}/quotes/{q.json()['quote_number']}", timeout=30)
+        assert detail.status_code == 200, detail.text
+        shown = detail.json()
+        assert shown["quote_number"] == q.json()["quote_number"]
+        assert shown["title"] == "Gizli fiyat"
+        assert shown["items"]
+        assert "grand_total" in shown
+        assert "9999" in str(shown) or float(shown.get("grand_total") or 0) > 0
+        assert "company_id" not in shown
+        assert "contact_id" not in shown
+        assert api.get(f"{BASE}/public/projects/{token}/quotes/NO-SUCH-QUOTE", timeout=30).status_code == 404
         api.delete(f"{BASE}/quotes/{q.json()['id']}", timeout=20)
 
     def test_status_change_is_reflected_dynamically(self, api, project):
