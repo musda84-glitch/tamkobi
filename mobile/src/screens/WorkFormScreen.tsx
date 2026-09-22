@@ -736,12 +736,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           onPress={() => !it.is_service && toggleLineKind(i)}
                         />
                       </Row>
-                      <ProductThumb
-                        uri={workItemImage(it, prod)}
-                        width={QUOTE_ITEM_THUMB.width}
-                        height={QUOTE_ITEM_THUMB.height}
-                        testID={`q-item-thumb-${i}`}
-                      />
+                      {!it.is_service ? (
+                        <ProductThumb
+                          uri={workItemImage(it, prod)}
+                          width={QUOTE_ITEM_THUMB.width}
+                          height={QUOTE_ITEM_THUMB.height}
+                          testID={`q-item-thumb-${i}`}
+                        />
+                      ) : null}
                     </Row>
                   ) : (
                     <Field
@@ -756,9 +758,115 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   )}
                   {kind === "quote" ? (
                     <View style={{ gap: 4 }}>
+                        {it.is_service ? (
+                        <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                          <ProductThumb
+                            uri={workItemImage(it, prod)}
+                            width={QUOTE_ITEM_THUMB.width}
+                            height={QUOTE_ITEM_THUMB.height}
+                            testID={`q-item-thumb-${i}`}
+                          />
+                          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                            <View>
+                              <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Hizmet adı")}</Text>
+                              <View
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                  borderRadius: 12,
+                                  backgroundColor: "#fff",
+                                  minHeight: 32,
+                                  paddingHorizontal: 8,
+                                  justifyContent: "center",
+                                }}
+                              >
+                                <TextInput
+                                  testID={`q-item-name-${i}`}
+                                  value={it.name}
+                                  onChangeText={(v) => patchItem(i, "name", v)}
+                                  editable={canEdit}
+                                  placeholder="Hizmet adı yazın"
+                                  placeholderTextColor={colors.muted}
+                                  style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                />
+                              </View>
+                            </View>
+                            <Row style={{ alignItems: "flex-end", gap: 6 }}>
+                              <View style={{ flexShrink: 0 }}>
+                                <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
+                                <View
+                                  style={{
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    borderWidth: 1,
+                                    borderColor: colors.border,
+                                    borderRadius: 999,
+                                    backgroundColor: "#fff",
+                                    overflow: "hidden",
+                                    minHeight: 32,
+                                  }}
+                                >
+                                  <Pressable
+                                    testID={`q-item-qty-dec-${i}`}
+                                    accessibilityLabel="Miktarı azalt"
+                                    disabled={!canEdit}
+                                    onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
+                                    style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                                  >
+                                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
+                                  </Pressable>
+                                  <TextInput
+                                    testID={`q-item-qty-${i}`}
+                                    value={String(it.quantity)}
+                                    onChangeText={(v) => patchItem(i, "quantity", n(v))}
+                                    keyboardType="decimal-pad"
+                                    editable={canEdit}
+                                    style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                  />
+                                  <Pressable
+                                    testID={`q-item-qty-inc-${i}`}
+                                    accessibilityLabel="Miktarı artır"
+                                    disabled={!canEdit}
+                                    onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
+                                    style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                                  >
+                                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                              <View style={{ flex: 1, minWidth: 72 }}>
+                                <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
+                                <View
+                                  style={{
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    borderWidth: 1,
+                                    borderColor: colors.border,
+                                    borderRadius: 999,
+                                    backgroundColor: "#fff",
+                                    minHeight: 32,
+                                    paddingHorizontal: 8,
+                                    gap: 4,
+                                  }}
+                                >
+                                  <TextInput
+                                    testID={`q-item-price-${i}`}
+                                    value={String(it.unit_price)}
+                                    onChangeText={(v) => patchItem(i, "unit_price", n(v))}
+                                    keyboardType="decimal-pad"
+                                    editable={canEdit}
+                                    style={{ flex: 1, fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                  />
+                                  <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
+                                </View>
+                              </View>
+                            </Row>
+                          </View>
+                        </Row>
+                        ) : (
                         <Row style={{ alignItems: "stretch", gap: 6 }}>
                           <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper(it.is_service ? "Hizmet adı" : "Ürün")}</Text>
+                            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Ürün")}</Text>
                             <View
                               style={{
                                 flex: 1,
@@ -777,7 +885,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 onChangeText={(v) => patchItem(i, "name", v)}
                                 editable={canEdit}
                                 multiline
-                                placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
+                                placeholder="Ürün adı"
                                 placeholderTextColor={colors.muted}
                                 style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 64 }}
                               />
@@ -854,6 +962,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                             </View>
                           </View>
                         </Row>
+                        )}
                         <Row style={{ justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
                           <Text testID={`q-item-gross-${i}`} style={{ flex: 1, textAlign: "right", fontSize: 15, fontWeight: "800", color: colors.text }}>
                             {it.name ? fmtMoney(workItemLineGross(it)) : ""}
