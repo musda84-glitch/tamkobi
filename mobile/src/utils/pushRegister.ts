@@ -2,10 +2,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { del, post, type ApiClient } from "../api/client";
 import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, shouldAskPushOnOpen } from "./push";
+import { localPushContent, planLocalPush } from "./pushLocal";
+import type { Notification } from "../types";
 
 const TOKEN_KEY = "tamkobi.pushToken";
+const SEEN_KEY = "tamkobi.pushLocalSeen";
+const SEEDED_KEY = "tamkobi.pushLocalSeeded";
 
 export type PushStatus = "idle" | "ok" | "denied" | "web" | "unavailable";
+export type PushResult = { status: PushStatus; token?: string; error?: string };
 
 function projectId(): string {
   try {
@@ -79,26 +84,30 @@ export async function askPushPermission(): Promise<PushStatus> {
   }
 }
 
-export async function requestPushToken(): Promise<{ status: PushStatus; token?: string }> {
+export async function requestPushToken(): Promise<PushResult> {
   const perm = await askPushPermission();
   if (perm !== "ok") return { status: perm };
   const Notifications = await nativeNotifications();
-  if (!Notifications) return { status: "unavailable" };
+  if (!Notifications) return { status: "unavailable", error: "Bildirim modülü yok." };
   try {
+    const Device = await import("expo-device");
+    if (Device.isDevice === false) {
+      return { status: "unavailable", error: "Emülatörde uzak bildirim yok." };
+    }
     const pid = projectId();
     const tokenRes = pid
       ? await Notifications.getExpoPushTokenAsync({ projectId: pid })
       : await Notifications.getExpoPushTokenAsync();
     const token = String(tokenRes?.data || "");
-    if (!isExpoPushToken(token)) return { status: "unavailable" };
+    if (!isExpoPushToken(token)) return { status: "unavailable", error: "Push token alınamadı." };
     await AsyncStorage.setItem(TOKEN_KEY, token);
     return { status: "ok", token };
-  } catch {
-    return { status: "unavailable" };
+  } catch (err) {
+    return { status: "unavailable", error: err instanceof Error ? err.message : "Push token alınamadı." };
   }
 }
 
-export async function registerDevicePush(client: ApiClient): Promise<{ status: PushStatus; token?: string }> {
+export async function registerDevicePush(client: ApiClient): Promise<PushResult> {
   const got = await requestPushToken();
   if (got.status !== "ok" || !got.token) return got;
   try {
@@ -108,10 +117,77 @@ export async function registerDevicePush(client: ApiClient): Promise<{ status: P
       platform: Platform.OS,
       device_id: Device.modelName || Device.osInternalBuildId || Device.osName || "",
     });
-  } catch {
-    /* token cihazda durur; sonraki açılışta tekrar dener */
+    return got;
+  } catch (err) {
+    return {
+      status: "unavailable",
+      token: got.token,
+      error: err instanceof Error ? err.message : "Token sunucuya yazılamadı.",
+    };
   }
-  return got;
+}
+
+export async function loadLocalPushState(): Promise<{ seen: string[]; seeded: boolean }> {
+  const [raw, seeded] = await Promise.all([
+    AsyncStorage.getItem(SEEN_KEY),
+    AsyncStorage.getItem(SEEDED_KEY),
+  ]);
+  let seen: string[] = [];
+  try {
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) seen = parsed.map((x) => String(x || "")).filter(Boolean);
+  } catch {
+    seen = [];
+  }
+  return { seen, seeded: seeded === "1" };
+}
+
+export async function saveLocalPushState(seen: string[], seeded: boolean): Promise<void> {
+  await AsyncStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+  if (seeded) await AsyncStorage.setItem(SEEDED_KEY, "1");
+}
+
+export async function presentLocalNotification(note: {
+  title: string;
+  body?: string;
+  data?: Record<string, string>;
+}): Promise<boolean> {
+  const perm = await askPushPermission();
+  if (perm !== "ok") return false;
+  const Notifications = await nativeNotifications();
+  if (!Notifications?.scheduleNotificationAsync) return false;
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: note.title || "TamKobi",
+        body: note.body || "",
+        sound: "default",
+        data: note.data || {},
+        ...(Platform.OS === "android" ? { channelId: PUSH_CHANNEL } : {}),
+      },
+      trigger: null,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function presentLocalForNotes(notes: Notification[]): Promise<number> {
+  let shown = 0;
+  for (const note of notes) {
+    const content = localPushContent(note);
+    if (await presentLocalNotification(content)) shown += 1;
+  }
+  return shown;
+}
+
+export async function syncLocalPhoneAlerts(rows: Notification[] | null | undefined): Promise<number> {
+  const state = await loadLocalPushState();
+  const plan = planLocalPush(rows, state.seen, state.seeded);
+  const shown = await presentLocalForNotes(plan.alerts);
+  await saveLocalPushState(plan.nextSeen, plan.seeded);
+  return shown;
 }
 
 export async function unregisterDevicePush(client: ApiClient): Promise<void> {
