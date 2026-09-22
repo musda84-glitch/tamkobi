@@ -1383,7 +1383,7 @@ def parse_advance_self(req: Dict[str, Any]) -> Dict[str, Any]:
 
 def bonus_counts_as_advance(b: Dict[str, Any]) -> bool:
     """Bekleyen self-servis avans talebi kalan alacaktan düşülmez."""
-    if (b.get("type") or "") != "advance":
+    if (b.get("type") or "") not in ("advance", "borc"):
         return False
     if b.get("status") in ("rejected",):
         return False

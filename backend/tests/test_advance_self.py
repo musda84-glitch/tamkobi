@@ -34,3 +34,5 @@ def test_bonus_counts_as_advance():
     assert not bonus_counts_as_advance({"type": "advance", "status": "rejected"})
     assert not bonus_counts_as_advance({"type": "bonus", "status": "paid"})
     assert bonus_counts_as_advance({"type": "advance", "status": "pending"})  # yönetici kaydı
+    assert bonus_counts_as_advance({"type": "borc", "status": "pending"})
+    assert not bonus_counts_as_advance({"type": "alacak", "status": "pending"})

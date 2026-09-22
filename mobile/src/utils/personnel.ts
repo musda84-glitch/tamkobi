@@ -117,6 +117,7 @@ export type EmployeePayMove = {
   note?: string;
   editable?: boolean;
   payable?: boolean;
+  deletable?: boolean;
 };
 
 export function isUnpaidYevmiye(b?: EmployeeBonus | null): boolean {
@@ -182,7 +183,22 @@ const BONUS_TYPE_TR: Record<string, string> = {
   expense: "Masraf Ödemesi",
   overtime: "Fazla Mesai",
   yevmiye: "Yevmiye",
+  alacak: "Alacak",
+  borc: "Borç",
 };
+
+export function isDeletableBonus(b?: EmployeeBonus | null): boolean {
+  return !!idOf(b);
+}
+
+export function yevmiyeAddHint(existingDays = 0, newDays = 0): string {
+  const have = Math.max(0, Math.trunc(Number(existingDays) || 0));
+  const add = Math.max(0, Math.trunc(Number(newDays) || 0));
+  if (add > 0 && have > 0) return `${have} gün + ${add} gün = ${have + add} gün`;
+  if (add > 0) return `+${add} gün alacağa yazılacak`;
+  if (have > 0) return `Mevcut ${have} gün · yazılan gün artı olarak eklenir`;
+  return "Yazılan gün mevcut alacağa eklenir.";
+}
 
 export function bonusTypeTr(type?: string | null, fallback?: string | null): string {
   const key = String(type || "");
@@ -230,6 +246,7 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
       note: b.note,
       editable: isUnpaidYevmiye(b),
       payable: String(b.status || "") !== "paid",
+      deletable: isDeletableBonus(b),
     });
   }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -649,6 +666,27 @@ export function bonusPayPayload(
   };
 }
 
+export type LedgerSide = "alacak" | "borc";
+
+export function ledgerPayPayload(
+  employeeId: string,
+  side: LedgerSide,
+  amount: string,
+  period: string,
+  accountId: string,
+  note: string,
+) {
+  const debt = side === "borc";
+  return {
+    employee_id: employeeId,
+    type: (debt ? "borc" : "alacak") as LedgerSide,
+    amount: num(amount),
+    period,
+    note: note.trim() || (debt ? "Borç" : "Alacak"),
+    ...splitPaymentTarget(accountId),
+  };
+}
+
 export function validateOvertime(hours: string, start?: string, end?: string): string | null {
   const ranged = hoursFromTimeRange(start, end);
   if (ranged != null && ranged > 0) return null;
@@ -888,7 +926,7 @@ export function employeeCardActionTitle(
   action: { key: string; title: string },
   emp?: Pick<Employee, "pay_type"> | null,
 ): string {
-  if (action.key === "salary" && isDailyWage(emp)) return "Yevmiye öde";
+  if (action.key === "salary" && isDailyWage(emp)) return "Alacak / Borç";
   if (action.key === "bonus" && isDailyWage(emp)) return "Yevmiye günü";
   return action.title;
 }
