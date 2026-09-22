@@ -22,6 +22,9 @@ export type Employee = {
   annual_leave_days?: number;
   used_leave_days?: number;
   photo_url?: string | null;
+  workplace?: Workplace | null;
+  yevmiye_days?: number;
+  yevmiye_due?: number;
 };
 
 export function employeeInitials(name?: string | null): string {
@@ -89,6 +92,15 @@ export type EmployeeCard = {
   balance?: EmployeeBalance;
   overtime?: { hours?: number; amount?: number };
   workplace?: Workplace | null;
+  tasks?: Array<{
+    id?: string;
+    title?: string;
+    project_name?: string;
+    project_number?: string;
+    due_date?: string | null;
+    duration_days?: number | null;
+    done?: boolean;
+  }>;
 };
 
 export type EmployeePayMove = {
@@ -104,6 +116,7 @@ export type EmployeePayMove = {
   daily_wage?: number;
   note?: string;
   editable?: boolean;
+  payable?: boolean;
 };
 
 export function isUnpaidYevmiye(b?: EmployeeBonus | null): boolean {
@@ -127,6 +140,17 @@ export function yevmiyeDaysFromBonus(b?: EmployeeBonus | null): number | null {
   if (!m) return null;
   const n = Number(m[1]);
   return n > 0 ? n : null;
+}
+
+/** Ödenmemiş yevmiye kayıtlarının gün ve tutar toplamı. */
+export function unpaidYevmiyeTotals(bonuses?: EmployeeBonus[] | null): { days: number; amount: number } {
+  let days = 0;
+  let amount = 0;
+  for (const b of (bonuses || []).filter(isUnpaidYevmiye)) {
+    days += yevmiyeDaysFromBonus(b) || 0;
+    amount += Number(b.amount) || 0;
+  }
+  return { days, amount };
 }
 
 const BONUS_TYPE_TR: Record<string, string> = {
@@ -165,6 +189,7 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
       amount: Number(p.final_payable ?? p.net_salary) || 0,
       date: String(p.paid_date || p.period || ""),
       status: p.status,
+      payable: String(p.status || "") !== "paid",
     });
   }
   for (const b of card?.bonuses || []) {
@@ -182,6 +207,7 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
       daily_wage: Number(b.daily_wage) || undefined,
       note: b.note,
       editable: isUnpaidYevmiye(b),
+      payable: String(b.status || "") !== "paid",
     });
   }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -516,15 +542,17 @@ export function enrichEmployeeBalance(card?: EmployeeCard | null, month = ""): E
 export function employeeCompRows(
   emp?: Employee | null,
   balance?: EmployeeBalance | null,
-  opts?: { daysPresent?: number },
+  opts?: { daysPresent?: number; yevmiyeDays?: number; yevmiyeAmount?: number },
 ): { key: string; label: string; value: number; hint?: string }[] {
   const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
   const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
   const daily = isDailyWage(emp);
   const wage = daily ? (Number(emp?.daily_wage) || 0) : (Number(emp?.salary) || 0);
-  const days = Math.max(0, Math.trunc(Number(opts?.daysPresent) || 0));
+  const recordedDays = Math.max(0, Math.trunc(Number(opts?.yevmiyeDays ?? emp?.yevmiye_days) || 0));
+  const days = recordedDays > 0 ? recordedDays : Math.max(0, Math.trunc(Number(opts?.daysPresent) || 0));
   const prim = bonusDue(balance);
-  const yevmiyeEarned = dailyEarned(emp, days);
+  const recordedAmt = Number(opts?.yevmiyeAmount ?? emp?.yevmiye_due);
+  const yevmiyeEarned = recordedAmt > 0 ? recordedAmt : dailyEarned(emp, days);
   const bonusValue = daily ? yevmiyeEarned : prim;
   const mesai = overtimeDue(balance);
   return [
@@ -637,7 +665,32 @@ export type ProjectTask = {
   status?: string;
   assignee_id?: string | null;
   assignee_name?: string | null;
+  due_date?: string | null;
+  duration_days?: number | null;
 };
+
+/** Dış görev gün sayısı: 1–366. */
+export function parseTaskDays(raw: string): number | null {
+  const n = Math.trunc(Number(String(raw || "").trim().replace(",", ".")));
+  if (!Number.isFinite(n) || n < 1 || n > 366) return null;
+  return n;
+}
+
+export function validateTaskDays(raw: string): string | null {
+  if (!String(raw || "").trim()) return null;
+  return parseTaskDays(raw) == null ? "1–366 arası gün sayısı girin." : null;
+}
+
+export function dueDateFromDays(start: string, days: number): string {
+  const parts = String(start || "").slice(0, 10).split("-").map(Number);
+  if (parts.length !== 3 || parts.some((x) => !Number.isFinite(x))) return String(start || "").slice(0, 10);
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  d.setDate(d.getDate() + Math.max(1, Math.trunc(days)) - 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 export type ProjectWithTasks = {
   id?: string;
@@ -664,14 +717,23 @@ export function normalizeProjectTasks(tasks?: ProjectTask[] | null): ProjectTask
       done: !!(t.done || t.status === "done" || t.status === "completed"),
       assignee_id: t.assignee_id || null,
       assignee_name: t.assignee_name || null,
+      due_date: t.due_date || null,
+      duration_days: t.duration_days || null,
     }))
     .filter((t) => t.title);
+}
+
+function withTaskDuration(task: ProjectTask, opts: { durationDays?: number; dueDate?: string }): ProjectTask {
+  const next = { ...task };
+  if (opts.durationDays) next.duration_days = opts.durationDays;
+  if (opts.dueDate) next.due_date = opts.dueDate;
+  return next;
 }
 
 export function assignEmployeeToTasks(
   tasks: ProjectTask[] | undefined,
   employee: Pick<Employee, "id" | "_id" | "full_name">,
-  opts: { taskId?: string; title?: string; newId?: string },
+  opts: { taskId?: string; title?: string; newId?: string; durationDays?: number; dueDate?: string },
 ): { tasks: ProjectTask[]; error: string | null } {
   const empId = idOf(employee);
   const empName = employee.full_name || "Personel";
@@ -680,20 +742,20 @@ export function assignEmployeeToTasks(
     const idx = existing.findIndex((t) => t.id === opts.taskId);
     if (idx < 0) return { tasks: existing, error: "Görev bulunamadı." };
     return {
-      tasks: existing.map((t, i) => (i === idx ? { ...t, assignee_id: empId, assignee_name: empName } : t)),
+      tasks: existing.map((t, i) => (i === idx ? withTaskDuration({ ...t, assignee_id: empId, assignee_name: empName }, opts) : t)),
       error: null,
     };
   }
   const title = (opts.title || "").trim();
   if (!title) return { tasks: existing, error: "Görev adı girin." };
   return {
-    tasks: [...existing, {
+    tasks: [...existing, withTaskDuration({
       id: opts.newId || newTaskId(),
       title,
       done: false,
       assignee_id: empId,
       assignee_name: empName,
-    }],
+    }, opts)],
     error: null,
   };
 }

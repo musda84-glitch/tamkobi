@@ -15,7 +15,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ project_id: "", title: "", due_date: "" });
+  const [form, setForm] = useState({ project_id: "", title: "", due_date: "", duration_days: "" });
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -70,6 +70,10 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
           assignee_id: empId,
           assignee_name: employee.full_name,
           due_date: form.due_date || null,
+          duration_days: (() => {
+            const n = Math.trunc(Number(form.duration_days));
+            return n > 0 ? n : null;
+          })(),
         },
       ];
       await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next });
@@ -158,6 +162,29 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                   Dış görevde işe giriş/çıkış görev yerinden yapılır
                   {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
                 </p>
+                <div>
+                  <label className="block font-semibold mb-1">Kaç gün (dış görev)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="366"
+                    value={form.duration_days}
+                    onChange={(e) => {
+                      const duration_days = e.target.value;
+                      const n = Math.trunc(Number(duration_days));
+                      let due_date = form.due_date;
+                      if (n > 0) {
+                        const d = new Date();
+                        d.setDate(d.getDate() + n - 1);
+                        due_date = d.toISOString().slice(0, 10);
+                      }
+                      setForm({ ...form, duration_days, due_date });
+                    }}
+                    placeholder="Örn: 3"
+                    className={inputCls}
+                    data-testid="emp-task-days"
+                  />
+                </div>
                 <div>
                   <label className="block font-semibold mb-1">Son tarih (opsiyonel)</label>
                   <input

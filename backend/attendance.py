@@ -336,6 +336,7 @@ def workplace_payload(company_loc: Optional[dict], assignment: Optional[dict] = 
             "project_name": project_name,
             "project_number": assignment.get("project_number") or "",
             "due_date": assignment.get("due_date"),
+            "duration_days": _duration_days_of(assignment),
         }
     coords = _coords_of(company_loc)
     if not coords:
@@ -367,6 +368,16 @@ def workplace_place_label(loc: Optional[dict]) -> str:
     return loc.get("label") or "firma"
 
 
+def _duration_days_of(task: Optional[dict]) -> Optional[int]:
+    if not isinstance(task, dict):
+        return None
+    try:
+        n = int(float(task.get("duration_days")))
+    except (TypeError, ValueError):
+        n = 0
+    return n if n > 0 else None
+
+
 def assignment_from_project(proj: dict, task: dict) -> dict:
     return {
         "id": task.get("id") or task.get("_id"),
@@ -374,6 +385,7 @@ def assignment_from_project(proj: dict, task: dict) -> dict:
         "done": bool(task.get("done") or task.get("status") in ("done", "completed", "tamamlandi")),
         "status": task.get("status"),
         "due_date": task.get("due_date"),
+        "duration_days": _duration_days_of(task),
         "project_id": proj.get("_id") or proj.get("id"),
         "project_name": proj.get("name"),
         "project_number": proj.get("project_number"),

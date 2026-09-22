@@ -39,13 +39,14 @@ def test_workplace_task_overrides_company():
     company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Ofis"}
     assignment = {
         "id": "t1", "title": "Montaj", "project_name": "Villa", "project_number": "PRJ-1",
-        "latitude": 40.1, "longitude": 32.9, "address": "Ankara",
+        "latitude": 40.1, "longitude": 32.9, "address": "Ankara", "duration_days": 3,
     }
     w = workplace_payload(company, assignment)
     assert w["kind"] == "task"
     assert w["has_coords"] is True
     assert w["latitude"] == 40.1
     assert w["task_title"] == "Montaj"
+    assert w["duration_days"] == 3
     assert geo_target(w)["latitude"] == 40.1
     assert workplace_place_label(w) == "Villa"
 

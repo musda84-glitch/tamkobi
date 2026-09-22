@@ -34,6 +34,10 @@ import {
   parseYevmiyeDays,
   parseYevmiyeWage,
   pendingYevmiyeBonus,
+  parseTaskDays,
+  unpaidYevmiyeTotals,
+  dueDateFromDays,
+  validateTaskDays,
   validateYevmiyeDays,
   validateYevmiyeWage,
   yevmiyeDaysFromBonus,
@@ -71,7 +75,7 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
-import { workplaceHint, workplaceShort } from "../utils/workplace";
+import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
 
 type Tab = "payroll" | "attendance" | "leaves";
 
@@ -115,6 +119,7 @@ export function PersonnelScreen() {
   const [taskProjectId, setTaskProjectId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
+  const [taskDays, setTaskDays] = useState("");
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
@@ -130,27 +135,42 @@ export function PersonnelScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [emps, pays, accs, pars, lvs, att] = await Promise.all([
+      const [emps, pays, accs, pars, lvs, att, projs] = await Promise.all([
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }),
         get<Payroll[]>(client, "/personnel/payrolls", { company_id: companyId }),
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
         get<LeaveRequest[]>(client, "/personnel/leaves", { company_id: companyId }).catch(() => []),
         get<AttendancePayload>(client, "/personnel/attendance", { company_id: companyId, month }).catch(() => null),
+        get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 }).catch(() => []),
       ]);
-      setEmployees(emps || []);
       setPayrolls(pays || []);
       setAccounts(Array.isArray(accs) ? accs : []);
       setPartners(Array.isArray(pars) ? pars : []);
       setLeaves(lvs || []);
       setAttendance(att);
+      setProjects(Array.isArray(projs) ? projs : []);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url] as const;
+        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, unpaidYevmiyeTotals(card?.bonuses)] as const;
       }));
-      setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance, string | null | undefined] => !!row[1]).map(([id, bal]) => [id, bal] as const)));
+      setBalances(Object.fromEntries(pairs.filter((row) => !!row[1]).map(([id, bal]) => [id, bal as EmployeeBalance] as const)));
       const photos = Object.fromEntries(pairs.flatMap(([id, , url]) => (url ? [[id, url] as const] : [])));
-      setEmployees((list) => list.map((e) => ({ ...e, photo_url: e.photo_url || photos[idOf(e)] })));
+      const cardWp = Object.fromEntries(pairs.flatMap(([id, , , wp]) => (wp ? [[id, wp] as const] : [])));
+      const yevFromCard = Object.fromEntries(pairs.map(([id, , , , yev]) => [id, yev] as const));
+      setEmployees((emps || []).map((e) => {
+        const eid = idOf(e);
+        const attWp = (att?.summary || []).find((s) => s.employee_id === eid)?.workplace;
+        const wp = pickEmployeeWorkplace(e.workplace, cardWp[eid], attWp, fieldWorkplaceFromProjects(projs || [], eid));
+        const yev = yevFromCard[eid];
+        return {
+          ...e,
+          photo_url: e.photo_url || photos[eid],
+          workplace: wp,
+          yevmiye_days: yev?.days || e.yevmiye_days,
+          yevmiye_due: yev?.amount || e.yevmiye_due,
+        };
+      }));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
       if ((accs || []).length) setPayAccount((cur) => cur || idOf(accs[0]));
       else if (firstPartner) setPayAccount((cur) => cur || `partner:${idOf(firstPartner)}`);
@@ -291,6 +311,7 @@ export function PersonnelScreen() {
     setTaskProjectId("");
     setTaskId("");
     setTaskTitle("");
+    setTaskDays("");
     setBusy(true);
     try {
       const rows = await get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 });
@@ -444,13 +465,21 @@ export function PersonnelScreen() {
     if (invalid) { setError(invalid); return; }
     const project = projects.find((p) => idOf(p) === taskProjectId);
     if (!project) { setError("Proje bulunamadı."); return; }
-    const next = assignEmployeeToTasks(project.tasks, taskEmp, { taskId, title: taskTitle });
+    const daysInvalid = validateTaskDays(taskDays);
+    if (daysInvalid) { setError(daysInvalid); return; }
+    const days = parseTaskDays(taskDays);
+    const due = days ? dueDateFromDays(todayIso(), days) : undefined;
+    const next = assignEmployeeToTasks(project.tasks, taskEmp, {
+      taskId, title: taskTitle, durationDays: days || undefined, dueDate: due,
+    });
     if (next.error) { setError(next.error); return; }
     setBusy(true);
     try {
       await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
       setTaskEmp(null);
+      setTaskDays("");
       setMessage(`${taskEmp.full_name} ${project.name || "projeye"} atandı.`);
+      await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
     } finally {
@@ -496,6 +525,35 @@ export function PersonnelScreen() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const payUnpaidMove = (row: EmployeePayMove) => {
+    const emp = movesEmp;
+    if (!emp) return;
+    setMovesEmp(null);
+    setMoves([]);
+    if (row.kind === "payroll") {
+      const item = payrolls.find((p) => idOf(p) === row.id);
+      if (item) setPayItem(item);
+      return;
+    }
+    if (row.type === "yevmiye" || row.title === "Yevmiye") {
+      openYevmiyeDays(emp, {
+        id: row.id,
+        type: row.type,
+        amount: row.amount,
+        period: month,
+        note: row.note,
+        status: row.status,
+        worked_days: row.worked_days,
+        daily_wage: row.daily_wage,
+      });
+      return;
+    }
+    setExtraKind(row.type === "overtime" ? "overtime" : "bonus");
+    setExtraAmount(row.amount ? String(row.amount) : "");
+    setExtraNote(row.note || "");
+    setExtraEmp(emp);
   };
 
   const openMoves = async (emp: Employee) => {
@@ -603,7 +661,11 @@ export function PersonnelScreen() {
             const due = remainingDue(balances[eid], unpaid);
             const bal = balances[eid];
             const daysPresent = (attendance?.summary || []).find((s) => s.employee_id === eid)?.days_present || 0;
-            const comp = employeeCompRows(emp, bal, { daysPresent });
+            const comp = employeeCompRows(emp, bal, {
+              daysPresent,
+              yevmiyeDays: emp.yevmiye_days,
+              yevmiyeAmount: emp.yevmiye_due,
+            });
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
@@ -627,14 +689,18 @@ export function PersonnelScreen() {
                     </View>
                     <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
                     <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
-                    {(() => {
-                      const wp = (attendance?.summary || []).find((s) => s.employee_id === eid)?.workplace;
-                      return wp?.kind === "task" ? (
-                        <Muted testID={`emp-card-workplace-${eid}`}>Dış görev · {workplaceShort(wp)} — giriş görev yerinden</Muted>
-                      ) : null;
-                    })()}
                   </View>
                 </View>
+                {emp.workplace?.kind === "task" ? (
+                  <View
+                    testID={`emp-card-workplace-${eid}`}
+                    style={{ padding: 10, borderRadius: 12, backgroundColor: "#EEF2FF", borderWidth: 1, borderColor: "#C7D2FE", gap: 2 }}
+                  >
+                    <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12 }}>Görev / çalıştığı yer</Text>
+                    <Text style={{ fontWeight: "700", color: "#312E81", fontSize: 13 }}>Dış görev · {workplaceShort(emp.workplace)}</Text>
+                    <Muted>{workplaceHint(emp.workplace, true)}</Muted>
+                  </View>
+                ) : null}
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {comp.map((row) => (
                     <View key={row.key} style={{ minWidth: 140, flexGrow: 1, flexBasis: "46%", paddingRight: 8, paddingBottom: 4 }}>
@@ -841,6 +907,15 @@ export function PersonnelScreen() {
                 daily_wage: row.daily_wage,
               });
             } : undefined}
+            action={row.payable && canEdit && movesEmp ? (
+              <PayChip
+                title="Öde"
+                color={colors.primaryHover}
+                bg={colors.emerald50}
+                testID={`emp-pay-move-pay-${row.id}`}
+                onPress={() => payUnpaidMove(row)}
+              />
+            ) : undefined}
           />
         ))}
       </B2BSheet>
@@ -1037,7 +1112,7 @@ export function PersonnelScreen() {
         visible={!!taskEmp}
         title="Görev ata"
         subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
-        onClose={() => setTaskEmp(null)}
+        onClose={() => { setTaskEmp(null); setTaskDays(""); }}
         testID="task-assign-sheet"
       >
         <GroupedSelect
@@ -1058,6 +1133,19 @@ export function PersonnelScreen() {
         />
         {!taskId ? (
           <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
+        ) : null}
+        <Field
+          label="Dış görev gün sayısı"
+          testID="task-assign-days"
+          value={taskDays}
+          onChangeText={setTaskDays}
+          keyboardType="number-pad"
+          placeholder="Örn: 3"
+        />
+        {parseTaskDays(taskDays) ? (
+          <Muted testID="task-assign-days-hint">
+            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
+          </Muted>
         ) : null}
         <Muted testID="task-assign-field-hint">
           {(() => {
@@ -1109,6 +1197,12 @@ function EmpActionChip({
       onPress={() => handlers[action.key]?.(emp)}
     />
   );
+}
+
+function pickEmployeeWorkplace(
+  ...rows: Array<Workplace | null | undefined>
+): Workplace | null {
+  return rows.find((w) => w?.kind === "task") || rows.find((w) => !!w) || null;
 }
 
 function PayChip({
