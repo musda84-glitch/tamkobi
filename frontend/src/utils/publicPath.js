@@ -1,7 +1,7 @@
 /** Paths that do not require an ERP session. Keep `/b2b-yonetim` private. */
 export function isPublicPath(pathname) {
   const p = pathname || "/";
-  if (p === "/" || p === "/login" || p === "/kurulum") return true;
+  if (p === "/" || p === "/login" || p === "/kurulum" || p === "/sifre" || p.startsWith("/sifre/")) return true;
   if (p === "/sistem" || p.startsWith("/sistem/")) return true;
   if (p === "/b2b" || p.startsWith("/b2b/")) return true;
   return (

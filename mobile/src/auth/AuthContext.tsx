@@ -39,11 +39,13 @@ type AuthState = {
 type AuthContextValue = AuthState & {
   client: ApiClient;
   companyId: string;
-  login: (email: string, password: string, serverUrl?: string) => Promise<void>;
+  login: (email: string, password: string, serverUrl?: string, remember?: boolean) => Promise<void>;
   loginB2b: (email: string, password: string, serverUrl?: string) => Promise<void>;
   enterB2bToken: (tokenOrLink: string, serverUrl?: string) => Promise<void>;
   forgotB2b: (email: string) => Promise<B2BForgotResult>;
   resetB2b: (resetToken: string, password: string) => Promise<void>;
+  forgotErp: (email: string, next?: "login" | "sistem") => Promise<B2BForgotResult>;
+  resetErp: (resetToken: string, password: string) => Promise<{ redirect?: string; email?: string }>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
   setServer: (url: string) => Promise<void>;
@@ -180,10 +182,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bootstrap();
   }, [bootstrap]);
 
-  const login = useCallback(async (email: string, password: string, serverUrl?: string) => {
+  const login = useCallback(async (email: string, password: string, serverUrl?: string, remember = true) => {
     const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
     if (serverUrl) setState((s) => ({ ...s, baseUrl }));
-    const res = await post<SessionPayload>({ baseUrl, token: null }, "/auth/login", { email, password, remember: true });
+    const res = await post<SessionPayload>({ baseUrl, token: null }, "/auth/login", { email, password, remember: remember !== false });
     if (!res?.token || !res.user) throw new Error("Giriş yanıtı geçersiz.");
     await clearB2bSession();
     await saveToken(res.token);
@@ -227,6 +229,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!res?.token) throw new Error("Şifre güncellendi ancak giriş yanıtı geçersiz.");
     await persistB2b(state.baseUrl, res.token, res.name);
   }, [persistB2b, state.baseUrl]);
+
+  const forgotErp = useCallback(async (email: string, next: "login" | "sistem" = "login") => {
+    return post<B2BForgotResult>(
+      { baseUrl: state.baseUrl, token: null },
+      "/auth/forgot-password",
+      { email, base_url: state.baseUrl, next }
+    );
+  }, [state.baseUrl]);
+
+  const resetErp = useCallback(async (resetToken: string, password: string) => {
+    return post<{ redirect?: string; email?: string }>(
+      { baseUrl: state.baseUrl, token: null },
+      `/auth/reset/${resetToken}`,
+      { password }
+    );
+  }, [state.baseUrl]);
 
   const logout = useCallback(async () => {
     try {
@@ -288,6 +306,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       enterB2bToken,
       forgotB2b,
       resetB2b,
+      forgotErp,
+      resetErp,
       logout,
       switchCompany,
       setServer,
@@ -295,7 +315,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       can: (path, level = "view") => (state.sessionKind === "b2b" ? false : canPerm(state.user, path, level)),
       moduleOn: (path) => (state.sessionKind === "b2b" ? false : moduleOnPerm(state.license, path)),
     }),
-    [bootstrap, client, companyId, enterB2bToken, forgotB2b, login, loginB2b, logout, resetB2b, setServer, state, switchCompany]
+    [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

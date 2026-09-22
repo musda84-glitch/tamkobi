@@ -572,6 +572,12 @@ COLLECTIONS = {
         "keys": ("_id", "contact_id", "used_at"),
         "refs": ("contacts._id",),
     },
+    "password_resets": {
+        "scope": SCOPE_TENANT,
+        "description": "ERP / personel / panel şifre sıfırlama tokenları.",
+        "keys": ("_id", "user_id", "email", "used_at"),
+        "refs": ("users._id",),
+    },
     "b2b_product_aliases": {
         "scope": SCOPE_TENANT,
         "description": "B2B AI sepet ürün takma adları.",

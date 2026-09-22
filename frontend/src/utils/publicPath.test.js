@@ -4,6 +4,7 @@ import { isPublicPath } from "./publicPath";
 test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/")).toBe(true);
   expect(isPublicPath("/login")).toBe(true);
+  expect(isPublicPath("/sifre/abc")).toBe(true);
   expect(isPublicPath("/kurulum")).toBe(true);
   expect(isPublicPath("/fiyatlar")).toBe(true);
   expect(isPublicPath("/web")).toBe(true);

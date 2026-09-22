@@ -108,6 +108,7 @@ applog.setup_logging()
 import addons
 import support_tickets
 import staff_messages
+import password_reset
 import data_export
 import legal_docs
 import ubl_export
@@ -2253,6 +2254,119 @@ async def change_password(req: ChangePasswordRequest, request: Request):
         {"$set": {"password_hash": hash_password(new_pw), "password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
     return {"status": "success", "message": "Şifreniz güncellendi."}
+
+
+@api_router.post("/auth/forgot-password")
+async def erp_forgot_password(req: Dict[str, Any], request: Request):
+    email = password_reset.normalize_email(req.get("email") or "")
+    next_kind = password_reset.login_next(req.get("next") or "")
+    out = password_reset.generic_forgot_response()
+    if not email or "@" not in email:
+        return out
+    user = await db.users.find_one({"email": email})
+    if not user or user.get("is_active") is False or not user.get("password_hash"):
+        return out
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.password_resets.update_many(
+        {"user_id": user["_id"], "used_at": None},
+        {"$set": {"used_at": now.isoformat(), "revoked": True}},
+    )
+    company_id = user.get("active_company_id") or ((user.get("company_ids") or [None])[0])
+    await db.password_resets.insert_one({
+        "_id": token,
+        "user_id": user["_id"],
+        "email": email,
+        "company_id": company_id,
+        "next": next_kind,
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "used_at": None,
+        "created_at": now.isoformat(),
+    })
+    base = await _public_base_url(request, req.get("base_url") or "")
+    link = password_reset.reset_link(base, token, next_kind)
+    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+    try:
+        if not company_id:
+            raise HTTPException(status_code=404, detail="E-posta hesabı tanımlı değil.")
+        a = await _mail_account(company_id)
+        company = await db.companies.find_one({"_id": company_id}) or {}
+        brand = company.get("name") or "TamKobi"
+        subject = f"{brand} şifre sıfırlama"
+        body = (
+            f"Merhaba {user.get('name') or ''},\n"
+            f"Şifrenizi sıfırlamak için bu bağlantıyı 1 saat içinde kullanın:\n{link}\n"
+            "Bu isteği siz yapmadıysanız bu e-postayı yok sayın."
+        )
+        html = (
+            f"<p>Merhaba {user.get('name') or ''},</p>"
+            "<p>Şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p>"
+            f"<p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
+        )
+        await _send_tracked_mail(
+            company_id=company_id, to=[email], subject=subject, body=body, html=html,
+            account=a, context="erp_reset", ref_id=token, base_url=base,
+        )
+        mail_status, mail_detail = "sent", f"{email} adresine gönderildi."
+    except HTTPException as e:
+        if getattr(e, "status_code", None) == 424:
+            mail_status, mail_detail = "failed", str(e.detail)[:140]
+        else:
+            mail_status, mail_detail = "skipped", str(e.detail)
+    except Exception as e:
+        mail_status, mail_detail = "failed", str(e)[:140]
+    out["mail_status"] = mail_status
+    out["detail"] = mail_detail
+    if mail_status != "sent":
+        out["reset_url"] = link
+        out["reset_token"] = token
+    return out
+
+
+async def _erp_reset_doc(token: str) -> dict:
+    row = await db.password_resets.find_one({"_id": token})
+    err = password_reset.reset_row_error(row)
+    if err:
+        raise HTTPException(status_code=404 if not row else 400, detail=err)
+    return row
+
+
+@api_router.get("/auth/reset/{token}")
+async def erp_reset_get(token: str):
+    row = await _erp_reset_doc(token)
+    user = await db.users.find_one({"_id": row.get("user_id")}) or {}
+    email = row.get("email") or user.get("email") or ""
+    return {
+        "valid": True,
+        "name": user.get("name"),
+        "email_masked": password_reset.mask_email(email),
+        "next": password_reset.login_next(row.get("next")),
+    }
+
+
+@api_router.post("/auth/reset/{token}")
+async def erp_reset_post(token: str, req: Dict[str, Any]):
+    row = await _erp_reset_doc(token)
+    pwd = str(req.get("password") or "")
+    err = password_reset.password_error(pwd)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    user = await db.users.find_one({"_id": row.get("user_id")})
+    if not user or user.get("is_active") is False:
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı veya pasif.")
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": hash_password(pwd), "password_changed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await db.password_resets.update_one({"_id": token}, {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}})
+    next_kind = password_reset.login_next(row.get("next"))
+    return {
+        "status": "success",
+        "message": "Şifreniz güncellendi.",
+        "redirect": password_reset.redirect_after_reset(next_kind),
+        "email": user.get("email"),
+        "next": next_kind,
+    }
 
 # ----------------- DASHBOARD & KPIS -----------------
 _TR_MON = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
