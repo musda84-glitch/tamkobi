@@ -53,7 +53,6 @@ import {
   hydrateWorkItem,
   namedItems,
   newButtonLabel,
-  QUOTE_ITEM_THUMB,
   QUOTE_SERVICE_THUMB,
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
@@ -89,6 +88,7 @@ import {
   workItemNoteOpen,
   workItemTotals,
   itemStripe,
+  workItemLineKind,
   type ProjectDoc,
   type QuoteDoc,
   type SurveyDoc,
@@ -786,7 +786,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         </View>
       ) : null}
 
-      {kind !== "project" ? (
+      {workItemLineKind(kind) ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
           <View
@@ -816,8 +816,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           </View>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
-            const richLine = kind !== "project";
-            const noteShown = richLine && workItemNoteOpen(it, noteOpen[i]);
+            const noteShown = workItemNoteOpen(it, noteOpen[i]);
             const quoteGrossField = (
               <View
                 style={{
@@ -871,7 +870,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 position: "relative",
               }}
             >
-              {richLine && canEdit ? (
+              {canEdit ? (
                 <Pressable
                   onPress={() => removeItem(i)}
                   testID={`q-item-del-${i}`}
@@ -891,39 +890,26 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 </Pressable>
               ) : null}
               <View style={{ gap: 4 }}>
-                  {richLine ? (
-                    <Row style={{ alignItems: "flex-start", gap: 8, paddingRight: 28 }}>
-                      <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
-                        <Chip
-                          compact
-                          label="Ürün"
-                          active={!it.is_service}
-                          color={colors.primary}
-                          testID={`q-item-kind-product-${i}`}
-                          onPress={() => it.is_service && toggleLineKind(i)}
-                        />
-                        <Chip
-                          compact
-                          label="Hizmet"
-                          active={!!it.is_service}
-                          color={colors.indigo}
-                          testID={`q-item-kind-service-${i}`}
-                          onPress={() => !it.is_service && toggleLineKind(i)}
-                        />
-                      </Row>
+                  <Row style={{ alignItems: "flex-start", gap: 8, paddingRight: 28 }}>
+                    <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
+                      <Chip
+                        compact
+                        label="Ürün"
+                        active={!it.is_service}
+                        color={colors.primary}
+                        testID={`q-item-kind-product-${i}`}
+                        onPress={() => it.is_service && toggleLineKind(i)}
+                      />
+                      <Chip
+                        compact
+                        label="Hizmet"
+                        active={!!it.is_service}
+                        color={colors.indigo}
+                        testID={`q-item-kind-service-${i}`}
+                        onPress={() => !it.is_service && toggleLineKind(i)}
+                      />
                     </Row>
-                  ) : (
-                    <Field
-                      dense
-                      label={it.is_service ? "Hizmet adı" : "Ürün"}
-                      testID={`q-item-name-${i}`}
-                      value={it.name}
-                      onChangeText={(v) => patchItem(i, "name", v)}
-                      editable={canEdit}
-                      placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
-                    />
-                  )}
-                  {richLine ? (
+                  </Row>
                     <Row style={{ alignItems: "stretch", gap: 8 }}>
                       <Pressable
                         onPress={() => pickLineImage(i)}
@@ -1047,39 +1033,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         {quoteGrossField}
                       </View>
                     </Row>
-                  ) : (
-                    <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                      <ProductThumb
-                        uri={workItemImage(it, prod)}
-                        width={QUOTE_ITEM_THUMB.width}
-                        height={QUOTE_ITEM_THUMB.height}
-                        testID={`q-item-thumb-${i}`}
-                      />
-                      <Row style={{ flex: 1, alignItems: "flex-end", gap: 6 }}>
-                        <View style={{ width: 52, flexShrink: 0 }}>
-                          <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                        </View>
-                        <View style={{ width: 70, flexShrink: 0 }}>
-                          <Field dense label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                        </View>
-                        <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, fontSize: 13, marginBottom: 4 }} testID={`q-item-gross-${i}`}>
-                          {it.name ? fmtMoney(workItemLineGross(it)) : ""}
-                        </Text>
-                        {canEdit ? (
-                          <Pressable
-                            onPress={() => removeItem(i)}
-                            testID={`q-item-del-${i}`}
-                            accessibilityLabel="Kalemi sil"
-                            style={{ width: 28, height: 30, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                          >
-                            <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                          </Pressable>
-                        ) : null}
-                      </Row>
-                    </Row>
-                  )}
-                  {richLine ? (
-                    <>
                       <Row style={{ alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <Pressable
                           onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
@@ -1128,8 +1081,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           placeholder="Satır notu, ölçü, kesim…"
                         />
                       ) : null}
-                    </>
-                  ) : null}
               </View>
             </View>
             );
