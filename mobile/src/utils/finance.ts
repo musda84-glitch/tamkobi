@@ -221,6 +221,37 @@ export function accountGroupTone(key?: string | null): AccountGroupTone {
   return ACCOUNT_GROUP_TONES[String(key || "")] || ACCOUNT_GROUP_TONES.other;
 }
 
+/** Ortak kartları: her ortak için kararlı renk. */
+export const PARTNER_CARD_TONES: AccountGroupTone[] = [
+  { bg: "#FFFBEB", border: "#FCD34D", label: "#B45309", amount: "#92400E", accent: "#D97706" },
+  { bg: "#EEF2FF", border: "#A5B4FC", label: "#3730A3", amount: "#312E81", accent: "#4F46E5" },
+  { bg: "#ECFDF5", border: "#6EE7B7", label: "#047857", amount: "#065F46", accent: "#059669" },
+  { bg: "#FDF2F8", border: "#F9A8D4", label: "#9D174D", amount: "#831843", accent: "#DB2777" },
+  { bg: "#F0F9FF", border: "#7DD3FC", label: "#0369A1", amount: "#075985", accent: "#0284C7" },
+  { bg: "#FAF5FF", border: "#D8B4FE", label: "#6B21A8", amount: "#581C87", accent: "#7C3AED" },
+];
+
+export function partnerCardTone(key?: string | null): AccountGroupTone {
+  const s = String(key || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return PARTNER_CARD_TONES[h % PARTNER_CARD_TONES.length];
+}
+
+export function partnerInitials(name?: string | null): string {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toLocaleUpperCase("tr-TR");
+  }
+  return (parts[0] || "O").slice(0, 2).toLocaleUpperCase("tr-TR");
+}
+
+export function filterPartnerTxs(txs: PartnerTx[] | null | undefined, partnerId?: string | null): PartnerTx[] {
+  const list = txs || [];
+  if (!partnerId) return list;
+  return list.filter((tx) => String(tx.partner_id || "") === partnerId);
+}
+
 export function filterPartners<T extends { name?: string; phone?: string; email?: string }>(
   partners: T[] | null | undefined,
   q: string,

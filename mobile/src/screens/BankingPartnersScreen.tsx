@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
@@ -7,6 +7,9 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
 import { colors } from "../theme";
 import {
+  filterPartnerTxs,
+  partnerCardTone,
+  partnerInitials,
   partnerTxTr,
   paymentTargetGroups,
   validatePartner,
@@ -46,6 +49,7 @@ export function BankingPartnersPanel({
   const [profitAccount, setProfitAccount] = useState("");
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [payNow, setPayNow] = useState(true);
+  const [openPartner, setOpenPartner] = useState<string | null>(null);
 
   const cashAccounts = (accounts || []).filter((a) => String(a.type || "") !== "credit_card");
   const firstCash = cashAccounts[0] ? idOf(cashAccounts[0]) : (accounts[0] ? idOf(accounts[0]) : "");
@@ -243,24 +247,80 @@ export function BankingPartnersPanel({
 
       {!partners.length ? (
         <Empty icon="people-outline" title="Henüz ortak yok" hint={canEdit ? "Ortak ekleyerek sermaye hareketi kaydedin." : undefined} />
-      ) : partners.map((p) => (
-        <Card key={idOf(p)} testID={`partner-card-${p.name}`}>
-          <Text style={{ fontWeight: "800", color: colors.text }}>{p.name}</Text>
-          <Muted>{[p.email, p.phone, `%${p.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
-          <Text style={{ fontSize: 20, fontWeight: "800", color: colors.text }}>{fmtMoney(p.balance)}</Text>
-          <Muted>Giriş {fmtMoney(p.total_capital_in)} · çekiş {fmtMoney(p.total_withdrawn)} · kâr {fmtMoney(p.total_profit_share)}</Muted>
-        </Card>
-      ))}
+      ) : partners.map((p) => {
+        const pid = idOf(p);
+        const tone = partnerCardTone(pid || p.name || "");
+        const open = openPartner === pid;
+        const mine = filterPartnerTxs(txs, pid);
+        return (
+          <Pressable
+            key={pid}
+            testID={`partner-card-${p.name}`}
+            onPress={() => setOpenPartner(open ? null : pid)}
+            style={{
+              backgroundColor: tone.bg,
+              borderColor: open ? tone.accent : tone.border,
+              borderWidth: 1,
+              borderRadius: 16,
+              padding: 14,
+              gap: 8,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View
+                testID={`partner-avatar-${pid}`}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: tone.accent,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "900", fontSize: 15 }}>{partnerInitials(p.name)}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontWeight: "800", color: tone.label }}>{p.name}</Text>
+                <Muted>{[p.email, p.phone, `%${p.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
+              </View>
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(p.balance)}</Text>
+            <Muted>Giriş {fmtMoney(p.total_capital_in)} · çekiş {fmtMoney(p.total_withdrawn)} · kâr {fmtMoney(p.total_profit_share)}</Muted>
+            {open ? (
+              <View testID={`partner-moves-${pid}`} style={{ borderTopWidth: 1, borderTopColor: tone.border, paddingTop: 8, gap: 4 }}>
+                <Text style={{ fontWeight: "800", color: tone.label }}>Hareketler</Text>
+                {!mine.length ? (
+                  <Muted>Hareket yok.</Muted>
+                ) : mine.slice(0, 40).map((tx) => (
+                  <ListRow
+                    key={idOf(tx)}
+                    testID={`partner-tx-${idOf(tx)}`}
+                    title={partnerTxTr(tx.type)}
+                    subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
+                    right={fmtMoney(tx.amount)}
+                    rightColor={tx.type === "withdrawal" ? colors.danger : colors.primary}
+                  />
+                ))}
+              </View>
+            ) : null}
+          </Pressable>
+        );
+      })}
 
-      <Text style={{ fontWeight: "800", color: colors.text }}>Ortak hareketleri</Text>
-      {!txs.length ? <Muted>Hareket yok.</Muted> : txs.slice(0, 40).map((tx) => (
-        <ListRow
-          key={idOf(tx)}
-          title={`${partnerTxTr(tx.type)} · ${tx.partner_name || ""}`}
-          subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-          right={fmtMoney(tx.amount)}
-        />
-      ))}
+      {!openPartner ? (
+        <>
+          <Text style={{ fontWeight: "800", color: colors.text }}>Ortak hareketleri</Text>
+          {!txs.length ? <Muted>Hareket yok.</Muted> : txs.slice(0, 40).map((tx) => (
+            <ListRow
+              key={idOf(tx)}
+              title={`${partnerTxTr(tx.type)} · ${tx.partner_name || ""}`}
+              subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
+              right={fmtMoney(tx.amount)}
+            />
+          ))}
+        </>
+      ) : null}
     </View>
   );
 }

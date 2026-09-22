@@ -30,6 +30,9 @@ import {
   recentPartnerTx,
   bankMovementNotice,
   partnerMovementNotice,
+  partnerCardTone,
+  partnerInitials,
+  filterPartnerTxs,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -260,5 +263,16 @@ describe("finance drafts", () => {
       { id: "p4", type: "capital_in", amount: 2, date: "2026-09-22" },
     ]).map((t) => t.id)).toEqual(["p4", "p2", "p3"]);
     expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
+  });
+
+  it("gives partners stable colors and filters their movements", () => {
+    expect(partnerInitials("Ali BAL")).toBe("AB");
+    expect(partnerInitials("Mustafa Bal")).toBe("MB");
+    expect(partnerCardTone("ali")).toEqual(partnerCardTone("ali"));
+    expect(partnerCardTone("ali").accent).not.toBe(partnerCardTone("mustafa").accent);
+    expect(filterPartnerTxs([
+      { id: "1", partner_id: "a", amount: 1 },
+      { id: "2", partner_id: "b", amount: 2 },
+    ], "a").map((t) => t.id)).toEqual(["1"]);
   });
 });
