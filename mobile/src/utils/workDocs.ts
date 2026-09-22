@@ -414,6 +414,13 @@ export function shouldCollapseAddress(address?: string | null, min = 36): boolea
   return String(address || "").trim().length > min;
 }
 
+/** Cari detay / liste: company-wide light satırlardan bu carinin projeleri. */
+export function projectsForContact(rows: ProjectDoc[] | null | undefined, contactId?: string | null): ProjectDoc[] {
+  const id = String(contactId || "").trim();
+  if (!id) return [];
+  return (rows || []).filter((p) => String(p.contact_id || "") === id);
+}
+
 export function projectTaskSummary(tasks?: ProjectTask[] | null) {
   const rows = normalizeProjectTasks(tasks);
   if (!rows.length) return null;

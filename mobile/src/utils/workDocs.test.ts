@@ -19,6 +19,7 @@ import {
   projectCardBits,
   addressToggleLabel,
   shouldCollapseAddress,
+  projectsForContact,
   projectMetricSectionOrder,
   quotesForProject,
   projectPayload,
@@ -175,6 +176,16 @@ describe("workDocs", () => {
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
     expect(bits.expense).toBe(18.5);
+  });
+
+  it("keeps only the selected contact's projects for the cari tab", () => {
+    const rows = [
+      { id: "p1", contact_id: "c1", name: "A" },
+      { id: "p2", contact_id: "c2", name: "B" },
+      { id: "p3", contact_id: "c1", name: "C" },
+    ];
+    expect(projectsForContact(rows, "c1").map((p) => p.id)).toEqual(["p1", "p3"]);
+    expect(projectsForContact(rows, "")).toEqual([]);
   });
 
   it("picks quotes linked to a project and puts the focused metric first", () => {

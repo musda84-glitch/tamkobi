@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, Share, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -10,6 +10,7 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
+import { ProjectCardsHost } from "../components/ProjectCard";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
@@ -45,6 +46,8 @@ import {
   type TermsDraft,
 } from "../utils/installments";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
+import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
+import { projectsForContact, type ProjectDoc } from "../utils/workDocs";
 import type { BankAccount } from "../utils/finance";
 import { canDeleteInvoice, canEditInvoiceItems } from "../utils/invoiceDraft";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
@@ -79,7 +82,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 }
 
 export function ContactDetailScreen() {
-  const { client, companyId, can, activeCompany } = useAuth();
+  const { client, companyId, can, activeCompany, baseUrl } = useAuth();
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const canEditContact = can("/contacts", "edit");
   const canInvoice = can("/invoices", "edit");
@@ -89,6 +92,8 @@ export function ContactDetailScreen() {
   const canOrder = can("/orders", "edit") || can("/saha", "edit");
   const canCheque = can("/cheques", "edit");
   const canPaper = canCheque || canBank;
+  const canProject = can("/projects", "edit");
+  const canExp = can("/expenses", "edit");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -118,6 +123,8 @@ export function ContactDetailScreen() {
   const [infoOpen, setInfoOpen] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
   const [openInvRow, setOpenInvRow] = useState<string | null>(null);
+  const [lightProjects, setLightProjects] = useState<ProjectDoc[] | null>(null);
+  const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
 
   const loadCash = useCallback(async () => {
     const [accs, pars] = await Promise.all([
@@ -145,7 +152,38 @@ export function ContactDetailScreen() {
     await loadInstallments();
   }, [client, id, loadInstallments]);
 
+  const loadProjectCards = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [rows, stages] = await Promise.all([
+        get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 }),
+        get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] })),
+      ]);
+      setLightProjects(projectsForContact(rows || [], id));
+      setProjectStages(normalizeProjectStages(stages?.stages));
+    } catch (err) {
+      setError(apiErrorMessage(err, "Projeler yüklenemedi."));
+    }
+  }, [client, companyId, id]);
+
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useFocusEffect(useCallback(() => {
+    if (tab !== "projects") return;
+    loadProjectCards();
+  }, [tab, loadProjectCards]));
+
+  useEffect(() => {
+    if (tab === "projects") loadProjectCards();
+  }, [tab, loadProjectCards]);
+
+  const patchContactProject = useCallback((pid: string, patch: Partial<ProjectDoc>) => {
+    setLightProjects((rows) => (rows ? rows.map((p) => (idOf(p) === pid ? { ...p, ...patch } : p)) : rows));
+    setData((ov: any) => {
+      if (!ov?.projects) return ov;
+      return { ...ov, projects: ov.projects.map((p: any) => (idOf(p) === pid ? { ...p, ...patch } : p)) };
+    });
+  }, []);
 
   const c = data?.contact || data || {};
   const summary = data?.summary || {};
@@ -157,7 +195,8 @@ export function ContactDetailScreen() {
   const payments = data?.payments || [];
   const orders = data?.orders || [];
   const quotes = data?.quotes || [];
-  const projects = data?.projects || [];
+  const overlayProjects = (data?.projects || []) as ProjectDoc[];
+  const projects = lightProjects ?? overlayProjects;
   const surveys = data?.surveys || [];
   const comms = data?.communications || [];
   const cheques = data?.cheques || [];
@@ -1049,19 +1088,25 @@ export function ContactDetailScreen() {
 
       {tab === "projects" ? (
         <>
-          {can("/projects", "edit") ? (
+          {canProject ? (
             <PrimaryButton title="Yeni proje" onPress={() => go("ProjectNew", docParams)} color={colors.primary} testID="detail-project-new" />
           ) : null}
-          {!projects.length ? <Muted>Proje yok.</Muted> : projects.map((p: any, idx: number) => (
-            <ListRow
-              key={idOf(p) || idx}
-              testID={`detail-proj-${idOf(p) || idx}`}
-              title={p.name || p.project_number || "Proje"}
-              subtitle={[statusTr(p.status), fmtDate(p.start_date)].filter(Boolean).join(" · ")}
-              right={fmtMoney(p.budget)}
-              onPress={() => go("ProjectDetail", { id: idOf(p) })}
+          {!projects.length ? (
+            <Muted>Proje yok.</Muted>
+          ) : (
+            <ProjectCardsHost
+              projects={projects}
+              stages={projectStages}
+              canEdit={canProject}
+              canExp={canExp}
+              canQuote={canQuote}
+              client={client}
+              companyId={companyId}
+              baseUrl={baseUrl}
+              onPatch={patchContactProject}
+              onError={setError}
             />
-          ))}
+          )}
         </>
       ) : null}
 
