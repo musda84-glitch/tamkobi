@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage } from "../auth/AuthContext";
 import { goHref } from "../nav";
@@ -13,7 +13,41 @@ import {
   requestKindLabel,
   type PendingRequest,
 } from "../utils/personnel";
-import { Card, Muted, PrimaryButton, Row } from "./kit";
+import { Card, Muted, Row } from "./kit";
+
+function Chip({
+  title,
+  color,
+  onPress,
+  disabled,
+  testID,
+}: {
+  title: string;
+  color: string;
+  onPress: () => void;
+  disabled?: boolean;
+  testID?: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      disabled={disabled}
+      style={{
+        backgroundColor: color,
+        opacity: disabled ? 0.5 : 1,
+        paddingHorizontal: 8,
+        minHeight: 28,
+        borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{title}</Text>
+    </Pressable>
+  );
+}
 
 type CashApproval = {
   id?: string;
@@ -120,19 +154,21 @@ export function ManagerApprovalsPanel({
             const key = `${it.kind}-${it.id}`;
             const busy = busyId === key;
             return (
-              <View key={key} style={{ gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }} testID={`home-approval-${it.kind}-${it.id}`}>
-                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>
-                  {it.employee_name || "Personel"} · {requestKindLabel(it.kind)}
-                </Text>
+              <View key={key} style={{ gap: 2, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }} testID={`home-approval-${it.kind}-${it.id}`}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1, minWidth: 0 }} numberOfLines={1}>
+                    {it.employee_name || "Personel"} · {requestKindLabel(it.kind)}
+                  </Text>
+                  {it.kind === "dispute" ? (
+                    <Chip title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
+                  ) : (
+                    <>
+                      <Chip title={busy ? "…" : "Onayla"} color={colors.primary} testID={`home-approval-ok-${it.kind}-${it.id}`} onPress={() => decideStaff(it, true)} disabled={busy} />
+                      <Chip title={busy ? "…" : (it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet")} color={colors.danger} testID={`home-approval-no-${it.kind}-${it.id}`} onPress={() => decideStaff(it, false)} disabled={busy} />
+                    </>
+                  )}
+                </View>
                 <Muted>{it.title || "Talep"}{it.detail ? ` · ${it.detail}` : ""}</Muted>
-                {it.kind === "dispute" ? (
-                  <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
-                ) : (
-                  <Row>
-                    <PrimaryButton title={busy ? "…" : "Onayla"} color={colors.primary} testID={`home-approval-ok-${it.kind}-${it.id}`} onPress={() => decideStaff(it, true)} disabled={busy} />
-                    <PrimaryButton title={busy ? "…" : (it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet")} color={colors.danger} testID={`home-approval-no-${it.kind}-${it.id}`} onPress={() => decideStaff(it, false)} disabled={busy} />
-                  </Row>
-                )}
               </View>
             );
           })}
@@ -140,17 +176,20 @@ export function ManagerApprovalsPanel({
             const id = idOf(row);
             const busy = busyId === `cash-${id}`;
             return (
-              <View key={`cash-${id}`} style={{ gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }} testID={`home-approval-cash-${id}`}>
-                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>{row.kind_label || row.kind || "Kasa"} · onay bekliyor</Text>
+              <View key={`cash-${id}`} style={{ gap: 2, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }} testID={`home-approval-cash-${id}`}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1, minWidth: 0 }} numberOfLines={1}>
+                    {row.kind_label || row.kind || "Kasa"} · onay bekliyor
+                  </Text>
+                  {row.can_approve === false ? null : (
+                    <>
+                      <Chip title={busy ? "…" : "Onayla"} color={colors.primary} testID={`home-approval-cash-ok-${id}`} onPress={() => decideCash(row, true)} disabled={busy} />
+                      <Chip title={busy ? "…" : "Reddet"} color={colors.danger} testID={`home-approval-cash-no-${id}`} onPress={() => decideCash(row, false)} disabled={busy} />
+                    </>
+                  )}
+                </View>
                 <Muted>{[row.summary, row.requested_by_name].filter(Boolean).join(" · ")}</Muted>
-                {row.can_approve === false ? (
-                  <Muted>Diğer yönetici onayı bekleniyor</Muted>
-                ) : (
-                  <Row>
-                    <PrimaryButton title={busy ? "…" : "Onayla"} color={colors.primary} testID={`home-approval-cash-ok-${id}`} onPress={() => decideCash(row, true)} disabled={busy} />
-                    <PrimaryButton title={busy ? "…" : "Reddet"} color={colors.danger} testID={`home-approval-cash-no-${id}`} onPress={() => decideCash(row, false)} disabled={busy} />
-                  </Row>
-                )}
+                {row.can_approve === false ? <Muted>Diğer yönetici onayı bekleniyor</Muted> : null}
               </View>
             );
           })}
