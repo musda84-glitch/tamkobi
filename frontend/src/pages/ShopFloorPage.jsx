@@ -131,8 +131,13 @@ export default function ShopFloorPage() {
               <div><label className="block text-xs font-semibold mb-1">Üretilen ({finishing.unit})</label><input type="number" min="0" step="any" value={fin.produced_qty} onChange={(e) => setFin({ ...fin, produced_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" /></div>
               <div><label className="block text-xs font-semibold mb-1">Fire / Hatalı</label><input type="number" min="0" step="any" value={fin.scrap_qty} onChange={(e) => setFin({ ...fin, scrap_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center text-rose-600" data-testid="wo-finish-scrap" /></div>
             </div>
+            {Number(fin.produced_qty) + Number(fin.scrap_qty || 0) > Number(finishing.planned_quantity || 0) && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="wo-finish-over-hint">
+                Plan üstü üretim: {finishing.planned_quantity} {finishing.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
+              </p>
+            )}
             <input value={fin.notes} onChange={(e) => setFin({ ...fin, notes: e.target.value })} placeholder="Not (isteğe bağlı)" className="w-full border rounded-xl p-3" data-testid="wo-finish-notes" />
-            {finishing.step_no === finishing.step_count && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir.</p>}
+            {finishing.step_no === finishing.step_count && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır.</p>}
             <div className="flex gap-2"><button onClick={() => setFinishing(null)} className="flex-1 py-3 border-2 rounded-xl font-semibold">İptal</button><button onClick={() => act(finishing, "finish", { produced_qty: Number(fin.produced_qty), scrap_qty: Number(fin.scrap_qty), notes: fin.notes })} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid="wo-finish-confirm">Tamamla</button></div>
           </div>
         </div>
