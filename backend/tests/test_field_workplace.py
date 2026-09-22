@@ -130,3 +130,19 @@ def test_build_active_duty():
     f = build_active_duty("field", task_id="t1", title="Keşif", project_id="pr1", project_name="Villa")
     assert f["kind"] == "field"
     assert f["project_id"] == "pr1"
+
+
+def test_project_radius_overrides_company():
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Ofis"}
+    assignment = {
+        "id": "t1", "title": "Montaj", "project_name": "Villa",
+        "latitude": 40.1, "longitude": 32.9, "radius_m": 500,
+    }
+    w = workplace_payload(company, assignment)
+    assert w["radius_m"] == 500
+    assert geo_target(w)["radius_m"] == 500
+
+
+def test_no_workplace():
+    assert workplace_payload(None, None) is None
+    assert pick_field_assignment([], "2026-09-22") is None

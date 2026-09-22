@@ -309,16 +309,18 @@ describe("workDocs", () => {
   it("sends marked coordinates with project and survey", () => {
     const p = projectPayload("comp", {
       name: "Villa", contact_id: "", contact_name: "", budget: "", start_date: "", end_date: "", notes: "", address: "",
-      location_url: "https://www.google.com/maps?q=41.0151,28.9795", latitude: "41.0151", longitude: "28.9795",
+      location_url: "https://www.google.com/maps?q=41.0151,28.9795", latitude: "41.0151", longitude: "28.9795", radius_m: 500,
     });
     expect(p.latitude).toBe(41.0151);
     expect(p.longitude).toBe(28.9795);
+    expect(p.radius_m).toBe(500);
     const s = surveyPayload("comp", {
       contact_id: "", contact_name: "", address: "", survey_date: "2026-09-16", notes: "",
-      location_url: "", latitude: "39,9255", longitude: "32,8662",
+      location_url: "", latitude: "39,9255", longitude: "32,8662", radius_m: "150",
     }, []);
     expect(s.latitude).toBe(39.9255);
     expect(s.longitude).toBe(32.8662);
+    expect(s.radius_m).toBe(150);
   });
 
   it("builds project list cards like the web grid", () => {

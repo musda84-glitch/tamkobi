@@ -23,7 +23,7 @@ import type { Contact, Invoice, Product } from "../types";
 import { invoiceListSubtitle } from "../utils/invoiceDraft";
 import { VAT_OPTIONS } from "../utils/documentLines";
 import { go } from "../nav";
-import { coordText, mapsLink } from "../utils/geo";
+import { coordText, DEFAULT_LOCATION_RADIUS_M, mapsLink, normalizeRadiusM } from "../utils/geo";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
@@ -176,7 +176,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [startDate, setStartDate] = useState(kind === "project" ? ymdOrToday() : "");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
-  const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "" });
+  const [location, setLocation] = useState<LocationValue>({ url: "", lat: "", lng: "", radius_m: DEFAULT_LOCATION_RADIUS_M });
   const [photos, setPhotos] = useState<string[]>([]);
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
@@ -265,7 +265,12 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setEndDate(String(p.end_date || "").slice(0, 10));
         setNotes(p.description || "");
         setAddress(p.address || "");
-        setLocation({ url: p.location_url || "", lat: coordText(p.latitude), lng: coordText(p.longitude) });
+        setLocation({
+          url: p.location_url || "",
+          lat: coordText(p.latitude),
+          lng: coordText(p.longitude),
+          radius_m: normalizeRadiusM(p.radius_m),
+        });
         setPhotos(p.images || []);
         setStatus(p.status || "planning");
         const stages = await get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] }));
@@ -296,7 +301,12 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setAddress(s.address || "");
         setSurveyDate(String(s.survey_date || todayIso()).slice(0, 10));
         setNotes(s.notes || "");
-        setLocation({ url: s.location_url || "", lat: coordText(s.latitude), lng: coordText(s.longitude) });
+        setLocation({
+          url: s.location_url || "",
+          lat: coordText(s.latitude),
+          lng: coordText(s.longitude),
+          radius_m: normalizeRadiusM(s.radius_m),
+        });
         setStatus(s.status || "planned");
         const nextItems = surveyItemsFromMeasurements(s.measurements);
         setPhotos(workGalleryWithoutLinePhotos(s.images || [], nextItems));
@@ -327,6 +337,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     location_url: location.url,
     latitude: location.lat,
     longitude: location.lng,
+    radius_m: location.radius_m ?? DEFAULT_LOCATION_RADIUS_M,
   };
   const pricedItems = items.map((it) => hydrateWorkItem(it, products.find((p) => idOf(p) === it.product_id)));
   const totals = workItemTotals(pricedItems);
@@ -1245,7 +1256,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {kind !== "quote" ? <Field dense label="Adres" value={address} onChangeText={setAddress} editable={canEdit} /> : null}
       {kind !== "quote" ? (
-        <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} testID="work-location" />
+        <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} showRadius testID="work-location" />
       ) : null}
       {kind === "project" && project ? (
         <ProjectStagePhotos

@@ -66,6 +66,7 @@ type ProjectForWorkplace = {
     due_date?: string | null;
     duration_days?: number | null;
   }>;
+  radius_m?: number | null;
 };
 
 /** Açık dış görev atamasından kart iş yeri (API workplace yoksa). */
@@ -98,6 +99,7 @@ export function fieldWorkplaceFromProjects(
         has_coords: !!has,
         address: p.address,
         location_url: p.location_url,
+        radius_m: p.radius_m != null ? Number(p.radius_m) : undefined,
       };
     }
   }

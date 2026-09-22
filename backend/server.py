@@ -1687,13 +1687,27 @@ async def list_projects(request: Request, company_id: Optional[str] = "comp_nexu
         out.append(clean_doc(p))
     return out
 
+def _normalize_radius_m(raw, default: int = 300) -> Optional[int]:
+    if raw in (None, ""):
+        return None
+    try:
+        n = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    if n < 25:
+        return default
+    return min(5000, n)
+
+
 @api_router.post("/projects")
 async def create_project(req: Dict[str, Any]):
     track_token = uuid.uuid4().hex
+    radius = _normalize_radius_m(req.get("radius_m"))
     doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
            "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
            "start_date": req.get("start_date"), "end_date": req.get("end_date"), "description": req.get("description", ""), "address": req.get("address", ""),
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
+           "radius_m": radius if radius is not None else 300,
            "images": [], "stage_photos": [], "tasks": req.get("tasks", []),
            "tracking": {"token": track_token, "link": f"/proje/{track_token}", "sent_count": 0, "view_count": 0},
            "created_at": datetime.now(timezone.utc).isoformat()}
@@ -1714,7 +1728,9 @@ async def update_project(project_id: str, req: Dict[str, Any]):
     prev = await db.projects.find_one({"_id": project_id})
     if not prev:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
-    allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "stage_photos", "tasks", "latitude", "longitude", "location_url"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "stage_photos", "tasks", "latitude", "longitude", "location_url", "radius_m"}}
+    if "radius_m" in allowed:
+        allowed["radius_m"] = _normalize_radius_m(allowed.get("radius_m"), 300) or 300
     if "stage_photos" in allowed:
         allowed["stage_photos"] = project_photos.sanitize_stage_photos(allowed["stage_photos"])
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
@@ -2020,17 +2036,21 @@ async def list_surveys(request: Request, company_id: Optional[str] = "comp_nexus
 
 @api_router.post("/surveys")
 async def create_survey(req: Dict[str, Any]):
+    radius = _normalize_radius_m(req.get("radius_m"))
     doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "survey_number": await _next_number("KSF", db.surveys), "contact_id": req.get("contact_id"),
            "contact_name": req.get("contact_name"), "address": req.get("address", ""), "survey_date": req.get("survey_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
            "assigned_to": req.get("assigned_to", ""), "status": "planned", "notes": req.get("notes", ""), "measurements": req.get("measurements", []), "images": [],
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
+           "radius_m": radius if radius is not None else 300,
            "project_id": req.get("project_id"), "quote_id": None, "created_at": datetime.now(timezone.utc).isoformat()}
     await db.surveys.insert_one(doc)
     return clean_doc(doc)
 
 @api_router.put("/surveys/{survey_id}")
 async def update_survey(survey_id: str, req: Dict[str, Any]):
-    allowed = {k: v for k, v in req.items() if k in {"contact_id", "contact_name", "address", "survey_date", "assigned_to", "status", "notes", "measurements", "images", "project_id", "latitude", "longitude", "location_url"}}
+    allowed = {k: v for k, v in req.items() if k in {"contact_id", "contact_name", "address", "survey_date", "assigned_to", "status", "notes", "measurements", "images", "project_id", "latitude", "longitude", "location_url", "radius_m"}}
+    if "radius_m" in allowed:
+        allowed["radius_m"] = _normalize_radius_m(allowed.get("radius_m"), 300) or 300
     await db.surveys.update_one({"_id": survey_id}, {"$set": allowed})
     s = await db.surveys.find_one({"_id": survey_id})
     if not s:

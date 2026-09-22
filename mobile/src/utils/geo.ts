@@ -43,11 +43,23 @@ export function mapsLink(row: {
   return addr ? mapsSearchUrl(addr) : null;
 }
 
-export function locationPickerSummary(value: { url?: string; lat?: string; lng?: string } | null | undefined): string {
+export function locationPickerSummary(value: { url?: string; lat?: string; lng?: string; radius_m?: number | string } | null | undefined): string {
   if (!value) return "Kapalı";
-  if (value.lat && value.lng) return `${value.lat}, ${value.lng}`;
-  if (String(value.url || "").trim()) return "Konum linki var";
+  const radius = normalizeRadiusM(value.radius_m);
+  const radiusPart = radius ? ` · ${radius} m` : "";
+  if (value.lat && value.lng) return `${value.lat}, ${value.lng}${radiusPart}`;
+  if (String(value.url || "").trim()) return `Konum linki var${radiusPart}`;
   return "Kapalı";
+}
+
+/** Giriş/çıkış yarıçapı (metre). Boş/geçersiz → varsayılan 300. */
+export const DEFAULT_LOCATION_RADIUS_M = 300;
+export const LOCATION_RADIUS_OPTIONS = [50, 100, 150, 200, 300, 500, 750, 1000] as const;
+
+export function normalizeRadiusM(raw: unknown, fallback = DEFAULT_LOCATION_RADIUS_M): number {
+  const n = Math.trunc(Number(String(raw ?? "").replace(",", ".").trim()));
+  if (!Number.isFinite(n) || n < 25) return fallback;
+  return Math.min(5000, n);
 }
 
 export function coordText(v: unknown): string {

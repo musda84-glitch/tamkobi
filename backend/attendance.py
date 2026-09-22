@@ -333,12 +333,18 @@ def pick_field_assignment(rows: list, today: str) -> Optional[dict]:
 
 
 def workplace_payload(company_loc: Optional[dict], assignment: Optional[dict] = None, radius_default: int = 300) -> Optional[dict]:
-    """Etkin iş yeri: açık dış görev varsa proje konumu, yoksa firma."""
+    """Etkin iş yeri: açık dış görev varsa proje konumu (+ proje yarıçapı), yoksa firma."""
     if assignment:
-        coords = _coords_of(assignment)
-        radius = int((company_loc or {}).get("radius_m") or radius_default)
+        try:
+            task_radius = int(float(assignment.get("radius_m") or 0))
+        except (TypeError, ValueError):
+            task_radius = 0
+        if task_radius < 25:
+            task_radius = int((company_loc or {}).get("radius_m") or radius_default)
+        radius = max(25, min(5000, task_radius))
         title = assignment.get("title") or assignment.get("task_title") or "Görev"
         project_name = assignment.get("project_name") or ""
+        coords = _coords_of(assignment)
         return {
             "kind": "task",
             "label": project_name or title or "Dış görev",
@@ -413,6 +419,7 @@ def assignment_from_project(proj: dict, task: dict) -> dict:
         "longitude": proj.get("longitude"),
         "address": proj.get("address"),
         "location_url": proj.get("location_url"),
+        "radius_m": proj.get("radius_m"),
     }
 
 
@@ -425,7 +432,7 @@ async def field_assignments_for(emp: dict) -> list:
     async for proj in _db.projects.find(
         {"company_id": company_id, "tasks.assignee_id": emp_id},
         {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
-         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1, "radius_m": 1},
     ):
         for t in (proj.get("tasks") or []):
             if str(t.get("assignee_id") or "") != emp_id:
@@ -498,7 +505,7 @@ async def workplaces_by_employee(company_id: str, emp_ids: list, today: str, com
         async for proj in _db.projects.find(
             {"company_id": company_id, "tasks.assignee_id": {"$in": list(idset)}},
             {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
-             "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
+             "latitude": 1, "longitude": 1, "address": 1, "location_url": 1, "radius_m": 1},
         ):
             for t in (proj.get("tasks") or []):
                 aid = str(t.get("assignee_id") or "")
