@@ -28,6 +28,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
+  const { account_id: preAccountId } = useLocalSearchParams<{ account_id?: string }>();
   const canEdit = can("/expenses", "edit");
   const isNew = !expenseId;
   const [draft, setDraft] = useState<ExpenseDraft>(emptyExpenseDraft(todayIso()));
@@ -72,12 +73,14 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         setLoaded(exp);
         setDraft(draftFromExpense(exp, todayIso()));
         setPayAcc(exp.account_id || "");
+      } else if (preAccountId) {
+        setDraft((d) => (d.account_id ? d : { ...d, account_id: String(preAccountId) }));
       }
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Masraf yüklenemedi."));
     }
-  }, [client, companyId, expenseId]);
+  }, [client, companyId, expenseId, preAccountId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
