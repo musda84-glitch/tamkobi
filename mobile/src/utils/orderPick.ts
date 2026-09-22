@@ -119,7 +119,7 @@ export function pendingSevkCount(input: {
   const picks = pendingPickCount(input.picks);
   const fromPath = (rows?: Array<{ key?: string; path?: string; count?: number }> | null) =>
     (rows || [])
-      .filter((t) => t.key === "pick_missing" || String(t.path || "").includes("/sevk"))
+      .filter((t) => t.key === "pick_missing" || String(t.path || "").includes("/sevk") || String(t.path || "").includes("/production"))
       .reduce((sum, t) => sum + (Number(t.count) || 0), 0);
   return Math.max(picks, fromPath(input.tasks), fromPath(input.ops));
 }

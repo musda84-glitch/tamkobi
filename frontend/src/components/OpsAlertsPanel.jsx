@@ -17,7 +17,7 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 const GROUP_META = {
-  pick_missing: { Icon: ClipboardList, tone: "text-amber-800 bg-amber-50 border-amber-100", dest: "/sevk" },
+  pick_missing: { Icon: ClipboardList, tone: "text-amber-800 bg-amber-50 border-amber-100", dest: "/production?tab=missing" },
   low_stock: { Icon: Package, tone: "text-amber-700 bg-amber-50 border-amber-100", dest: "/stock?status=critical" },
   production: { Icon: Factory, tone: "text-indigo-700 bg-indigo-50 border-indigo-100", dest: "/production" },
   shipped: { Icon: Truck, tone: "text-sky-700 bg-sky-50 border-sky-100", dest: "/orders?status=dispatched" },
