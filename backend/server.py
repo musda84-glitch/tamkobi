@@ -455,10 +455,73 @@ async def assign_office_task(emp_id: str, req: Dict[str, Any]):
     if not park:
         raise HTTPException(status_code=400, detail="Parkur seçin.")
     row = wp.office_task_row(emp, park, req.get("title") or "")
-    tasks = list(emp.get("office_tasks") or [])
+    # Önceki açık iç görevleri kapat; iş merkezine dönüşte dış görev çiti ücret kesmesin.
+    tasks = []
+    for t in (emp.get("office_tasks") or []):
+        if isinstance(t, dict) and not t.get("done"):
+            tasks.append({**t, "done": True, "status": "completed"})
+        elif isinstance(t, dict):
+            tasks.append(t)
     tasks.append(row)
-    await db.employees.update_one({"_id": emp_id}, {"$set": {"office_tasks": tasks, "updated_at": datetime.now(timezone.utc).isoformat()}})
-    return {"status": "success", "message": "İç görev atandı.", "task": row}
+    duty = attendance.build_active_duty(
+        "office",
+        task_id=row.get("id"),
+        title=row.get("title") or "",
+        park_id=row.get("park_id"),
+        park_name=row.get("park_name") or "",
+    )
+    await db.employees.update_one(
+        {"_id": emp_id},
+        {"$set": {"office_tasks": tasks, "active_duty": duty, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "success", "message": "İç görev atandı.", "task": row, "active_duty": duty}
+
+
+@api_router.post("/personnel/employees/{emp_id}/active-duty")
+async def set_employee_active_duty(emp_id: str, req: Dict[str, Any]):
+    """İç↔dış geçişte etkin iş yeri: dış görev kuralları / iş merkezine dönüşte ücret korunur."""
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    kind = attendance.task_kind_of(req)
+    if kind == "office":
+        duty = attendance.build_active_duty(
+            "office",
+            task_id=req.get("task_id"),
+            title=req.get("title") or "",
+            park_id=req.get("park_id"),
+            park_name=req.get("park_name") or "",
+        )
+        patch = {"active_duty": duty, "updated_at": datetime.now(timezone.utc).isoformat()}
+    else:
+        duty = attendance.build_active_duty(
+            "field",
+            task_id=req.get("task_id"),
+            title=req.get("title") or "",
+            project_id=req.get("project_id"),
+            project_name=req.get("project_name") or "",
+            project_number=req.get("project_number") or "",
+        )
+        # Dış göreve geçerken açık iç görevleri kapat — dış görev çiti devreye girer.
+        office_tasks = []
+        for t in (emp.get("office_tasks") or []):
+            if isinstance(t, dict) and not t.get("done"):
+                office_tasks.append({**t, "done": True, "status": "completed"})
+            elif isinstance(t, dict):
+                office_tasks.append(t)
+        patch = {
+            "active_duty": duty,
+            "office_tasks": office_tasks,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    await db.employees.update_one({"_id": emp_id}, {"$set": patch})
+    workplace = await attendance.workplace_for_employee({**emp, "active_duty": duty})
+    return {
+        "status": "success",
+        "message": "Dış görev etkin." if kind == "field" else "İç görev (iş merkezi) etkin.",
+        "active_duty": duty,
+        "workplace": workplace,
+    }
 
 def _require_company_member(user: dict, company_id: str):
     if company_id not in (user.get("company_ids") or []):

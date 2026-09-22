@@ -602,9 +602,22 @@ export function PersonnelScreen() {
     setBusy(true);
     try {
       await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
+      const assigned = taskId
+        ? next.tasks.find((t) => t.id === taskId)
+        : next.tasks[next.tasks.length - 1];
+      const work = (assigned?.title || taskTitle || "iş").trim();
+      try {
+        await post(client, `/personnel/employees/${idOf(taskEmp)}/active-duty`, {
+          kind: "field",
+          task_id: assigned?.id,
+          title: work,
+          project_id: taskProjectId,
+          project_name: project.name || "",
+          project_number: project.project_number || "",
+        });
+      } catch { /* görev kaydı yeterli */ }
       setTaskEmp(null);
       setTaskDays("");
-      const work = (next.tasks.find((t) => t.id === taskId)?.title || taskTitle || "iş").trim();
       setMessage(`${taskEmp.full_name} · ${work} · ${project.name || "proje"}`);
       await load();
     } catch (err) {
@@ -1506,19 +1519,19 @@ export function PersonnelScreen() {
         <Muted testID="task-assign-field-hint">
           {(() => {
             if (taskKind === "office") {
-              return "İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez.";
+              return "İç görev: giriş/çıkış iş merkezinden. Dış görevden geri dönünce ücret kesilmez; gün içi konum kontrolü ücreti etkilemez.";
             }
             const proj = projects.find((p) => idOf(p) === taskProjectId);
             const days = parseTaskDays(taskDays);
             const hint = !proj
-              ? "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır."
-              : workplaceHint({
+              ? "Dış görev: giriş/çıkış görev yerinden. İş yerinde atanırsa çıkış dış görev yerini referans alır."
+              : `${workplaceHint({
                 kind: "task",
                 task_title: taskTitle || "Görev",
                 project_name: proj.name,
                 has_coords: proj.latitude != null && proj.longitude != null,
                 duration_days: days || undefined,
-              }, true);
+              }, true)} İş yerinde atanırsa çıkış dış görev yerini referans alır.`;
             return days ? `${hint} · ${days} gün` : hint;
           })()}
         </Muted>

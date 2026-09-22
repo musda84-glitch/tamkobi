@@ -127,7 +127,20 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
     setBusy(true);
     try {
       await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next.tasks });
-      const work = (next.tasks.find((t) => t.id === form.task_id)?.title || form.title || "iş").trim();
+      const assigned = form.task_id
+        ? next.tasks.find((t) => t.id === form.task_id)
+        : next.tasks[next.tasks.length - 1];
+      const work = (assigned?.title || form.title || "iş").trim();
+      try {
+        await axios.post(`${API_URL}/personnel/employees/${empId}/active-duty`, {
+          kind: "field",
+          task_id: assigned?.id,
+          title: work,
+          project_id: project.id || project._id,
+          project_name: project.name || "",
+          project_number: project.project_number || "",
+        });
+      } catch { /* görev kaydı yeterli; etkin iş yeri sonradan da seçilir */ }
       toast.success(`${employee.full_name} · ${work} · dış görev`);
       onSaved?.();
       onClose();
@@ -228,7 +241,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     />
                   </div>
                   <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
-                    İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez.
+                    İç görev: giriş/çıkış iş merkezinden. Dış görevden geri dönünce ücret kesilmez; gün içi konum kontrolü ücreti etkilemez.
                   </p>
                 </>
               )
@@ -323,8 +336,9 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                   </p>
                 )}
                 <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
-                  Dış görevde işe giriş/çıkış görev yerinden yapılır
+                  Dış görev: giriş/çıkış görev yerinden yapılır
                   {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
+                  {" "}İş yerinde atanmışsa çıkış da dış görev yerini referans alır.
                   {days ? ` · ${days} gün.` : ""}
                 </p>
               </>

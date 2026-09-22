@@ -89,6 +89,44 @@ def test_company_fallback():
     assert geo_target(w) is w
 
 
-def test_no_workplace():
-    assert workplace_payload(None, None) is None
-    assert pick_field_assignment([], "2026-09-22") is None
+def test_office_active_duty_overrides_open_field():
+    """İç göreve dönüşte açık dış görev kalsa bile iş merkezi (firma) iş yeridir — ücret kesilmez."""
+    from attendance import resolve_workplace
+
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Merkez"}
+    field = {
+        "id": "t1", "title": "Montaj", "kind": "field", "project_status": "active",
+        "latitude": 40.1, "longitude": 32.9, "project_name": "Villa",
+    }
+    w = resolve_workplace(company, [field], "2026-09-22", {"kind": "office", "task_id": "ot1"})
+    assert w["kind"] == "company"
+    assert w["latitude"] == 41.0
+
+
+def test_field_active_duty_uses_task_site():
+    from attendance import resolve_workplace
+
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Merkez"}
+    field = {
+        "id": "t1", "title": "Montaj", "kind": "field", "project_status": "active",
+        "latitude": 40.1, "longitude": 32.9, "project_name": "Villa",
+    }
+    other = {
+        "id": "t2", "title": "Eski", "kind": "field", "project_status": "active",
+        "latitude": 39.0, "longitude": 35.0, "project_name": "Eski",
+    }
+    w = resolve_workplace(company, [other, field], "2026-09-22", {"kind": "field", "task_id": "t1"})
+    assert w["kind"] == "task"
+    assert w["latitude"] == 40.1
+    assert w["task_title"] == "Montaj"
+
+
+def test_build_active_duty():
+    from attendance import build_active_duty, task_kind_of
+
+    d = build_active_duty("office", task_id="ot1", title="Makina", park_id="p1", park_name="Makina")
+    assert task_kind_of(d) == "office"
+    assert d["park_id"] == "p1"
+    f = build_active_duty("field", task_id="t1", title="Keşif", project_id="pr1", project_name="Villa")
+    assert f["kind"] == "field"
+    assert f["project_id"] == "pr1"
