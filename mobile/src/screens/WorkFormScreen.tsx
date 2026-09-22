@@ -717,22 +717,30 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             >
               <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
-                    <Row style={{ flexWrap: "wrap", gap: 4 }}>
-                      <Chip
-                        compact
-                        label="Ürün"
-                        active={!it.is_service}
-                        color={colors.primary}
-                        testID={`q-item-kind-product-${i}`}
-                        onPress={() => it.is_service && toggleLineKind(i)}
-                      />
-                      <Chip
-                        compact
-                        label="Hizmet"
-                        active={!!it.is_service}
-                        color={colors.indigo}
-                        testID={`q-item-kind-service-${i}`}
-                        onPress={() => !it.is_service && toggleLineKind(i)}
+                    <Row style={{ alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                      <Row style={{ flexWrap: "wrap", gap: 4, flex: 1 }}>
+                        <Chip
+                          compact
+                          label="Ürün"
+                          active={!it.is_service}
+                          color={colors.primary}
+                          testID={`q-item-kind-product-${i}`}
+                          onPress={() => it.is_service && toggleLineKind(i)}
+                        />
+                        <Chip
+                          compact
+                          label="Hizmet"
+                          active={!!it.is_service}
+                          color={colors.indigo}
+                          testID={`q-item-kind-service-${i}`}
+                          onPress={() => !it.is_service && toggleLineKind(i)}
+                        />
+                      </Row>
+                      <ProductThumb
+                        uri={workItemImage(it, prod)}
+                        width={QUOTE_ITEM_THUMB.width}
+                        height={QUOTE_ITEM_THUMB.height}
+                        testID={`q-item-thumb-${i}`}
                       />
                     </Row>
                   ) : (
@@ -748,16 +756,17 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   )}
                   {kind === "quote" ? (
                     <View style={{ gap: 4 }}>
-                        <Row style={{ alignItems: "flex-end", gap: 6 }}>
+                        <Row style={{ alignItems: "stretch", gap: 6 }}>
                           <View style={{ flex: 1, minWidth: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper(it.is_service ? "Hizmet adı" : "Ürün")}</Text>
                             <View
                               style={{
+                                flex: 1,
                                 borderWidth: 1,
                                 borderColor: colors.border,
-                                borderRadius: 999,
+                                borderRadius: 12,
                                 backgroundColor: "#fff",
-                                minHeight: 32,
+                                minHeight: 68,
                                 paddingHorizontal: 8,
                                 justifyContent: "center",
                               }}
@@ -767,86 +776,83 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 value={it.name}
                                 onChangeText={(v) => patchItem(i, "name", v)}
                                 editable={canEdit}
+                                multiline
                                 placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
                                 placeholderTextColor={colors.muted}
-                                style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 64 }}
                               />
                             </View>
                           </View>
-                          <View style={{ flexShrink: 0 }}>
-                            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
-                            <View
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                borderWidth: 1,
-                                borderColor: colors.border,
-                                borderRadius: 999,
-                                backgroundColor: "#fff",
-                                overflow: "hidden",
-                                minHeight: 32,
-                              }}
-                            >
-                              <Pressable
-                                testID={`q-item-qty-dec-${i}`}
-                                accessibilityLabel="Miktarı azalt"
-                                disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
-                                style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                          <View style={{ flexShrink: 0, gap: 4 }}>
+                            <View>
+                              <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
+                              <View
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                  borderRadius: 999,
+                                  backgroundColor: "#fff",
+                                  overflow: "hidden",
+                                  minHeight: 32,
+                                }}
                               >
-                                <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
-                              </Pressable>
-                              <TextInput
-                                testID={`q-item-qty-${i}`}
-                                value={String(it.quantity)}
-                                onChangeText={(v) => patchItem(i, "quantity", n(v))}
-                                keyboardType="decimal-pad"
-                                editable={canEdit}
-                                style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
-                              />
-                              <Pressable
-                                testID={`q-item-qty-inc-${i}`}
-                                accessibilityLabel="Miktarı artır"
-                                disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
-                                style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                                <Pressable
+                                  testID={`q-item-qty-dec-${i}`}
+                                  accessibilityLabel="Miktarı azalt"
+                                  disabled={!canEdit}
+                                  onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
+                                  style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                                >
+                                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
+                                </Pressable>
+                                <TextInput
+                                  testID={`q-item-qty-${i}`}
+                                  value={String(it.quantity)}
+                                  onChangeText={(v) => patchItem(i, "quantity", n(v))}
+                                  keyboardType="decimal-pad"
+                                  editable={canEdit}
+                                  style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                />
+                                <Pressable
+                                  testID={`q-item-qty-inc-${i}`}
+                                  accessibilityLabel="Miktarı artır"
+                                  disabled={!canEdit}
+                                  onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
+                                  style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
+                                >
+                                  <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                            <View>
+                              <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
+                              <View
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                  borderRadius: 999,
+                                  backgroundColor: "#fff",
+                                  minHeight: 32,
+                                  paddingHorizontal: 8,
+                                  gap: 4,
+                                }}
                               >
-                                <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
-                              </Pressable>
+                                <TextInput
+                                  testID={`q-item-price-${i}`}
+                                  value={String(it.unit_price)}
+                                  onChangeText={(v) => patchItem(i, "unit_price", n(v))}
+                                  keyboardType="decimal-pad"
+                                  editable={canEdit}
+                                  style={{ width: 56, fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                />
+                                <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
+                              </View>
                             </View>
                           </View>
-                          <View style={{ width: 84, flexShrink: 0 }}>
-                            <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Fiyat")}</Text>
-                            <View
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                borderWidth: 1,
-                                borderColor: colors.border,
-                                borderRadius: 999,
-                                backgroundColor: "#fff",
-                                minHeight: 32,
-                                paddingHorizontal: 8,
-                                gap: 4,
-                              }}
-                            >
-                              <TextInput
-                                testID={`q-item-price-${i}`}
-                                value={String(it.unit_price)}
-                                onChangeText={(v) => patchItem(i, "unit_price", n(v))}
-                                keyboardType="decimal-pad"
-                                editable={canEdit}
-                                style={{ flex: 1, fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
-                              />
-                              <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12 }}>₺</Text>
-                            </View>
-                          </View>
-                          <ProductThumb
-                            uri={workItemImage(it, prod)}
-                            width={QUOTE_ITEM_THUMB.width}
-                            height={QUOTE_ITEM_THUMB.height}
-                            testID={`q-item-thumb-${i}`}
-                          />
                         </Row>
                         <Row style={{ justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
                           <Text testID={`q-item-gross-${i}`} style={{ flex: 1, textAlign: "right", fontSize: 15, fontWeight: "800", color: colors.text }}>
