@@ -20,6 +20,8 @@ export type WorkItem = {
   price_includes_vat?: boolean;
   image_url?: string;
   thumbnail_url?: string;
+  /** Hizmet satırında yalnızca PDF / yazdırma formu. Stok kartına yazılmaz. */
+  print_image_url?: string;
   is_service?: boolean;
   description?: string;
 };
@@ -218,9 +220,25 @@ export function workItemFromProduct(prod: {
 export function toggleWorkItemService(item: WorkItem): WorkItem {
   const is_service = !item.is_service;
   if (is_service) {
-    return { ...item, is_service: true, product_id: "" };
+    return {
+      ...item,
+      is_service: true,
+      product_id: "",
+      print_image_url: item.print_image_url || item.image_url || item.thumbnail_url,
+    };
   }
   return { ...item, is_service: false };
+}
+
+/** Hizmet görseli stok kartına gitmez; PDF / yazdırma formunda kullanılır. */
+export function workItemPrintImage(
+  item: Pick<WorkItem, "print_image_url" | "image_url" | "thumbnail_url" | "is_service">,
+  product?: { thumbnail_url?: string; image_url?: string; images?: string[] } | null,
+): string {
+  if (item.is_service) {
+    return String(item.print_image_url || item.thumbnail_url || item.image_url || "").trim();
+  }
+  return String(item.thumbnail_url || item.image_url || item.print_image_url || (product ? productImage(product) : "") || "").trim();
 }
 
 /** Ad alanındaki uzun metinden SKU / kelime parçaları (stok araması). */
@@ -335,10 +353,10 @@ export function workItemNoteOpen(item: Pick<WorkItem, "description">, forced?: b
 }
 
 export function workItemImage(
-  item: Pick<WorkItem, "image_url" | "thumbnail_url">,
+  item: Pick<WorkItem, "image_url" | "thumbnail_url" | "print_image_url" | "is_service">,
   product?: { thumbnail_url?: string; image_url?: string; images?: string[] } | null,
 ): string {
-  return item.thumbnail_url || item.image_url || (product ? productImage(product) : "");
+  return workItemPrintImage(item, item.is_service ? null : product);
 }
 
 function nearly(a: number, b: number, eps = 0.05): boolean {
@@ -349,7 +367,7 @@ export function hydrateWorkItem(
   item: WorkItem,
   product?: { price_includes_vat?: boolean; sale_price?: number; thumbnail_url?: string; image_url?: string; images?: string[] } | null,
 ): WorkItem {
-  if (!item.image_url && !item.thumbnail_url && product) {
+  if (!item.is_service && !item.image_url && !item.thumbnail_url && product) {
     const photo = productImage(product);
     if (photo) item = { ...item, image_url: photo };
   }
@@ -785,10 +803,10 @@ export function workItemLineKind(kind: WorkKind): "quote" | null {
 /** Satır görselleri teklif / keşif galerisinde durmaz. */
 export function workGalleryWithoutLinePhotos(
   images: string[] | null | undefined,
-  items: Array<Pick<WorkItem, "image_url" | "thumbnail_url">> | null | undefined,
+  items: Array<Pick<WorkItem, "image_url" | "thumbnail_url" | "print_image_url">> | null | undefined,
 ): string[] {
   const line = new Set(
-    (items || []).flatMap((it) => [it.image_url, it.thumbnail_url].map((u) => String(u || "").trim()).filter(Boolean)),
+    (items || []).flatMap((it) => [it.image_url, it.thumbnail_url, it.print_image_url].map((u) => String(u || "").trim()).filter(Boolean)),
   );
   return (images || []).filter((url) => {
     const key = String(url || "").trim();

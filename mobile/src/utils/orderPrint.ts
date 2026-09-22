@@ -158,7 +158,7 @@ function pickItemImage(it: Record<string, unknown>, prod?: PrintProduct): string
   const images = Array.isArray(it.images) ? it.images : [];
   const prodImages = Array.isArray(prod?.images) ? prod.images : [];
   return String(
-    it.thumbnail_url || it.image_url || prod?.thumbnail_url || prod?.image_url || images[0] || prodImages[0] || "",
+    it.print_image_url || it.thumbnail_url || it.image_url || prod?.thumbnail_url || prod?.image_url || images[0] || prodImages[0] || "",
   );
 }
 

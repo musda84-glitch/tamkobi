@@ -46,6 +46,7 @@ import {
   quoteSaveMessage,
   workItemFromProduct,
   workItemImage,
+  workItemPrintImage,
   bumpWorkItemQty,
   workItemPriceFromGross,
   workItemLineGross,
@@ -141,7 +142,10 @@ describe("workDocs", () => {
     const service = toggleWorkItemService({ ...emptyItem(), product_id: "p1", name: "Profil", image_url: "x.jpg", thumbnail_url: "x.jpg" });
     expect(service.is_service).toBe(true);
     expect(service.product_id).toBe("");
-    expect(service.image_url).toBe("x.jpg");
+    expect(service.print_image_url).toBe("x.jpg");
+    expect(workItemPrintImage(service, { image_url: "stock.jpg" })).toBe("x.jpg");
+    expect(workItemImage(service, { image_url: "stock.jpg" })).toBe("x.jpg");
+    expect(quoteLineProductPayload({ name: "Montaj", unit_price: 10, vat_rate: 20, unit: "Adet", image_url: undefined }, "c", "M-1").image_url).toBeUndefined();
     expect(toggleWorkItemService(service).is_service).toBe(false);
     const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
     expect(fromSvc.is_service).toBe(true);
@@ -340,8 +344,8 @@ describe("workDocs", () => {
 
   it("keeps line photos off the quote gallery", () => {
     expect(workGalleryWithoutLinePhotos(
-      ["/api/files/line.jpg", "/api/files/gallery.jpg", ""],
-      [{ image_url: "/api/files/line.jpg" }],
+      ["/api/files/line.jpg", "/api/files/gallery.jpg", "/api/files/print.jpg", ""],
+      [{ image_url: "/api/files/line.jpg", print_image_url: "/api/files/print.jpg" }],
     )).toEqual(["/api/files/gallery.jpg"]);
     expect(workGalleryWithoutLinePhotos(["/api/files/a.jpg"], [])).toEqual(["/api/files/a.jpg"]);
   });
