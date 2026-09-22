@@ -71,6 +71,7 @@ import {
   quotePayload,
   quoteSaveMessage,
   quoteLinkedProjectId,
+  quoteProjectSyncPayload,
   quoteToProjectAction,
   quoteUpdateBody,
   shouldAttachQuoteDraftInvoice,
@@ -241,8 +242,13 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           nextItems,
         );
       } else if (kind === "project") {
-        const rows = await get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 });
-        const p = (rows || []).find((x) => idOf(x) === docId) || null;
+        let p: ProjectDoc | null = null;
+        try {
+          p = await get<ProjectDoc>(client, `/projects/${docId}`);
+        } catch {
+          const rows = await get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 });
+          p = (rows || []).find((x) => idOf(x) === docId) || null;
+        }
         if (!p) { setError("Proje bulunamadı."); return; }
         setProject(p);
         setName(p.name || "");
@@ -260,11 +266,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setProjectStages(normalizeProjectStages(stages?.stages));
         const [expList, quoteRows, invoiceRows] = await Promise.all([
           get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] })),
-          get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, summary: 1 }).catch(() => []),
+          get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, project_id: docId, summary: 1 }).catch(() => []),
           get<Invoice[]>(client, "/invoices", { company_id: companyId, project_id: docId }).catch(() => []),
         ]);
+        let linked = quotesForProject(quoteRows, p);
+        if (!linked.length) {
+          const sourceId = String(p.quote_id || "").trim();
+          if (sourceId) {
+            const one = await get<QuoteDoc>(client, `/quotes/${sourceId}`).catch(() => null);
+            if (one) linked = [one];
+          }
+        }
         setProjectExpenses(expList.expenses || []);
-        setProjectQuotes(quotesForProject(quoteRows, p));
+        setProjectQuotes(linked);
         setProjectInvoices(invoiceRows || []);
       } else {
         const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
@@ -564,15 +578,25 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         if (qid) router.replace({ pathname: "/quotes/[id]", params: { id: qid } });
       } else if (kind === "quote") {
         if (!(await persistExistingQuote(true))) return;
-        const updating = Boolean(quoteLinkedProjectId(quote));
-        const r = await post<{ project?: ProjectDoc; message?: string; updated?: boolean }>(client, `/quotes/${docId}/convert-to-project`);
-        setMessage(r.message || (updating ? "Proje güncellendi." : "Proje oluşturuldu."));
-        const pid = idOf(r.project);
-        if (updating || r.updated) {
-          if (pid) setLinkedProjectId(pid);
-          await loadDoc();
-        } else if (pid) {
+        const pid = quoteLinkedProjectId(quote);
+        if (pid) {
+          const project = await put<ProjectDoc>(client, `/projects/${pid}`, quoteProjectSyncPayload({
+            title,
+            quote_number: quote?.quote_number,
+            contact_id: contactId,
+            contact_name: contactName,
+            notes,
+            grand_total: workItemTotals(items).grandTotal,
+            images: photos,
+          }));
+          setLinkedProjectId(pid);
+          setMessage(`${quote?.quote_number || "Teklif"} → ${project.project_number || "proje"} güncellendi.`);
           router.replace({ pathname: "/projects/[id]", params: { id: pid } });
+        } else {
+          const r = await post<{ project?: ProjectDoc; message?: string }>(client, `/quotes/${docId}/convert-to-project`);
+          setMessage(r.message || "Proje oluşturuldu.");
+          const createdId = idOf(r.project);
+          if (createdId) router.replace({ pathname: "/projects/[id]", params: { id: createdId } });
         }
       } else {
         const r = await post<{ invoice?: { id?: string; _id?: string; invoice_number?: string }; message?: string }>(client, `/projects/${docId}/invoice`);
@@ -1156,6 +1180,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
       {!isNew && kind === "survey" && !survey?.quote_id && canEdit ? (
         <PrimaryButton title="Teklife dönüştür" onPress={() => confirmAction("Teklif", "Keşif teklife dönüştürülsün mü?", convert)} color={colors.indigo} testID="survey-to-quote" />
+      ) : null}
+      {!isNew && kind === "quote" && quoteLinkedProjectId(quote) ? (
+        <Muted testID="quote-saved-project">
+          Kayıtlı proje: {quote?.project_number || "açık"}. Güncelle adı, cariyi, bütçeyi ve notu bu projeye yazar.
+        </Muted>
       ) : null}
       {!isNew && kind === "quote" && canEdit && quoteProjectAction ? (
         <PrimaryButton
