@@ -57,25 +57,29 @@ export function ExpensesScreen() {
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={<Field label="Ara" testID="exp-search" value={q} onChangeText={setQ} placeholder="Açıklama / no / kategori" />}
-    >
-      {canEdit ? (
-        <PrimaryButton title="Yeni masraf" onPress={() => go("ExpenseNew")} color={colors.danger} testID="exp-new-btn" />
-      ) : null}
-      {s ? (
-        <Card>
-          <Text style={{ fontWeight: "800", color: colors.text }}>Bu ay {fmtMoney(s.this_month_total)}</Text>
-          <Row style={{ justifyContent: "space-between" }}>
-            <Text style={{ color: colors.muted }}>Ödenmemiş</Text>
-            <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(s.unpaid_total)} · {s.unpaid_count || 0}</Text>
+      stickyTop={(
+        <>
+          {canEdit ? (
+            <PrimaryButton title="Yeni masraf" onPress={() => go("ExpenseNew")} color={colors.danger} testID="exp-new-btn" />
+          ) : null}
+          {s ? (
+            <Card>
+              <Text style={{ fontWeight: "800", color: colors.text }}>Bu ay {fmtMoney(s.this_month_total)}</Text>
+              <Row style={{ justifyContent: "space-between" }}>
+                <Text style={{ color: colors.muted }}>Ödenmemiş</Text>
+                <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(s.unpaid_total)} · {s.unpaid_count || 0}</Text>
+              </Row>
+            </Card>
+          ) : null}
+          <Row>
+            {[["all", "Tümü"], ["unpaid", "Ödenmedi"], ["paid", "Ödendi"]].map(([k, l]) => (
+              <Chip key={k} label={l} active={status === k} onPress={() => setStatus(k)} testID={`exp-status-${k}`} />
+            ))}
           </Row>
-        </Card>
-      ) : null}
-      <Row>
-        {[["all", "Tümü"], ["unpaid", "Ödenmedi"], ["paid", "Ödendi"]].map(([k, l]) => (
-          <Chip key={k} label={l} active={status === k} onPress={() => setStatus(k)} testID={`exp-status-${k}`} />
-        ))}
-      </Row>
+          <Field label="Ara" testID="exp-search" value={q} onChangeText={setQ} placeholder="Açıklama / no / kategori" />
+        </>
+      )}
+    >
       <ErrorBanner message={error} />
       {!rows.length ? (
         <Empty icon="receipt-outline" title="Masraf yok" hint={canEdit ? "Kira, yakıt, yemek gibi gider ekleyin." : undefined} />
