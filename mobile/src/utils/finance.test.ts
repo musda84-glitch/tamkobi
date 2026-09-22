@@ -7,6 +7,10 @@ import {
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
+  accountGroupTone,
+  bankingFilterLabel,
+  bankingListFilterKeys,
+  filterPartners,
   groupedAccounts,
   paymentTargetGroups,
   splitPaymentTarget,
@@ -20,6 +24,15 @@ import {
   virmanAccounts,
   virmanSelectGroups,
   isBankingBankAccount,
+  isBankingCashAccount,
+  isBankingPosAccount,
+  recentTxForAccounts,
+  recentPartnerTx,
+  bankMovementNotice,
+  partnerMovementNotice,
+  partnerCardTone,
+  partnerInitials,
+  filterPartnerTxs,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -145,8 +158,15 @@ describe("finance drafts", () => {
 
   it("puts partner cash and integrated banks on the virman list", () => {
     expect(isBankingBankAccount({ type: "bank" })).toBe(true);
-    expect(isBankingBankAccount({ type: "pos" })).toBe(true);
+    expect(isBankingBankAccount({ type: "pos" })).toBe(false);
+    expect(isBankingBankAccount({ type: "okc_pos" })).toBe(false);
     expect(isBankingBankAccount({ type: "cash_box" })).toBe(false);
+    expect(isBankingPosAccount({ type: "pos" })).toBe(true);
+    expect(isBankingPosAccount({ type: "okc_pos" })).toBe(true);
+    expect(isBankingPosAccount({ type: "bank" })).toBe(false);
+    expect(isBankingCashAccount({ type: "cash_box" })).toBe(true);
+    expect(isBankingCashAccount({ type: "kasa" })).toBe(true);
+    expect(isBankingCashAccount({ type: "bank" })).toBe(false);
     const groups = virmanSelectGroups(
       [
         { id: "k1", type: "cash_box", account_name: "Kasa", current_balance: 10 },
@@ -171,6 +191,14 @@ describe("finance drafts", () => {
       { type: "credit_card", account_name: "Kart" },
     ]);
     const keys = groups.map((g) => g.key);
+    expect(accountGroupTone("cash_box").accent).toBe("#059669");
+    expect(accountGroupTone("bank").bg).toBe("#EFF6FF");
+    expect(accountGroupTone("partners").label).toBe("#B45309");
+    expect(accountGroupTone("yok").accent).toBe("#64748B");
+    expect(bankingListFilterKeys(keys, true)).toEqual(["all", "bank", "partners", "cash_box", "credit_card"]);
+    expect(bankingFilterLabel("all")).toBe("Tümü");
+    expect(bankingFilterLabel("partners")).toBe("Ortaklar");
+    expect(filterPartners([{ name: "Ali BAL" }, { name: "Veli" }], "ali")).toHaveLength(1);
     expect(keys).toEqual(["bank", "cash_box", "credit_card"]);
     expect(groups.find((g) => g.key === "cash_box")?.items).toHaveLength(2);
     expect(totalLiquidity([
@@ -213,5 +241,38 @@ describe("finance drafts", () => {
     });
     expect(bank.path).toBe("/banking/transactions");
     expect(bank.body).toMatchObject({ category: "Cari Ödeme", contact_id: "ct1", account_name: "Kasa", source: "manual" });
+  });
+
+  it("picks the latest 3 movements per group card", () => {
+    const accs = [{ id: "b1" }, { id: "b2" }];
+    const txs = [
+      { id: "1", account_id: "b1", type: "inflow", amount: 10, date: "2026-01-01", description: "eski" },
+      { id: "2", account_id: "b1", type: "outflow", amount: 4, date: "2026-09-20", description: "tediye" },
+      { id: "3", account_id: "x", type: "inflow", amount: 99, date: "2026-09-22", description: "başka" },
+      { id: "4", account_id: "b2", type: "inflow", amount: 8, date: "2026-09-21", description: "tahsilat" },
+      { id: "5", target_account_id: "b1", account_id: "z", type: "transfer", amount: 3, date: "2026-09-22", description: "virman" },
+    ];
+    const latest = recentTxForAccounts(txs, accs, 3);
+    expect(latest.map((t) => t.id)).toEqual(["5", "4", "2"]);
+    expect(bankMovementNotice(latest[0], accs).signed).toBe(3);
+    expect(bankMovementNotice(latest[2], accs).signed).toBe(-4);
+    expect(recentPartnerTx([
+      { id: "p1", type: "capital_in", amount: 20, date: "2026-01-01" },
+      { id: "p2", type: "withdrawal", amount: 5, date: "2026-09-21" },
+      { id: "p3", type: "profit_share", amount: 1, date: "2026-09-20" },
+      { id: "p4", type: "capital_in", amount: 2, date: "2026-09-22" },
+    ]).map((t) => t.id)).toEqual(["p4", "p2", "p3"]);
+    expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
+  });
+
+  it("gives partners stable colors and filters their movements", () => {
+    expect(partnerInitials("Ali BAL")).toBe("AB");
+    expect(partnerInitials("Mustafa Bal")).toBe("MB");
+    expect(partnerCardTone("ali")).toEqual(partnerCardTone("ali"));
+    expect(partnerCardTone("ali").accent).not.toBe(partnerCardTone("mustafa").accent);
+    expect(filterPartnerTxs([
+      { id: "1", partner_id: "a", amount: 1 },
+      { id: "2", partner_id: "b", amount: 2 },
+    ], "a").map((t) => t.id)).toEqual(["1"]);
   });
 });

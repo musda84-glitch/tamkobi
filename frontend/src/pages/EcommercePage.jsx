@@ -306,7 +306,7 @@ export default function EcommercePage() {
               <div className="pt-2 border-t">
                 <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
                 <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id} accounts={accounts.filter((a) => !a.is_integrated)} value={selectedConfig.settlement_account_id || ""} onChange={(v) => setSelectedConfig({ ...selectedConfig, settlement_account_id: v || null })} testId="ecom-settlement-select" emptyLabel="Hesap seçilmedi — fatura yalnızca ödendi işaretlenir" collectableOnly includePartners={false} />
-                <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; kesintiler "Pazaryeri Komisyonu" masrafına yazılır.</p>
+                <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; kesinti pazaryeri carisine (Trendyol vb.) ve &quot;Pazaryeri Komisyonu&quot; masrafına yazılır.</p>
               </div>
               <div className="space-y-2 pt-2 border-t">
                 <label className="flex items-center gap-2 cursor-pointer">

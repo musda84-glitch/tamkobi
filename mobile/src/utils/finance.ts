@@ -105,6 +105,7 @@ export type Partner = {
   total_withdrawn?: number;
   total_profit_share?: number;
   is_active?: boolean;
+  photo_url?: string | null;
 };
 
 export type PartnerSummary = {
@@ -198,6 +199,87 @@ export function accountBalance(a?: { current_balance?: number; balance?: number 
   return Number(a?.current_balance ?? a?.balance ?? 0) || 0;
 }
 
+export type AccountGroupTone = {
+  bg: string;
+  border: string;
+  label: string;
+  amount: string;
+  accent: string;
+};
+
+/** Web Kasa & Banka grup kartları: banka mavi, kasa yeşil, POS mor, ortak amber. */
+export const ACCOUNT_GROUP_TONES: Record<string, AccountGroupTone> = {
+  bank: { bg: "#EFF6FF", border: "#93C5FD", label: "#1D4ED8", amount: "#1E3A8A", accent: "#2563EB" },
+  cash_box: { bg: "#ECFDF5", border: "#6EE7B7", label: "#047857", amount: "#065F46", accent: "#059669" },
+  pos: { bg: "#F5F3FF", border: "#C4B5FD", label: "#6D28D9", amount: "#4C1D95", accent: "#7C3AED" },
+  okc_pos: { bg: "#F0FDFA", border: "#5EEAD4", label: "#0F766E", amount: "#115E59", accent: "#0D9488" },
+  credit_card: { bg: "#FDF4FF", border: "#F0ABFC", label: "#A21CAF", amount: "#86198F", accent: "#C026D3" },
+  partners: { bg: "#FFFBEB", border: "#FCD34D", label: "#B45309", amount: "#92400E", accent: "#D97706" },
+  other: { bg: "#F8FAFC", border: "#E2E8F0", label: "#475569", amount: "#0F172A", accent: "#64748B" },
+};
+
+export function accountGroupTone(key?: string | null): AccountGroupTone {
+  return ACCOUNT_GROUP_TONES[String(key || "")] || ACCOUNT_GROUP_TONES.other;
+}
+
+/** Ortak kartları: her ortak için kararlı renk. */
+export const PARTNER_CARD_TONES: AccountGroupTone[] = [
+  { bg: "#FFFBEB", border: "#FCD34D", label: "#B45309", amount: "#92400E", accent: "#D97706" },
+  { bg: "#EEF2FF", border: "#A5B4FC", label: "#3730A3", amount: "#312E81", accent: "#4F46E5" },
+  { bg: "#ECFDF5", border: "#6EE7B7", label: "#047857", amount: "#065F46", accent: "#059669" },
+  { bg: "#FDF2F8", border: "#F9A8D4", label: "#9D174D", amount: "#831843", accent: "#DB2777" },
+  { bg: "#F0F9FF", border: "#7DD3FC", label: "#0369A1", amount: "#075985", accent: "#0284C7" },
+  { bg: "#FAF5FF", border: "#D8B4FE", label: "#6B21A8", amount: "#581C87", accent: "#7C3AED" },
+];
+
+export function partnerCardTone(key?: string | null): AccountGroupTone {
+  const s = String(key || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return PARTNER_CARD_TONES[h % PARTNER_CARD_TONES.length];
+}
+
+export function partnerInitials(name?: string | null): string {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toLocaleUpperCase("tr-TR");
+  }
+  return (parts[0] || "O").slice(0, 2).toLocaleUpperCase("tr-TR");
+}
+
+export function filterPartnerTxs(txs: PartnerTx[] | null | undefined, partnerId?: string | null): PartnerTx[] {
+  const list = txs || [];
+  if (!partnerId) return list;
+  return list.filter((tx) => String(tx.partner_id || "") === partnerId);
+}
+
+export function filterPartners<T extends { name?: string; phone?: string; email?: string }>(
+  partners: T[] | null | undefined,
+  q: string,
+): T[] {
+  const list = partners || [];
+  const s = q.trim().toLowerCase();
+  if (!s) return list;
+  return list.filter((p) => [p.name, p.phone, p.email].some((v) => String(v || "").toLowerCase().includes(s)));
+}
+
+/** Tümü + Banka + Ortaklar önde, sonra kasa / POS / kart. */
+export function bankingListFilterKeys(groupKeys: string[], hasPartners: boolean): string[] {
+  const keys = groupKeys || [];
+  const rest = keys.filter((k) => k !== "bank");
+  const out = ["all"];
+  if (keys.includes("bank")) out.push("bank");
+  if (hasPartners) out.push("partners");
+  out.push(...rest);
+  return out;
+}
+
+export function bankingFilterLabel(key: string): string {
+  if (key === "all") return "Tümü";
+  if (key === "partners") return "Ortaklar";
+  return ACCOUNT_TYPE_TR[key] || key;
+}
+
 export function groupedAccounts<T extends { type?: string }>(accounts: T[]): { key: string; label: string; items: T[] }[] {
   const list = accounts || [];
   const groups: { key: string; label: string; items: T[] }[] = ACCOUNT_TYPES.map((g) => ({
@@ -215,11 +297,21 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
   return (accounts || []).filter((a) => !a.is_integrated);
 }
 
-const BANK_TAB_TYPES = new Set(["bank", "pos", "okc_pos"]);
+const POS_TAB_TYPES = new Set(["pos", "okc_pos"]);
 
-/** Kasa & Banka üst sekmesindeki Bankalar: banka + POS + ÖKC. */
+/** Üst sekmedeki Bankalar: yalnızca banka hesapları (POS ayrı sekmede). */
 export function isBankingBankAccount(a?: { type?: string } | null): boolean {
-  return BANK_TAB_TYPES.has(normalizeAccountType(a?.type));
+  return normalizeAccountType(a?.type) === "bank";
+}
+
+/** Üst sekmedeki POS: POS + ÖKC. */
+export function isBankingPosAccount(a?: { type?: string } | null): boolean {
+  return POS_TAB_TYPES.has(normalizeAccountType(a?.type));
+}
+
+/** Üst sekmedeki Kasa: kasa / nakit alias’ları. */
+export function isBankingCashAccount(a?: { type?: string } | null): boolean {
+  return normalizeAccountType(a?.type) === "cash_box";
 }
 
 export type PaymentTargetOption = { value: string; label: string; disabled?: boolean };
@@ -549,4 +641,65 @@ export function txTypeTr(v?: string | null): string {
 export function partnerTxTr(v?: string | null): string {
   if (!v) return "—";
   return PARTNER_TX_TR[v] || v;
+}
+
+function dateMs(value?: string | null): number {
+  const t = Date.parse(value || "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+export type GroupMovementNotice = {
+  id: string;
+  title: string;
+  detail: string;
+  signed: number;
+  currency?: string;
+};
+
+/** Grup kartı için hesapların en yeni hareketleri (varsayılan 3). */
+export function recentTxForAccounts(txs: BankTx[], accounts: { id?: string; _id?: string }[], limit = 3): BankTx[] {
+  const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
+  return (txs || [])
+    .filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || "")))
+    .sort((a, b) => dateMs(b.date) - dateMs(a.date))
+    .slice(0, limit);
+}
+
+export function recentPartnerTx(txs: PartnerTx[], limit = 3): PartnerTx[] {
+  return [...(txs || [])].sort((a, b) => dateMs(b.date) - dateMs(a.date)).slice(0, limit);
+}
+
+export function signedTxForGroup(tx: BankTx, accountIds: Set<string>): number {
+  const amt = Number(tx.amount || 0);
+  if (tx.type === "outflow") return -amt;
+  if (tx.type === "inflow") return amt;
+  if (tx.type === "transfer") {
+    const from = accountIds.has(String(tx.account_id || ""));
+    const to = accountIds.has(String(tx.target_account_id || ""));
+    if (from && !to) return -amt;
+    if (to && !from) return amt;
+    return 0;
+  }
+  return amt;
+}
+
+export function bankMovementNotice(tx: BankTx, accounts: { id?: string; _id?: string }[]): GroupMovementNotice {
+  const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
+  return {
+    id: idOf(tx),
+    title: String(tx.description || tx.category || txTypeTr(tx.type)),
+    detail: [txTypeTr(tx.type), tx.account_name, tx.contact_name].filter(Boolean).join(" · "),
+    signed: signedTxForGroup(tx, ids),
+    currency: tx.currency,
+  };
+}
+
+export function partnerMovementNotice(tx: PartnerTx): GroupMovementNotice {
+  const amt = Number(tx.amount || 0);
+  return {
+    id: idOf(tx),
+    title: String(tx.description || partnerTxTr(tx.type)),
+    detail: [partnerTxTr(tx.type), tx.partner_name, tx.account_name].filter(Boolean).join(" · "),
+    signed: tx.type === "withdrawal" ? -amt : amt,
+  };
 }

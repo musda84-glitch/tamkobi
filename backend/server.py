@@ -58,6 +58,7 @@ import bank_providers
 import bank_guard
 import cash_approval
 import marketplace_providers
+from marketplace_settlement import marketplace_contact_name
 from zoneinfo import ZoneInfo
 import httpx
 from urllib.parse import quote
@@ -1010,7 +1011,7 @@ async def upload_generic_file(
     stage: str = Query(""),
     stage_label: str = Query(""),
 ):
-    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo"}.get(entity, entity)
+    entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo", "partners": "partner_photo", "partner": "partner_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF, HEIC veya PDF yükleyebilirsiniz.")
@@ -1041,13 +1042,13 @@ async def upload_generic_file(
     }
     await db.files.insert_one(file_doc)
     url = f"/api/files/{result['path']}"
-    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo") and entity_id:
-        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees}[entity]
+    if entity in ("quote", "project", "survey", "company", "contact", "employee_photo", "partner_photo") and entity_id:
+        coll = {"quote": db.quotes, "project": db.projects, "survey": db.surveys, "company": db.companies, "contact": db.contacts, "employee_photo": db.employees, "partner_photo": db.partners}[entity]
         # Match by id or _id — clients may send either after clean_doc
         q = {"$or": [{"_id": entity_id}, {"id": entity_id}]}
         if entity in ("company", "contact"):
             await coll.update_one(q, {"$set": {"logo_url": url}})
-        elif entity == "employee_photo":
+        elif entity in ("employee_photo", "partner_photo"):
             await coll.update_one(q, {"$set": {"photo_url": url}})
         else:
             stage_key = project_photos.clean_stage_key(stage) if entity == "project" else ""
@@ -6326,7 +6327,7 @@ async def create_partner(partner: Partner):
 
 @api_router.put("/banking/partners/{partner_id}")
 async def update_partner(partner_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active"}}
+    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url"}}
     await db.partners.update_one({"_id": partner_id}, {"$set": allowed})
     res = await db.partners.find_one({"_id": partner_id})
     if not res:
@@ -9010,8 +9011,46 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"settlement_account_id": account_id, "settlement_account_name": name}})
     return {"status": "success", "settlement_account_id": account_id, "settlement_account_name": name, "message": f"Hakediş hesabı: {name}" if name else "Hakediş hesabı kaldırıldı; faturalar yalnızca 'ödendi' işaretlenir."}
 
+async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional[dict]:
+    """Kanalın pazaryeri carisini bulur (Trendyol, Hepsiburada…); yoksa tedarikçi cari açar."""
+    name = marketplace_contact_name(channel)
+    if not name:
+        return None
+    source = f"marketplace:{channel}"
+    c = await db.contacts.find_one({"company_id": company_id, "source": source})
+    if not c:
+        c = await db.contacts.find_one({"company_id": company_id, "name": name, "category": "Pazaryeri"})
+    if not c:
+        c = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+    if c:
+        return c
+    try:
+        await saas.check_contact_limit(company_id)
+    except HTTPException:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    c = {
+        "_id": f"cnt_{uuid.uuid4().hex[:8]}",
+        "company_id": company_id,
+        "type": "supplier",
+        "name": name,
+        "balance": 0.0,
+        "credit_limit": 0.0,
+        "category": "Pazaryeri",
+        "tax_number_or_id": "11111111111",
+        "is_e_invoice_user": False,
+        "payment_term_days": 0,
+        "late_fee_rate": 0.0,
+        "b2b_enabled": False,
+        "source": source,
+        "auto_created": True,
+        "created_at": now,
+    }
+    await db.contacts.insert_one(c)
+    return c
+
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
-    """Kanal için hakediş hesabı seçiliyse: net tutar (ciro − komisyon − hizmet/kargo) hesaba tahsilat, kesintiler 'Pazaryeri Komisyonu' masrafı."""
+    """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, kesinti pazaryeri carisine ve 'Pazaryeri Komisyonu' masrafına."""
     channel = (order.get("channel") or "").lower()
     if channel in ("", "b2b", "manual", "saha"):
         return None
@@ -9032,14 +9071,40 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     await db.bank_transactions.insert_one(tx)
     await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": net}})
     exp = None
+    mp = await _ensure_marketplace_contact(order["company_id"], channel) if deductions > 0 else None
     if deductions > 0:
         exp = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "expense_number": await expenses._next_number(order["company_id"]), "date": today, "category": "Pazaryeri Komisyonu",
                "description": f"{channel.title()} {order.get('order_number')} komisyon + hizmet/kargo bedeli", "amount": round(deductions - p["commission_vat"], 2), "vat_rate": float(_channel_fees(cfg, channel).get("commission_vat_rate") or 0),
                "vat_amount": p["commission_vat"], "total": deductions, "currency": "TRY", "payment_status": "paid", "account_id": acc["_id"], "account_name": acc.get("account_name"), "paid_date": today,
-               "order_id": order["_id"], "invoice_id": invoice["_id"], "channel": channel, "netted_in_settlement": True, "notes": "Hakedişten mahsup edildi (ayrı kasa çıkışı yok).", "is_recurring": False, "created_at": now}
+               "contact_id": mp["_id"] if mp else None, "contact_name": (mp.get("name") if mp else marketplace_contact_name(channel)),
+               "order_id": order["_id"], "invoice_id": invoice["_id"], "channel": channel, "netted_in_settlement": True, "notes": "Hakedişten mahsup edildi (ayrı kasa çıkışı yok). Pazaryeri carisine işlendi.", "is_recurring": False, "created_at": now}
         await db.expenses.insert_one(exp)
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"settlement": {"account_id": acc["_id"], "account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "tx_id": tx["_id"], "expense_id": exp["_id"] if exp else None, "date": today}}})
-    return {"account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net}
+        # Kasa zaten net hakedişte mahsup; kesinti yalnızca pazaryeri carisi hareketinde görünür.
+        if mp:
+            kesinti_tx = {
+                "_id": str(uuid.uuid4()),
+                "company_id": order["company_id"],
+                "account_id": None,
+                "account_name": "Pazaryeri Kesintisi",
+                "type": "outflow",
+                "category": "Pazaryeri Kesintisi",
+                "amount": deductions,
+                "currency": "TRY",
+                "description": f"{channel.title()} {order.get('order_number')} kesinti {deductions:,.2f}",
+                "contact_id": mp["_id"],
+                "contact_name": mp.get("name"),
+                "related_invoice_id": invoice["_id"],
+                "order_id": order["_id"],
+                "channel": channel,
+                "source": "ledger",
+                "is_simulated": False,
+                "date": today,
+                "created_at": now,
+            }
+            await db.bank_transactions.insert_one(kesinti_tx)
+            await db.contacts.update_one({"_id": mp["_id"]}, {"$inc": {"balance": deductions}})
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"settlement": {"account_id": acc["_id"], "account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "tx_id": tx["_id"], "expense_id": exp["_id"] if exp else None, "marketplace_contact_id": mp["_id"] if mp else None, "date": today}}})
+    return {"account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "marketplace_contact_id": mp["_id"] if mp else None}
 
 async def _upsert_by_external(coll, company_id: str, docs: list) -> int:
     n = 0
