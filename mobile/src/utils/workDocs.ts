@@ -394,6 +394,8 @@ export function projectCardBits(p: ProjectDoc) {
   return {
     codes: [p.project_number, p.quote_number].filter(Boolean).join(" · "),
     name: p.name || p.project_number || "Proje",
+    contactName: p.contact_name || "—",
+    address: String(p.address || "").trim(),
     contact: [p.contact_name || "—", p.address].filter(Boolean).join(" · "),
     quoteCount: Number(p.quote_count) || 0,
     budget: Number(p.budget) || 0,
@@ -401,6 +403,15 @@ export function projectCardBits(p: ProjectDoc) {
     invoiced: Number(p.invoiced_total) || 0,
     expense: Number(p.expense_total) || 0,
   };
+}
+
+export function addressToggleLabel(expanded: boolean): string {
+  return expanded ? "Gizle" : "Göster";
+}
+
+/** Uzun saha adresi kartta gizle/göster ile açılır. */
+export function shouldCollapseAddress(address?: string | null, min = 36): boolean {
+  return String(address || "").trim().length > min;
 }
 
 export function projectTaskSummary(tasks?: ProjectTask[] | null) {
