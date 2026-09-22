@@ -133,6 +133,29 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
             ) : (
               <>
                 <div>
+                  <label className="block font-semibold mb-1">Dış görev kaç gün?</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="366"
+                    value={form.duration_days}
+                    onChange={(e) => {
+                      const duration_days = e.target.value;
+                      const n = Math.trunc(Number(duration_days));
+                      let due_date = form.due_date;
+                      if (n > 0) {
+                        const d = new Date();
+                        d.setDate(d.getDate() + n - 1);
+                        due_date = d.toISOString().slice(0, 10);
+                      }
+                      setForm({ ...form, duration_days, due_date });
+                    }}
+                    placeholder="Örn: 3"
+                    className={inputCls}
+                    data-testid="emp-task-days"
+                  />
+                </div>
+                <div>
                   <label className="block font-semibold mb-1">Proje</label>
                   <select
                     value={form.project_id}
@@ -161,30 +184,8 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                 <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
                   Dış görevde işe giriş/çıkış görev yerinden yapılır
                   {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
+                  {Math.trunc(Number(form.duration_days)) > 0 ? ` · ${Math.trunc(Number(form.duration_days))} gün.` : ""}
                 </p>
-                <div>
-                  <label className="block font-semibold mb-1">Kaç gün (dış görev)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="366"
-                    value={form.duration_days}
-                    onChange={(e) => {
-                      const duration_days = e.target.value;
-                      const n = Math.trunc(Number(duration_days));
-                      let due_date = form.due_date;
-                      if (n > 0) {
-                        const d = new Date();
-                        d.setDate(d.getDate() + n - 1);
-                        due_date = d.toISOString().slice(0, 10);
-                      }
-                      setForm({ ...form, duration_days, due_date });
-                    }}
-                    placeholder="Örn: 3"
-                    className={inputCls}
-                    data-testid="emp-task-days"
-                  />
-                </div>
                 <div>
                   <label className="block font-semibold mb-1">Son tarih (opsiyonel)</label>
                   <input

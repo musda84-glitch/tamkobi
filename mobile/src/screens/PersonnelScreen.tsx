@@ -1139,10 +1139,25 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!taskEmp}
         title="Görev ata"
-        subtitle={taskEmp ? `${taskEmp.full_name} · proje görevi seçin veya yeni yazın` : undefined}
+        subtitle={taskEmp ? `${taskEmp.full_name} · dış görev gününü yazın, proje seçin` : undefined}
         onClose={() => { setTaskEmp(null); setTaskDays(""); }}
         testID="task-assign-sheet"
       >
+        <Field
+          label="Dış görev kaç gün?"
+          testID="task-assign-days"
+          value={taskDays}
+          onChangeText={setTaskDays}
+          keyboardType="number-pad"
+          placeholder="Örn: 3"
+        />
+        {parseTaskDays(taskDays) ? (
+          <Muted testID="task-assign-days-hint">
+            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
+          </Muted>
+        ) : (
+          <Muted testID="task-assign-days-hint">Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır.</Muted>
+        )}
         <GroupedSelect
           label="Proje"
           testID="task-project-select"
@@ -1162,29 +1177,20 @@ export function PersonnelScreen() {
         {!taskId ? (
           <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
         ) : null}
-        <Field
-          label="Dış görev gün sayısı"
-          testID="task-assign-days"
-          value={taskDays}
-          onChangeText={setTaskDays}
-          keyboardType="number-pad"
-          placeholder="Örn: 3"
-        />
-        {parseTaskDays(taskDays) ? (
-          <Muted testID="task-assign-days-hint">
-            {parseTaskDays(taskDays)} gün · bitiş {dueDateFromDays(todayIso(), parseTaskDays(taskDays) || 1)}
-          </Muted>
-        ) : null}
         <Muted testID="task-assign-field-hint">
           {(() => {
             const proj = projects.find((p) => idOf(p) === taskProjectId);
-            if (!proj) return "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır.";
-            return workplaceHint({
-              kind: "task",
-              task_title: taskTitle || "Görev",
-              project_name: proj.name,
-              has_coords: proj.latitude != null && proj.longitude != null,
-            }, true);
+            const days = parseTaskDays(taskDays);
+            const hint = !proj
+              ? "Dış görevde giriş/çıkış görev yerinden yapılır; proje konumu iş yeri sayılır."
+              : workplaceHint({
+                kind: "task",
+                task_title: taskTitle || "Görev",
+                project_name: proj.name,
+                has_coords: proj.latitude != null && proj.longitude != null,
+                duration_days: days || undefined,
+              }, true);
+            return days ? `${hint} · ${days} gün` : hint;
           })()}
         </Muted>
         <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
