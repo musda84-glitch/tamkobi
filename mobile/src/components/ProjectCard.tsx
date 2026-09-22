@@ -210,21 +210,28 @@ export function ProjectCard({
           onPress={() => go("ProjectDetail", { id, section: "expenses" })}
         />
       </Row>
-      {taskBits || trackLabel ? (
-        <Pressable onPress={() => go("ProjectDetail", { id })}>
-          <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-            {taskBits ? (
-              <View testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
-              </View>
-            ) : null}
-            {trackLabel ? (
-              <View testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
-              </View>
-            ) : null}
-          </Row>
-        </Pressable>
+      {taskBits || trackLabel || onCollect ? (
+        <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          {taskBits ? (
+            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
+            </Pressable>
+          ) : null}
+          {trackLabel ? (
+            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
+            </Pressable>
+          ) : null}
+          {onCollect ? (
+            <Pressable
+              testID={`project-collect-badge-${id}`}
+              onPress={onCollect}
+              style={{ backgroundColor: colors.emerald50, borderRadius: 8, borderWidth: 1, borderColor: "#A7F3D0", paddingHorizontal: 8, paddingVertical: 4 }}
+            >
+              <Text style={{ fontWeight: "700", color: "#047857", fontSize: 11 }}>Tahsilat</Text>
+            </Pressable>
+          ) : null}
+        </Row>
       ) : null}
       {canEdit ? (
         <View style={{ marginTop: 8 }}>
