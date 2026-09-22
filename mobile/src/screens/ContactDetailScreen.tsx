@@ -33,6 +33,7 @@ import {
   paymentAmountColor,
   paymentAmountPrefix,
   paymentKindLabel,
+  paymentRowSurface,
   paymentEditFrom,
   paymentEditPayload,
   planPayload,
@@ -924,53 +925,72 @@ export function ContactDetailScreen() {
             const showChequeBtns = (canBank || canCheque) && isChequePayment(p);
             const tone = paymentAmountColor(p);
             const kind = paymentKindLabel(p);
+            const surface = paymentRowSurface(p);
             return (
-              <View key={idOf(p) || idx} style={{ gap: 4 }}>
+              <View
+                key={idOf(p) || idx}
+                style={{
+                  gap: 4,
+                  backgroundColor: surface.bg,
+                  borderRadius: 12,
+                  borderLeftWidth: 4,
+                  borderLeftColor: surface.border,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}
+              >
                 <ListRow
                   testID={`detail-pay-${idOf(p) || idx}`}
-                  title={
-                    <Text style={{ fontWeight: "700", fontSize: 14, color: tone }}>
-                      {`${kind}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
-                    </Text>
-                  }
+                  title={`${kind}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
+                  titleColor={tone}
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
                   right={`${paymentAmountPrefix(p)}${fmtMoney(p.amount)}`}
                   rightColor={tone}
+                  badge={<Badge label={kind} tone={surface.badge} />}
                 />
                 <Row>
-                  <PrimaryButton
-                    title="Makbuz"
-                    onPress={() => printPayment(p)}
-                    color={colors.slate800}
-                    testID={`pay-print-${idOf(p) || idx}`}
-                  />
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton
+                      title="Makbuz"
+                      onPress={() => printPayment(p)}
+                      color={colors.slate800}
+                      testID={`pay-print-${idOf(p) || idx}`}
+                    />
+                  </View>
+                  {showChequeBtns ? (
+                    <>
+                      <View style={{ flex: 1 }}>
+                        <PrimaryButton
+                          title="Düzenle"
+                          onPress={() => {
+                            if (chequeId) go("ChequeDetail", { id: chequeId });
+                            else go("Cheques");
+                          }}
+                          color={colors.secondary}
+                          testID={`pay-cheque-edit-${chequeId || idOf(p) || idx}`}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <PrimaryButton
+                          title="Sil"
+                          onPress={() => removeChequePayment(p)}
+                          color={colors.danger}
+                          testID={`pay-cheque-delete-${chequeId || idOf(p) || idx}`}
+                        />
+                      </View>
+                    </>
+                  ) : canBank && !locked ? (
+                    <>
+                      <View style={{ flex: 1 }}>
+                        <PrimaryButton title="Düzenle" onPress={() => openPaymentEdit(p)} color={colors.secondary} testID={`pay-edit-btn-${idOf(p)}`} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <PrimaryButton title="Sil" onPress={() => removePayment(p)} color={colors.danger} testID={`pay-delete-btn-${idOf(p)}`} />
+                      </View>
+                    </>
+                  ) : null}
                 </Row>
-                {showChequeBtns ? (
-                  <Row>
-                    <PrimaryButton
-                      title="Düzenle"
-                      onPress={() => {
-                        if (chequeId) go("ChequeDetail", { id: chequeId });
-                        else go("Cheques");
-                      }}
-                      color={colors.secondary}
-                      testID={`pay-cheque-edit-${chequeId || idOf(p) || idx}`}
-                    />
-                    <PrimaryButton
-                      title="Sil"
-                      onPress={() => removeChequePayment(p)}
-                      color={colors.danger}
-                      testID={`pay-cheque-delete-${chequeId || idOf(p) || idx}`}
-                    />
-                  </Row>
-                ) : canBank && !locked ? (
-                  <Row>
-                    <PrimaryButton title="Düzenle" onPress={() => openPaymentEdit(p)} color={colors.secondary} testID={`pay-edit-btn-${idOf(p)}`} />
-                    <PrimaryButton title="Sil" onPress={() => removePayment(p)} color={colors.danger} testID={`pay-delete-btn-${idOf(p)}`} />
-                  </Row>
-                ) : locked ? (
-                  <Muted>{lockedPaymentLabel(p)} kaynaklı hareket kendi modülünden yönetilir.</Muted>
-                ) : null}
+                {locked && !showChequeBtns ? <Muted>{lockedPaymentLabel(p)} kaynaklı hareket kendi modülünden yönetilir.</Muted> : null}
               </View>
             );
           })}

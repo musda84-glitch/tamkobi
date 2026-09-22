@@ -141,6 +141,12 @@ export function paymentAmountPrefix(p: ContactPayment): string {
   return isPaymentInflow(p) ? "+" : "-";
 }
 
+export function paymentRowSurface(p: ContactPayment): { bg: string; border: string; badge: "green" | "red" } {
+  return isPaymentInflow(p)
+    ? { bg: "#ECFDF5", border: "#059669", badge: "green" }
+    : { bg: "#FFF1F2", border: "#E11D48", badge: "red" };
+}
+
 /** Banka entegrasyonu, ortak ve çek kaynaklı hareketler kendi modülünden yönetilir. */
 export function isLockedPayment(p: ContactPayment): boolean {
   return p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || p.source === "expense" || p.source === "invoice" || !!p.virtual;
