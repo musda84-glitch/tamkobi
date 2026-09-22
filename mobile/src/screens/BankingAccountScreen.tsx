@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -8,31 +8,38 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import { accountBalance, accountTypeTr, normalizeAccountType, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
+import type { Contact } from "../types";
+import { accountBalance, accountCashTxRequest, accountTypeTr, normalizeAccountType, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function BankingAccountScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
+  const canExp = can("/expenses", "edit");
   const { id } = useLocalSearchParams<{ id: string }>();
   const [acc, setAcc] = useState<BankAccount | null>(null);
   const [txs, setTxs] = useState<BankTx[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [txType, setTxType] = useState<"inflow" | "outflow">("inflow");
   const [amount, setAmount] = useState("");
   const [desc, setDesc] = useState("");
+  const [contactId, setContactId] = useState("");
+  const [custQ, setCustQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [accounts, rows] = await Promise.all([
+      const [accounts, rows, cnt] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<BankTx[]>(client, "/banking/transactions", { company_id: companyId, account_id: id }),
+        get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
       ]);
       const found = (accounts || []).find((a) => idOf(a) === id) || null;
       setAcc(found);
       setTxs(rows || []);
+      setContacts(cnt || []);
       setError(found ? null : "Hesap bulunamadı.");
     } catch (err) {
       setError(apiErrorMessage(err, "Hesap yüklenemedi."));
@@ -41,27 +48,38 @@ export function BankingAccountScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const picked = contacts.find((c) => idOf(c) === contactId);
+  const hits = useMemo(() => {
+    const s = custQ.trim().toLowerCase();
+    if (s.length < 2) return [];
+    return contacts
+      .filter((c) => [c.name, c.phone, c.tax_number_or_id, c.company_title].some((v) => String(v || "").toLowerCase().includes(s)))
+      .slice(0, 8);
+  }, [contacts, custQ]);
+
   const saveTx = async () => {
     if (!canEdit) { setError("Hareket yetkiniz yok."); return; }
     const amt = n(amount);
     if (!(amt > 0)) { setError("Geçerli bir tutar girin."); return; }
+    if (txType === "inflow" && !contactId) { setError("Tahsilat için cari seçin."); return; }
     if (!acc) return;
     setBusy(true);
     try {
-      await post(client, "/banking/transactions", {
-        company_id: companyId,
-        account_id: id,
-        account_name: acc.account_name,
+      const req = accountCashTxRequest({
+        companyId,
+        account: acc,
         type: txType,
-        category: txType === "inflow" ? "Tahsilat" : "Tediye",
         amount: amt,
-        currency: acc.currency || "TRY",
-        description: desc.trim() || (txType === "inflow" ? "Tahsilat" : "Tediye"),
+        description: desc.trim(),
         date: todayIso(),
-        source: "manual",
+        contactId,
+        contactName: picked?.name || "",
       });
+      await post(client, req.path, req.body);
       setAmount("");
       setDesc("");
+      setContactId("");
+      setCustQ("");
       setMessage(txType === "inflow" ? "Tahsilat kaydedildi." : "Tediye kaydedildi.");
       setError(null);
       await load();
@@ -96,6 +114,14 @@ export function BankingAccountScreen() {
       {canEdit ? (
         <PrimaryButton title="Hesabı düzenle" onPress={() => go("BankingEdit", { id })} color={colors.secondary} testID="bank-edit" />
       ) : null}
+      {canExp ? (
+        <PrimaryButton
+          title="Masraf ekle"
+          onPress={() => go("ExpenseNew", { account_id: id })}
+          color={colors.danger}
+          testID="bank-expense-btn"
+        />
+      ) : null}
       {canEdit && !isCard && !acc.is_integrated ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Tahsilat / tediye</Text>
@@ -103,6 +129,34 @@ export function BankingAccountScreen() {
             <Chip label="Tahsilat" active={txType === "inflow"} testID="bank-tx-in" onPress={() => setTxType("inflow")} />
             <Chip label="Tediye" active={txType === "outflow"} color={colors.danger} testID="bank-tx-out" onPress={() => setTxType("outflow")} />
           </Row>
+          {contactId ? (
+            <ListRow
+              testID="bank-tx-contact"
+              title={picked?.name || "Cari"}
+              subtitle={txType === "inflow" ? "Tahsilat bu cariye işlenir · değiştir" : "Ödeme bu cariye işlenir · değiştir"}
+              onPress={() => { setContactId(""); setCustQ(""); }}
+            />
+          ) : (
+            <>
+              <Field
+                label={txType === "inflow" ? "Cari ara" : "Cari ara (opsiyonel)"}
+                testID="bank-tx-contact-search"
+                value={custQ}
+                onChangeText={setCustQ}
+                placeholder="Ad / telefon / VKN"
+              />
+              {hits.map((c) => (
+                <ListRow
+                  key={idOf(c)}
+                  testID={`bank-tx-contact-${idOf(c)}`}
+                  title={c.name}
+                  subtitle={[c.phone, c.tax_number_or_id].filter(Boolean).join(" · ") || "Cari"}
+                  onPress={() => { setContactId(idOf(c)); setCustQ(""); }}
+                />
+              ))}
+              {txType === "inflow" ? <Muted>Tahsilat için cari seçin; tutar cari bakiyesine işlenir.</Muted> : null}
+            </>
+          )}
           <Field label="Tutar" testID="bank-tx-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="bank-tx-desc" value={desc} onChangeText={setDesc} />
           <PrimaryButton title={busy ? "Kaydediliyor…" : "Hareketi kaydet"} onPress={saveTx} loading={busy} color={colors.primary} testID="bank-tx-save" />

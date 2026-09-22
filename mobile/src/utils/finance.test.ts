@@ -16,6 +16,7 @@ import {
   splitPaymentTarget,
   validateContactPayment,
   contactPaymentRequest,
+  accountCashTxRequest,
   totalLiquidity,
   validateAccountDraft,
   validateExpenseDraft,
@@ -241,6 +242,42 @@ describe("finance drafts", () => {
     });
     expect(bank.path).toBe("/banking/transactions");
     expect(bank.body).toMatchObject({ category: "Cari Ödeme", contact_id: "ct1", account_name: "Kasa", source: "manual" });
+  });
+
+  it("posts cash-account tahsilat with optional cari", () => {
+    const acc = { id: "k1", account_name: "Matek Kasa", currency: "TRY" };
+    const plain = accountCashTxRequest({
+      companyId: "c1",
+      account: acc,
+      type: "inflow",
+      amount: 100,
+      description: "",
+      date: "2026-09-22",
+    });
+    expect(plain.body).toMatchObject({
+      account_id: "k1",
+      category: "Tahsilat",
+      description: "Tahsilat",
+      date: "2026-09-22",
+      source: "manual",
+    });
+    expect(plain.body).not.toHaveProperty("contact_id");
+    const withCari = accountCashTxRequest({
+      companyId: "c1",
+      account: acc,
+      type: "inflow",
+      amount: 80,
+      description: "Nakit",
+      date: "2026-09-22",
+      contactId: "ct9",
+      contactName: "Ali BAL",
+    });
+    expect(withCari.body).toMatchObject({
+      category: "Cari Tahsilat",
+      contact_id: "ct9",
+      contact_name: "Ali BAL",
+      date: "2026-09-22",
+    });
   });
 
   it("picks the latest 3 movements per group card", () => {

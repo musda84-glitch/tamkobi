@@ -421,6 +421,48 @@ export function contactPaymentRequest(opts: {
   };
 }
 
+/** Kasa/banka kartından manuel tahsilat veya tediye. Cari seçilirse cari bakiyesi de işlenir. */
+export function accountCashTxRequest(opts: {
+  companyId: string;
+  account: BankAccount;
+  type: "inflow" | "outflow";
+  amount: number;
+  description: string;
+  date: string;
+  contactId?: string;
+  contactName?: string;
+}) {
+  const contactId = String(opts.contactId || "").trim();
+  if (contactId) {
+    const req = contactPaymentRequest({
+      companyId: opts.companyId,
+      contactId,
+      contactName: opts.contactName || "",
+      type: opts.type,
+      amount: opts.amount,
+      accountId: idOf(opts.account),
+      description: opts.description || (opts.type === "inflow" ? "Tahsilat" : "Tediye"),
+      accounts: [opts.account],
+    });
+    return { path: req.path, body: { ...req.body, date: opts.date } };
+  }
+  return {
+    path: "/banking/transactions",
+    body: {
+      company_id: opts.companyId,
+      account_id: idOf(opts.account),
+      account_name: opts.account.account_name,
+      type: opts.type,
+      category: opts.type === "inflow" ? "Tahsilat" : "Tediye",
+      amount: opts.amount,
+      currency: opts.account.currency || "TRY",
+      description: opts.description.trim() || (opts.type === "inflow" ? "Tahsilat" : "Tediye"),
+      date: opts.date,
+      source: "manual",
+    },
+  };
+}
+
 export function totalLiquidity(accounts: BankAccount[]): number {
   return (accounts || [])
     .filter((a) => normalizeAccountType(a.type) !== "credit_card")
