@@ -116,6 +116,11 @@ describe("workDocs", () => {
     expect(workItemNameHits(products, { name: "dekor", is_service: false }).map((p) => p.id)).toEqual(["p1"]);
     expect(workItemNameHits(products, { name: "dekor", is_service: true })).toEqual([]);
     expect(workItemNameHits(products, { name: "Dekorasyon Profili", product_id: "p1", is_service: false })).toEqual([]);
+    expect(workItemNameHits(products, {
+      name: "*Koli içi 14 boy*Boy ölçüsü 290cm* DL120-ANT-G74 Dekorasyon Profili (Decoration Profile)",
+      is_service: false,
+    }).map((p) => p.id)).toEqual(["p1"]);
+    expect(workItemNameHits(products, { name: "DL120", is_service: false }).map((p) => p.id)).toEqual(["p1"]);
     const service = toggleWorkItemService({ ...emptyItem(), product_id: "p1", name: "Profil", image_url: "x.jpg" });
     expect(service.is_service).toBe(true);
     expect(service.product_id).toBe("");

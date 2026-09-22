@@ -222,6 +222,30 @@ export function toggleWorkItemService(item: WorkItem): WorkItem {
   return { ...item, is_service: false };
 }
 
+/** Ad alanındaki uzun metinden SKU / kelime parçaları (stok araması). */
+export function workItemSearchTokens(name: string): string[] {
+  const raw = String(name || "").trim();
+  if (raw.length < 2) return [];
+  const parts = raw
+    .split(/[\s*,;|/]+/)
+    .map((t) => t.replace(/[():]+/g, "").trim())
+    .filter((t) => t.length >= 2);
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const part of parts) {
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(key);
+  }
+  if (!seen.has(raw.toLowerCase()) && raw.length >= 2 && raw.length <= 40) tokens.unshift(raw.toLowerCase());
+  return tokens;
+}
+
+function productSearchHay<T extends { name?: string; sku?: string; barcode?: string; category?: string }>(p: T): string[] {
+  return [p.name, p.sku, p.barcode, p.category].map((v) => String(v || "").toLowerCase()).filter(Boolean);
+}
+
 export function workItemNameHits<T extends { id?: string; _id?: string; name?: string; sku?: string; barcode?: string; category?: string }>(
   products: T[] | null | undefined,
   item: Pick<WorkItem, "name" | "is_service" | "product_id">,
@@ -231,11 +255,14 @@ export function workItemNameHits<T extends { id?: string; _id?: string; name?: s
   const q = String(item.name || "").trim();
   if (q.length < 2) return [];
   const pid = item.product_id || "";
-  const s = q.toLowerCase();
+  const tokens = workItemSearchTokens(q);
+  const full = q.toLowerCase();
   return (products || [])
     .filter((p) => {
-      if (pid && idOf(p) === pid && String(p.name || "") === q) return false;
-      return [p.name, p.sku, p.barcode, p.category].some((v) => String(v || "").toLowerCase().includes(s));
+      if (pid && idOf(p) === pid) return false;
+      const hay = productSearchHay(p);
+      if (hay.some((h) => h.includes(full) || (full.length <= 48 && full.includes(h)))) return true;
+      return tokens.some((t) => hay.some((h) => h.includes(t) || (t.length >= 4 && t.includes(h))));
     })
     .slice(0, limit);
 }
