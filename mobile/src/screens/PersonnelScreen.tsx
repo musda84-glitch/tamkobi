@@ -26,8 +26,13 @@ import {
   employeeCompRows,
   unpaidPayrollTotal,
   employeePayMoves,
-  EMPLOYEE_CARD_ACTIONS,
+  EMPLOYEE_CARD_PAY_ACTIONS,
+  EMPLOYEE_CARD_WORK_ACTIONS,
   allowanceDue,
+  bonusDue,
+  bonusPayPayload,
+  enrichEmployeeBalance,
+  overtimeDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
   overtimePayload,
@@ -93,6 +98,10 @@ export function PersonnelScreen() {
   const [taskProjectId, setTaskProjectId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
+  const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
+  const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
+  const [extraAmount, setExtraAmount] = useState("");
+  const [extraNote, setExtraNote] = useState("");
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -113,7 +122,7 @@ export function PersonnelScreen() {
       setAttendance(att);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), card?.balance] as const;
+        return [idOf(e), enrichEmployeeBalance(card, month)] as const;
       }));
       setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance] => !!row[1])));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
@@ -268,6 +277,65 @@ export function PersonnelScreen() {
     }
   };
 
+  const openAdvance = (emp: Employee) => {
+    setAdvanceEmp(emp);
+    setAdvanceAmount("");
+    setAdvanceNote("");
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+  };
+
+  const openExtraPay = (emp: Employee, kind: "bonus" | "overtime") => {
+    const bal = balances[idOf(emp)];
+    const due = kind === "overtime" ? overtimeDue(bal) : bonusDue(bal);
+    setExtraEmp(emp);
+    setExtraKind(kind);
+    setExtraAmount(due > 0 ? String(due) : "");
+    setExtraNote("");
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+  };
+
+  const saveExtraPay = async () => {
+    if (!extraEmp) return;
+    const invalid = validateAdvance(extraAmount);
+    if (invalid) { setError(invalid === "Avans tutarı girin." ? "Tutar girin." : invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/bonuses", bonusPayPayload(
+        idOf(extraEmp),
+        extraKind,
+        extraAmount,
+        month,
+        payAccount,
+        extraNote,
+      ));
+      const label = extraKind === "overtime" ? "Fazla mesai ücreti" : "Prim";
+      setExtraEmp(null);
+      setExtraAmount("");
+      setExtraNote("");
+      setMessage(`${extraEmp.full_name} için ${label.toLowerCase()} kaydedildi.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Ödeme kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const empActionHandlers = {
+    advance: openAdvance,
+    salary: openSalaryPay,
+    task: openTaskAssign,
+    overtime: openOvertime,
+    meal: (emp: Employee) => openAllowance(emp, "meal"),
+    transport: (emp: Employee) => openAllowance(emp, "transport"),
+    bonus: (emp: Employee) => openExtraPay(emp, "bonus"),
+    otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
+  };
+
   const saveTaskAssign = async () => {
     if (!taskEmp) return;
     const invalid = validateTaskAssign(taskProjectId, taskId, taskTitle);
@@ -416,9 +484,9 @@ export function PersonnelScreen() {
                     </View>
                   ))}
                 </Row>
-                {due !== comp[3].value || bal?.advances ? (
+                {due !== (comp.find((r) => r.key === "total")?.value ?? 0) || bal?.advances ? (
                   <Row style={{ justifyContent: "space-between" }}>
-                    {due !== comp[3].value ? (
+                    {due !== (comp.find((r) => r.key === "total")?.value ?? 0) ? (
                       <View>
                         <Muted>Kalan alacak</Muted>
                         <Text style={{ fontWeight: "700", color: due > 0 ? colors.danger : colors.text }}>{fmtMoney(due)}</Text>
@@ -432,50 +500,27 @@ export function PersonnelScreen() {
                     ) : null}
                   </Row>
                 ) : null}
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
-                  <PayChip
-                    title="Hareketler"
-                    color={colors.secondary}
-                    bg="#F1F5F9"
-                    testID={`emp-card-moves-btn-${eid}`}
-                    onPress={() => openMoves(emp)}
-                    wide
-                  />
-                  {canEdit ? EMPLOYEE_CARD_ACTIONS.map((action) => {
-                      const press = {
-                        advance: () => {
-                          setAdvanceEmp(emp);
-                          setAdvanceAmount("");
-                          setAdvanceNote("");
-                          get<Partner[]>(client, "/banking/partners", { company_id: companyId })
-                            .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
-                            .catch(() => undefined);
-                        },
-                        salary: () => openSalaryPay(emp),
-                        task: () => openTaskAssign(emp),
-                        overtime: () => openOvertime(emp),
-                        meal: () => openAllowance(emp, "meal"),
-                        transport: () => openAllowance(emp, "transport"),
-                      }[action.key];
-                      const tone = {
-                        advance: { color: "#B45309", bg: colors.amber50 },
-                        salary: { color: colors.primaryHover, bg: colors.emerald50 },
-                        task: { color: colors.indigo, bg: colors.indigo50 },
-                        overtime: { color: "#6D28D9", bg: colors.indigo50 },
-                        meal: { color: "#C2410C", bg: "#FFF7ED" },
-                        transport: { color: "#0E7490", bg: "#ECFEFF" },
-                      }[action.key];
-                      return (
-                        <PayChip
-                          key={action.key}
-                          title={action.title}
-                          color={tone.color}
-                          bg={tone.bg}
-                          testID={`emp-card-${action.key}-btn-${eid}`}
-                          onPress={press}
-                        />
-                      );
-                    }) : null}
+                <View style={{ gap: 8 }} testID={`emp-card-actions-${eid}`}>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    <PayChip
+                      title="Hareketler"
+                      color={colors.secondary}
+                      bg="#F1F5F9"
+                      testID={`emp-card-moves-btn-${eid}`}
+                      onPress={() => openMoves(emp)}
+                      wide
+                    />
+                    {canEdit ? EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
+                      <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
+                    )) : null}
+                  </View>
+                  {canEdit ? (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-work-actions-${eid}`}>
+                      {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
+                        <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
               </Card>
             );
@@ -678,6 +723,45 @@ export function PersonnelScreen() {
       </B2BSheet>
 
       <B2BSheet
+        visible={!!extraEmp}
+        title={extraKind === "overtime" ? "Mesai ücreti öde" : "Prim öde"}
+        subtitle={extraEmp ? `${extraEmp.full_name} · ${month}` : undefined}
+        onClose={() => setExtraEmp(null)}
+        testID="extra-pay-sheet"
+      >
+        <Field
+          label="Tutar (₺)"
+          testID="extra-pay-amount"
+          value={extraAmount}
+          onChangeText={setExtraAmount}
+          keyboardType="numeric"
+          placeholder={extraKind === "overtime" ? "Fazla mesai ücreti" : "Prim tutarı"}
+        />
+        <Field
+          label="Açıklama"
+          testID="extra-pay-note"
+          value={extraNote}
+          onChangeText={setExtraNote}
+          placeholder={extraKind === "overtime" ? "Fazla mesai ücreti" : "Prim"}
+        />
+        <GroupedSelect
+          label="Kasa / Banka / Ortak"
+          testID="extra-pay-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Şimdi ödenmeyecek (kayıt olarak bırak)"
+        />
+        <PrimaryButton
+          title={payAccount ? "Kaydet & Öde" : "Kaydet"}
+          testID="extra-pay-submit"
+          color={extraKind === "overtime" ? "#6D28D9" : "#B45309"}
+          loading={busy}
+          onPress={saveExtraPay}
+        />
+      </B2BSheet>
+
+      <B2BSheet
         visible={!!payItem}
         title="Maaş ödemesi onayı"
         subtitle={payItem ? `${payItem.employee_name} · ${payItem.period} · ${fmtMoney(payItem.final_payable)}` : undefined}
@@ -744,6 +828,40 @@ export function PersonnelScreen() {
         <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
       </B2BSheet>
     </Screen>
+  );
+}
+
+const EMP_ACTION_TONE: Record<string, { color: string; bg: string }> = {
+  advance: { color: "#B45309", bg: colors.amber50 },
+  salary: { color: colors.primaryHover, bg: colors.emerald50 },
+  task: { color: colors.indigo, bg: colors.indigo50 },
+  overtime: { color: "#6D28D9", bg: colors.indigo50 },
+  meal: { color: "#C2410C", bg: "#FFF7ED" },
+  transport: { color: "#0E7490", bg: "#ECFEFF" },
+  bonus: { color: "#B45309", bg: "#FFFBEB" },
+  otpay: { color: "#6D28D9", bg: "#F5F3FF" },
+};
+
+function EmpActionChip({
+  action,
+  emp,
+  eid,
+  handlers,
+}: {
+  action: { key: string; title: string };
+  emp: Employee;
+  eid: string;
+  handlers: Record<string, (emp: Employee) => void>;
+}) {
+  const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
+  return (
+    <PayChip
+      title={action.title}
+      color={tone.color}
+      bg={tone.bg}
+      testID={`emp-card-${action.key}-btn-${eid}`}
+      onPress={() => handlers[action.key]?.(emp)}
+    />
   );
 }
 

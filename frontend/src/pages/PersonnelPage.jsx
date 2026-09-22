@@ -317,6 +317,14 @@ export default function PersonnelPage() {
   };
 
   const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
+  const openBonusFor = (emp) => {
+    const due = Number(emp?.balance?.bonus_pending || 0) || 0;
+    setQuickPay({ p: payrollStubFor(emp), type: "bonus", amount: due > 0 ? due : "" });
+  };
+  const openOtPayFor = (emp) => {
+    const due = Number(emp?.balance?.overtime_due ?? emp?.balance?.overtime_pay || 0) || 0;
+    setQuickPay({ p: payrollStubFor(emp), type: "overtime", amount: due > 0 ? due : "" });
+  };
 
   const openMealExpenseFor = (emp) => {
     const bal = emp?.balance || {};
@@ -601,7 +609,16 @@ export default function PersonnelPage() {
                   {Number(emp.balance?.remaining || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
                 </span>
               </div>
+              <div className="flex items-center justify-between text-xs" data-testid={`employee-bonus-due-${emp.tc_kimlik || empKey}`}>
+                <span className="text-slate-400">Prim hakedişi:</span>
+                <span className="text-sm font-bold text-amber-800">{Number(emp.balance?.bonus_pending || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
+              </div>
+              <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>
+                <span className="text-slate-400">Fazla mesai ücreti:</span>
+                <span className="text-sm font-bold text-violet-800">{Number(emp.balance?.overtime_due ?? emp.balance?.overtime_pay || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
+              </div>
             </div>
+            <div className="space-y-1.5">
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
@@ -622,22 +639,6 @@ export default function PersonnelPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setTaskEmp(emp)}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
-                data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <ClipboardList className="w-3.5 h-3.5" /> Görev
-              </button>
-              <button
-                type="button"
-                onClick={() => openOvertimeFor(emp)}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
-                data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Timer className="w-3.5 h-3.5" /> F. Mesai
-              </button>
-              <button
-                type="button"
                 onClick={() => openMealExpenseFor(emp)}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200"
                 title="Yemek ücreti — masraf olarak kaydedilir"
@@ -654,6 +655,41 @@ export default function PersonnelPage() {
               >
                 <Bus className="w-3.5 h-3.5" /> Yol
               </button>
+              <button
+                type="button"
+                onClick={() => openBonusFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200"
+                data-testid={`employee-bonus-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Gift className="w-3.5 h-3.5" /> Prim öde
+              </button>
+              <button
+                type="button"
+                onClick={() => openOtPayFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                data-testid={`employee-otpay-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Timer className="w-3.5 h-3.5" /> Mesai öde
+              </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
+              <button
+                type="button"
+                onClick={() => setTaskEmp(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" /> Görev
+              </button>
+              <button
+                type="button"
+                onClick={() => openOvertimeFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border-violet-200"
+                data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Timer className="w-3.5 h-3.5" /> F. Mesai
+              </button>
+              </div>
             </div>
             <button onClick={() => setCardEmp(emp)} className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold" data-testid={`employee-card-btn-${emp.tc_kimlik}`}>Personel Kartı</button>
           </div>
