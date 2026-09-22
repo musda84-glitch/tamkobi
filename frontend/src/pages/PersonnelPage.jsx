@@ -16,6 +16,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
+import { isDailyWage, payrollWageLine, totalMonthlyLoad } from "../utils/personnelWage";
 
 import {
   UserCheck,
@@ -360,7 +361,8 @@ export default function PersonnelPage() {
 
   const requestsFor = (emp) => pendingReqs.filter((it) => empIdOf(it) === empIdOf(emp));
 
-  const totalMonthlyPayroll = employees.reduce((sum, e) => sum + (e.salary || 0), 0);
+  const totalMonthlyPayroll = totalMonthlyLoad(employees);
+  const hasDaily = employees.some(isDailyWage);
 
   return (
     <div className="space-y-6" data-testid="personnel-page">
@@ -370,6 +372,7 @@ export default function PersonnelPage() {
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Personel & Bordro Modülü</h1>
           <p className="text-xs sm:text-sm text-slate-500">
             Aylık Toplam Net Maaş Yükü: <span className="font-bold text-slate-900">{totalMonthlyPayroll.toLocaleString('tr-TR')} ₺</span>
+            {hasDaily ? <span className="text-slate-400"> · yevmiye × 26 gün tahmini</span> : null}
           </p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -429,6 +432,7 @@ export default function PersonnelPage() {
                   </div>
                   <div className="min-w-0">
                   <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
+                  {isDailyWage(emp) ? <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
                   </div>
@@ -491,8 +495,8 @@ export default function PersonnelPage() {
 
             <div className="pt-2 border-t border-slate-100 space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">{emp.pay_type === "daily" ? "Yevmiye:" : "Net Maaş:"}</span>
-                <span className="text-sm font-bold text-slate-900">{emp.pay_type === "daily" ? `${Number(emp.daily_wage || 0).toLocaleString("tr-TR")} ₺ / gün` : `${emp.salary?.toLocaleString("tr-TR")} ₺`}</span>
+                <span className="text-slate-400">{isDailyWage(emp) ? "Yevmiye:" : "Net Maaş:"}</span>
+                <span className="text-sm font-bold text-slate-900">{isDailyWage(emp) ? `${Number(emp.daily_wage || 0).toLocaleString("tr-TR")} ₺ / gün` : `${emp.salary?.toLocaleString("tr-TR")} ₺`}</span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
                 <span className="text-slate-400">Kalan Alacak:</span>
@@ -567,12 +571,12 @@ export default function PersonnelPage() {
               {payrolls.map((p) => (
                 <tr key={p.id || p._id} className="hover:bg-slate-50/70 transition">
                   <td className="px-4 py-2.5">
-                    <div className="font-bold text-slate-900">{p.employee_name}</div>
+                    <div className="font-bold text-slate-900">{p.employee_name}{isDailyWage(p) ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Yevmiye</span> : null}</div>
                     <div className="text-slate-400 text-[11px] font-mono">{p.period} Dönemi</div>
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-700 font-medium">
                     {p.net_salary?.toLocaleString('tr-TR')} ₺
-                    {(p.overtime_pay > 0 || p.second_salary > 0) && <div className="text-[10px] font-normal text-slate-500" data-testid={`payroll-breakdown-${p.id || p._id}`}>{p.overtime_pay > 0 && <span className="text-indigo-700">+{p.overtime_pay.toLocaleString('tr-TR')} ₺ mesai ({p.overtime_hours} sa)</span>}{p.overtime_pay > 0 && p.second_salary > 0 && " · "}{p.second_salary > 0 && <span className="text-amber-700">+{p.second_salary.toLocaleString('tr-TR')} ₺ 2. maaş</span>}</div>}
+                    {(isDailyWage(p) || p.overtime_pay > 0 || p.second_salary > 0) && <div className="text-[10px] font-normal text-slate-500" data-testid={`payroll-breakdown-${p.id || p._id}`}>{isDailyWage(p) ? <span className="text-amber-700">{payrollWageLine(p)}</span> : null}{isDailyWage(p) && (p.overtime_pay > 0 || p.second_salary > 0) ? " · " : null}{p.overtime_pay > 0 && <span className="text-indigo-700">+{p.overtime_pay.toLocaleString('tr-TR')} ₺ mesai ({p.overtime_hours} sa)</span>}{p.overtime_pay > 0 && p.second_salary > 0 && " · "}{p.second_salary > 0 && <span className="text-amber-700">+{p.second_salary.toLocaleString('tr-TR')} ₺ 2. maaş</span>}</div>}
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-500 font-mono">
                     {p.gross_salary?.toLocaleString('tr-TR')} ₺

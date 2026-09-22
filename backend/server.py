@@ -8502,7 +8502,11 @@ async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", mont
     for e in emps:
         mine = [r for r in rows if r["employee_id"] == e["_id"]]
         ot = await attendance.overtime_pay_for_period(company, e, month)
-        summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], **attendance.summarize(mine),
+        summ = attendance.summarize(mine)
+        summary.append({"employee_id": e["_id"], "employee_name": e["full_name"], **summ,
+                        "pay_type": personnel_wage.pay_type_of(e),
+                        "daily_wage": personnel_wage.daily_wage_of(e),
+                        "period_wage": personnel_wage.period_wage(e, summ.get("days_present") or 0),
                         "overtime_pay": ot["amount"], "overtime_rate": ot["weekday_rate"], "overtime_method": ot["method"],
                         "schedule": attendance.merge_schedule(company, e), "has_override": bool(e.get("work_schedule")),
                         "today": clean_doc(next((r for r in mine if r["date"] == today_s), None) or {}) or None})

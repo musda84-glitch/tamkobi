@@ -35,6 +35,9 @@ export type Payroll = {
   overtime_hours?: number;
   second_salary?: number;
   bonus?: number;
+  pay_type?: string;
+  daily_wage?: number;
+  worked_days?: number;
   status?: string;
   paid_date?: string;
 };
@@ -106,11 +109,12 @@ export function bonusStatusTr(status?: string | null): string {
 export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] {
   const rows: EmployeePayMove[] = [];
   for (const p of card?.payrolls || []) {
+    const wage = payrollWageLine(p);
     rows.push({
       id: idOf(p) || `pay-${p.period || ""}`,
       kind: "payroll",
-      title: "Maaş",
-      subtitle: [p.period, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · "),
+      title: isDailyPayroll(p) ? "Yevmiye" : "Maaş",
+      subtitle: [p.period, wage, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · "),
       amount: Number(p.final_payable ?? p.net_salary) || 0,
       date: String(p.paid_date || p.period || ""),
       status: p.status,
@@ -172,6 +176,9 @@ export type AttendanceSummary = {
   overtime_hours?: number;
   overtime_pay?: number;
   late_count?: number;
+  pay_type?: string;
+  daily_wage?: number;
+  period_wage?: number;
   today?: AttendanceToday | null;
 };
 
@@ -271,9 +278,26 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
   return body;
 }
 
-export function isDailyWage(emp?: Employee | null): boolean {
+export function isDailyWage(emp?: Pick<Employee, "pay_type"> | null): boolean {
   const t = String(emp?.pay_type || "monthly").toLowerCase();
   return t === "daily" || t === "yevmiye" || t === "gunluk" || t === "günlük";
+}
+
+export function isDailyPayroll(p?: Pick<Payroll, "pay_type"> | null): boolean {
+  return isDailyWage(p);
+}
+
+export function dailyEarned(emp?: Employee | null, daysPresent = 0): number {
+  if (!isDailyWage(emp)) return 0;
+  const days = Math.max(0, Math.trunc(Number(daysPresent) || 0));
+  return Math.round((Number(emp?.daily_wage) || 0) * days * 100) / 100;
+}
+
+export function payrollWageLine(p?: Payroll | null): string {
+  if (!isDailyPayroll(p)) return "";
+  const days = Math.max(0, Math.trunc(Number(p?.worked_days) || 0));
+  const wage = Number(p?.daily_wage) || 0;
+  return `${days} gün × ${wage} ₺`;
 }
 
 export function monthlyPayrollLoad(employees: Employee[]): number {
@@ -559,6 +583,8 @@ export function employeeCardActionTitles(): string[] {
 
 export function payrollBreakdown(p: Payroll): string {
   const bits: string[] = [];
+  const wage = payrollWageLine(p);
+  if (wage) bits.push(wage);
   if ((p.overtime_pay || 0) > 0) bits.push(`+${p.overtime_pay} ₺ mesai${p.overtime_hours ? ` (${p.overtime_hours} sa)` : ""}`);
   if ((p.second_salary || 0) > 0) bits.push(`+${p.second_salary} ₺ 2. maaş`);
   return bits.join(" · ");

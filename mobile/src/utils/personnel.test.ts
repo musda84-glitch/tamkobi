@@ -59,6 +59,7 @@ describe("payroll helpers", () => {
     expect(payrollStatusTr("paid", "2026-09-15")).toBe("Ödendi (2026-09-15)");
     expect(payrollBreakdown({ overtime_pay: 1200, overtime_hours: 8, second_salary: 5000 })).toContain("mesai");
     expect(payrollBreakdown({ overtime_pay: 0, second_salary: 0 })).toBe("");
+    expect(payrollBreakdown({ pay_type: "daily", worked_days: 18, daily_wage: 1500 })).toBe("18 gün × 1500 ₺");
   });
 
   it("sums unpaid payroll and prefers card remaining", () => {
@@ -180,6 +181,11 @@ describe("employee card actions", () => {
     expect(rows[0].amount).toBe(3750);
     expect(rows[1].subtitle).toContain("Ödeme bekliyor");
     expect(employeePayMoves(null)).toEqual([]);
+    const daily = employeePayMoves({
+      payrolls: [{ id: "d1", period: "2026-09", status: "pending", pay_type: "daily", worked_days: 12, daily_wage: 1500, final_payable: 18000 }],
+    });
+    expect(daily[0].title).toBe("Yevmiye");
+    expect(daily[0].subtitle).toContain("12 gün × 1500 ₺");
   });
 });
 

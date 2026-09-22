@@ -36,3 +36,27 @@ def monthly_load(emp: dict | None) -> float:
         return float(emp.get("salary") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def wage_line(days_present: int = 0, daily_wage: float = 0) -> str:
+    """Bordro açıklaması: '18 gün × 1500 ₺'."""
+    try:
+        days = max(0, int(days_present or 0))
+    except (TypeError, ValueError):
+        days = 0
+    try:
+        wage = float(daily_wage or 0)
+    except (TypeError, ValueError):
+        wage = 0.0
+    if wage == int(wage):
+        wage_s = str(int(wage))
+    else:
+        wage_s = f"{wage:.2f}".rstrip("0").rstrip(".")
+    return f"{days} gün × {wage_s} ₺"
+
+
+def payroll_wage_line(payroll: dict | None) -> str:
+    p = payroll or {}
+    if pay_type_of(p) != "daily":
+        return ""
+    return wage_line(p.get("worked_days"), p.get("daily_wage"))
