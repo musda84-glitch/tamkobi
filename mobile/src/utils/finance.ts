@@ -265,12 +265,11 @@ export function virmanAccounts<T extends { is_integrated?: boolean }>(accounts: 
   return (accounts || []).filter((a) => !a.is_integrated);
 }
 
-const BANK_TAB_TYPES = new Set(["bank", "pos", "okc_pos"]);
 const POS_TAB_TYPES = new Set(["pos", "okc_pos"]);
 
-/** Kasa & Banka üst sekmesindeki Bankalar: banka + POS + ÖKC. */
+/** Üst sekmedeki Bankalar: yalnızca banka hesapları (POS ayrı sekmede). */
 export function isBankingBankAccount(a?: { type?: string } | null): boolean {
-  return BANK_TAB_TYPES.has(normalizeAccountType(a?.type));
+  return normalizeAccountType(a?.type) === "bank";
 }
 
 /** Üst sekmedeki POS: POS + ÖKC. */

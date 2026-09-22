@@ -155,7 +155,8 @@ describe("finance drafts", () => {
 
   it("puts partner cash and integrated banks on the virman list", () => {
     expect(isBankingBankAccount({ type: "bank" })).toBe(true);
-    expect(isBankingBankAccount({ type: "pos" })).toBe(true);
+    expect(isBankingBankAccount({ type: "pos" })).toBe(false);
+    expect(isBankingBankAccount({ type: "okc_pos" })).toBe(false);
     expect(isBankingBankAccount({ type: "cash_box" })).toBe(false);
     expect(isBankingPosAccount({ type: "pos" })).toBe(true);
     expect(isBankingPosAccount({ type: "okc_pos" })).toBe(true);
