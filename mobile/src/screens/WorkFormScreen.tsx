@@ -546,40 +546,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     : null;
 
   return (
-    <Screen
-      stickyTop={kind !== "project" ? (
-        <View
-          testID="q-stock-search"
-          style={{
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 12,
-            padding: 8,
-            gap: 6,
-            shadowColor: "#0F172A",
-            shadowOpacity: 0.1,
-            shadowRadius: 10,
-            shadowOffset: { width: 0, height: 4 },
-            elevation: 6,
-          }}
-        >
-          <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-          {prodHits.length ? (
-            <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
-              {prodHits.map((p) => (
-                <ProductPickRow
-                  key={idOf(p)}
-                  product={p}
-                  testID={`q-prod-${idOf(p)}`}
-                  onPress={() => addProductFromSearch(p)}
-                />
-              ))}
-            </ScrollView>
-          ) : null}
-        </View>
-      ) : undefined}
-    >
+    <Screen>
       <H1>{heading}</H1>
       <Muted>{kind === "quote" ? "Cari ve kalemlerle fiyat teklifi." : kind === "project" ? "İş / saha projesi, bütçe ve cari." : "Keşif, ölçü ve teklife dönüştürme."}</Muted>
       <ErrorBanner message={error} />
@@ -708,6 +675,31 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind !== "project" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
+          <View
+            testID="q-stock-search"
+            style={{
+              backgroundColor: colors.slate50,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 12,
+              padding: 8,
+              gap: 6,
+            }}
+          >
+            <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
+            {prodHits.length ? (
+              <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
+                {prodHits.map((p) => (
+                  <ProductPickRow
+                    key={idOf(p)}
+                    product={p}
+                    testID={`q-prod-${idOf(p)}`}
+                    onPress={() => addProductFromSearch(p)}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
+          </View>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
             const noteShown = kind === "quote" && workItemNoteOpen(it, noteOpen[i]);
