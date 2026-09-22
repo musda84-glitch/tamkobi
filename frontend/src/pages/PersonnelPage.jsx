@@ -36,6 +36,8 @@ import {
   Banknote,
   ClipboardList,
   Timer,
+  UtensilsCrossed,
+  Bus,
   Bell,
   Upload,
   Image as ImageIcon,
@@ -246,6 +248,32 @@ export default function PersonnelPage() {
   };
 
   const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
+
+  const openMealExpenseFor = (emp) => {
+    const bal = emp?.balance || {};
+    const due = Number(bal.meal_due ?? emp.meal_allowance ?? 0) || 0;
+    setQuickPay({
+      p: payrollStubFor(emp),
+      type: "expense",
+      category: "Yemek",
+      description: "Yemek ücreti",
+      amount: due > 0 ? due : "",
+      initialMode: "new",
+    });
+  };
+
+  const openTransportExpenseFor = (emp) => {
+    const bal = emp?.balance || {};
+    const due = Number(bal.transport_due ?? emp.transport_allowance ?? 0) || 0;
+    setQuickPay({
+      p: payrollStubFor(emp),
+      type: "expense",
+      category: "Yol / Ulaşım",
+      description: "Yol / ulaşım ödemesi",
+      amount: due > 0 ? due : "",
+      initialMode: "new",
+    });
+  };
 
   const openSalaryFor = async (emp) => {
     const eid = empIdOf(emp);
@@ -539,6 +567,24 @@ export default function PersonnelPage() {
               >
                 <Timer className="w-3.5 h-3.5" /> F. Mesai
               </button>
+              <button
+                type="button"
+                onClick={() => openMealExpenseFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200"
+                title="Yemek ücreti — masraf olarak kaydedilir"
+                data-testid={`employee-meal-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <UtensilsCrossed className="w-3.5 h-3.5" /> Yemek
+              </button>
+              <button
+                type="button"
+                onClick={() => openTransportExpenseFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200"
+                title="Yol ödemesi — masraf olarak kaydedilir"
+                data-testid={`employee-transport-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Bus className="w-3.5 h-3.5" /> Yol
+              </button>
             </div>
             <button onClick={() => setCardEmp(emp)} className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold" data-testid={`employee-card-btn-${emp.tc_kimlik}`}>Personel Kartı</button>
           </div>
@@ -807,7 +853,27 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
-      {quickPay && <QuickPayModal payroll={quickPay.p} type={quickPay.type} companyId={companyId} accounts={bankAccounts} allowances={(() => { const emp = employees.find((x) => empIdOf(x) === String(quickPay.p.employee_id || "")); return { meal: emp?.meal_allowance, transport: emp?.transport_allowance }; })()} onClose={() => setQuickPay(null)} onDone={loadPersonnelData} />}
+      {quickPay && <QuickPayModal
+        payroll={quickPay.p}
+        type={quickPay.type}
+        companyId={companyId}
+        accounts={bankAccounts}
+        initialMode={quickPay.initialMode}
+        initialCategory={quickPay.category}
+        initialDescription={quickPay.description}
+        initialAmount={quickPay.amount}
+        allowances={(() => {
+          const emp = employees.find((x) => empIdOf(x) === String(quickPay.p.employee_id || ""));
+          return {
+            meal: emp?.meal_allowance,
+            transport: emp?.transport_allowance,
+            mealDue: emp?.balance?.meal_due,
+            transportDue: emp?.balance?.transport_due,
+          };
+        })()}
+        onClose={() => setQuickPay(null)}
+        onDone={loadPersonnelData}
+      />}
       {taskEmp && (
         <EmployeeAssignTaskModal
           employee={taskEmp}
