@@ -37,7 +37,11 @@ import {
   validateOvertime,
   validateTaskAssign,
   parseYevmiyeDays,
+  parseYevmiyeWage,
+  pendingYevmiyeBonus,
   validateYevmiyeDays,
+  validateYevmiyeWage,
+  yevmiyeDaysFromBonus,
   yevmiyeDaysLine,
   yevmiyePayPayload,
 } from "./personnel";
@@ -109,14 +113,17 @@ describe("payroll helpers", () => {
       ["total", 35950],
     ]);
     expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200 }).find((r) => r.key === "yol")?.value).toBe(200);
-    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value])).toEqual([
-      ["Yemek", 100],
-      ["Yol", 0],
-      ["Yevmiye", 1500],
-      ["Prim hakedişi", 0],
-      ["Fazla mesai ücreti", 0],
-      ["Toplam", 1600],
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value, r.hint])).toEqual([
+      ["Yemek", 100, undefined],
+      ["Yol", 0, undefined],
+      ["Yevmiye", 1500, undefined],
+      ["Yevmiye günü", 0, "0 gün"],
+      ["Fazla mesai ücreti", 0, undefined],
+      ["Toplam", 1600, undefined],
     ]);
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, null, { daysPresent: 6 }).find((r) => r.key === "bonus")).toEqual({
+      key: "bonus", label: "Yevmiye günü", value: 9000, hint: "6 gün",
+    });
     expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
     expect(overtimeDue({ overtime_pay: 1800, overtime_due: 600 })).toBe(600);
     expect(enrichEmployeeBalance({
@@ -217,6 +224,18 @@ describe("employee card actions", () => {
     expect(parseYevmiyeDays("0")).toBeNull();
     expect(validateYevmiyeDays("")).toBe("1–31 arası gün sayısı girin.");
     expect(yevmiyeDaysLine({ pay_type: "daily", daily_wage: 1500 }, 6)).toBe("6 gün × 1500 ₺");
+    expect(validateYevmiyeWage("")).toBe("Yevmiye ücreti girin.");
+    expect(parseYevmiyeWage("1750,5")).toBe(1750.5);
+    expect(yevmiyePayPayload("e1", { pay_type: "daily", daily_wage: 1500 }, "6", "2026-09", "", "", "1750")).toMatchObject({
+      employee_id: "e1",
+      type: "yevmiye",
+      amount: 10500,
+      period: "2026-09",
+      note: "6 gün × 1750 ₺",
+      worked_days: 6,
+      daily_wage: 1750,
+      account_id: null,
+    });
     expect(yevmiyePayPayload("e1", { pay_type: "daily", daily_wage: 1500 }, "6", "2026-09", "acc1", "")).toMatchObject({
       employee_id: "e1",
       type: "yevmiye",
@@ -269,6 +288,13 @@ describe("employee card actions", () => {
     });
     expect(daily[0].title).toBe("Yevmiye");
     expect(daily[0].subtitle).toContain("12 gün × 1500 ₺");
+    const yev = employeePayMoves({
+      bonuses: [{ id: "y1", type: "yevmiye", amount: 9000, period: "2026-09", status: "pending", note: "6 gün × 1500 ₺", worked_days: 6, daily_wage: 1500 }],
+    });
+    expect(yev[0].editable).toBe(true);
+    expect(yev[0].worked_days).toBe(6);
+    expect(pendingYevmiyeBonus([{ type: "yevmiye", status: "pending", period: "2026-09", id: "a" }, { type: "yevmiye", status: "paid", id: "b" }], "2026-09")?.id).toBe("a");
+    expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
   });
 });
 

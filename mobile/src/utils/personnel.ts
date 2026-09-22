@@ -78,6 +78,8 @@ export type EmployeeBonus = {
   account_name?: string;
   status?: string;
   created_at?: string;
+  worked_days?: number;
+  daily_wage?: number;
 };
 
 export type EmployeeCard = {
@@ -97,7 +99,35 @@ export type EmployeePayMove = {
   amount: number;
   date: string;
   status?: string;
+  type?: string;
+  worked_days?: number;
+  daily_wage?: number;
+  note?: string;
+  editable?: boolean;
 };
+
+export function isUnpaidYevmiye(b?: EmployeeBonus | null): boolean {
+  return String(b?.type || "") === "yevmiye" && String(b?.status || "") !== "paid";
+}
+
+export function pendingYevmiyeBonus(bonuses?: EmployeeBonus[] | null, period?: string): EmployeeBonus | null {
+  const rows = (bonuses || []).filter(isUnpaidYevmiye);
+  if (!rows.length) return null;
+  if (period) {
+    const same = rows.find((b) => String(b.period || "") === period);
+    if (same) return same;
+  }
+  return rows[0];
+}
+
+export function yevmiyeDaysFromBonus(b?: EmployeeBonus | null): number | null {
+  const days = Math.trunc(Number(b?.worked_days) || 0);
+  if (days > 0) return days;
+  const m = String(b?.note || "").match(/(\d+)\s*gün/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n > 0 ? n : null;
+}
 
 const BONUS_TYPE_TR: Record<string, string> = {
   bonus: "Prim",
@@ -138,14 +168,20 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
     });
   }
   for (const b of card?.bonuses || []) {
+    const days = yevmiyeDaysFromBonus(b);
     rows.push({
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
       amount: Number(b.amount) || 0,
       date: String(b.created_at || b.period || ""),
       status: b.status,
+      type: b.type,
+      worked_days: days || undefined,
+      daily_wage: Number(b.daily_wage) || undefined,
+      note: b.note,
+      editable: isUnpaidYevmiye(b),
     });
   }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -322,9 +358,19 @@ export function validateYevmiyeDays(raw: string): string | null {
   return parseYevmiyeDays(raw) == null ? "1–31 arası gün sayısı girin." : null;
 }
 
-export function yevmiyeDaysLine(emp?: Employee | null, days = 0): string {
+export function parseYevmiyeWage(raw: string): number | null {
+  const n = Number(String(raw || "").trim().replace(",", "."));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function validateYevmiyeWage(raw: string): string | null {
+  return parseYevmiyeWage(raw) == null ? "Yevmiye ücreti girin." : null;
+}
+
+export function yevmiyeDaysLine(emp?: Employee | null, days = 0, wageOverride?: number): string {
   const d = Math.max(0, Math.trunc(Number(days) || 0));
-  const wage = Number(emp?.daily_wage) || 0;
+  const wage = wageOverride != null ? Number(wageOverride) : Number(emp?.daily_wage) || 0;
   return `${d} gün × ${wage} ₺`;
 }
 
@@ -335,15 +381,19 @@ export function yevmiyePayPayload(
   period: string,
   accountId: string,
   note: string,
+  wageRaw = "",
 ) {
   const days = parseYevmiyeDays(daysRaw) || 0;
+  const wage = parseYevmiyeWage(wageRaw) ?? (Number(emp?.daily_wage) || 0);
+  const forCalc = { ...(emp || {}), daily_wage: wage };
   return {
     employee_id: employeeId,
     type: "yevmiye" as const,
-    amount: dailyEarned(emp, days),
+    amount: dailyEarned(forCalc, days),
     period,
-    note: note.trim() || yevmiyeDaysLine(emp, days),
+    note: note.trim() || yevmiyeDaysLine(forCalc, days, wage),
     worked_days: days,
+    daily_wage: wage,
     ...splitPaymentTarget(accountId),
   };
 }
@@ -463,20 +513,32 @@ export function enrichEmployeeBalance(card?: EmployeeCard | null, month = ""): E
   return bal;
 }
 
-export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalance | null): { key: string; label: string; value: number }[] {
+export function employeeCompRows(
+  emp?: Employee | null,
+  balance?: EmployeeBalance | null,
+  opts?: { daysPresent?: number },
+): { key: string; label: string; value: number; hint?: string }[] {
   const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
   const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
   const daily = isDailyWage(emp);
   const wage = daily ? (Number(emp?.daily_wage) || 0) : (Number(emp?.salary) || 0);
+  const days = Math.max(0, Math.trunc(Number(opts?.daysPresent) || 0));
   const prim = bonusDue(balance);
+  const yevmiyeEarned = dailyEarned(emp, days);
+  const bonusValue = daily ? yevmiyeEarned : prim;
   const mesai = overtimeDue(balance);
   return [
     { key: "meal", label: "Yemek", value: meal },
     { key: "yol", label: "Yol", value: yol },
     { key: "salary", label: daily ? "Yevmiye" : "Maaş", value: wage },
-    { key: "bonus", label: "Prim hakedişi", value: prim },
+    {
+      key: "bonus",
+      label: daily ? "Yevmiye günü" : "Prim hakedişi",
+      value: bonusValue,
+      hint: daily ? `${days} gün` : undefined,
+    },
     { key: "overtime", label: "Fazla mesai ücreti", value: mesai },
-    { key: "total", label: "Toplam", value: meal + yol + wage + prim + mesai },
+    { key: "total", label: "Toplam", value: meal + yol + wage + bonusValue + mesai },
   ];
 }
 
