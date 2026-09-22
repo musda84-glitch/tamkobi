@@ -58,6 +58,11 @@ import {
   QUOTE_SERVICE_THUMB,
   QUOTE_ITEM_THUMB_SIZE,
   toggleWorkItemService,
+  workItemNeedsStockCard,
+  matchProductByName,
+  quoteLineSku,
+  quoteLineProductPayload,
+  attachProductToWorkItem,
 } from "./workDocs";
 
 describe("workDocs", () => {
@@ -151,6 +156,17 @@ describe("workDocs", () => {
     ]);
     expect(q.items[0].is_service).toBe(true);
     expect(q.items[0].description).toBe("Montaj");
+    expect(workItemNeedsStockCard({ name: "a", is_service: false })).toBe(true);
+    expect(workItemNeedsStockCard({ name: "a", is_service: true })).toBe(false);
+    expect(workItemNeedsStockCard({ name: "a", product_id: "p1", is_service: false })).toBe(false);
+    expect(workItemNeedsStockCard({ name: "  ", is_service: false })).toBe(false);
+    expect(matchProductByName([{ id: "p1", name: "A" }, { id: "p2", name: "Raf" }], "a")?.id).toBe("p1");
+    expect(quoteLineSku("çelik raf", "ab12")).toBe("CELIK-RAF-AB12");
+    expect(quoteLineSku("", "x")).toBe("STOK-X");
+    const body = quoteLineProductPayload({ name: "a", unit_price: 236.36, vat_rate: 10, unit: "Adet", image_url: "blob:x" }, "comp_1", "A-1");
+    expect(body).toMatchObject({ company_id: "comp_1", name: "a", sku: "A-1", sale_price: 236.36, vat_rate: 10, type: "product" });
+    expect(body.image_url).toBeUndefined();
+    expect(attachProductToWorkItem({ ...emptyItem(), name: "a" }, { id: "p9", image_url: "raf.jpg" }).product_id).toBe("p9");
   });
 
   it("removes a quote or survey line and keeps one empty row", () => {

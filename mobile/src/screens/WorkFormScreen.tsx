@@ -79,6 +79,11 @@ import {
   bumpWorkItemQty,
   workItemPriceFromGross,
   workItemFromProduct,
+  workItemNeedsStockCard,
+  matchProductByName,
+  quoteLineSku,
+  quoteLineProductPayload,
+  attachProductToWorkItem,
   workItemImage,
   workItemLineGross,
   workItemNoteOpen,
@@ -145,6 +150,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   }>();
   const { client, companyId, can } = useAuth();
   const canEdit = can(PERM[kind], "edit");
+  const canStock = can("/products", "edit");
   const canExp = can("/expenses", "edit");
   const canQuote = can("/quotes", "edit");
   const isNew = !docId;
@@ -355,6 +361,34 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     setItems((rows) => removeWorkItem(rows, i));
   };
 
+  const ensureQuoteStockCards = useCallback(async (rows: WorkItem[]): Promise<WorkItem[]> => {
+    if (kind !== "quote" || !canEdit) return rows;
+    let catalog = products;
+    let next = rows;
+    let changed = false;
+    for (let i = 0; i < next.length; i += 1) {
+      const it = next[i];
+      if (!workItemNeedsStockCard(it)) continue;
+      const existing = matchProductByName(catalog, it.name);
+      if (existing) {
+        next = next.map((row, idx) => (idx === i ? attachProductToWorkItem(row, existing) : row));
+        changed = true;
+        continue;
+      }
+      if (!canStock) continue;
+      const sku = quoteLineSku(it.name, `${Date.now().toString(36)}${i}`.slice(-6));
+      const created = await post<Product>(client, "/products", quoteLineProductPayload(it, companyId, sku));
+      catalog = [...catalog, created];
+      next = next.map((row, idx) => (idx === i ? attachProductToWorkItem(row, created) : row));
+      changed = true;
+    }
+    if (changed) {
+      setItems(next);
+      setProducts(catalog);
+    }
+    return next;
+  }, [canEdit, canStock, client, companyId, kind, products]);
+
   const addProductFromSearch = (p: Product) => {
     setItems((rows) => {
       const emptyIdx = rows.findIndex((it) => !it.name);
@@ -376,7 +410,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       setError(invalid);
       return false;
     }
-    await put(client, `/quotes/${docId}`, quoteUpdateBody(a.form, a.pricedItems));
+    const linked = await ensureQuoteStockCards(a.items);
+    const priced = linked.map((it) => hydrateWorkItem(it, products.find((p) => idOf(p) === it.product_id)));
+    await put(client, `/quotes/${docId}`, quoteUpdateBody(a.form, priced));
     if (a.status !== (a.quote?.status || "draft")) await put(client, `/quotes/${docId}`, { status: a.status });
     quoteBaseline.current = quoteDraftSig(a.title, a.contactId, a.contactName, a.validUntil, a.notes, a.status, a.items);
     if (!quiet) {
@@ -384,7 +420,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       await loadDoc();
     }
     return true;
-  }, [canEdit, client, docId, loadDoc]);
+  }, [canEdit, client, docId, ensureQuoteStockCards, loadDoc, products]);
 
   useEffect(() => {
     if (kind !== "quote" || isNew || !canEdit || !docId || !quote) return;
@@ -411,8 +447,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       if (kind === "quote") {
         let qid = docId;
         let currentQuote = quote;
+        const linked = await ensureQuoteStockCards(items);
+        const quoteItems = linked.map((it) => hydrateWorkItem(it, products.find((p) => idOf(p) === it.product_id)));
         if (isNew) {
-          const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, pricedItems));
+          const created = await post<QuoteDoc>(client, "/quotes", quotePayload(companyId, form, quoteItems));
           qid = idOf(created);
           currentQuote = created;
         } else if (!(await persistExistingQuote(true))) {
@@ -902,6 +940,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               testID={`q-item-name-${i}`}
                               value={it.name}
                               onChangeText={(v) => patchItem(i, "name", v)}
+                              onBlur={() => {
+                                if (kind !== "quote" || it.is_service) return;
+                                const rows = items.map((row, idx) => (idx === i ? { ...row, name: it.name } : row));
+                                void ensureQuoteStockCards(rows).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
+                              }}
                               editable={canEdit}
                               placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
                               placeholderTextColor={colors.muted}

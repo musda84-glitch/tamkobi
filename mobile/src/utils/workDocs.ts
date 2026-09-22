@@ -247,6 +247,67 @@ function productSearchHay<T extends { name?: string; sku?: string; barcode?: str
   return [p.name, p.sku, p.barcode, p.category].map((v) => String(v || "").toLowerCase()).filter(Boolean);
 }
 
+export function workItemNeedsStockCard(it: Pick<WorkItem, "name" | "is_service" | "product_id">): boolean {
+  return !it.is_service && !String(it.product_id || "").trim() && !!String(it.name || "").trim();
+}
+
+export function matchProductByName<T extends { name?: string }>(products: T[] | null | undefined, name: string): T | undefined {
+  const key = String(name || "").trim().toLocaleLowerCase("tr-TR");
+  if (!key) return undefined;
+  return (products || []).find((p) => String(p.name || "").trim().toLocaleLowerCase("tr-TR") === key);
+}
+
+export function quoteLineSku(name: string, uniq: string): string {
+  const map: Record<string, string> = { ç: "C", ğ: "G", ı: "I", i: "I", ö: "O", ş: "S", ü: "U", Ç: "C", Ğ: "G", İ: "I", I: "I", Ö: "O", Ş: "S", Ü: "U" };
+  const slug = String(name || "")
+    .trim()
+    .replace(/[çğıiöşüÇĞİIÖŞÜ]/g, (c) => map[c] || c)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 16) || "STOK";
+  const tail = String(uniq || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "1";
+  return `${slug}-${tail}`;
+}
+
+export function quoteLineProductPayload(
+  it: Pick<WorkItem, "name" | "unit_price" | "vat_rate" | "unit" | "price_includes_vat" | "image_url">,
+  companyId: string,
+  sku: string,
+): Record<string, unknown> {
+  const photo = String(it.image_url || "");
+  const image = photo && !/^(blob:|file:|data:)/i.test(photo) ? photo : undefined;
+  return {
+    company_id: companyId,
+    name: String(it.name || "").trim(),
+    sku,
+    barcode: "",
+    type: "product",
+    category: "Genel",
+    unit: it.unit || "Adet",
+    vat_rate: Number(it.vat_rate) || 20,
+    sale_price: Number(it.unit_price) || 0,
+    purchase_price: 0,
+    stock_quantity: 0,
+    min_stock_alert: 5,
+    price_includes_vat: !!it.price_includes_vat,
+    show_in_b2b: true,
+    track_stock: true,
+    is_active: true,
+    image_url: image,
+  };
+}
+
+export function attachProductToWorkItem(it: WorkItem, prod: { id?: string; _id?: string; thumbnail_url?: string; image_url?: string; images?: string[] }): WorkItem {
+  const photo = it.image_url || productImage(prod) || undefined;
+  return {
+    ...it,
+    product_id: idOf(prod),
+    image_url: photo,
+    thumbnail_url: it.thumbnail_url || prod.thumbnail_url || undefined,
+  };
+}
+
 export function workItemNameHits<T extends { id?: string; _id?: string; name?: string; sku?: string; barcode?: string; category?: string }>(
   products: T[] | null | undefined,
   item: Pick<WorkItem, "name" | "is_service" | "product_id">,
