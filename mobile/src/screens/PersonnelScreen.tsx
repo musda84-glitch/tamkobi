@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
+import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -456,20 +457,28 @@ export function PersonnelScreen() {
             const comp = employeeCompRows(emp, bal);
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
-                <View>
-                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                    <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
-                    {isDailyWage(emp) ? (
-                      <Text
-                        testID={`emp-yevmiye-badge-${eid}`}
-                        style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
-                      >
-                        Yevmiye
-                      </Text>
-                    ) : null}
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                  <EmployeeAvatar
+                    name={emp.full_name}
+                    photoUrl={emp.photo_url}
+                    size={48}
+                    testID={`emp-card-photo-${eid}`}
+                  />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                      <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
+                      {isDailyWage(emp) ? (
+                        <Text
+                          testID={`emp-yevmiye-badge-${eid}`}
+                          style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
+                        >
+                          Yevmiye
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
+                    <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
                   </View>
-                  <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
-                  <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
                 </View>
                 <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {comp.map((row) => (

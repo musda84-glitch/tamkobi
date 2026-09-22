@@ -1,5 +1,6 @@
 import {
   draftFromEmployee,
+  employeeInitials,
   employeePayload,
   emptyEmployeeDraft,
   leaveDays,
@@ -36,6 +37,14 @@ import {
   validateOvertime,
   validateTaskAssign,
 } from "./personnel";
+
+describe("employee initials", () => {
+  it("uses first and last name letters", () => {
+    expect(employeeInitials("Muhammed Usta")).toBe("MU");
+    expect(employeeInitials("Ali")).toBe("AL");
+    expect(employeeInitials("")).toBe("?");
+  });
+});
 
 describe("employee draft", () => {
   it("requires name and TC", () => {
