@@ -143,23 +143,27 @@ export function StockScreen() {
     <Screen
       onRefresh={() => load(true)}
       refreshing={refreshing}
-      stickyTop={<Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />}
+      stickyTop={(
+        <>
+          <ActionTiles
+            items={[
+              ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
+              { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
+              { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
+            ]}
+            columns={3}
+          />
+          <GroupedSelect
+            label="Kategori"
+            testID="stock-category"
+            value={cat}
+            onChange={(v) => { setCat(v || "all"); setHit(null); }}
+            groups={catGroups}
+          />
+          <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
+        </>
+      )}
     >
-      <ActionTiles
-        items={[
-          ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
-          { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
-          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
-        ]}
-        columns={3}
-      />
-        <GroupedSelect
-          label="Kategori"
-          testID="stock-category"
-          value={cat}
-          onChange={(v) => { setCat(v || "all"); setHit(null); }}
-          groups={catGroups}
-        />
         <ErrorBanner message={error} />
         {!filtered.length ? (
           <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Kategori veya aramayı değiştirin, ya da yeni stok kartı ekleyin." : "Kategori veya aramayı değiştirin, ya da barkod okutun."} />
