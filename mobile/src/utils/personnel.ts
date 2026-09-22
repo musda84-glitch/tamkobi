@@ -126,6 +126,7 @@ export type PendingRequest = {
   id?: string;
   kind?: string;
   employee_id?: string;
+  employee_name?: string;
   title?: string;
   detail?: string;
 };
@@ -141,6 +142,38 @@ export const REQUEST_KIND_TR: Record<string, string> = {
 
 export function requestKindLabel(kind?: string | null): string {
   return REQUEST_KIND_TR[String(kind || "")] || "Talep";
+}
+
+export function pendingRequestDecision(
+  it: PendingRequest,
+  approved: boolean,
+): { path: string; body: Record<string, string> } | null {
+  const id = String(it.id || "").trim();
+  if (!id) return null;
+  if (it.kind === "leave") {
+    return { path: `/personnel/leaves/${id}/decide`, body: { status: approved ? "approved" : "rejected" } };
+  }
+  if (it.kind === "advance") {
+    return { path: `/personnel/bonuses/${id}/decide`, body: { status: approved ? "approved" : "rejected" } };
+  }
+  if (it.kind === "early_leave") {
+    return { path: `/personnel/attendance/${id}/early-leave-decision`, body: { decision: approved ? "approve" : "reject" } };
+  }
+  if (it.kind === "intraday_leave") {
+    return { path: `/personnel/attendance/${id}/intraday-leave-decision`, body: { decision: approved ? "approve" : "reject" } };
+  }
+  if (it.kind === "yevmiye_adjustment") {
+    return { path: `/personnel/attendance/${id}/yevmiye-decision`, body: { decision: approved ? "approve" : "reject" } };
+  }
+  return null;
+}
+
+export function pendingRequestDecisionMessage(it: PendingRequest, approved: boolean): string {
+  if (it.kind === "yevmiye_adjustment") {
+    return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
+  }
+  const label = requestKindLabel(it.kind);
+  return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
 }
 
 export function requestsForEmployee(items: PendingRequest[] | null | undefined, empId: string): PendingRequest[] {

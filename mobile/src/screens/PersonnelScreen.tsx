@@ -58,6 +58,8 @@ import {
   hasEmployeeDetails,
   openEmployeeTasks,
   remainingLeaveDays,
+  pendingRequestDecision,
+  pendingRequestDecisionMessage,
   requestKindLabel,
   requestsForEmployee,
   companyBonusPayload,
@@ -787,30 +789,16 @@ export function PersonnelScreen() {
   };
 
   const decideRequest = async (it: PendingRequest, approved: boolean) => {
-    const id = it.id || "";
-    if (!id) return;
+    const spec = pendingRequestDecision(it, approved);
+    if (!spec) {
+      setTab("attendance");
+      setMessage("İtirazı puantaj kaydından inceleyin.");
+      return;
+    }
     setBusy(true);
     try {
-      if (it.kind === "leave") {
-        await post(client, `/personnel/leaves/${id}/decide`, { status: approved ? "approved" : "rejected" });
-      } else if (it.kind === "advance") {
-        await post(client, `/personnel/bonuses/${id}/decide`, { status: approved ? "approved" : "rejected" });
-      } else if (it.kind === "early_leave") {
-        await post(client, `/personnel/attendance/${id}/early-leave-decision`, { decision: approved ? "approve" : "reject" });
-      } else if (it.kind === "intraday_leave") {
-        await post(client, `/personnel/attendance/${id}/intraday-leave-decision`, { decision: approved ? "approve" : "reject" });
-      } else if (it.kind === "yevmiye_adjustment") {
-        await post(client, `/personnel/attendance/${id}/yevmiye-decision`, { decision: approved ? "approve" : "reject" });
-      } else {
-        setTab("attendance");
-        setMessage("İtirazı puantaj kaydından inceleyin.");
-        return;
-      }
-      setMessage(
-        it.kind === "yevmiye_adjustment"
-          ? (approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.")
-          : (approved ? `${requestKindLabel(it.kind)} onaylandı.` : `${requestKindLabel(it.kind)} reddedildi.`),
-      );
+      await post(client, spec.path, spec.body);
+      setMessage(pendingRequestDecisionMessage(it, approved));
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -933,7 +921,7 @@ export function PersonnelScreen() {
               {it.kind !== "dispute" && canEdit ? (
                 <Row>
                   <PrimaryButton title="Onayla" color={colors.primary} testID={`approve-req-${it.id}`} onPress={() => decideRequest(it, true)} />
-                  <PrimaryButton title="Reddet" color={colors.danger} testID={`reject-req-${it.id}`} onPress={() => decideRequest(it, false)} />
+                  <PrimaryButton title={it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet"} color={colors.danger} testID={`reject-req-${it.id}`} onPress={() => decideRequest(it, false)} />
                 </Row>
               ) : (
                 <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
@@ -1107,7 +1095,7 @@ export function PersonnelScreen() {
                         {it.kind !== "dispute" && canEdit ? (
                           <Row>
                             <PrimaryButton title="Onayla" color={colors.primary} testID={`card-approve-${it.kind}-${it.id}`} onPress={() => decideRequest(it, true)} />
-                            <PrimaryButton title="Reddet" color={colors.danger} testID={`card-reject-${it.kind}-${it.id}`} onPress={() => decideRequest(it, false)} />
+                            <PrimaryButton title={it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet"} color={colors.danger} testID={`card-reject-${it.kind}-${it.id}`} onPress={() => decideRequest(it, false)} />
                           </Row>
                         ) : null}
                       </View>

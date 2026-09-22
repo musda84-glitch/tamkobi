@@ -60,6 +60,8 @@ import {
   referenceDailyWage,
   hasEmployeeDetails,
   employeeStatusLabel,
+  pendingRequestDecision,
+  pendingRequestDecisionMessage,
   requestKindLabel,
   requestsForEmployee,
   companyBonusPayload,
@@ -121,6 +123,14 @@ describe("employee draft", () => {
     expect(employeeStatusLabel("active")).toBe("Aktif");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
     expect(requestKindLabel("yevmiye_adjustment")).toBe("Yevmiye");
+    expect(pendingRequestDecision({ id: "l1", kind: "leave" }, true)).toEqual({
+      path: "/personnel/leaves/l1/decide", body: { status: "approved" },
+    });
+    expect(pendingRequestDecision({ id: "a1", kind: "advance" }, false)?.body).toEqual({ status: "rejected" });
+    expect(pendingRequestDecision({ id: "y1", kind: "yevmiye_adjustment" }, true)?.path).toBe("/personnel/attendance/y1/yevmiye-decision");
+    expect(pendingRequestDecision({ id: "d1", kind: "dispute" }, true)).toBeNull();
+    expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
+    expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Yevmiye kart ücretiyle bırakıldı.");
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
