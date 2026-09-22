@@ -36,10 +36,13 @@ import {
   overtimeDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
+  emptyEmployeeDraft,
+  employeePayload,
   overtimePayload,
   projectSelectGroups,
   taskSelectGroups,
   validateAdvance,
+  validateEmployee,
   validateIsoDate,
   validateLeave,
   validateOvertime,
@@ -48,6 +51,7 @@ import {
   type AttendanceSummary,
   type Employee,
   type EmployeeBalance,
+  type EmployeeDraft,
   type EmployeeCard,
   type EmployeePayMove,
   type LeaveRequest,
@@ -103,6 +107,8 @@ export function PersonnelScreen() {
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
   const [extraNote, setExtraNote] = useState("");
+  const [empOpen, setEmpOpen] = useState(false);
+  const [empDraft, setEmpDraft] = useState<EmployeeDraft>(() => emptyEmployeeDraft(todayIso()));
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -415,6 +421,24 @@ export function PersonnelScreen() {
     }
   };
 
+  const saveEmployee = async () => {
+    const invalid = validateEmployee(empDraft);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/employees", employeePayload(empDraft, companyId));
+      setEmpOpen(false);
+      setEmpDraft(emptyEmployeeDraft(todayIso()));
+      setMessage("Personel kaydedildi.");
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Personel kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const decideLeave = async (id: string, status: "approved" | "rejected") => {
     try {
       await post(client, `/personnel/leaves/${id}/decide`, { status });
@@ -449,6 +473,33 @@ export function PersonnelScreen() {
 
       {tab === "payroll" ? (
         <>
+          {canEdit ? (
+            <PrimaryButton
+              title="Yeni personel ekle"
+              onPress={() => {
+                setEmpDraft(emptyEmployeeDraft(todayIso()));
+                setEmpOpen(true);
+                setError(null);
+              }}
+              color={colors.primary}
+              testID="personnel-add-btn"
+            />
+          ) : null}
+          {empOpen ? (
+            <Card testID="personnel-add-form">
+              <Muted>Yeni personel</Muted>
+              <Field label="Ad soyad" testID="emp-name" value={empDraft.full_name} onChangeText={(v) => setEmpDraft({ ...empDraft, full_name: v })} />
+              <Field label="TC kimlik" testID="emp-tc" value={empDraft.tc_kimlik} onChangeText={(v) => setEmpDraft({ ...empDraft, tc_kimlik: v })} keyboardType="number-pad" />
+              <Field label="Departman" testID="emp-dept" value={empDraft.department} onChangeText={(v) => setEmpDraft({ ...empDraft, department: v })} />
+              <Field label="Pozisyon" testID="emp-pos" value={empDraft.position} onChangeText={(v) => setEmpDraft({ ...empDraft, position: v })} />
+              <Field label="Telefon" testID="emp-phone" value={empDraft.phone} onChangeText={(v) => setEmpDraft({ ...empDraft, phone: v })} keyboardType="phone-pad" />
+              <Field label="E-posta" testID="emp-email" value={empDraft.email} onChangeText={(v) => setEmpDraft({ ...empDraft, email: v })} autoCapitalize="none" keyboardType="email-address" />
+              <Field label="Maaş" testID="emp-salary" value={empDraft.salary} onChangeText={(v) => setEmpDraft({ ...empDraft, salary: v })} keyboardType="decimal-pad" />
+              <Field label="İşe başlama" testID="emp-start" value={empDraft.start_date} onChangeText={(v) => setEmpDraft({ ...empDraft, start_date: v })} placeholder="YYYY-AA-GG" />
+              <PrimaryButton title="Kaydet" onPress={saveEmployee} loading={busy} color={colors.primary} testID="personnel-add-save" />
+              <PrimaryButton title="Vazgeç" onPress={() => setEmpOpen(false)} testID="personnel-add-cancel" />
+            </Card>
+          ) : null}
           {!employees.length ? (
             <Empty icon="people-outline" title="Çalışan yok" />
           ) : employees.map((emp) => {
