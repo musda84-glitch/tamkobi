@@ -31,11 +31,15 @@ function detector(): DetectorCtor | null {
 export function WebBarcodeCamera({
   active,
   onScan,
+  continuous = false,
 }: {
   active: boolean;
   onScan: (code: string) => void;
+  continuous?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
   const [hint, setHint] = useState("Kamera açılıyor…");
 
   useEffect(() => {
@@ -67,7 +71,9 @@ export function WebBarcodeCamera({
           const codes = await det.detect(video);
           const value = normalizeScanText(codes[0]?.rawValue);
           if (value) {
-            onScan(value);
+            onScanRef.current(value);
+            if (!continuous) return;
+            timer = window.setTimeout(() => tick(det), 900);
             return;
           }
         }
@@ -105,7 +111,7 @@ export function WebBarcodeCamera({
       video.srcObject = null;
       host.replaceChildren();
     };
-  }, [active, onScan]);
+  }, [active, continuous]);
 
   return (
     <View style={{ gap: 8 }}>

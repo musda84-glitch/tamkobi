@@ -31,7 +31,7 @@ export function SevkPickScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<PickSession | null>(null);
   const [code, setCode] = useState("");
-  const [scan, setScan] = useState(false);
+  const [scan, setScan] = useState<null | "once" | "serial">(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -158,7 +158,10 @@ export function SevkPickScreen() {
           />
           <Row>
             <View style={{ flex: 1 }}>
-              <PrimaryButton title="Okut" onPress={() => setScan(true)} color={colors.indigo} testID="sevk-scan-btn" />
+              <PrimaryButton title="Okut" onPress={() => setScan("once")} color={colors.indigo} testID="sevk-scan-btn" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <PrimaryButton title="Seri okut" onPress={() => setScan("serial")} color={colors.indigo} testID="sevk-scan-serial-btn" />
             </View>
             <View style={{ flex: 1 }}>
               <PrimaryButton title="Ekle" onPress={() => submitScan(code)} loading={busy} color={colors.primary} testID="sevk-add-btn" />
@@ -245,7 +248,12 @@ export function SevkPickScreen() {
         <PrimaryButton title="Siparişi aç" color={colors.secondary} testID="sevk-open-order" onPress={() => go("OrderDetail", { id: session.order_id || idOf(session) })} />
       ) : null}
 
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={submitScan} />
+      <BarcodeScannerModal
+        visible={!!scan}
+        continuous={scan === "serial"}
+        onClose={() => setScan(null)}
+        onScan={submitScan}
+      />
     </Screen>
   );
 }
