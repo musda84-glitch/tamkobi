@@ -1,5 +1,5 @@
 import { normalizeApiBase } from "../api/url";
-import { coordValue } from "./geo";
+import { coordValue, normalizeRadiusM } from "./geo";
 import { fmtDate, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
@@ -88,6 +88,7 @@ export type ProjectDoc = {
   location_url?: string;
   latitude?: number | null;
   longitude?: number | null;
+  radius_m?: number | null;
   images?: string[];
   stage_photos?: StagePhoto[];
   tasks?: ProjectTask[];
@@ -126,6 +127,7 @@ export type SurveyDoc = {
   location_url?: string;
   latitude?: number | null;
   longitude?: number | null;
+  radius_m?: number | null;
   images?: string[];
 };
 
@@ -572,7 +574,7 @@ export function quoteProjectSyncPayload(quote: {
   return payload;
 }
 
-export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string }) {
+export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string; radius_m?: number | string }) {
   return {
     company_id: companyId,
     name: form.name.trim(),
@@ -586,6 +588,7 @@ export function projectPayload(companyId: string, form: { name: string; contact_
     location_url: form.location_url || null,
     latitude: coordValue(form.latitude || ""),
     longitude: coordValue(form.longitude || ""),
+    radius_m: normalizeRadiusM(form.radius_m),
   };
 }
 
@@ -619,7 +622,7 @@ export function surveyItemsFromMeasurements(
   return rows.length ? rows : [emptyItem()];
 }
 
-export function surveyPayload(companyId: string, form: { contact_id: string; contact_name: string; address: string; survey_date: string; notes: string; location_url: string; latitude?: string; longitude?: string }, items: WorkItem[]) {
+export function surveyPayload(companyId: string, form: { contact_id: string; contact_name: string; address: string; survey_date: string; notes: string; location_url: string; latitude?: string; longitude?: string; radius_m?: number | string }, items: WorkItem[]) {
   return {
     company_id: companyId,
     contact_id: form.contact_id || null,
@@ -630,6 +633,7 @@ export function surveyPayload(companyId: string, form: { contact_id: string; con
     location_url: form.location_url || null,
     latitude: coordValue(form.latitude || ""),
     longitude: coordValue(form.longitude || ""),
+    radius_m: normalizeRadiusM(form.radius_m),
     measurements: namedItems(items).map((i) => workItemPersistFields(i)),
   };
 }

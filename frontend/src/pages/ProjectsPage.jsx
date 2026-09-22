@@ -26,6 +26,7 @@ import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalP
 import { formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
 import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
+import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } from "../utils/locationRadius";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -306,7 +307,7 @@ export default function ProjectsPage({ section } = {}) {
   const openTracking = async (p) => { await ensureContacts(); setTrackingProject(p); };
 
   const openForm = (kind) => {
-    setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [] });
+    setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [], radius_m: DEFAULT_LOCATION_RADIUS_M });
     setItems([computeLine(emptyLine())]);
     ensureFormRefs();
   };
@@ -779,7 +780,32 @@ export default function ProjectsPage({ section } = {}) {
                 <div className="relative flex-1 min-w-0"><MapPin className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-rose-500" /><input value={form.location_url || ""} onChange={(e) => setForm({ ...form, location_url: e.target.value, ...parseLoc(e.target.value) })} placeholder="Harita / konum linki" className={`${inputCls} pl-8`} data-testid="pf-location-url" /></div>
                 <button type="button" onClick={useMyLocation} className="flex items-center gap-1 px-2.5 sm:px-3 border rounded-lg font-semibold hover:bg-slate-50 shrink-0" data-testid="pf-use-my-location"><LocateFixed className="w-3.5 h-3.5" /> <span className="hidden xs:inline sm:inline">Konumum</span></button>
               </div>
-              {form.latitude && <div className="text-[10px] text-emerald-700 font-mono">Konum: {form.latitude}, {form.longitude} <a href={form.location_url} target="_blank" rel="noreferrer" className="underline">haritada aç</a></div>}
+              <div className="flex flex-wrap items-center gap-1.5" data-testid="pf-location-radius">
+                <span className="text-[11px] text-slate-500 font-semibold">Giriş mesafesi</span>
+                {LOCATION_RADIUS_OPTIONS.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setForm({ ...form, radius_m: m })}
+                    className={`px-2 py-1 rounded-full border text-[11px] font-semibold ${normalizeRadiusM(form.radius_m) === m ? "bg-indigo-50 text-indigo-800 border-indigo-200" : "bg-white text-slate-500 border-slate-200"}`}
+                    data-testid={`pf-radius-${m}`}
+                  >
+                    {m} m
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min="25"
+                  max="5000"
+                  step="25"
+                  value={form.radius_m ?? DEFAULT_LOCATION_RADIUS_M}
+                  onChange={(e) => setForm({ ...form, radius_m: normalizeRadiusM(e.target.value) })}
+                  className="w-20 border rounded-lg p-1.5 bg-slate-50 text-[11px] font-mono"
+                  data-testid="pf-radius-custom"
+                />
+                <span className="text-[11px] text-slate-400">m · personel bu yarıçaptan giriş yapar</span>
+              </div>
+              {form.latitude && <div className="text-[10px] text-emerald-700 font-mono">Konum: {form.latitude}, {form.longitude} · {normalizeRadiusM(form.radius_m)} m <a href={form.location_url} target="_blank" rel="noreferrer" className="underline">haritada aç</a></div>}
             </div>}
             {form.kind !== "project" && (
               <div className="space-y-2">

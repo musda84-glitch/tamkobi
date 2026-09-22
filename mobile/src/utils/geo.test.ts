@@ -1,6 +1,22 @@
-import { coordText, coordValue, locationPickerSummary, mapsLink, mapsSearchUrl, mapsUrlFor, parseMapsUrl } from "./geo";
+import { coordText, coordValue, locationPickerSummary, mapsLink, mapsSearchUrl, mapsUrlFor, normalizeRadiusM, parseMapsUrl } from "./geo";
 
 describe("geo", () => {
+  it("parses google maps links", () => {
+    expect(parseMapsUrl("https://www.google.com/maps/@41.01,28.97,15z")).toEqual({ lat: 41.01, lng: 28.97 });
+    expect(parseMapsUrl("https://maps.google.com/?q=39.9,32.8")).toEqual({ lat: 39.9, lng: 32.8 });
+  });
+
+  it("builds maps urls and summaries", () => {
+    expect(mapsLink({ location_url: "https://x.test/map" })).toBe("https://x.test/map");
+    expect(mapsLink({ latitude: 41, longitude: 29 })).toBe(mapsUrlFor(41, 29));
+    expect(mapsLink({ latitude: null, longitude: null })).toBeNull();
+    expect(mapsSearchUrl("Kadıköy")).toContain("Kad");
+    expect(locationPickerSummary({ url: "", lat: "41", lng: "29", radius_m: 500 })).toContain("500 m");
+    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var");
+    expect(normalizeRadiusM(50)).toBe(50);
+    expect(normalizeRadiusM("750")).toBe(750);
+    expect(normalizeRadiusM(10)).toBe(300);
+  });
   it("parses coordinates from the maps links web accepts", () => {
     expect(parseMapsUrl("https://www.google.com/maps/@41.015137,28.979530,15z")).toEqual({ lat: 41.015137, lng: 28.97953 });
     expect(parseMapsUrl("https://maps.google.com/?q=39.925533,32.866287")).toEqual({ lat: 39.925533, lng: 32.866287 });
