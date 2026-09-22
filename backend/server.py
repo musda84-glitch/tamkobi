@@ -10740,14 +10740,17 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
     by_product: Dict[str, dict] = {}
 
     def _ensure(pid: str, name: str) -> dict:
-        key = str(pid or "") or f"name:{name}"
+        pname = (name or "").strip() or "Ürün"
+        key = str(pid or "") or f"name:{pname.lower()}"
         row = by_product.get(key)
         if row:
+            if pname and str(row.get("product_name") or "").lower().startswith("depo eksik"):
+                row["product_name"] = pname
             return row
         row = {
             "key": key,
             "product_id": str(pid) if pid else None,
-            "product_name": name or "Ürün",
+            "product_name": pname,
             "sku": "",
             "unit": "Adet",
             "stock_quantity": 0.0,
@@ -10765,6 +10768,111 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
         by_product[key] = row
         return row
 
+    def _parse_missing_summary(text: str) -> list:
+        """'Ürün A (0/2), Ürün B (1/3)' → ürün satırları."""
+        import re
+        out = []
+        for part in re.split(r",\s*", (text or "").strip()):
+            part = part.strip()
+            if not part or part.lower().startswith("depo eksik"):
+                continue
+            m = re.match(r"^(.+?)\s*\(([\d.,]+)\s*/\s*([\d.,]+)\)\s*$", part)
+            if not m:
+                if len(part) < 120:
+                    out.append({"product_id": None, "product_name": part, "sku": "", "unit": "Adet", "missing_qty": 1.0, "detail": "bildirim"})
+                continue
+            try:
+                picked = float(m.group(2).replace(",", "."))
+                ordered = float(m.group(3).replace(",", "."))
+            except ValueError:
+                continue
+            miss = ordered - picked
+            if miss <= 1e-9:
+                continue
+            out.append({
+                "product_id": None,
+                "product_name": m.group(1).strip(),
+                "sku": "",
+                "unit": "Adet",
+                "missing_qty": miss,
+                "detail": f"{picked:g}/{ordered:g}",
+            })
+        return out
+
+    def _resolve_note_lines(n: dict, ses: dict, order: dict) -> list:
+        """Öncelik: oturum eksikleri → bildirim missing_items → sipariş kalemleri → message parse."""
+        already = {str(c.get("product_id")) for c in (ses.get("production_orders") or []) if c.get("product_id")}
+        lines = []
+        for i in ses.get("items") or []:
+            miss = float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0)
+            if miss <= 1e-9:
+                continue
+            pid = i.get("product_id")
+            if pid and str(pid) in already:
+                continue
+            lines.append({
+                "product_id": pid,
+                "product_name": i.get("product_name") or "Ürün",
+                "sku": i.get("sku") or "",
+                "unit": i.get("unit") or "Adet",
+                "missing_qty": miss,
+                "detail": f"{float(i.get('picked_qty') or 0):g}/{float(i.get('ordered_qty') or 0):g}",
+            })
+        if lines:
+            return lines
+        for i in (n.get("missing_items") or ses.get("missing_items") or []):
+            miss = float(i.get("missing_qty") or 0)
+            if miss <= 0:
+                miss = float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0)
+            if miss <= 1e-9:
+                continue
+            pid = i.get("product_id")
+            if pid and str(pid) in already:
+                continue
+            lines.append({
+                "product_id": pid,
+                "product_name": i.get("product_name") or "Ürün",
+                "sku": i.get("sku") or "",
+                "unit": i.get("unit") or "Adet",
+                "missing_qty": miss,
+                "detail": f"eksik {miss:g}",
+            })
+        if lines:
+            return lines
+        # Sipariş kalemlerinden (oturum boş / silinmiş)
+        picked_by = {}
+        for i in ses.get("items") or []:
+            key = str(i.get("product_id") or "") or f"n:{(i.get('product_name') or '').lower()}"
+            picked_by[key] = picked_by.get(key, 0.0) + float(i.get("picked_qty") or 0)
+        for it in order.get("items") or []:
+            ordered = float(it.get("quantity") or it.get("ordered_qty") or 0)
+            if ordered <= 0:
+                continue
+            key = str(it.get("product_id") or "") or f"n:{(it.get('product_name') or it.get('name') or '').lower()}"
+            picked = float(picked_by.get(key) or 0)
+            miss = ordered - picked
+            if miss <= 1e-9:
+                continue
+            pid = it.get("product_id")
+            if pid and str(pid) in already:
+                continue
+            lines.append({
+                "product_id": pid,
+                "product_name": it.get("product_name") or it.get("name") or "Ürün",
+                "sku": it.get("sku") or "",
+                "unit": it.get("unit") or "Adet",
+                "missing_qty": miss,
+                "detail": f"{picked:g}/{ordered:g}",
+            })
+        if lines:
+            return lines
+        summary = n.get("missing_summary") or ""
+        msg = n.get("message") or ""
+        text = summary
+        if "eksik:" in msg:
+            text = msg.split("eksik:", 1)[-1].strip()
+        return _parse_missing_summary(text)
+
     order_ids = []
     for n in notes:
         oid = n.get("ref_id")
@@ -10776,45 +10884,28 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
     if order_ids:
         for ses in await db.order_pick_sessions.find({"order_id": {"$in": order_ids}}).to_list(200):
             sessions[str(ses.get("order_id"))] = ses
-        for o in await db.orders.find({"_id": {"$in": order_ids}}, {"order_number": 1, "customer_name": 1, "company_id": 1}).to_list(200):
+        for o in await db.orders.find(
+            {"_id": {"$in": order_ids}},
+            {"order_number": 1, "customer_name": 1, "company_id": 1, "items": 1},
+        ).to_list(200):
             orders_map[str(o.get("_id"))] = o
 
     for n in notes:
         oid = str(n.get("ref_id") or "")
         ses = sessions.get(oid) or {}
         order = orders_map.get(oid) or {}
-        items = ses.get("items") or []
-        missing_lines = [
-            i for i in items
-            if float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0) > 1e-9
-        ]
-        already = {str(c.get("product_id")) for c in (ses.get("production_orders") or []) if c.get("product_id")}
-        if not missing_lines and n.get("message"):
-            # Bildirim var ama oturum kalemi yoksa özet satırı
-            row = _ensure("", n.get("title") or "Depo eksik")
-            if n.get("_id") and str(n["_id"]) not in row["notification_ids"]:
-                row["notification_ids"].append(str(n["_id"]))
-            row["sources"].append({
-                "type": "order_pick",
-                "order_id": oid or None,
-                "order_number": n.get("order_number") or order.get("order_number"),
-                "customer_name": n.get("customer_name") or order.get("customer_name"),
-                "missing_qty": float(n.get("missing_count") or 0) or None,
-                "notification_id": str(n.get("_id") or ""),
-                "detail": (n.get("message") or "")[:200],
-            })
-            continue
-        for i in missing_lines:
-            pid = i.get("product_id")
-            if pid and str(pid) in already:
+        for i in _resolve_note_lines(n, ses, order):
+            pname = (i.get("product_name") or "").strip()
+            if not pname or pname.lower().startswith("depo eksik"):
                 continue
-            miss = float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0)
-            if miss <= 1e-9:
-                continue
-            row = _ensure(pid, i.get("product_name") or "Ürün")
-            row["missing_qty"] = round(row["missing_qty"] + miss, 4)
+            row = _ensure(i.get("product_id"), pname)
+            miss = float(i.get("missing_qty") or 0)
+            if miss > 0:
+                row["missing_qty"] = round(row["missing_qty"] + miss, 4)
             if i.get("sku") and not row["sku"]:
                 row["sku"] = i.get("sku")
+            if i.get("unit"):
+                row["unit"] = i.get("unit")
             if oid and oid not in row["order_ids"]:
                 row["order_ids"].append(oid)
             nid = str(n.get("_id") or "")
@@ -10825,9 +10916,10 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
                 "order_id": oid or None,
                 "order_number": n.get("order_number") or order.get("order_number"),
                 "customer_name": n.get("customer_name") or order.get("customer_name"),
-                "missing_qty": round(miss, 4),
+                "missing_qty": round(miss, 4) if miss else None,
                 "notification_id": nid,
-                "detail": f"{float(i.get('picked_qty') or 0):g}/{float(i.get('ordered_qty') or 0):g}",
+                "detail": i.get("detail") or pname,
+                "product_name": pname,
             })
 
     # Kritik stok + reçeteli mamuller (depo bildirimi olmasa da planlanabilir)
@@ -10885,6 +10977,53 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
             })
             row["missing_qty"] = round(max(row["missing_qty"], need), 4)
 
+    # İsimsiz / yalnızca bildirim başlığı kalan satırları at
+    for key in list(by_product.keys()):
+        pname = str(by_product[key].get("product_name") or "").strip().lower()
+        if not pname or pname.startswith("depo eksik"):
+            by_product.pop(key, None)
+
+    # product_id yoksa isimle eşleştir
+    unresolved = [
+        r for r in by_product.values()
+        if not r.get("product_id") and (r.get("product_name") or "").strip()
+    ]
+    if unresolved:
+        names = list({(r.get("product_name") or "").strip() for r in unresolved})
+        name_map = {}
+        for p in await db.products.find(
+            {"company_id": company_id, "name": {"$in": names}},
+            {"name": 1, "sku": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "has_recipe": 1},
+        ).to_list(len(names) + 50):
+            nm = (p.get("name") or "").strip()
+            if nm and nm not in name_map:
+                name_map[nm] = p
+        for r in unresolved:
+            p = name_map.get((r.get("product_name") or "").strip())
+            if not p:
+                continue
+            pid = str(p.get("_id"))
+            existing = by_product.get(pid)
+            if existing and existing is not r:
+                existing["missing_qty"] = round(float(existing.get("missing_qty") or 0) + float(r.get("missing_qty") or 0), 4)
+                for nid in r.get("notification_ids") or []:
+                    if nid not in existing["notification_ids"]:
+                        existing["notification_ids"].append(nid)
+                for oid in r.get("order_ids") or []:
+                    if oid not in existing["order_ids"]:
+                        existing["order_ids"].append(oid)
+                existing["sources"].extend(r.get("sources") or [])
+                by_product.pop(r["key"], None)
+            else:
+                old_key = r["key"]
+                r["product_id"] = pid
+                r["key"] = pid
+                r["sku"] = r.get("sku") or (p.get("sku") or "")
+                r["unit"] = p.get("unit") or r.get("unit") or "Adet"
+                if old_key != pid:
+                    by_product.pop(old_key, None)
+                    by_product[pid] = r
+
     # Zenginleştir: stok / reçete / açık emir (depo kaynaklı satırlar için)
     pids = [r["product_id"] for r in by_product.values() if r.get("product_id")]
     prod_map = {}
@@ -10894,9 +11033,13 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
 
     items = []
     for row in by_product.values():
+        pname = str(row.get("product_name") or "").strip()
+        if not pname or pname.lower().startswith("depo eksik"):
+            continue
         pid = row.get("product_id")
         if pid and pid in prod_map:
             p = prod_map[pid]
+            row["product_name"] = p.get("name") or row["product_name"]
             row["sku"] = row["sku"] or (p.get("sku") or "")
             row["unit"] = p.get("unit") or row["unit"] or "Adet"
             row["stock_quantity"] = float(p.get("stock_quantity") or 0)

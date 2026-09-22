@@ -297,13 +297,30 @@ async def notify_missing(order_id: str):
         f"{i['product_name']} ({float(i['picked_qty'] or 0):g}/{float(i['ordered_qty']):g})"
         for i in missing[:12]
     )
+    missing_items = [
+        {
+            "product_id": i.get("product_id"),
+            "product_name": i.get("product_name") or "Ürün",
+            "sku": i.get("sku") or "",
+            "unit": i.get("unit") or "Adet",
+            "ordered_qty": float(i.get("ordered_qty") or 0),
+            "picked_qty": float(i.get("picked_qty") or 0),
+            "missing_qty": round(float(i.get("ordered_qty") or 0) - float(i.get("picked_qty") or 0), 4),
+        }
+        for i in missing
+    ]
     title = f"Depo eksik: {o.get('order_number')}"
     msg = f"{o.get('customer_name')} siparişi {o.get('order_number')} toplanırken eksik: {lines}"
     link = f"/production?tab=missing&order={order_id}"
     note = await attendance.notify_managers(o["company_id"], "order_pick_missing", title, msg, link=link)
     await _db.order_pick_sessions.update_one(
         {"_id": ses["_id"]},
-        {"$set": {"notified_missing_at": _now(), "updated_at": _now(), "missing_summary": lines}},
+        {"$set": {
+            "notified_missing_at": _now(),
+            "updated_at": _now(),
+            "missing_summary": lines,
+            "missing_items": missing_items,
+        }},
     )
     await _db.notifications.update_one(
         {"title": title, "company_id": o["company_id"], "type": "order_pick_missing"},
@@ -315,13 +332,15 @@ async def notify_missing(order_id: str):
             "order_number": o.get("order_number"),
             "customer_name": o.get("customer_name"),
             "missing_count": len(missing),
+            "missing_items": missing_items,
+            "missing_summary": lines,
             "updated_at": _now(),
         }},
     )
     return {
         "status": note.get("status") or "sent",
         "message": f"Yöneticiye {len(missing)} eksik kalem bildirildi.",
-        "missing": [{"product_name": i["product_name"], "picked": i["picked_qty"], "ordered": i["ordered_qty"]} for i in missing],
+        "missing": [{"product_name": i["product_name"], "picked": i["picked_qty"], "ordered": i["ordered_qty"], "product_id": i.get("product_id"), "missing_qty": i["missing_qty"]} for i in missing_items],
         "mail": note.get("mail"),
     }
 
