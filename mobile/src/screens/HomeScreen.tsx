@@ -7,6 +7,7 @@ import { useBadges } from "../auth/BadgeContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, Muted, Row, Screen, StatRows } from "../components/kit";
 import { NotificationsPanel } from "../components/NotificationsPanel";
+import { ManagerApprovalsPanel } from "../components/ManagerApprovalsPanel";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { goHref } from "../nav";
 import { colors } from "../theme";
@@ -14,7 +15,7 @@ import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
-import { hasSelfPersonnelRecord, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
+import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
 export function HomeScreen() {
@@ -29,6 +30,7 @@ export function HomeScreen() {
 
   const showFinance = showHomeFinanceSummary(user);
   const showRefresh = showHomeRefreshTile(user);
+  const showApprovals = showHomeApprovals(user);
   const role = (user?.role || "").toLowerCase();
   const showMessages = hasSelfPersonnelRecord(user) || role === "admin" || role === "manager";
   const { tiles, notifications } = useMemo(
@@ -118,6 +120,11 @@ export function HomeScreen() {
             }] : []),
           ]}
         />
+        {showApprovals ? (
+          <View style={{ marginTop: 8 }}>
+            <ManagerApprovalsPanel client={client} companyId={companyId} onChanged={refreshBadges} />
+          </View>
+        ) : null}
         {showMessages ? (
           <View style={{ marginTop: 8 }}>
             <StaffMessagesPanel client={client} onChanged={refreshBadges} />

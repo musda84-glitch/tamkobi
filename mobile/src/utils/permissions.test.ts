@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -107,6 +107,14 @@ describe("permissions", () => {
     expect(showHomeFinanceSummary({ role: "sales", employee_id: null })).toBe(true);
     expect(showHomeFinanceSummary({ role: "admin", employee_id: "emp_1" })).toBe(false);
     expect(showHomeFinanceSummary({ role: "personel", employee_id: "e2" })).toBe(false);
+  });
+
+  it("shows home approvals for managers and hides them for staff", () => {
+    expect(showHomeApprovals({ role: "admin" })).toBe(true);
+    expect(showHomeApprovals({ role: "manager" })).toBe(true);
+    expect(showHomeApprovals({ role: "accountant" })).toBe(true);
+    expect(showHomeApprovals({ role: "personel", employee_id: "e1", permissions: { "/personnel": "none", "/mesai": "edit" } })).toBe(false);
+    expect(showHomeApprovals({ role: "sales", permissions: { "/personnel": "edit" } })).toBe(true);
   });
 
   it("shows the home Yenile tile only on personnel login", () => {

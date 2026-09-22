@@ -75,6 +75,13 @@ export function showHomeRefreshTile(user: SessionUser): boolean {
   return hasSelfPersonnelRecord(user);
 }
 
+/** Ana sayfa yönetici onay kutusu: admin / müdür / muhasebe veya İK yetkisi. */
+export function showHomeApprovals(user: SessionUser): boolean {
+  const role = String(user?.role || "").toLowerCase();
+  if (role === "admin" || role === "manager" || role === "accountant") return true;
+  return hasPersonnelAccess(user);
+}
+
 /** Stok kartı formu: yalnız /stock düzenleme (depo / yönetici). Personel ve üretim giremez. */
 export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
