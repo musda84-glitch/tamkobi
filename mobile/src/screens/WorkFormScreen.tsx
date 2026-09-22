@@ -1014,43 +1014,42 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                     </Row>
                   )}
                   {kind === "quote" ? (
-                    <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                      {VAT_OPTIONS.map((v) => (
-                        <Chip
-                          compact
-                          key={v}
-                          label={`%${v}`}
-                          active={Number(it.vat_rate) === v}
-                          onPress={() => canEdit && patchItem(i, "vat_rate", v)}
-                          testID={`q-item-vat-${i}-${v}`}
-                        />
-                      ))}
-                    </Row>
-                  ) : null}
-                  {kind === "quote" ? (
                     <>
-                      <Pressable
-                        onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
-                        testID={`q-item-note-toggle-${i}`}
-                        accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          alignSelf: "flex-start",
-                          gap: 6,
-                          minHeight: 32,
-                          paddingHorizontal: 10,
-                          borderRadius: 999,
-                          borderWidth: 1,
-                          borderColor: noteShown ? colors.indigo : colors.border,
-                          backgroundColor: noteShown ? colors.indigo50 : "#fff",
-                        }}
-                      >
-                        <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
-                        <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
-                          {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
-                        </Text>
-                      </Pressable>
+                      <Row style={{ alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <Pressable
+                          onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
+                          testID={`q-item-note-toggle-${i}`}
+                          accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                            minHeight: 32,
+                            paddingHorizontal: 10,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: noteShown ? colors.indigo : colors.border,
+                            backgroundColor: noteShown ? colors.indigo50 : "#fff",
+                          }}
+                        >
+                          <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
+                          <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
+                            {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
+                          </Text>
+                        </Pressable>
+                        <Row style={{ flex: 1, flexWrap: "wrap", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
+                          {VAT_OPTIONS.map((v) => (
+                            <Chip
+                              compact
+                              key={v}
+                              label={`%${v}`}
+                              active={Number(it.vat_rate) === v}
+                              onPress={() => canEdit && patchItem(i, "vat_rate", v)}
+                              testID={`q-item-vat-${i}-${v}`}
+                            />
+                          ))}
+                        </Row>
+                      </Row>
                       {noteShown ? (
                         <Field
                           dense
