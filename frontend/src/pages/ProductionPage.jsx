@@ -34,6 +34,7 @@ export default function ProductionPage() {
   const [planQty, setPlanQty] = useState({});
   const [selected, setSelected] = useState({});
   const [planning, setPlanning] = useState(false);
+  const [editPlan, setEditPlan] = useState({}); // { [orderId]: { qty, recipe_id } }
 
   const loadOrders = useCallback(async () => {
     try {
@@ -104,9 +105,30 @@ export default function ProductionPage() {
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { if (tab === "recipes" && !recipesLoaded) loadRecipes(); }, [tab, recipesLoaded, loadRecipes]);
   useEffect(() => { if (tab === "missing") loadMissing(); }, [tab, loadMissing]);
+  useEffect(() => { if (tab === "orders" && !recipesLoaded) loadRecipes(); }, [tab, recipesLoaded, loadRecipes]);
   useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products, setParams]);
 
   const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  const saveOrderPlan = async (o, patch) => {
+    try {
+      const r = await axios.put(`${API_URL}/production/orders/${o.id}`, patch);
+      toast.success(r.data.message || "Güncellendi.");
+      setEditPlan((prev) => { const n = { ...prev }; delete n[o.id]; return n; });
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Güncellenemedi.");
+    }
+  };
+  const planDraft = (o) => editPlan[o.id] || { qty: o.planned_quantity, recipe_id: o.recipe_id || "" };
+  const setPlanDraft = (o, fields) => setEditPlan((prev) => ({
+    ...prev,
+    [o.id]: { qty: o.planned_quantity, recipe_id: o.recipe_id || "", ...(prev[o.id] || {}), ...fields },
+  }));
+  const recipesForOrder = (o) => {
+    const all = (recipes || []).filter((r) => r.is_active !== false);
+    const same = all.filter((r) => r.finished_product_id === o.finished_product_id);
+    return same.length ? [...same, ...all.filter((r) => r.finished_product_id !== o.finished_product_id)] : all;
+  };
   const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
   const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
   const recipeCount = recipesLoaded ? recipes.length : (kpis.recipes || products.filter((p) => p.has_recipe).length);
@@ -323,18 +345,74 @@ export default function ProductionPage() {
             <tbody className="divide-y divide-slate-100">
               {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="po-loading">Yükleniyor…</td></tr>}
               {!loading && orders.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Üretim emri yok.</td></tr>}
-              {!loading && orders.map((o) => { const [l, c, Icon] = STATUS[o.status] || STATUS.planned; const remaining = o.planned_quantity - (o.completed_quantity || 0); return (
+              {!loading && orders.map((o) => { const [l, c, Icon] = STATUS[o.status] || STATUS.planned; const remaining = o.planned_quantity - (o.completed_quantity || 0); const canEditPlan = ["planned", "in_production"].includes(o.status); const draft = planDraft(o); const dirty = canEditPlan && (Number(draft.qty) !== Number(o.planned_quantity) || String(draft.recipe_id || "") !== String(o.recipe_id || "")); return (
                 <tr key={o.id} data-testid={`po-row-${o.order_code}`}>
                   <td className="px-4 py-2 font-mono font-semibold text-slate-900">{o.order_code}{o.source === "stock_card" && <div className="text-[9px] text-slate-400 font-sans">Stok kartından</div>}{o.source === "order_pick" && <div className="text-[9px] text-amber-700 font-sans">Eksik ürün planından</div>}{o.notes && <div className="text-[10px] text-slate-400 font-sans truncate max-w-[160px]">{o.notes}</div>}</td>
-                  <td className="px-4 py-2"><div className="font-semibold">{o.finished_product_name}</div><div className="text-[10px] text-slate-400">{o.recipe_name}</div>{o.shortages?.length > 0 && o.status !== "completed" && <div className="text-[10px] text-rose-600 font-semibold flex items-center gap-0.5"><AlertTriangle className="w-3 h-3" /> {o.shortages.length} hammadde eksik</div>}</td>
-                  <td className="px-4 py-2 text-right font-bold">{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span>{(() => { const s = o.steps_summary; if (!s?.total) return null; return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {s.done}/{s.total}{s.current_step_name ? ` • ${s.current_step_name}${s.current_operator ? " (" + s.current_operator + ")" : ""}` : ""}</div>; })()}</td>
+                  <td className="px-4 py-2">
+                    <div className="font-semibold">{o.finished_product_name}</div>
+                    {canEditPlan && !(o.completed_quantity > 0) ? (
+                      <select
+                        value={draft.recipe_id || ""}
+                        onChange={(e) => setPlanDraft(o, { recipe_id: e.target.value })}
+                        onFocus={() => { if (!recipesLoaded) loadRecipes(); }}
+                        className="mt-0.5 w-full max-w-[220px] bg-slate-50 border border-slate-200 rounded-md px-1.5 py-1 text-[10px] text-slate-700"
+                        title="Reçete değiştir (plan dışı seçilebilir)"
+                        data-testid={`po-recipe-${o.order_code}`}
+                      >
+                        {!draft.recipe_id && <option value="">Reçete seç…</option>}
+                        {recipesForOrder(o).map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}{r.finished_product_id !== o.finished_product_id ? ` · ${r.finished_product_name}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="text-[10px] text-slate-400">{o.recipe_name}</div>
+                    )}
+                    {o.shortages?.length > 0 && o.status !== "completed" && <div className="text-[10px] text-rose-600 font-semibold flex items-center gap-0.5"><AlertTriangle className="w-3 h-3" /> {o.shortages.length} hammadde eksik</div>}
+                  </td>
+                  <td className="px-4 py-2 text-right font-bold" data-testid={`po-plan-cell-${o.order_code}`}>
+                    {canEditPlan ? (
+                      <div className="inline-flex flex-col items-end gap-0.5">
+                        <div className="inline-flex items-center gap-1 justify-end">
+                          <input
+                            type="number"
+                            min={Math.max(0.001, Number(o.completed_quantity) || 0.001)}
+                            step="any"
+                            value={draft.qty}
+                            onChange={(e) => setPlanDraft(o, { qty: e.target.value })}
+                            onFocus={() => setPlanDraft(o, {})}
+                            className="w-16 bg-slate-50 border border-slate-200 rounded-md p-1 text-right font-bold"
+                            title="Plan miktarını değiştir"
+                            data-testid={`po-plan-qty-${o.order_code}`}
+                          />
+                          <span className="text-slate-400 font-normal">/</span>
+                          <span className="text-emerald-700">{o.completed_quantity || 0}</span>
+                        </div>
+                        {dirty && (
+                          <button
+                            type="button"
+                            onClick={() => saveOrderPlan(o, { planned_quantity: Number(draft.qty), recipe_id: draft.recipe_id || undefined })}
+                            className="px-2 py-0.5 bg-indigo-600 text-white rounded-md text-[10px] font-semibold"
+                            data-testid={`po-plan-save-${o.order_code}`}
+                          >
+                            Kaydet
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <>{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span></>
+                    )}
+                    {(() => { const s = o.steps_summary; if (!s?.total) return null; return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {s.done}/{s.total}{s.current_step_name ? ` • ${s.current_step_name}${s.current_operator ? " (" + s.current_operator + ")" : ""}` : ""}</div>; })()}
+                    {o.over_produced && <div className="text-[10px] font-semibold text-amber-700">Plan üstü üretim</div>}
+                  </td>
                   <td className="px-4 py-2 text-slate-500">{o.planned_date || o.start_date}{o.end_date && <div className="text-[10px] text-emerald-600">Bitti: {o.end_date}</div>}</td>
                   <td className="px-4 py-2 text-right">{fmt(o.total_cost)} ₺</td>
                   <td className="px-4 py-2"><span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}><Icon className="w-3 h-3" /> {l}</span></td>
                   <td className="px-4 py-2 text-right">
                     <div className="flex justify-end items-center gap-1">
                       {o.status === "planned" && <button onClick={() => act(o.id, "start")} className="px-2 py-1 bg-amber-500 text-white rounded-md font-semibold" data-testid={`po-start-${o.order_code}`}>Başlat</button>}
-                      {o.status === "in_production" && <><input type="number" min="0.001" step="any" value={completeQty[o.id] ?? remaining} onChange={(e) => setCompleteQty({ ...completeQty, [o.id]: e.target.value })} className="w-16 bg-slate-50 border rounded p-1 text-right" title="Tamamlanan miktar" data-testid={`po-complete-qty-${o.order_code}`} /><button onClick={() => act(o.id, "complete", { quantity: Number(completeQty[o.id] ?? remaining), update_cost: true })} className="px-2 py-1 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`po-complete-${o.order_code}`}>Tamamla</button></>}
+                      {o.status === "in_production" && <><input type="number" min="0.001" step="any" value={completeQty[o.id] ?? remaining} onChange={(e) => setCompleteQty({ ...completeQty, [o.id]: e.target.value })} className="w-16 bg-slate-50 border rounded p-1 text-right" title="Tamamlanan miktar (plan üstü girilebilir)" data-testid={`po-complete-qty-${o.order_code}`} /><button onClick={() => act(o.id, "complete", { quantity: Number(completeQty[o.id] ?? remaining), update_cost: true, allow_over: true })} className="px-2 py-1 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`po-complete-${o.order_code}`}>Tamamla</button></>}
                       {o.status === "planned" && <button onClick={async () => { if (!window.confirm("Üretim emri silinsin mi?")) return; try { await axios.delete(`${API_URL}/production/orders/${o.id}`); toast.success("Silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md" title="Sil" data-testid={`po-delete-${o.order_code}`}><Trash2 className="w-4 h-4" /></button>}
                       {["planned", "in_production"].includes(o.status) && <button onClick={() => act(o.id, "cancel")} className="p-1 text-rose-500 hover:bg-rose-50 rounded-md" title="İptal" data-testid={`po-cancel-${o.order_code}`}><XCircle className="w-4 h-4" /></button>}
                     </div>

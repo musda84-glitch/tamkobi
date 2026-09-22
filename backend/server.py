@@ -11148,26 +11148,116 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     if produced < 0 or scrap < 0:
         raise HTTPException(status_code=400, detail="Miktar negatif olamaz.")
     planned_q = float(w.get("planned_quantity", 0) or 0)
-    if planned_q and produced + scrap > planned_q + 1e-9:
-        raise HTTPException(status_code=400, detail=f"Üretilen + fire ({produced + scrap:g}) planlanan miktarı ({planned_q:g}) aşamaz.")
-    now = datetime.now(timezone.utc).isoformat()
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"status": "done", "finished_at": now, "produced_qty": produced, "scrap_qty": scrap, "finish_note": req.get("notes", "")}, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire")}})
+    over = planned_q > 0 and produced + scrap > planned_q + 1e-9
+    # Plan dışı fazla üretim serbest — iş emri planını üretilen+fire ile hizala
+    wo_patch: Dict[str, Any] = {
+        "status": "done",
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "produced_qty": produced,
+        "scrap_qty": scrap,
+        "finish_note": req.get("notes", ""),
+    }
+    if over:
+        wo_patch["planned_quantity"] = produced + scrap
+        wo_patch["over_produced"] = True
+    await db.work_orders.update_one(
+        {"_id": wo_id},
+        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire" + (" (plan üstü)" if over else ""))}},
+    )
     nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
-    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı."}
+    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı." + (" Plan üstü üretim kaydedildi." if over else "")}
     if nxt:
-        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": {"status": "ready"}})
+        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": {"status": "ready", **({"planned_quantity": produced + scrap} if over else {})}})
         result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
     else:
         o = await db.production_orders.find_one({"_id": w["order_id"]})
         if o and o.get("status") == "in_production" and produced > 0:
-            remaining = float(o.get("planned_quantity", 0)) - float(o.get("completed_quantity", 0))
             try:
-                r = await complete_production_order(w["order_id"], {"quantity": min(produced, remaining), "scrap_qty": scrap, "update_cost": bool(req.get("update_cost", False))})
+                r = await complete_production_order(w["order_id"], {"quantity": produced, "scrap_qty": scrap, "update_cost": bool(req.get("update_cost", False)), "allow_over": True})
                 result["message"] += " " + r["message"]
                 result["order_completed"] = r["finished"]
             except HTTPException as e:
                 result["message"] += f" (Stok işlenemedi: {e.detail})"
     return result
+
+
+@api_router.put("/production/orders/{order_id}")
+async def update_production_order(order_id: str, req: Dict[str, Any]):
+    """Plan miktarı ve/veya reçete değiştir (planlanan veya ilerleme yokken)."""
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    if o.get("status") not in ("planned", "in_production"):
+        raise HTTPException(status_code=400, detail="Sadece açık üretim emirleri düzenlenebilir.")
+    done = float(o.get("completed_quantity") or 0)
+    patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    recipe_changed = False
+    qty_changed = False
+
+    if "planned_quantity" in req and req.get("planned_quantity") is not None:
+        qty = float(req["planned_quantity"])
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="Plan miktarı sıfırdan büyük olmalı.")
+        if qty + 1e-9 < done:
+            raise HTTPException(status_code=400, detail=f"Plan miktarı üretilen miktardan ({done:g}) küçük olamaz.")
+        if abs(qty - float(o.get("planned_quantity") or 0)) > 1e-9:
+            patch["planned_quantity"] = qty
+            qty_changed = True
+
+    if req.get("recipe_id") and str(req["recipe_id"]) != str(o.get("recipe_id") or ""):
+        if done > 1e-9:
+            raise HTTPException(status_code=400, detail="Kısmen üretilmiş emirde reçete değiştirilemez.")
+        # Devam eden adım varsa engelle
+        busy = await db.work_orders.count_documents({"order_id": order_id, "status": {"$in": ["in_progress", "paused", "done"]}})
+        if busy:
+            raise HTTPException(status_code=400, detail="Başlanmış iş emirleri varken reçete değiştirilemez. Emri iptal edip yeniden oluşturun.")
+        recipe = await db.recipes.find_one({"_id": req["recipe_id"]})
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+        patch["recipe_id"] = recipe["_id"]
+        patch["recipe_name"] = recipe.get("name")
+        patch["finished_product_id"] = recipe.get("finished_product_id")
+        patch["finished_product_name"] = recipe.get("finished_product_name")
+        recipe_changed = True
+
+    if "planned_date" in req:
+        patch["planned_date"] = req.get("planned_date")
+    if "notes" in req:
+        patch["notes"] = req.get("notes")
+
+    if len(patch) <= 1:
+        return {**clean_doc(o), "message": "Değişiklik yok."}
+
+    # Maliyet güncelle
+    rid = patch.get("recipe_id") or o.get("recipe_id")
+    qty = float(patch.get("planned_quantity") if "planned_quantity" in patch else o.get("planned_quantity") or 1)
+    recipe = await db.recipes.find_one({"_id": rid}) if rid else None
+    if recipe:
+        costs = _recipe_costs(recipe)
+        patch["total_cost"] = round(costs["unit_cost"] * qty, 2)
+        rows = await _requirements(recipe, qty)
+        patch["shortages"] = [x for x in rows if x["shortage"] > 0]
+
+    await db.production_orders.update_one({"_id": order_id}, {"$set": patch})
+
+    if recipe_changed:
+        await db.work_orders.delete_many({"order_id": order_id})
+        updated = await db.production_orders.find_one({"_id": order_id})
+        await _generate_work_orders(updated, recipe or {})
+    elif qty_changed:
+        await db.work_orders.update_many(
+            {"order_id": order_id, "status": {"$ne": "done"}},
+            {"$set": {"planned_quantity": qty}},
+        )
+
+    updated = await db.production_orders.find_one({"_id": order_id})
+    msg = "Üretim emri güncellendi."
+    if recipe_changed:
+        msg = "Reçete değiştirildi; iş adımları yenilendi."
+    elif qty_changed:
+        msg = f"Plan miktarı {qty:g} olarak güncellendi."
+    return {**clean_doc(updated), "message": msg}
+
 
 @api_router.delete("/production/orders/{order_id}")
 async def delete_production_order(order_id: str):
@@ -11212,9 +11302,13 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
         raise HTTPException(status_code=400, detail="Önce üretimi başlatın (Başlat).")
     planned = float(p_order.get("planned_quantity", 1.0))
     done_before = float(p_order.get("completed_quantity", 0))
-    qty = float(req.get("quantity") or (planned - done_before))
-    if qty <= 0 or qty > planned - done_before + 1e-9:
-        raise HTTPException(status_code=400, detail=f"Miktar 0 ile {planned - done_before} arasında olmalı.")
+    remaining = planned - done_before
+    qty = float(req.get("quantity") if req.get("quantity") is not None else remaining)
+    allow_over = bool(req.get("allow_over", True))
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalı.")
+    if not allow_over and qty > remaining + 1e-9:
+        raise HTTPException(status_code=400, detail=f"Miktar 0 ile {remaining:g} arasında olmalı.")
     recipe = await db.recipes.find_one({"_id": p_order.get("recipe_id")})
     consumed = []
     consume_qty = qty + float(req.get("scrap_qty") or 0)
@@ -11228,8 +11322,18 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
     await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$inc": {"stock_quantity": qty}})
     new_done = round(done_before + qty, 3)
     finished = new_done >= planned - 1e-9
-    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "completed" if finished else "in_production", "completed_quantity": new_done, "end_date": datetime.now(timezone.utc).strftime("%Y-%m-%d") if finished else None, "shortages": []}})
-    return {"status": "success", "finished": finished, "consumed": consumed, "message": f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi." + ("" if finished else f" Kalan: {planned - new_done:g}")}
+    po_set: Dict[str, Any] = {
+        "status": "completed" if finished else "in_production",
+        "completed_quantity": new_done,
+        "end_date": datetime.now(timezone.utc).strftime("%Y-%m-%d") if finished else None,
+        "shortages": [],
+    }
+    if new_done > planned + 1e-9:
+        po_set["over_produced"] = True
+        po_set["over_produced_qty"] = round(new_done - planned, 3)
+    await db.production_orders.update_one({"_id": order_id}, {"$set": po_set})
+    over_note = f" (plan {planned:g}, fazla {new_done - planned:g})" if new_done > planned + 1e-9 else ""
+    return {"status": "success", "finished": finished, "consumed": consumed, "message": f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")}
 
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/employees")
