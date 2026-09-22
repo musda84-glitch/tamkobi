@@ -17,6 +17,7 @@ import {
   leaveStatusTr,
   leaveTypeTr,
   dailyEarned,
+  isDailyPayroll,
   isDailyWage,
   monthlyPayrollLoad,
   openPayroll,
@@ -29,6 +30,11 @@ import {
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
   EMPLOYEE_CARD_WORK_ACTIONS,
+  employeeCardActionTitle,
+  parseYevmiyeDays,
+  validateYevmiyeDays,
+  yevmiyeDaysLine,
+  yevmiyePayPayload,
   allowanceDue,
   bonusDue,
   bonusPayPayload,
@@ -107,6 +113,9 @@ export function PersonnelScreen() {
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
   const [extraNote, setExtraNote] = useState("");
+  const [yevmiyeEmp, setYevmiyeEmp] = useState<Employee | null>(null);
+  const [yevmiyeDays, setYevmiyeDays] = useState("");
+  const [yevmiyeNote, setYevmiyeNote] = useState("");
   const [empOpen, setEmpOpen] = useState(false);
   const [empDraft, setEmpDraft] = useState<EmployeeDraft>(() => emptyEmployeeDraft(todayIso()));
 
@@ -295,6 +304,42 @@ export function PersonnelScreen() {
       .catch(() => undefined);
   };
 
+  const openYevmiyeDays = (emp: Employee) => {
+    setYevmiyeEmp(emp);
+    setYevmiyeDays("");
+    setYevmiyeNote("");
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+  };
+
+  const saveYevmiyeDays = async () => {
+    if (!yevmiyeEmp) return;
+    const invalid = validateYevmiyeDays(yevmiyeDays);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, "/personnel/bonuses", yevmiyePayPayload(
+        idOf(yevmiyeEmp),
+        yevmiyeEmp,
+        yevmiyeDays,
+        month,
+        payAccount,
+        yevmiyeNote,
+      ));
+      const days = parseYevmiyeDays(yevmiyeDays) || 0;
+      setYevmiyeEmp(null);
+      setYevmiyeDays("");
+      setYevmiyeNote("");
+      setMessage(`${yevmiyeEmp.full_name} için ${yevmiyeDaysLine(yevmiyeEmp, days)} ödendi.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Yevmiye kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openExtraPay = (emp: Employee, kind: "bonus" | "overtime") => {
     const bal = balances[idOf(emp)];
     const due = kind === "overtime" ? overtimeDue(bal) : bonusDue(bal);
@@ -341,7 +386,7 @@ export function PersonnelScreen() {
     overtime: openOvertime,
     meal: (emp: Employee) => openAllowance(emp, "meal"),
     transport: (emp: Employee) => openAllowance(emp, "transport"),
-    bonus: (emp: Employee) => openExtraPay(emp, "bonus"),
+    bonus: (emp: Employee) => (isDailyWage(emp) ? openYevmiyeDays(emp) : openExtraPay(emp, "bonus")),
     otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
   };
 
@@ -787,6 +832,50 @@ export function PersonnelScreen() {
       </B2BSheet>
 
       <B2BSheet
+        visible={!!yevmiyeEmp}
+        title="Yevmiye günü"
+        subtitle={yevmiyeEmp ? `${yevmiyeEmp.full_name} · ${fmtMoney(yevmiyeEmp.daily_wage)} / gün` : undefined}
+        onClose={() => { setYevmiyeEmp(null); setYevmiyeDays(""); setYevmiyeNote(""); }}
+        testID="yevmiye-days-sheet"
+      >
+        <Field
+          label="Kaç gün"
+          testID="yevmiye-days-input"
+          value={yevmiyeDays}
+          onChangeText={setYevmiyeDays}
+          keyboardType="number-pad"
+          placeholder="Örn: 6"
+        />
+        {parseYevmiyeDays(yevmiyeDays) ? (
+          <Muted testID="yevmiye-days-total">
+            {yevmiyeDaysLine(yevmiyeEmp, parseYevmiyeDays(yevmiyeDays) || 0)} = {fmtMoney(dailyEarned(yevmiyeEmp, parseYevmiyeDays(yevmiyeDays) || 0))}
+          </Muted>
+        ) : null}
+        <Field
+          label="Açıklama"
+          testID="yevmiye-days-note"
+          value={yevmiyeNote}
+          onChangeText={setYevmiyeNote}
+          placeholder="Opsiyonel"
+        />
+        <GroupedSelect
+          label="Kasa / Banka / Ortak"
+          testID="yevmiye-days-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Şimdi ödenmeyecek (kayıt olarak bırak)"
+        />
+        <PrimaryButton
+          title={payAccount ? "Kaydet & Öde" : "Kaydet"}
+          testID="yevmiye-days-submit"
+          color={colors.primaryHover}
+          loading={busy}
+          onPress={saveYevmiyeDays}
+        />
+      </B2BSheet>
+
+      <B2BSheet
         visible={!!extraEmp}
         title={extraKind === "overtime" ? "Mesai ücreti öde" : "Prim öde"}
         subtitle={extraEmp ? `${extraEmp.full_name} · ${month}` : undefined}
@@ -827,7 +916,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!payItem}
-        title="Maaş ödemesi onayı"
+        title={payItem && isDailyPayroll(payItem) ? "Yevmiye ödemesi onayı" : "Maaş ödemesi onayı"}
         subtitle={payItem ? `${payItem.employee_name} · ${payItem.period} · ${fmtMoney(payItem.final_payable)}` : undefined}
         onClose={() => setPayItem(null)}
         testID="salary-pay-sheet"
@@ -920,7 +1009,7 @@ function EmpActionChip({
   const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
   return (
     <PayChip
-      title={action.title}
+      title={employeeCardActionTitle(action, emp)}
       color={tone.color}
       bg={tone.bg}
       testID={`emp-card-${action.key}-btn-${eid}`}
