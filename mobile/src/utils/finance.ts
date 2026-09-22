@@ -611,3 +611,64 @@ export function partnerTxTr(v?: string | null): string {
   if (!v) return "—";
   return PARTNER_TX_TR[v] || v;
 }
+
+function dateMs(value?: string | null): number {
+  const t = Date.parse(value || "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+export type GroupMovementNotice = {
+  id: string;
+  title: string;
+  detail: string;
+  signed: number;
+  currency?: string;
+};
+
+/** Grup kartı için hesapların en yeni hareketleri (varsayılan 3). */
+export function recentTxForAccounts(txs: BankTx[], accounts: { id?: string; _id?: string }[], limit = 3): BankTx[] {
+  const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
+  return (txs || [])
+    .filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || "")))
+    .sort((a, b) => dateMs(b.date) - dateMs(a.date))
+    .slice(0, limit);
+}
+
+export function recentPartnerTx(txs: PartnerTx[], limit = 3): PartnerTx[] {
+  return [...(txs || [])].sort((a, b) => dateMs(b.date) - dateMs(a.date)).slice(0, limit);
+}
+
+export function signedTxForGroup(tx: BankTx, accountIds: Set<string>): number {
+  const amt = Number(tx.amount || 0);
+  if (tx.type === "outflow") return -amt;
+  if (tx.type === "inflow") return amt;
+  if (tx.type === "transfer") {
+    const from = accountIds.has(String(tx.account_id || ""));
+    const to = accountIds.has(String(tx.target_account_id || ""));
+    if (from && !to) return -amt;
+    if (to && !from) return amt;
+    return 0;
+  }
+  return amt;
+}
+
+export function bankMovementNotice(tx: BankTx, accounts: { id?: string; _id?: string }[]): GroupMovementNotice {
+  const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
+  return {
+    id: idOf(tx),
+    title: String(tx.description || tx.category || txTypeTr(tx.type)),
+    detail: [txTypeTr(tx.type), tx.account_name, tx.contact_name].filter(Boolean).join(" · "),
+    signed: signedTxForGroup(tx, ids),
+    currency: tx.currency,
+  };
+}
+
+export function partnerMovementNotice(tx: PartnerTx): GroupMovementNotice {
+  const amt = Number(tx.amount || 0);
+  return {
+    id: idOf(tx),
+    title: String(tx.description || partnerTxTr(tx.type)),
+    detail: [partnerTxTr(tx.type), tx.partner_name, tx.account_name].filter(Boolean).join(" · "),
+    signed: tx.type === "withdrawal" ? -amt : amt,
+  };
+}

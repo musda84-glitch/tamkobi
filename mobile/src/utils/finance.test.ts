@@ -26,6 +26,10 @@ import {
   isBankingBankAccount,
   isBankingCashAccount,
   isBankingPosAccount,
+  recentTxForAccounts,
+  recentPartnerTx,
+  bankMovementNotice,
+  partnerMovementNotice,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -233,5 +237,27 @@ describe("finance drafts", () => {
     });
     expect(bank.path).toBe("/banking/transactions");
     expect(bank.body).toMatchObject({ category: "Cari Ödeme", contact_id: "ct1", account_name: "Kasa", source: "manual" });
+  });
+
+  it("picks the latest 3 movements per group card", () => {
+    const accs = [{ id: "b1" }, { id: "b2" }];
+    const txs = [
+      { id: "1", account_id: "b1", type: "inflow", amount: 10, date: "2026-01-01", description: "eski" },
+      { id: "2", account_id: "b1", type: "outflow", amount: 4, date: "2026-09-20", description: "tediye" },
+      { id: "3", account_id: "x", type: "inflow", amount: 99, date: "2026-09-22", description: "başka" },
+      { id: "4", account_id: "b2", type: "inflow", amount: 8, date: "2026-09-21", description: "tahsilat" },
+      { id: "5", target_account_id: "b1", account_id: "z", type: "transfer", amount: 3, date: "2026-09-22", description: "virman" },
+    ];
+    const latest = recentTxForAccounts(txs, accs, 3);
+    expect(latest.map((t) => t.id)).toEqual(["5", "4", "2"]);
+    expect(bankMovementNotice(latest[0], accs).signed).toBe(3);
+    expect(bankMovementNotice(latest[2], accs).signed).toBe(-4);
+    expect(recentPartnerTx([
+      { id: "p1", type: "capital_in", amount: 20, date: "2026-01-01" },
+      { id: "p2", type: "withdrawal", amount: 5, date: "2026-09-21" },
+      { id: "p3", type: "profit_share", amount: 1, date: "2026-09-20" },
+      { id: "p4", type: "capital_in", amount: 2, date: "2026-09-22" },
+    ]).map((t) => t.id)).toEqual(["p4", "p2", "p3"]);
+    expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
   });
 });

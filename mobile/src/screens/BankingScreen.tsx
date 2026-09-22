@@ -13,15 +13,22 @@ import {
   accountBalance,
   accountGroupTone,
   accountTypeTr,
+  bankMovementNotice,
   groupedAccounts,
   isBankingBankAccount,
   isBankingCashAccount,
   isBankingPosAccount,
+  partnerMovementNotice,
+  recentPartnerTx,
+  recentTxForAccounts,
   totalLiquidity,
   virmanAccounts,
   type BankAccount,
+  type BankTx,
+  type GroupMovementNotice,
   type Partner,
   type PartnerSummary,
+  type PartnerTx,
 } from "../utils/finance";
 import { fmtMoney, idOf } from "../utils/money";
 import { BankingMatchPanel } from "./BankingMatchPanel";
@@ -36,6 +43,29 @@ type CashApproval = {
   requested_by_name?: string;
   can_approve?: boolean;
 };
+
+function MovementNotices({ items, testID }: { items: GroupMovementNotice[]; testID: string }) {
+  if (!items.length) return null;
+  return (
+    <View testID={testID} style={{ marginTop: 8, gap: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: "rgba(15,23,42,0.08)" }}>
+      {items.map((m) => {
+        const tone = m.signed < 0 ? colors.danger : m.signed > 0 ? colors.primary : colors.muted;
+        return (
+          <View key={m.id} testID={`${testID}-${m.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone, flexShrink: 0 }} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>{m.title}</Text>
+              {m.detail ? <Text numberOfLines={1} style={{ fontSize: 10, color: colors.muted }}>{m.detail}</Text> : null}
+            </View>
+            <Text style={{ fontSize: 12, fontWeight: "800", color: tone }}>
+              {m.signed > 0 ? "+" : ""}{fmtMoney(m.signed, m.currency)}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 function Approvals({
   items,
@@ -77,6 +107,8 @@ export function BankingScreen() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
   const [approvals, setApprovals] = useState<CashApproval[]>([]);
+  const [txs, setTxs] = useState<BankTx[]>([]);
+  const [partnerTxs, setPartnerTxs] = useState<PartnerTx[]>([]);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [q, setQ] = useState("");
   const [groupF, setGroupF] = useState<string>("all");
@@ -86,18 +118,22 @@ export function BankingScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [accs, pts, ps, appr, unmatched] = await Promise.all([
+      const [accs, pts, ps, appr, unmatched, movements, partnerMoves] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
         get<PartnerSummary>(client, "/banking/partners/summary", { company_id: companyId }).catch(() => null),
         get<CashApproval[]>(client, "/banking/cash-approvals", { company_id: companyId, status: "pending" }).catch(() => []),
         get<unknown[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
+        get<BankTx[]>(client, "/banking/transactions", { company_id: companyId }).catch(() => []),
+        get<PartnerTx[]>(client, "/banking/partners/transactions", { company_id: companyId }).catch(() => []),
       ]);
       setRows(accs || []);
       setPartners(pts || []);
       setPartnerSummary(ps);
       setApprovals(appr || []);
       setUnmatchedCount((unmatched || []).length);
+      setTxs(movements || []);
+      setPartnerTxs(partnerMoves || []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Hesaplar yüklenemedi."));
@@ -132,6 +168,10 @@ export function BankingScreen() {
   const bankCount = useMemo(() => rows.filter(isBankingBankAccount).length, [rows]);
   const cashCount = useMemo(() => rows.filter(isBankingCashAccount).length, [rows]);
   const posCount = useMemo(() => rows.filter(isBankingPosAccount).length, [rows]);
+  const partnerNotices = useMemo(
+    () => recentPartnerTx(partnerTxs, 3).map(partnerMovementNotice),
+    [partnerTxs]
+  );
   const virmanOk = virmanAccounts(rows).length + activePartners.length > 1;
 
   const actions: ActionTile[] = [
@@ -197,6 +237,7 @@ export function BankingScreen() {
                 const total = g.items.reduce((s, a) => s + accountBalance(a), 0);
                 const active = groupF === g.key;
                 const tone = accountGroupTone(g.key);
+                const notices = recentTxForAccounts(txs, g.items, 3).map((tx) => bankMovementNotice(tx, g.items));
                 return (
                   <Pressable
                     key={g.key}
@@ -220,6 +261,7 @@ export function BankingScreen() {
                     <Text style={{ fontSize: 10, fontWeight: "800", color: tone.label, textTransform: "uppercase" }}>{g.label}</Text>
                     <Text style={{ fontWeight: "800", color: tone.amount, fontSize: 18 }}>{fmtMoney(total)}</Text>
                     <Text style={{ fontSize: 11, color: tone.label, opacity: 0.8 }}>{g.items.length} hesap{g.key === "credit_card" ? " · tahsilat kapalı" : ""}</Text>
+                    <MovementNotices items={notices} testID={`account-group-${g.key}-moves`} />
                   </Pressable>
                 );
               })}
@@ -240,6 +282,7 @@ export function BankingScreen() {
                   <Text style={{ fontSize: 10, fontWeight: "800", color: accountGroupTone("partners").label, textTransform: "uppercase" }}>Ortaklar</Text>
                   <Text style={{ fontWeight: "800", color: accountGroupTone("partners").amount, fontSize: 18 }}>{fmtMoney(partnerSummary?.total_balance)}</Text>
                   <Text style={{ fontSize: 11, color: accountGroupTone("partners").label, opacity: 0.8 }}>{activePartners.length} ortak</Text>
+                  <MovementNotices items={partnerNotices} testID="account-group-partners-moves" />
                 </Pressable>
               ) : null}
             </View>
