@@ -26,7 +26,8 @@ import {
   employeeCompRows,
   unpaidPayrollTotal,
   employeePayMoves,
-  EMPLOYEE_CARD_ACTIONS,
+  EMPLOYEE_CARD_PAY_ACTIONS,
+  EMPLOYEE_CARD_WORK_ACTIONS,
   allowanceDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
@@ -268,6 +269,24 @@ export function PersonnelScreen() {
     }
   };
 
+  const openAdvance = (emp: Employee) => {
+    setAdvanceEmp(emp);
+    setAdvanceAmount("");
+    setAdvanceNote("");
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+  };
+
+  const empActionHandlers = {
+    advance: openAdvance,
+    salary: openSalaryPay,
+    task: openTaskAssign,
+    overtime: openOvertime,
+    meal: (emp: Employee) => openAllowance(emp, "meal"),
+    transport: (emp: Employee) => openAllowance(emp, "transport"),
+  };
+
   const saveTaskAssign = async () => {
     if (!taskEmp) return;
     const invalid = validateTaskAssign(taskProjectId, taskId, taskTitle);
@@ -432,50 +451,27 @@ export function PersonnelScreen() {
                     ) : null}
                   </Row>
                 ) : null}
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
-                  <PayChip
-                    title="Hareketler"
-                    color={colors.secondary}
-                    bg="#F1F5F9"
-                    testID={`emp-card-moves-btn-${eid}`}
-                    onPress={() => openMoves(emp)}
-                    wide
-                  />
-                  {canEdit ? EMPLOYEE_CARD_ACTIONS.map((action) => {
-                      const press = {
-                        advance: () => {
-                          setAdvanceEmp(emp);
-                          setAdvanceAmount("");
-                          setAdvanceNote("");
-                          get<Partner[]>(client, "/banking/partners", { company_id: companyId })
-                            .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
-                            .catch(() => undefined);
-                        },
-                        salary: () => openSalaryPay(emp),
-                        task: () => openTaskAssign(emp),
-                        overtime: () => openOvertime(emp),
-                        meal: () => openAllowance(emp, "meal"),
-                        transport: () => openAllowance(emp, "transport"),
-                      }[action.key];
-                      const tone = {
-                        advance: { color: "#B45309", bg: colors.amber50 },
-                        salary: { color: colors.primaryHover, bg: colors.emerald50 },
-                        task: { color: colors.indigo, bg: colors.indigo50 },
-                        overtime: { color: "#6D28D9", bg: colors.indigo50 },
-                        meal: { color: "#C2410C", bg: "#FFF7ED" },
-                        transport: { color: "#0E7490", bg: "#ECFEFF" },
-                      }[action.key];
-                      return (
-                        <PayChip
-                          key={action.key}
-                          title={action.title}
-                          color={tone.color}
-                          bg={tone.bg}
-                          testID={`emp-card-${action.key}-btn-${eid}`}
-                          onPress={press}
-                        />
-                      );
-                    }) : null}
+                <View style={{ gap: 8 }} testID={`emp-card-actions-${eid}`}>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    <PayChip
+                      title="Hareketler"
+                      color={colors.secondary}
+                      bg="#F1F5F9"
+                      testID={`emp-card-moves-btn-${eid}`}
+                      onPress={() => openMoves(emp)}
+                      wide
+                    />
+                    {canEdit ? EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
+                      <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
+                    )) : null}
+                  </View>
+                  {canEdit ? (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-work-actions-${eid}`}>
+                      {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
+                        <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
               </Card>
             );
@@ -744,6 +740,38 @@ export function PersonnelScreen() {
         <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
       </B2BSheet>
     </Screen>
+  );
+}
+
+const EMP_ACTION_TONE: Record<string, { color: string; bg: string }> = {
+  advance: { color: "#B45309", bg: colors.amber50 },
+  salary: { color: colors.primaryHover, bg: colors.emerald50 },
+  task: { color: colors.indigo, bg: colors.indigo50 },
+  overtime: { color: "#6D28D9", bg: colors.indigo50 },
+  meal: { color: "#C2410C", bg: "#FFF7ED" },
+  transport: { color: "#0E7490", bg: "#ECFEFF" },
+};
+
+function EmpActionChip({
+  action,
+  emp,
+  eid,
+  handlers,
+}: {
+  action: { key: string; title: string };
+  emp: Employee;
+  eid: string;
+  handlers: Record<string, (emp: Employee) => void>;
+}) {
+  const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
+  return (
+    <PayChip
+      title={action.title}
+      color={tone.color}
+      bg={tone.bg}
+      testID={`emp-card-${action.key}-btn-${eid}`}
+      onPress={() => handlers[action.key]?.(emp)}
+    />
   );
 }
 

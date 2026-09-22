@@ -222,11 +222,11 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 shrink-0" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
         </div>
+          <div className="space-y-1.5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             <button type="button" onClick={() => setTab("salary")} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
             <button type="button" onClick={() => setQuickPay({ type: "advance" })} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
             <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>
-            <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
             <button type="button" onClick={() => setQuickPay({ type: "expense", initialMode: "new" })} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
             <button type="button" onClick={() => {
               const due = Number(card?.balance?.meal_due ?? e.meal_allowance ?? 0) || 0;
@@ -236,6 +236,10 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               const due = Number(card?.balance?.transport_due ?? e.transport_allowance ?? 0) || 0;
               setQuickPay({ type: "expense", category: "Yol / Ulaşım", description: "Yol / ulaşım ödemesi", amount: due > 0 ? due : "", initialMode: "new" });
             }} className={`${btn} bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border-cyan-200`} title="Yol ödemesi — masraf" data-testid="emp-card-transport-btn"><Bus className="w-3.5 h-3.5 inline mr-1" />Yol</button>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5" data-testid="emp-card-work-actions">
+            <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
+          </div>
           </div>
         </div>
         <div className="flex gap-1 px-5 border-b overflow-x-auto">{TABS.map(([k, l, I]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`emp-tab-${k}`}><I className="w-3.5 h-3.5" /> {l}</button>)}</div>

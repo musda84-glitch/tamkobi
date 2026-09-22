@@ -573,16 +573,25 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
 export const EMPLOYEE_MEAL_CATEGORY = "Yemek";
 export const EMPLOYEE_TRANSPORT_CATEGORY = "Yol / Ulaşım";
 
-export const EMPLOYEE_CARD_ACTIONS = [
+export const EMPLOYEE_CARD_PAY_ACTIONS = [
   { key: "advance", title: "Avans" },
   { key: "salary", title: "Maaş öde" },
-  { key: "task", title: "Görev ata" },
-  { key: "overtime", title: "+ Mesai" },
   { key: "meal", title: "Yemek" },
   { key: "transport", title: "Yol" },
 ] as const;
 
+export const EMPLOYEE_CARD_WORK_ACTIONS = [
+  { key: "task", title: "Görev ata" },
+  { key: "overtime", title: "+ Mesai" },
+] as const;
+
+export const EMPLOYEE_CARD_ACTIONS = [...EMPLOYEE_CARD_PAY_ACTIONS, ...EMPLOYEE_CARD_WORK_ACTIONS] as const;
+
 export type EmployeeCardActionKey = (typeof EMPLOYEE_CARD_ACTIONS)[number]["key"];
+
+export function employeeCardActionsByGroup(group: "pay" | "work") {
+  return group === "work" ? EMPLOYEE_CARD_WORK_ACTIONS : EMPLOYEE_CARD_PAY_ACTIONS;
+}
 
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;

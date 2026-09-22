@@ -14,6 +14,7 @@ import {
   remainingLeaveDays,
   unpaidPayrollTotal,
   employeeCardActionTitles,
+  employeeCardActionsByGroup,
   employeePayMoves,
   allowanceDue,
   personnelExpensePayload,
@@ -164,7 +165,9 @@ describe("overtime assign", () => {
 describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
-    expect(titles).toEqual(["Avans", "Maaş öde", "Görev ata", "+ Mesai", "Yemek", "Yol"]);
+    expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Görev ata", "+ Mesai"]);
+    expect(employeeCardActionsByGroup("work").map((a) => a.title)).toEqual(["Görev ata", "+ Mesai"]);
+    expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport"]);
     expect(titles).not.toContain("Düzenle");
     expect(titles).not.toContain("Sil");
     expect(allowanceDue({ meal_allowance: 5000 }, { meal_due: 3750 }, "meal")).toBe(3750);
