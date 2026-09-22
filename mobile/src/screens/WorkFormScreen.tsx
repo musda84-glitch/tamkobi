@@ -713,8 +713,21 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     })
     : null;
 
+  const cariSearch = !contactId ? (
+    <View>
+      <Field dense label="Cari ara" value={custQ} onChangeText={setCustQ} placeholder="Ad / telefon" />
+      {custHits.length ? (
+        <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
+          {custHits.map((c) => (
+            <ListRow key={idOf(c)} title={c.name} subtitle={c.phone || c.city} onPress={() => { setContactId(idOf(c)); setContactName(c.name); setAddress((a) => a || c.address || ""); setCustQ(""); }} />
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
-    <Screen>
+    <Screen stickyTop={cariSearch}>
       {kind === "quote" ? (
         <Stack.Screen
           options={{
@@ -811,14 +824,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.muted} />
           </Pressable>
-        ) : (
-          <>
-            <Field dense label="Cari ara" value={custQ} onChangeText={setCustQ} placeholder="Ad / telefon" />
-            {custHits.map((c) => (
-              <ListRow key={idOf(c)} title={c.name} subtitle={c.phone || c.city} onPress={() => { setContactId(idOf(c)); setContactName(c.name); setAddress((a) => a || c.address || ""); setCustQ(""); }} />
-            ))}
-          </>
-        )}
+        ) : null}
       </View>
 
       {kind === "quote" ? <DateField label="Geçerlilik" testID="q-valid" value={validUntil} onChangeText={setValidUntil} editable={canEdit} /> : null}
