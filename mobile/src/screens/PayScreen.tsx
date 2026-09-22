@@ -100,7 +100,10 @@ export function PayScreen() {
   };
 
   return (
-    <Screen onRefresh={load}>
+    <Screen
+      onRefresh={load}
+      stickyTop={!picked ? <Field label="Cari ara" testID="pay-contact-search" value={q} onChangeText={setQ} placeholder="Ad / telefon / VKN" /> : undefined}
+    >
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
       {!canPay ? <Muted>Tahsilat / ödeme için kasa yetkisi gerekir.</Muted> : null}
@@ -150,7 +153,6 @@ export function PayScreen() {
       ) : (
         <>
           <Muted>Tahsilat veya ödeme için cari seçin.</Muted>
-          <Field label="Cari ara" testID="pay-contact-search" value={q} onChangeText={setQ} placeholder="Ad / telefon / VKN" />
           {!hits.length ? (
             <Muted>{q.trim() ? "Cari bulunamadı." : contacts.length ? "Aramaya başlayın veya listeden seçin." : "Cari yok."}</Muted>
           ) : hits.map((c) => (
