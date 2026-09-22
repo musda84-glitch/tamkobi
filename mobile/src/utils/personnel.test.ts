@@ -357,7 +357,7 @@ describe("project task assign", () => {
 
   it("groups projects and open vs done tasks", () => {
     expect(validateTaskAssign("", "", "")).toBe("Proje seçin.");
-    expect(validateTaskAssign("p1", "", "")).toBe("Görev seçin veya yeni görev adı girin.");
+    expect(validateTaskAssign("p1", "", "")).toBe("Yapacağı işi seçin veya yeni iş adı yazın.");
     expect(validateTaskAssign("p1", "t1", "")).toBeNull();
     expect(projectSelectGroups([{ id: "p1", name: "Villa", project_number: "PRJ-1" }])[0].options[0]).toEqual({
       value: "p1",
@@ -367,8 +367,8 @@ describe("project task assign", () => {
       { id: "t1", title: "Montaj", assignee_name: "Ali" },
       { id: "t2", title: "Keşif", done: true },
     ]);
-    expect(groups[0].label).toBe("Açık görevler");
+    expect(groups[0].label).toBe("Yapılacak işler");
     expect(groups[0].options[0].label).toBe("Montaj · Ali");
-    expect(groups[1].label).toBe("Tamamlanan");
+    expect(groups[1].label).toBe("Biten işler");
   });
 });

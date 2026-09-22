@@ -830,7 +830,7 @@ export function assignEmployeeToTasks(
 
 export function validateTaskAssign(projectId: string, taskId: string, title: string): string | null {
   if (!projectId) return "Proje seçin.";
-  if (!taskId && !title.trim()) return "Görev seçin veya yeni görev adı girin.";
+  if (!taskId && !title.trim()) return "Yapacağı işi seçin veya yeni iş adı yazın.";
   return null;
 }
 
@@ -851,7 +851,7 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
   const groups: { label: string; options: { value: string; label: string }[] }[] = [];
   if (open.length) {
     groups.push({
-      label: "Açık görevler",
+      label: "Yapılacak işler",
       options: open.map((t) => ({
         value: t.id || "",
         label: t.assignee_name ? `${t.title} · ${t.assignee_name}` : String(t.title || ""),
@@ -860,7 +860,7 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
   }
   if (done.length) {
     groups.push({
-      label: "Tamamlanan",
+      label: "Biten işler",
       options: done.map((t) => ({
         value: t.id || "",
         label: String(t.title || ""),
