@@ -47,6 +47,7 @@ import {
   workItemFromProduct,
   workItemImage,
   bumpWorkItemQty,
+  workItemPriceFromGross,
   workItemLineGross,
   workItemNameHits,
   workItemNoteOpen,
@@ -54,8 +55,14 @@ import {
   hydrateWorkItem,
   itemStripe,
   QUOTE_ITEM_THUMB,
+  QUOTE_SERVICE_THUMB,
   QUOTE_ITEM_THUMB_SIZE,
   toggleWorkItemService,
+  workItemNeedsStockCard,
+  matchProductByName,
+  quoteLineSku,
+  quoteLineProductPayload,
+  attachProductToWorkItem,
 } from "./workDocs";
 
 describe("workDocs", () => {
@@ -70,6 +77,9 @@ describe("workDocs", () => {
     expect(bumpWorkItemQty(1, -1)).toBe(0);
     expect(bumpWorkItemQty(0, -1)).toBe(0);
     expect(bumpWorkItemQty(1.5, 1)).toBe(2.5);
+    expect(workItemPriceFromGross({ quantity: 1, vat_rate: 10 }, 260)).toBeCloseTo(236.3636, 3);
+    expect(workItemPriceFromGross({ quantity: 2, vat_rate: 20 }, 240)).toBe(100);
+    expect(workItemPriceFromGross({ quantity: 1, vat_rate: 20, price_includes_vat: true }, 120)).toBe(120);
     expect(workItemLineGross({ name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true })).toBe(120);
     const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true, thumbnail_url: "koltuk.jpg" });
     expect(fromCard.price_includes_vat).toBe(true);
@@ -134,9 +144,10 @@ describe("workDocs", () => {
     const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
     expect(fromSvc.is_service).toBe(true);
     expect(fromSvc.product_id).toBe("");
-    expect(QUOTE_ITEM_THUMB.width).toBe(36);
-    expect(QUOTE_ITEM_THUMB.height).toBe(36);
-    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.width);
+    expect(QUOTE_ITEM_THUMB.width).toBe(44);
+    expect(QUOTE_ITEM_THUMB.height).toBe(44);
+    expect(QUOTE_SERVICE_THUMB.height).toBeGreaterThan(QUOTE_SERVICE_THUMB.width);
+    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.height);
     expect(workItemNoteOpen({ description: "" })).toBe(false);
     expect(workItemNoteOpen({ description: "Kesim notu" })).toBe(true);
     expect(workItemNoteOpen({ description: "Kesim notu" }, false)).toBe(false);
@@ -145,6 +156,17 @@ describe("workDocs", () => {
     ]);
     expect(q.items[0].is_service).toBe(true);
     expect(q.items[0].description).toBe("Montaj");
+    expect(workItemNeedsStockCard({ name: "a", is_service: false })).toBe(true);
+    expect(workItemNeedsStockCard({ name: "a", is_service: true })).toBe(false);
+    expect(workItemNeedsStockCard({ name: "a", product_id: "p1", is_service: false })).toBe(false);
+    expect(workItemNeedsStockCard({ name: "  ", is_service: false })).toBe(false);
+    expect(matchProductByName([{ id: "p1", name: "A" }, { id: "p2", name: "Raf" }], "a")?.id).toBe("p1");
+    expect(quoteLineSku("çelik raf", "ab12")).toBe("CELIK-RAF-AB12");
+    expect(quoteLineSku("", "x")).toBe("STOK-X");
+    const body = quoteLineProductPayload({ name: "a", unit_price: 236.36, vat_rate: 10, unit: "Adet", image_url: "blob:x" }, "comp_1", "A-1");
+    expect(body).toMatchObject({ company_id: "comp_1", name: "a", sku: "A-1", sale_price: 236.36, vat_rate: 10, type: "product" });
+    expect(body.image_url).toBeUndefined();
+    expect(attachProductToWorkItem({ ...emptyItem(), name: "a" }, { id: "p9", image_url: "raf.jpg" }).product_id).toBe("p9");
   });
 
   it("removes a quote or survey line and keeps one empty row", () => {

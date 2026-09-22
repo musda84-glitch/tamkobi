@@ -990,7 +990,9 @@ export function ContactDetailScreen() {
                     </>
                   ) : null}
                 </Row>
-                {locked && !showChequeBtns ? <Muted>{lockedPaymentLabel(p)} kaynaklı hareket kendi modülünden yönetilir.</Muted> : null}
+                {locked && !showChequeBtns ? (
+                  <Muted>{lockedPaymentLabel(p)} kaynaklı hareket kendi modülünden yönetilir.</Muted>
+                ) : null}
               </View>
             );
           })}

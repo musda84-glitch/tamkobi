@@ -37,6 +37,7 @@ export function ProductThumb({
     alignItems: "center" as const,
     justifyContent: "center" as const,
     overflow: "hidden" as const,
+    pointerEvents: "none" as const,
   };
   if (!src || failed) {
     return (
