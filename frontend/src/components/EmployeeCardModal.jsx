@@ -305,7 +305,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                           <li key={t.id || i}>
                             {t.title || "Görev"}
                             {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                            {t.kind === "office" ? " · iç görev" : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
                           </li>
                         ))}
                       </ul>

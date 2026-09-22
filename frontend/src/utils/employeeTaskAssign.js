@@ -44,7 +44,7 @@ export function nextTasksAfterAssign(tasks, employee, { taskId, title, newId, du
   const existing = (tasks || []).map((t, i) => ({
     id: t.id || `t_${i}`,
     title: (t.title || t.name || "").trim(),
-    done: !!(t.done || t.status === "done" || t.status === "completed"),
+    done: !!(t.done || ["done", "completed", "tamamlandı", "tamamlandi"].includes(String(t.status || "").toLocaleLowerCase("tr-TR"))),
     assignee_id: t.assignee_id || null,
     assignee_name: t.assignee_name || null,
     due_date: t.due_date || null,

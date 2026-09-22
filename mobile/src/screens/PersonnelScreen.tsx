@@ -78,6 +78,7 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
 
 type Tab = "payroll" | "attendance" | "leaves";
@@ -125,6 +126,8 @@ export function PersonnelScreen() {
   const [taskDays, setTaskDays] = useState("");
   const [taskKind, setTaskKind] = useState<"field" | "office">("field");
   const [taskShowCompleted, setTaskShowCompleted] = useState(false);
+  const [workParks, setWorkParks] = useState<WorkPark[]>([]);
+  const [taskParkId, setTaskParkId] = useState("");
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
@@ -341,11 +344,18 @@ export function PersonnelScreen() {
     setTaskId("");
     setTaskTitle("");
     setTaskDays("");
+    setTaskParkId("");
     setTaskShowCompleted(false);
     setBusy(true);
     try {
-      const rows = await get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 });
+      const [rows, parksRes] = await Promise.all([
+        get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 }),
+        get<{ parks?: WorkPark[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
+      ]);
       setProjects(rows || []);
+      const parks = parksRes?.parks || [];
+      setWorkParks(parks);
+      setTaskParkId(parks[0]?.id || "");
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Projeler yüklenemedi."));
@@ -558,17 +568,35 @@ export function PersonnelScreen() {
 
   const saveTaskAssign = async () => {
     if (!taskEmp) return;
+    if (taskKind === "office") {
+      const invalid = validateOfficeTaskAssign(taskParkId);
+      if (invalid) { setError(invalid); return; }
+      const park = findWorkPark(workParks, taskParkId);
+      setBusy(true);
+      try {
+        await post(client, `/personnel/employees/${idOf(taskEmp)}/office-tasks`, officeTaskPayload(park, taskTitle));
+        setTaskEmp(null);
+        setTaskDays("");
+        setTaskParkId("");
+        setMessage(`${taskEmp.full_name} · ${park?.name || "iç görev"}`);
+        await load();
+      } catch (err) {
+        setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const invalid = validateTaskAssign(taskProjectId, taskId, taskTitle);
     if (invalid) { setError(invalid); return; }
     const project = projects.find((p) => idOf(p) === taskProjectId);
     if (!project) { setError("Proje bulunamadı."); return; }
-    const field = taskKind === "field";
-    const daysInvalid = field ? validateTaskDays(taskDays) : null;
+    const daysInvalid = validateTaskDays(taskDays);
     if (daysInvalid) { setError(daysInvalid); return; }
-    const days = field ? parseTaskDays(taskDays) : null;
+    const days = parseTaskDays(taskDays);
     const due = days ? dueDateFromDays(todayIso(), days) : undefined;
     const next = assignEmployeeToTasks(project.tasks, taskEmp, {
-      taskId, title: taskTitle, durationDays: days || undefined, dueDate: due, kind: taskKind,
+      taskId, title: taskTitle, durationDays: days || undefined, dueDate: due, kind: "field",
     });
     if (next.error) { setError(next.error); return; }
     setBusy(true);
@@ -1338,7 +1366,7 @@ export function PersonnelScreen() {
         visible={!!taskEmp}
         title="Görev ata"
         subtitle={taskEmp ? `${taskEmp.full_name} · atama bu personele · yapacağı işi seçin` : undefined}
-        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); setTaskKind("field"); }}
+        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); setTaskKind("field"); setTaskParkId(""); }}
         testID="task-assign-sheet"
       >
         <Row>
@@ -1389,8 +1417,32 @@ export function PersonnelScreen() {
             )}
           </>
         ) : (
-          <Muted testID="task-assign-office-hint">İç görev ofiste yapılır; konum kontrolü ücreti etkilemez.</Muted>
+          <Muted testID="task-assign-office-hint">İç görev ofiste / parkurda yapılır; konum kontrolü ücreti etkilemez.</Muted>
         )}
+        {taskKind === "office" ? (
+          workParks.length ? (
+            <>
+              <GroupedSelect
+                label="Parkur"
+                testID="task-park-select"
+                value={taskParkId}
+                onChange={setTaskParkId}
+                groups={parkSelectGroups(workParks)}
+                emptyLabel="Parkur seçin"
+              />
+              <Field
+                label="Yapacağı iş (opsiyonel)"
+                testID="task-title-input"
+                value={taskTitle}
+                onChangeText={setTaskTitle}
+                placeholder="Boş bırakılırsa parkur adı yazılır"
+              />
+            </>
+          ) : (
+            <Muted testID="task-no-parks-hint">Henüz parkur yok. Firma Ayarları → İç görev parkurları’ndan ekleyin (ör. Makina parkuru).</Muted>
+          )
+        ) : (
+          <>
         <GroupedSelect
           label="Proje"
           testID="task-project-select"
@@ -1429,7 +1481,7 @@ export function PersonnelScreen() {
           value={taskId}
           onChange={(v) => { setTaskId(v); if (v) setTaskTitle(""); }}
           groups={taskSelectGroups(projects.find((p) => idOf(p) === taskProjectId)?.tasks)}
-          emptyLabel={taskProjectId ? "Listeden iş seçin" : "Önce proje seçin"}
+          emptyLabel={taskProjectId ? "Yapılacak iş seçin" : "Önce proje seçin"}
         />
         {taskEmp && taskId ? (
           <Muted testID="task-assign-who">
@@ -1449,6 +1501,8 @@ export function PersonnelScreen() {
             placeholder="Listede yoksa yazın: keşif, montaj"
           />
         ) : null}
+          </>
+        )}
         <Muted testID="task-assign-field-hint">
           {(() => {
             if (taskKind === "office") {

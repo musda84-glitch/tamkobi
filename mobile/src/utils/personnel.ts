@@ -795,12 +795,19 @@ export function newTaskId(now = Date.now(), rand = Math.random().toString(36).sl
   return `t_${now}_${rand}`;
 }
 
+export function taskIsDone(task?: Pick<ProjectTask, "done" | "status"> | null): boolean {
+  if (!task) return false;
+  if (task.done) return true;
+  const s = String(task.status || "").toLocaleLowerCase("tr-TR");
+  return s === "done" || s === "completed" || s === "tamamlandı" || s === "tamamlandi";
+}
+
 export function normalizeProjectTasks(tasks?: ProjectTask[] | null): ProjectTask[] {
   return (tasks || [])
     .map((t, i) => ({
       id: t.id || `t_${i}`,
       title: (t.title || t.name || "").trim(),
-      done: !!(t.done || t.status === "done" || t.status === "completed"),
+      done: taskIsDone(t),
       assignee_id: t.assignee_id || null,
       assignee_name: t.assignee_name || null,
       due_date: t.due_date || null,
@@ -890,29 +897,15 @@ export function projectSelectGroups(
 }
 
 export function taskSelectGroups(tasks?: ProjectTask[] | null) {
-  const rows = normalizeProjectTasks(tasks);
-  const open = rows.filter((t) => !t.done);
-  const done = rows.filter((t) => t.done);
-  const groups: { label: string; options: { value: string; label: string }[] }[] = [];
-  if (open.length) {
-    groups.push({
-      label: "Yapılacak işler",
-      options: open.map((t) => ({
-        value: t.id || "",
-        label: String(t.title || ""),
-      })),
-    });
-  }
-  if (done.length) {
-    groups.push({
-      label: "Biten işler",
-      options: done.map((t) => ({
-        value: t.id || "",
-        label: String(t.title || ""),
-      })),
-    });
-  }
-  return groups;
+  const open = normalizeProjectTasks(tasks).filter((t) => !t.done);
+  if (!open.length) return [];
+  return [{
+    label: "Yapılacak işler",
+    options: open.map((t) => ({
+      value: t.id || "",
+      label: String(t.title || ""),
+    })),
+  }];
 }
 
 export const EMPLOYEE_MEAL_CATEGORY = "Yemek";

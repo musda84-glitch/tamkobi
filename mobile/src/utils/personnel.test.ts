@@ -389,9 +389,10 @@ describe("project task assign", () => {
     const groups = taskSelectGroups([
       { id: "t1", title: "Montaj", assignee_name: "Ali" },
       { id: "t2", title: "Keşif", done: true },
+      { id: "t3", title: "Teslim", status: "tamamlandı" },
     ]);
+    expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe("Yapılacak işler");
-    expect(groups[0].options[0].label).toBe("Montaj");
-    expect(groups[1].label).toBe("Biten işler");
+    expect(groups[0].options.map((o) => o.label)).toEqual(["Montaj"]);
   });
 });
