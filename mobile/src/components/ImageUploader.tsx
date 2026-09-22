@@ -134,14 +134,14 @@ export function ImageUploader({
                 testID={`${testID}-remove`}
                 accessibilityLabel="Fotoğrafı sil"
                 onPress={() => confirmAction("Fotoğraf", "Bu fotoğraf silinsin mi?", () => onRemoved(img))}
-                hitSlop={8}
+                hitSlop={10}
                 style={{
                   position: "absolute",
-                  top: 4,
-                  right: 4,
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
+                  top: 2,
+                  right: 2,
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
                   backgroundColor: "#fff",
                   alignItems: "center",
                   justifyContent: "center",
@@ -149,7 +149,7 @@ export function ImageUploader({
                   borderColor: colors.border,
                 }}
               >
-                <Ionicons name="trash" size={14} color={colors.danger} />
+                <Ionicons name="trash" size={10} color={colors.danger} />
               </Pressable>
             ) : null}
           </View>
