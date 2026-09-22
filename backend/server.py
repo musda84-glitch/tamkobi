@@ -10819,15 +10819,50 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
 @api_router.post("/personnel/employees")
 async def create_employee(emp: Employee):
     doc = emp.to_mongo()
+    sgk = str(doc.get("sgk_number") or "").strip()
+    if sgk:
+        doc["sgk_number"] = sgk
+        if not _norm_iban(doc.get("iban")):
+            raise HTTPException(status_code=400, detail="SGK sicil numarası girildiğinde personel IBAN zorunludur (maaş yalnız bankadan ödenir).")
+    elif "sgk_number" in doc:
+        doc["sgk_number"] = None
     await db.employees.insert_one(doc)
     return clean_doc(doc)
 
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
-                      "meal_allowance", "transport_allowance"}
+                      "meal_allowance", "transport_allowance", "sgk_number"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
+
+
+def _sgk_set(emp: Optional[dict]) -> bool:
+    return bool(str((emp or {}).get("sgk_number") or "").strip())
+
+
+def _norm_iban(v: Optional[str]) -> str:
+    return "".join(ch for ch in str(v or "").upper() if ch.isalnum())
+
+
+async def _assert_salary_bank_only(emp: dict, account_id: Optional[str], partner_id: Optional[str]):
+    """SGK sicili olan personelin ana maaşı yalnız banka hesabından ödenir (kasa/ortak/kart yok)."""
+    if not _sgk_set(emp):
+        return
+    if partner_id:
+        raise HTTPException(status_code=400, detail="SGK sicil numarası kayıtlı personelin maaşı ortak hesabından ödenemez; banka hesabı seçin.")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="SGK sicil numarası kayıtlı personelin maaşı için banka hesabı seçin.")
+    acc = await db.bank_accounts.find_one({"_id": account_id})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Banka hesabı bulunamadı.")
+    acc_type = str(acc.get("type") or "").lower()
+    if acc_type in ("cash", "kasa", "cashbox", "nakit"):
+        acc_type = "cash_box"
+    if acc_type != "bank":
+        raise HTTPException(status_code=400, detail="SGK sicil numarası kayıtlı personelin maaşı yalnızca banka hesabından ödenebilir (kasa / POS / kart kullanılamaz).")
+    if not _norm_iban(emp.get("iban")):
+        raise HTTPException(status_code=400, detail="SGK'lı personel için maaş ödemeden önce personel kartına IBAN girin.")
 
 
 def _emp_num(v, default: float = 0.0) -> float:
@@ -10956,8 +10991,19 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             if ws.get("start") and ws.get("end") and attendance._hm(ws["end"]) <= attendance._hm(ws["start"]):
                 raise HTTPException(status_code=400, detail="Mesai bitişi başlangıçtan sonra olmalı.")
             v = ws or None
+        if k == "sgk_number":
+            v = str(v or "").strip() or None
+        if k == "iban":
+            raw = str(v or "").strip()
+            v = raw or None
         upd[k] = v
+    # SGK sicili varsa IBAN zorunlu (güncelleme sonrası nihai durum)
     if upd:
+        existing = await db.employees.find_one({"_id": emp_id}) or {}
+        final_sgk = upd["sgk_number"] if "sgk_number" in upd else existing.get("sgk_number")
+        final_iban = upd["iban"] if "iban" in upd else existing.get("iban")
+        if str(final_sgk or "").strip() and not _norm_iban(final_iban):
+            raise HTTPException(status_code=400, detail="SGK sicil numarası girildiğinde personel IBAN zorunludur (maaş yalnız bankadan ödenir).")
         upd["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.employees.update_one({"_id": emp_id}, {"$set": upd})
     res = await db.employees.find_one({"_id": emp_id})
@@ -11114,6 +11160,13 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "start_date": emp.get("start_date"),
         "photo_url": emp.get("photo_url"),
         "iban": emp.get("iban"),
+        "sgk_number": emp.get("sgk_number"),
+        "meal_allowance": _emp_num(emp.get("meal_allowance")),
+        "transport_allowance": _emp_num(emp.get("transport_allowance")),
+        "birth_date": emp.get("birth_date"),
+        "address": emp.get("address"),
+        "emergency_contact": emp.get("emergency_contact"),
+        "notes": emp.get("notes"),
     }
     compensation = {
         "salary": _emp_num(emp.get("payroll_salary"), _emp_num(emp.get("salary"))),
@@ -11287,6 +11340,9 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
 
+    emp = await db.employees.find_one({"_id": payroll.get("employee_id")}) or {}
+    await _assert_salary_bank_only(emp, account_id, partner_id)
+
     amount = payroll.get("final_payable", 0.0)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     paid_from = None
@@ -11299,6 +11355,10 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
         acc_name = acc.get("account_name", "Banka") if acc else "Banka"
         await bank_guard.assert_manual_allowed(db, account_id)
         await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+        desc = f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi"
+        emp_iban = _norm_iban(emp.get("iban"))
+        if emp_iban:
+            desc = f"{desc} · IBAN {emp.get('iban')}"
         await db.bank_transactions.insert_one({
             "_id": str(uuid.uuid4()),
             "company_id": payroll.get("company_id"),
@@ -11308,7 +11368,7 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
             "category": "Personel Maaş Ödemesi",
             "amount": amount,
             "currency": "TRY",
-            "description": f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi",
+            "description": desc,
             "date": today,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
