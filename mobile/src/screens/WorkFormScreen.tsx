@@ -131,6 +131,7 @@ function quoteDraftSig(
       is_service: !!it.is_service,
       description: it.description || "",
       image_url: it.image_url || it.thumbnail_url || "",
+      print_image_url: it.print_image_url || "",
     })),
   });
 }
@@ -343,7 +344,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       const compact = await compressPickerAsset(asset);
       const { blob, name: fileName } = await resolveUploadBlob(compact);
       appendUploadBlob(formData, blob, fileName);
-      const req = current?.product_id
+      const req = !current?.is_service && current?.product_id
         ? imageUploadRequest("product", current.product_id)
         : lineItemImageUploadRequest(companyId);
       const uploaded = await upload<unknown>(client, req.path, formData, req.query);
@@ -352,7 +353,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setError("Fotoğraf yüklendi ama adres dönmedi.");
         return;
       }
-      const next = items.map((row, idx) => (idx === i ? { ...row, image_url: url, thumbnail_url: url } : row));
+      const next = items.map((row, idx) => {
+        if (idx !== i) return row;
+        if (row.is_service) return { ...row, print_image_url: url };
+        return { ...row, image_url: url, thumbnail_url: url };
+      });
       setItems(next);
       if (kind === "quote" && !current?.is_service) {
         void ensureQuoteStockCards(next).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
