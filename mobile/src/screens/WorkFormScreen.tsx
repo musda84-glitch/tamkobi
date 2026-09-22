@@ -713,6 +713,47 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
             const noteShown = kind === "quote" && workItemNoteOpen(it, noteOpen[i]);
+            const quoteGrossField = (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: 999,
+                  backgroundColor: "#fff",
+                  minHeight: 32,
+                  paddingHorizontal: 10,
+                  gap: 4,
+                  overflow: "hidden",
+                }}
+              >
+                <TextInput
+                  testID={`q-item-gross-${i}`}
+                  value={grossDraft[i] ?? (it.name ? quotePriceText(workItemLineGross(it)) : "")}
+                  onFocus={() => setGrossDraft((m) => ({ ...m, [i]: quotePriceText(workItemLineGross(it)) }))}
+                  onBlur={() => setGrossDraft((m) => {
+                    const next = { ...m };
+                    delete next[i];
+                    return next;
+                  })}
+                  onChangeText={(v) => {
+                    if (!canEdit) return;
+                    setGrossDraft((m) => ({ ...m, [i]: v }));
+                    const unit = workItemPriceFromGross(it, n(v));
+                    setItems((rows) => rows.map((row, idx) => (
+                      idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
+                    )));
+                  }}
+                  keyboardType="decimal-pad"
+                  editable={canEdit}
+                  numberOfLines={1}
+                  style={{ flex: 1, minWidth: 0, textAlign: "right", fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 32 }}
+                />
+                <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 13, flexShrink: 0 }}>₺</Text>
+              </View>
+            );
             return (
             <View
               key={i}
@@ -885,9 +926,11 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 </View>
                               </View>
                             </Row>
+                            {quoteGrossField}
                           </View>
                         </Row>
                         ) : (
+                        <>
                         <Row style={{ alignItems: "stretch", gap: 6 }}>
                           <View style={{ flex: 1, minWidth: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Ürün")}</Text>
@@ -989,49 +1032,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                             </View>
                           </View>
                         </Row>
+                        {quoteGrossField}
+                        </>
                         )}
-                        <Row style={{ justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
-                          <View
-                            style={{
-                              flex: 1,
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              borderWidth: 1,
-                              borderColor: colors.border,
-                              borderRadius: 999,
-                              backgroundColor: "#fff",
-                              minHeight: 32,
-                              paddingHorizontal: 10,
-                              gap: 4,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <TextInput
-                              testID={`q-item-gross-${i}`}
-                              value={grossDraft[i] ?? (it.name ? quotePriceText(workItemLineGross(it)) : "")}
-                              onFocus={() => setGrossDraft((m) => ({ ...m, [i]: quotePriceText(workItemLineGross(it)) }))}
-                              onBlur={() => setGrossDraft((m) => {
-                                const next = { ...m };
-                                delete next[i];
-                                return next;
-                              })}
-                              onChangeText={(v) => {
-                                if (!canEdit) return;
-                                setGrossDraft((m) => ({ ...m, [i]: v }));
-                                const unit = workItemPriceFromGross(it, n(v));
-                                setItems((rows) => rows.map((row, idx) => (
-                                  idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
-                                )));
-                              }}
-                              keyboardType="decimal-pad"
-                              editable={canEdit}
-                              numberOfLines={1}
-                              style={{ flex: 1, minWidth: 0, textAlign: "right", fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 32 }}
-                            />
-                            <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 13, flexShrink: 0 }}>₺</Text>
-                          </View>
-                        </Row>
                       </View>
                   ) : (
                     <Row style={{ alignItems: "flex-start", gap: 8 }}>
