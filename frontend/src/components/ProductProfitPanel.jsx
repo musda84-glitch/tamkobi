@@ -5,9 +5,9 @@ import { toast } from "sonner";
 import { TrendingUp, Link2, ChevronDown, ChevronUp, PackagePlus } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { channelTr } from "../utils/labels";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 
-const fmt = (n) => formatTrAmount((Number(n) || 0));
+const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const tone = (m) => (m < 10 ? "text-rose-600" : m < 20 ? "text-amber-600" : "text-emerald-600");
 
 export const ProductProfitPanel = ({ companyId }) => {
@@ -47,11 +47,11 @@ export const ProductProfitPanel = ({ companyId }) => {
                 <div className="font-bold text-amber-900 flex items-center gap-1.5"><Link2 className="w-4 h-4" /> Stok kartıyla eşleşmeyen pazaryeri ürünleri — eşleştirin ki kârlılık ve stok düşümü doğru hesaplansın</div>
                 {d.unmatched.map((u) => (
                   <div key={u.key} className="flex flex-wrap items-center gap-2 bg-white rounded-lg px-3 py-2 border border-amber-100" data-testid={`unmatched-${u.key.replace(/[^a-z0-9]/gi, "-")}`}>
-                    <div className="flex-1 min-w-[200px]"><b className="text-slate-900">{u.product_name}</b><div className="text-[10px] text-slate-500">{u.barcode ? `Barkod ${u.barcode}` : ""}{u.sku ? ` · SKU ${u.sku}` : ""} · {u.channels.map(channelTr).join(", ")} · {u.qty} adet · {fmt(u.revenue)} ₺</div></div>
+                    <div className="flex-1 min-w-[200px]"><b className="text-slate-900">{u.product_name}</b><div className="text-[10px] text-slate-500">{u.barcode ? `Barkod ${u.barcode}` : ""}{u.sku ? ` · SKU ${u.sku}` : ""} · {u.channels.map(channelTr).join(", ")} · {u.qty} adet · {fmt(u.revenue)}</div></div>
                     <select value={sel[u.key] || ""} onChange={(e) => setSel({ ...sel, [u.key]: e.target.value })} className="bg-slate-50 border rounded-lg p-1.5 w-56" data-testid="unmatched-product-select"><option value="">Stok kartı seç…</option>{d.products.map((p) => <option key={p.id} value={p.id}>{p.sku ? `${p.name} (${p.sku})` : p.name}</option>)}</select>
                     <button onClick={() => match(u)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid="unmatched-match-btn">Eşleştir</button>
                     <span className="text-slate-300">|</span>
-                    <input type="number" step="0.01" min="0" placeholder="Alış ₺" value={cost[u.key] || ""} onChange={(e) => setCost({ ...cost, [u.key]: e.target.value })} className="bg-slate-50 border rounded-lg p-1.5 w-20" data-testid="unmatched-cost-input" />
+                    <input type="number" step="0.01" min="0" placeholder="Alış" value={cost[u.key] || ""} onChange={(e) => setCost({ ...cost, [u.key]: e.target.value })} className="bg-slate-50 border rounded-lg p-1.5 w-20" data-testid="unmatched-cost-input" />
                     <button onClick={() => createCard(u)} disabled={busy === u.key} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" title="Pazaryeri bilgileriyle yeni stok kartı aç ve otomatik eşleştir" data-testid="unmatched-create-btn"><PackagePlus className="w-3.5 h-3.5" /> Stok Kartı Oluştur</button>
                   </div>))}
               </div>
@@ -59,8 +59,8 @@ export const ProductProfitPanel = ({ companyId }) => {
             <div className="overflow-x-auto border border-slate-200 rounded-xl"><table className="w-full"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 text-left">Ürün</th><th className="px-3 py-2 text-left">Kanallar</th><th className="px-3 py-2 text-right">Adet</th><th className="px-3 py-2 text-right">Ort. Satış</th><th className="px-3 py-2 text-right">Ciro</th><th className="px-3 py-2 text-right">Komisyon</th><th className="px-3 py-2 text-right">Hizmet/Kargo</th><th className="px-3 py-2 text-right">Maliyet</th><th className="px-3 py-2 text-right">Birim Kâr</th><th className="px-3 py-2 text-right">Net Kâr</th><th className="px-3 py-2 text-right">Marj</th></tr></thead>
               <tbody className="divide-y divide-slate-100">{d.rows.map((r) => (
                 <tr key={r.product_id} data-testid={`product-profit-row-${r.sku || r.product_id}`}>
-                  <td className="px-3 py-1.5"><b className="text-slate-900">{r.product_name}</b><div className="text-[10px] text-slate-400 font-mono">{r.sku}{r.purchase_price ? ` · alış ${fmt(r.purchase_price)} ₺` : " · alış fiyatı yok!"}</div></td>
-                  <td className="px-3 py-1.5"><div className="flex flex-wrap gap-1">{r.channels.map((c) => <span key={c.channel} className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded" title={`${fmt(c.revenue)} ₺ ciro · ${fmt(c.net)} ₺ net`}>{channelTr(c.channel)} ×{c.qty}</span>)}</div></td>
+                  <td className="px-3 py-1.5"><b className="text-slate-900">{r.product_name}</b><div className="text-[10px] text-slate-400 font-mono">{r.sku}{r.purchase_price ? ` · alış ${fmt(r.purchase_price)}` : " · alış fiyatı yok!"}</div></td>
+                  <td className="px-3 py-1.5"><div className="flex flex-wrap gap-1">{r.channels.map((c) => <span key={c.channel} className="text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded" title={`${fmt(c.revenue)} ciro · ${fmt(c.net)} net`}>{channelTr(c.channel)} ×{c.qty}</span>)}</div></td>
                   <td className="px-3 py-1.5 text-right font-semibold">{r.qty}</td><td className="px-3 py-1.5 text-right">{fmt(r.avg_price)}</td><td className="px-3 py-1.5 text-right">{fmt(r.revenue)}</td><td className="px-3 py-1.5 text-right text-rose-600">−{fmt(r.commission)}</td><td className="px-3 py-1.5 text-right text-rose-600">−{fmt(r.fees)}</td><td className="px-3 py-1.5 text-right text-rose-600">−{fmt(r.cost)}</td>
                   <td className={`px-3 py-1.5 text-right font-bold ${tone(r.margin_pct)}`}>{fmt(r.unit_profit)}</td><td className={`px-3 py-1.5 text-right font-bold ${tone(r.margin_pct)}`}>{fmt(r.net_profit)}</td><td className={`px-3 py-1.5 text-right font-bold ${tone(r.margin_pct)}`}>%{r.margin_pct}</td>
                 </tr>))}</tbody></table>

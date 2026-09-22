@@ -2,9 +2,9 @@ import React from "react";
 import { CalendarClock } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 
-const fmt = (n) => formatTrAmount(n || 0);
+const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
 /** Herkese açık teklif gövdesi — kalemler, toplam, plan, not. */
 export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
@@ -34,8 +34,8 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
               <tr key={`${it.name || "satir"}-${i}`} className="border-b border-slate-100" data-testid={`${testIdPrefix}-item-${i}`}>
                 <td className="p-2">{it.name}</td>
                 <td className="p-2 text-right">{it.quantity} {it.unit || ""}</td>
-                <td className="p-2 text-right">{fmt(lineUnitGross(it))} ₺</td>
-                <td className="p-2 text-right font-semibold">{fmt(lineGross(it))} ₺</td>
+                <td className="p-2 text-right">{fmt(lineUnitGross(it), q.currency || "TRY")}</td>
+                <td className="p-2 text-right font-semibold">{fmt(lineGross(it), q.currency || "TRY")}</td>
               </tr>
             ))}
           </tbody>
@@ -43,10 +43,10 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
       </div>
       <div className="flex justify-end">
         <div className="w-full sm:w-64 space-y-1 text-xs">
-          <div className="flex justify-between text-slate-500"><span>Ara Toplam (KDV Hariç)</span><span>{fmt(q.subtotal)} ₺</span></div>
-          <div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(q.vat_total)} ₺</span></div>
+          <div className="flex justify-between text-slate-500"><span>Ara Toplam (KDV Hariç)</span><span>{fmt(q.subtotal, q.currency || "TRY")}</span></div>
+          <div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(q.vat_total, q.currency || "TRY")}</span></div>
           <div className="flex justify-between text-sm font-black border-t-2 border-slate-900 pt-1" data-testid={`${testIdPrefix}-grand`}>
-            <span>TOPLAM (KDV Dahil)</span><span>{fmt(q.grand_total)} ₺</span>
+            <span>TOPLAM (KDV Dahil)</span><span>{fmt(q.grand_total, q.currency || "TRY")}</span>
           </div>
         </div>
       </div>
@@ -60,7 +60,7 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
               <div key={r.no || r.label} className="flex justify-between border-b border-violet-100 py-1">
                 <span>{r.label}</span>
                 <span className="text-slate-500">{r.due_date}</span>
-                <b>{fmt(r.amount)} ₺</b>
+                <b>{fmt(r.amount, q.currency || "TRY")}</b>
               </div>
             ))}
           </div>

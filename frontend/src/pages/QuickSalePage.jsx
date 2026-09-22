@@ -29,12 +29,12 @@ import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
 
-function money(n) {
-  return formatTrAmount(Number(n || 0));
+function money(n, c = "TRY") {
+  return fmtMoney(n, c);
 }
 
 function newLineId() {
@@ -102,7 +102,7 @@ function ShortcutTile({ product, onClick, tablet }) {
       <div className="p-2.5">
         <div className={`font-semibold text-slate-900 line-clamp-2 ${tablet ? "text-sm" : "text-xs"}`}>{product.name}</div>
         <div className="mt-1 flex items-center justify-between gap-1">
-          <span className="text-emerald-700 font-bold text-sm">₺{money(product.sale_price)}</span>
+          <span className="text-emerald-700 font-bold text-sm">{money(product.sale_price, product.currency)}</span>
           {(product.track_lot || product.track_serial || product.track_expiry) && (
             <span className="text-[10px] text-amber-600 font-semibold">lot/SKT</span>
           )}
@@ -616,7 +616,7 @@ export default function QuickSalePage() {
                     <span className="block font-semibold text-sm text-slate-900 truncate">{p.name}</span>
                     <span className="block text-xs text-slate-500 truncate">{p.sku || p.barcode || "—"}</span>
                   </span>
-                  <span className="text-emerald-700 font-bold text-sm shrink-0">₺{money(p.sale_price)}</span>
+                  <span className="text-emerald-700 font-bold text-sm shrink-0">{money(p.sale_price, p.currency)}</span>
                 </button>
               ))}
             </div>
@@ -678,7 +678,7 @@ export default function QuickSalePage() {
                       <div className="min-w-0">
                         <div className="font-medium text-sm text-slate-900 truncate">{l.name}</div>
                         <div className="text-xs text-slate-500">
-                          ₺{money(l.unit_price)} / {l.unit}
+                          {money(l.unit_price)} / {l.unit}
                           {l.lot_number ? ` · Lot ${l.lot_number}` : ""}
                           {l.serial_number ? ` · S/N ${l.serial_number}` : ""}
                           {l.expiry_date ? ` · SKT ${l.expiry_date}` : ""}
@@ -693,16 +693,16 @@ export default function QuickSalePage() {
                       <input type="number" step="any" value={l.quantity} onChange={(e) => setLineQty(l.id, e.target.value)} className={`text-center border rounded-lg py-1 font-semibold ${tabletMode ? "w-20 text-base" : "w-16 text-sm"}`} />
                       <button type="button" onClick={() => bumpQty(l.id, isWeighableUnit(l.unit) ? 0.1 : 1)} className={`rounded-lg border bg-white flex items-center justify-center ${tabletMode ? "w-11 h-11" : "w-8 h-8"}`}><Plus className="w-4 h-4" /></button>
                     </div>
-                    <div className="font-semibold text-sm">₺{money(Number(l.quantity) * Number(l.unit_price))}</div>
+                    <div className="font-semibold text-sm">{money(Number(l.quantity) * Number(l.unit_price))}</div>
                   </div>
                 </div>
               ))}
             </div>
 
             <div className="border-t border-slate-200 mt-3 pt-3 space-y-2 shrink-0">
-              <div className="flex justify-between text-sm text-slate-600"><span>Ara toplam</span><span>₺{money(totals.subtotal)}</span></div>
-              <div className="flex justify-between text-sm text-slate-600"><span>KDV</span><span>₺{money(totals.vat)}</span></div>
-              <div className="flex justify-between text-lg font-bold text-slate-900"><span>Toplam</span><span data-testid="pos-total">₺{money(totals.total)}</span></div>
+              <div className="flex justify-between text-sm text-slate-600"><span>Ara toplam</span><span>{money(totals.subtotal)}</span></div>
+              <div className="flex justify-between text-sm text-slate-600"><span>KDV</span><span>{money(totals.vat)}</span></div>
+              <div className="flex justify-between text-lg font-bold text-slate-900"><span>Toplam</span><span data-testid="pos-total">{money(totals.total)}</span></div>
               <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={`w-full border border-slate-200 rounded-lg px-3 ${btnSize}`} placeholder="Müşteri adı" />
               <div className="flex gap-2 pt-1">
                 <button type="button" disabled={busy || !cart.length} onClick={openPayPicker} className={`flex-1 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2 ${tabletMode ? "py-4 text-lg" : "py-3"}`} data-testid="pos-checkout-btn">
@@ -862,7 +862,7 @@ export default function QuickSalePage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-sm text-slate-900 truncate">{p.name}</div>
-                      <div className="text-xs text-slate-500 truncate">{p.sku || p.barcode || "—"} · ₺{money(p.sale_price)}</div>
+                      <div className="text-xs text-slate-500 truncate">{p.sku || p.barcode || "—"} · {money(p.sale_price, p.currency)}</div>
                     </div>
                     <div className={`w-6 h-6 rounded-md border flex items-center justify-center shrink-0 ${checked ? "bg-emerald-600 border-emerald-600 text-white" : "bg-white border-slate-300"}`}>
                       {checked && <Check className="w-4 h-4" />}
@@ -885,7 +885,7 @@ export default function QuickSalePage() {
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div>
                 <h3 className="font-bold text-slate-900">Ödeme şekli</h3>
-                <p className="text-xs text-slate-500">Toplam ₺{money(totals.total)}</p>
+                <p className="text-xs text-slate-500">Toplam {money(totals.total)}</p>
               </div>
               <button type="button" onClick={() => setShowPayPicker(false)} className="p-2 rounded-lg hover:bg-slate-100" data-testid="pos-pay-picker-close"><X className="w-5 h-5" /></button>
             </div>
@@ -946,14 +946,14 @@ export default function QuickSalePage() {
               <div className="px-4 pb-4 space-y-3 border-t pt-3">
                 <div className="text-sm">
                   <div className="font-semibold text-slate-900">{returnPreview.invoice.invoice_number}</div>
-                  <div className="text-slate-500 text-xs mt-0.5">{returnPreview.invoice.contact_name || "—"} · ₺{money(returnPreview.invoice.grand_total)}</div>
-                  <div className="text-xs text-slate-400 mt-1">{(returnPreview.invoice.items || []).length} kalem · Kalan ₺{money(returnPreview.remaining)}</div>
+                  <div className="text-slate-500 text-xs mt-0.5">{returnPreview.invoice.contact_name || "—"} · {money(returnPreview.invoice.grand_total)}</div>
+                  <div className="text-xs text-slate-400 mt-1">{(returnPreview.invoice.items || []).length} kalem · Kalan {money(returnPreview.remaining)}</div>
                 </div>
                 <ul className="max-h-40 overflow-y-auto text-xs space-y-1 bg-slate-50 rounded-lg p-2">
                   {(returnPreview.invoice.items || []).map((it, idx) => (
                     <li key={idx} className="flex justify-between gap-2">
                       <span className="truncate">{it.name || it.product_name}</span>
-                      <span className="shrink-0">{it.quantity} × ₺{money(it.unit_price)}</span>
+                      <span className="shrink-0">{it.quantity} × {money(it.unit_price)}</span>
                     </li>
                   ))}
                 </ul>

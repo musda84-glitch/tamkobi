@@ -178,7 +178,7 @@ export const VariantManager = ({ product, onUpdated }) => {
                   <th className="px-2 py-2">SKU</th>
                   <th className="px-2 py-2">Barkod</th>
                   <th className="px-2 py-2 w-20">Stok</th>
-                  <th className="px-2 py-2 w-24">Fiyat ₺</th>
+                  <th className="px-2 py-2 w-24">Fiyat ({product.currency === "TRY" || !product.currency ? "₺" : product.currency})</th>
                   <th className="px-2 py-2"></th>
                 </tr>
               </thead>

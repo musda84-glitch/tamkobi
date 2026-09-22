@@ -28,9 +28,11 @@ export function DocumentLineEditor({
   onAdd,
   testIdPrefix = "doc-line",
   defaultVat = 20,
+  currency = "TRY",
   getProductExtra,
   renderRowExtra,
 }) {
+  const ccy = currency || "TRY";
   const { activeCompany } = useAuth();
   const [units, setUnits] = useState(FALLBACK_UNITS);
   useEffect(() => {
@@ -237,10 +239,10 @@ export function DocumentLineEditor({
                   </select>
                 </td>
                 <td className="px-2 py-1.5 text-right font-semibold text-slate-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-excl-${idx}`}>
-                  {fmtMoney(item.total)} ₺
+                  {fmtMoney(item.total, ccy)}
                 </td>
                 <td className="px-2 py-1.5 text-right font-bold text-emerald-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-incl-${idx}`}>
-                  {fmtMoney(item.total_incl)} ₺
+                  {fmtMoney(item.total_incl, ccy)}
                 </td>
                 <td className="px-1 py-1.5 text-center">
                   <button
@@ -282,15 +284,16 @@ export function DocumentLineEditor({
   );
 }
 
-export function LineTotalsFooter({ subtotal, vat, lineDiscount, grandTotal, extra }) {
+export function LineTotalsFooter({ subtotal, vat, lineDiscount, grandTotal, extra, currency = "TRY" }) {
+  const ccy = currency || "TRY";
   return (
     <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700 text-xs">
-      <div className="flex justify-between w-80"><span>Mal / Hizmet Toplamı (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal + (lineDiscount || 0))} ₺</span></div>
-      {lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{fmtMoney(lineDiscount)} ₺</span></div>}
+      <div className="flex justify-between w-80"><span>Mal / Hizmet Toplamı (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal + (lineDiscount || 0), ccy)}</span></div>
+      {lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{fmtMoney(lineDiscount, ccy)}</span></div>}
       {extra}
-      <div className="flex justify-between w-80 border-t border-slate-300 pt-1"><span>Ara Toplam (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal)} ₺</span></div>
-      <div className="flex justify-between w-80"><span>Toplam KDV:</span><span className="font-semibold">{fmtMoney(vat)} ₺</span></div>
-      <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300"><span>Genel Toplam (KDV Dahil):</span><span className="text-emerald-700">{fmtMoney(grandTotal)} ₺</span></div>
+      <div className="flex justify-between w-80 border-t border-slate-300 pt-1"><span>Ara Toplam (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal, ccy)}</span></div>
+      <div className="flex justify-between w-80"><span>Toplam KDV:</span><span className="font-semibold">{fmtMoney(vat, ccy)}</span></div>
+      <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300"><span>Genel Toplam (KDV Dahil):</span><span className="text-emerald-700">{fmtMoney(grandTotal, ccy)}</span></div>
     </div>
   );
 }

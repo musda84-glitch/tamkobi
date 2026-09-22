@@ -1,8 +1,11 @@
-import { formatTrAmount } from "./money";
+import { formatTrAmount, fmtMoney as formatMoneyWithCurrency } from "./money";
 export const VAT_OPTIONS = [20, 10, 1, 0];
 
-export const fmtMoney = (n) =>
-  formatTrAmount((Number(n) || 0));
+/** Amount only (no currency). Prefer fmtMoney(n, currency) for UI. */
+export const fmtAmount = (n) => formatTrAmount(Number(n) || 0);
+
+/** Amount + currency suffix (TRY → ₺). Same as utils/money.fmtMoney. */
+export const fmtMoney = (n, currency = "TRY") => formatMoneyWithCurrency(n, currency);
 
 export function emptyLine(overrides = {}) {
   return {

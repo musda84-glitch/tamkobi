@@ -4,8 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { Search, UserPlus, ShoppingBag, Users, Package, Receipt, FileText } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactForm } from "./ContactForm";
+import { fmtMoney } from "../utils/money";
 
-const money = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 }) + " ₺";
+const money = (n, c = "TRY") => fmtMoney(n, c);
 
 /** Global search field — used in the under-header utility strip. */
 export const GlobalSearch = ({ companyId, className = "" }) => {
@@ -22,7 +23,7 @@ export const GlobalSearch = ({ companyId, className = "" }) => {
   useEffect(() => { const h = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
   useEffect(() => { const h = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); box.current?.querySelector("input")?.focus(); } }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   const go = (path) => { setOpen(false); setQ(""); navigate(path); };
-  const groups = res ? [["Cariler", Users, res.contacts, (c) => [c.name, `${c.tax_number_or_id || ""} · ${money(c.balance)}`, `/contacts?contact_id=${c.id}`]], ["Ürünler", Package, res.products, (p) => [p.name, `SKU ${p.sku || "-"} · Stok ${p.stock_quantity ?? "-"} · ${money(p.sale_price)}`, `/stock?q=${encodeURIComponent(p.sku || p.name)}`]], ["Siparişler", ShoppingBag, res.orders, (o) => [o.order_number, `${o.customer_name || ""} · ${money(o.total_amount)}`, `/orders?q=${encodeURIComponent(o.order_number)}`]], ["Faturalar", Receipt, res.invoices, (i) => [i.invoice_number, `${i.contact_name || ""} · ${money(i.grand_total)}`, `/invoices?q=${encodeURIComponent(i.invoice_number)}`]]].filter((g) => g[2]?.length) : [];
+  const groups = res ? [["Cariler", Users, res.contacts, (c) => [c.name, `${c.tax_number_or_id || ""} · ${money(c.balance, c.currency)}`, `/contacts?contact_id=${c.id}`]], ["Ürünler", Package, res.products, (p) => [p.name, `SKU ${p.sku || "-"} · Stok ${p.stock_quantity ?? "-"} · ${money(p.sale_price, p.currency)}`, `/stock?q=${encodeURIComponent(p.sku || p.name)}`]], ["Siparişler", ShoppingBag, res.orders, (o) => [o.order_number, `${o.customer_name || ""} · ${money(o.total_amount, o.currency)}`, `/orders?q=${encodeURIComponent(o.order_number)}`]], ["Faturalar", Receipt, res.invoices, (i) => [i.invoice_number, `${i.contact_name || ""} · ${money(i.grand_total, i.currency)}`, `/invoices?q=${encodeURIComponent(i.invoice_number)}`]]].filter((g) => g[2]?.length) : [];
   return (
     <div className={`relative min-w-0 flex-1 max-w-xl ${className}`} ref={box} data-testid="global-search">
       <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
