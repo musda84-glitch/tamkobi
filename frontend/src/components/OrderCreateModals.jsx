@@ -73,9 +73,10 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
           kind="order"
           allowService
           invoiceType="sales"
+          currency="TRY"
           testIdPrefix="new-order"
         />
-        <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} />
+        <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} currency="TRY" />
         <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
         <div className="flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
       </div>
@@ -138,7 +139,7 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
         {linesLocked ? (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Pazaryeri kalemleri değiştirilemez. Not ve müşteri sipariş numarası kaydedilir.</div>
         ) : (
-          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" testIdPrefix="edit-order" />
+          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" currency={order?.currency || "TRY"} testIdPrefix="edit-order" />
         )}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button>

@@ -17,7 +17,6 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { ScanButton } from "../components/CameraScanner";
 import { SearchSelect } from "../components/SearchSelect";
 import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
-import { fmtMoney } from "../utils/documentLines";
 import { bulkProgressPercent, BULK_FLAG_TIMEOUT_MS, formatElapsed, runBulkFlagChunks } from "../utils/stockBulkFlags";
 
 import {
@@ -47,7 +46,7 @@ import {
   Clock,
   History,
 } from "lucide-react";
-import { formatTrAmount } from "../utils/money";
+import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -298,6 +297,7 @@ export default function StockBarcodePage() {
     vat_rate: 20,
     purchase_price: 0,
     sale_price: 0,
+    currency: "TRY",
     stock_quantity: 0,
     min_stock_alert: 10,
     warehouse_id: "wh_main",
@@ -468,8 +468,8 @@ export default function StockBarcodePage() {
       const line = barcodeSaleLine(scanResultProduct, qty);
       toast.success(
         scanSaleMode === "retail"
-          ? `Perakende satış: ${inv.invoice_number || ""} · ${fmtMoney(line.total_incl)} ₺`
-          : `Cari satış: ${inv.invoice_number || ""} · ${contact.name} · ${fmtMoney(line.total_incl)} ₺`
+          ? `Perakende satış: ${inv.invoice_number || ""} · ${fmtMoney(line.total_incl, inv.currency || "TRY")}`
+          : `Cari satış: ${inv.invoice_number || ""} · ${contact.name} · ${fmtMoney(line.total_incl, inv.currency || "TRY")}`
       );
       setScanResultProduct(null);
       setScannedBarcode("");
@@ -623,14 +623,14 @@ export default function StockBarcodePage() {
             </div>
             <div className="border rounded-xl overflow-hidden">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-2 py-1.5">Ürün</th><th className="px-2 py-1.5 text-right">Stok / Min</th><th className="px-2 py-1.5 text-right">Sipariş</th><th className="px-2 py-1.5 text-right">Birim ₺</th><th className="px-2 py-1.5">Tedarikçi</th></tr></thead>
+                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-2 py-1.5">Ürün</th><th className="px-2 py-1.5 text-right">Stok / Min</th><th className="px-2 py-1.5 text-right">Sipariş</th><th className="px-2 py-1.5 text-right">Birim fiyat</th><th className="px-2 py-1.5">Tedarikçi</th></tr></thead>
                 <tbody>
                   {reorder.lines.map((l, i) => (
                     <tr key={l.product_id} className="border-t" data-testid={`stock-reorder-row-${l.sku}`}>
                       <td className="px-2 py-1.5"><div className="font-semibold text-slate-900">{l.name}</div><div className="font-mono text-[10px] text-slate-400">{l.sku}</div></td>
                       <td className="px-2 py-1.5 text-right">{l.stock_quantity} / {l.min_stock_alert}</td>
                       <td className="px-2 py-1.5"><input type="number" min="1" value={l.quantity} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) }))} className="w-20 bg-slate-50 border rounded p-1 text-right" data-testid={`stock-reorder-qty-${l.sku}`} /></td>
-                      <td className="px-2 py-1.5 text-right">{formatTrAmount(Number(l.unit_price || 0))}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtMoney(Number(l.unit_price || 0), l.currency || "TRY")}</td>
                       <td className="px-2 py-1.5">
                         <select value={l.contact_id || reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, contact_id: e.target.value, contact_name: (s.contacts.find((c) => c.id === e.target.value) || {}).name || "" } : x) }))} className="w-full bg-slate-50 border rounded p-1" data-testid={`stock-reorder-supplier-${l.sku}`}>
                           <option value="">Seçin</option>
@@ -754,21 +754,21 @@ export default function StockBarcodePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-slate-500 font-medium" data-testid={`stock-purchase-${prod.sku}`}>
-                      <div>{formatTrAmount(prod.purchase_price)} ₺</div>
+                      <div>{fmtMoney(prod.purchase_price, prod.currency || "TRY")}</div>
                       {prod.last_purchase_price != null && (
                         <div className="text-[10px] text-amber-800 font-semibold" data-testid={`stock-last-buy-${prod.sku}`}>
-                          son {formatTrAmount(Number(prod.last_purchase_price))} ₺
+                          son {fmtMoney(Number(prod.last_purchase_price), prod.currency || "TRY")}
                           {prod.last_purchase_date ? ` · ${String(prod.last_purchase_date).slice(8, 10)}.${String(prod.last_purchase_date).slice(5, 7)}` : ""}
                         </div>
                       )}
                       {(prod.purchase_costs || []).length > 1 && (
-                        <div className="text-[10px] text-slate-400 truncate max-w-[140px] ml-auto" title={(prod.purchase_costs || []).map((c) => `${c.date || ""} ${formatTrAmount(Number(c.unit_price))}`).join(" · ")}>
-                          {(prod.purchase_costs || []).slice(0, 3).map((c) => formatTrAmount(Number(c.unit_price))).join(" · ")}
+                        <div className="text-[10px] text-slate-400 truncate max-w-[140px] ml-auto" title={(prod.purchase_costs || []).map((c) => `${c.date || ""} ${fmtMoney(Number(c.unit_price), prod.currency || "TRY")}`).join(" · ")}>
+                          {(prod.purchase_costs || []).slice(0, 3).map((c) => fmtMoney(Number(c.unit_price), prod.currency || "TRY")).join(" · ")}
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {formatTrAmount(prod.sale_price)} ₺
+                      {fmtMoney(prod.sale_price, prod.currency || "TRY")}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
@@ -945,7 +945,7 @@ export default function StockBarcodePage() {
                       <p className="text-indigo-700 font-mono text-xs">SKU: {scanResultProduct.sku} • {scanResultProduct.category}</p>
                     </div>
                     <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border shrink-0">
-                      {scanResultProduct.sale_price?.toLocaleString("tr-TR")} ₺
+                      {fmtMoney(scanResultProduct.sale_price, scanResultProduct.currency || "TRY")}
                     </span>
                   </div>
 
@@ -1018,7 +1018,7 @@ export default function StockBarcodePage() {
               <div className="text-[10px] text-slate-500 font-mono">SKU: {printBarcodeProduct.sku}</div>
               <BarcodeRenderer code={printBarcodeProduct.barcode} width={180} height={45} />
               <div className="text-sm font-bold text-slate-900 pt-1">
-                Fiyat: {printBarcodeProduct.sale_price?.toLocaleString('tr-TR')} ₺ <span className="text-[10px] text-slate-500 font-normal">(KDV Dahil)</span>
+                Fiyat: {fmtMoney(printBarcodeProduct.sale_price, printBarcodeProduct.currency || "TRY")} <span className="text-[10px] text-slate-500 font-normal">(KDV Dahil)</span>
               </div>
             </div>
 
@@ -1108,18 +1108,19 @@ export default function StockBarcodePage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Alış Fiyatı (₺)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Alış Fiyatı ({moneySuffix(newProduct.currency || "TRY")})</label>
                   <input
                     type="number"
                     value={newProduct.purchase_price}
                     onChange={(e) => setNewProduct({ ...newProduct, purchase_price: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="new-product-purchase-price"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Satış Fiyatı (₺)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Satış Fiyatı ({moneySuffix(newProduct.currency || "TRY")})</label>
                   <input
                     type="number"
                     value={newProduct.sale_price}
@@ -1127,6 +1128,19 @@ export default function StockBarcodePage() {
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
                     data-testid="product-price-input"
                   />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Para Birimi</label>
+                  <select
+                    value={newProduct.currency || "TRY"}
+                    onChange={(e) => setNewProduct({ ...newProduct, currency: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                    data-testid="new-product-currency"
+                  >
+                    {CURRENCIES.map((c) => (
+                      <option key={c} value={c}>{moneySuffix(c)} · {c}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">KDV Oranı</label>

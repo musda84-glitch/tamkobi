@@ -24,7 +24,7 @@ import {
   Layers,
   ArrowRight
 } from "lucide-react";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney, formatTrAmount } from "../utils/money";
 import {
   AreaChart,
   Area,
@@ -76,15 +76,15 @@ export default function Dashboard() {
   const kpis = [
     {
       title: "Toplam Kasa & Banka",
-      value: `${formatTrAmount(stats.total_bank_balance)} ₺`,
+      value: fmtMoney(stats.total_bank_balance, "TRY"),
       sub: "Nakit, banka ve POS bakiyeleri",
       icon: Wallet,
       color: "text-emerald-600 bg-emerald-50 border-emerald-100",
-      trend: stats.total_stock_value ? `Stok değeri ${Number(stats.total_stock_value).toLocaleString("tr-TR", { maximumFractionDigits: 0 })} ₺` : "Güncel bakiye"
+      trend: stats.total_stock_value ? `Stok değeri ${fmtMoney(stats.total_stock_value, "TRY")}` : "Güncel bakiye"
     },
     {
       title: "Müşteri Alacakları",
-      value: `${formatTrAmount(stats.total_receivables)} ₺`,
+      value: fmtMoney(stats.total_receivables, "TRY"),
       sub: "Tahsil edilecek vadeli cari bakiye",
       icon: ArrowDownRight,
       color: "text-blue-600 bg-blue-50 border-blue-100",
@@ -92,7 +92,7 @@ export default function Dashboard() {
     },
     {
       title: "Tedarikçi Borçları",
-      value: `${formatTrAmount(stats.total_payables)} ₺`,
+      value: fmtMoney(stats.total_payables, "TRY"),
       sub: "Ödenecek hammadde ve hizmet borcu",
       icon: ArrowUpRight,
       color: "text-amber-600 bg-amber-50 border-amber-100",
@@ -100,8 +100,8 @@ export default function Dashboard() {
     },
     {
       title: "Net Aylık Kâr",
-      value: `${formatTrAmount(stats.net_profit)} ₺`,
-      sub: "Ciro: " + (stats.monthly_sales?.toLocaleString('tr-TR') || 0) + " ₺",
+      value: fmtMoney(stats.net_profit, "TRY"),
+      sub: "Ciro: " + fmtMoney(stats.monthly_sales || 0, "TRY"),
       icon: TrendingUp,
       color: "text-indigo-600 bg-indigo-50 border-indigo-100",
       trend: stats.sales_change_pct == null ? "Önceki ay yok" : `${stats.sales_change_pct > 0 ? "+" : ""}${stats.sales_change_pct}% ciro (önceki aya)`
@@ -290,7 +290,7 @@ export default function Dashboard() {
                   <div className="text-slate-400 text-[11px] font-mono">{inv.invoice_number} • {inv.issue_date}</div>
                 </div>
                 <div className="text-right">
-                  <div className="font-bold text-slate-900">{formatTrAmount(inv.grand_total)} ₺</div>
+                  <div className="font-bold text-slate-900">{fmtMoney(inv.grand_total, inv.currency || "TRY")}</div>
                   <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded font-medium ${
                     inv.status === 'approved' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
                   }`}>

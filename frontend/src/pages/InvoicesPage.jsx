@@ -953,6 +953,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   kind="invoice"
                   allowService
                   invoiceType={formData.invoice_type}
+                  currency={formData.currency || "TRY"}
                   testIdPrefix="inv-item"
                   defaultVat={formData.trade_kind === "export" || formData.e_type === "e_export" ? 0 : 20}
                   getProductExtra={purchaseCostText}

@@ -5,7 +5,7 @@ import { Save, Loader2, RefreshCw, Package } from "lucide-react";
 import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 import { confirmGenerateBarcode } from "../utils/barcodeFormat";
-import { formatTrAmount } from "../utils/money";
+import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
@@ -18,6 +18,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   const [f, setF] = useState({
     name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit,
     vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price,
+    currency: product.currency || "TRY",
     min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type,
     show_in_b2b: product.show_in_b2b !== false, track_stock: product.track_stock !== false, is_active: product.is_active !== false,
     track_lot: !!product.track_lot, track_serial: !!product.track_serial, track_expiry: !!product.track_expiry,
@@ -26,6 +27,8 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
   });
+  const ccy = f.currency || "TRY";
+  const ccyLabel = moneySuffix(ccy);
   const [units, setUnits] = useState([]);
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,9 +94,14 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
           <p className="text-[10px] text-slate-400 mt-0.5">Firma ayarlarındaki birimler; yeni yazılan kayıt edilir.</p>
         </F>
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        <F label="Alış (₺)"><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} /></F>
-        <F label="Satış (₺)"><input type="number" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-price-input" /></F>
+      <div className="grid grid-cols-4 gap-2">
+        <F label={`Alış (${ccyLabel})`}><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} data-testid="edit-purchase-price" /></F>
+        <F label={`Satış (${ccyLabel})`}><input type="number" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-price-input" /></F>
+        <F label="Para Birimi">
+          <select value={ccy} onChange={(e) => set("currency", e.target.value)} className={inputCls} data-testid="edit-currency-select">
+            {CURRENCIES.map((c) => <option key={c} value={c}>{moneySuffix(c)} · {c}</option>)}
+          </select>
+        </F>
         <F label="Kritik Stok"><input type="number" value={f.min_stock_alert} onChange={(e) => set("min_stock_alert", e.target.value)} className={inputCls} /></F>
       </div>
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2" data-testid="vat-details">
@@ -104,7 +112,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
           <F label="KDV İstisna Kodu"><input value={f.vat_exemption_code} onChange={(e) => set("vat_exemption_code", e.target.value)} placeholder="Örn: 301, 350" className={inputCls} /></F>
         </div>
         <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={f.price_includes_vat} onChange={(e) => set("price_includes_vat", e.target.checked)} data-testid="edit-vat-included-checkbox" /><span className="font-semibold">Satış fiyatı KDV dahil</span></label>
-        <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{formatTrAmount((f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)))} ₺</b> • KDV dahil: <b>{formatTrAmount((f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)))} ₺</b></div>
+        <div className="text-[11px] text-slate-500">KDV'siz satış: <b>{fmtMoney((f.price_includes_vat ? Number(f.sale_price) / (1 + Number(f.vat_rate) / 100) : Number(f.sale_price)), ccy)}</b> • KDV dahil: <b>{fmtMoney((f.price_includes_vat ? Number(f.sale_price) : Number(f.sale_price) * (1 + Number(f.vat_rate) / 100)), ccy)}</b></div>
       </div>
 
       <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 space-y-2" data-testid="product-package-fields">

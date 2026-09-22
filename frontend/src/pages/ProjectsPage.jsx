@@ -791,6 +791,7 @@ export default function ProjectsPage({ section } = {}) {
                   kind="quote"
                   allowService
                   invoiceType="sales"
+                  currency={form.currency || "TRY"}
                   testIdPrefix="q-item"
                   defaultVat={20}
                 />
@@ -799,6 +800,7 @@ export default function ProjectsPage({ section } = {}) {
                   vat={lineTotals.vat}
                   lineDiscount={lineTotals.lineDiscount}
                   grandTotal={lineTotals.grandTotal}
+                  currency={form.currency || "TRY"}
                 />
               </div>
             )}

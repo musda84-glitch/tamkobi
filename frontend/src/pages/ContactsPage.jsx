@@ -34,7 +34,7 @@ import {
   Filter
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -206,7 +206,7 @@ export default function ContactsPage() {
             <div className="flex items-center justify-between border-b pb-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900">{selectedContactStatement.name} - Cari Ekstresi</h3>
-                <p className="text-xs text-slate-500">VKN: {selectedContactStatement.tax_number_or_id} • Bakiye: {selectedContactStatement.balance?.toLocaleString('tr-TR')} ₺</p>
+                <p className="text-xs text-slate-500">VKN: {selectedContactStatement.tax_number_or_id} • Bakiye: {fmtMoney(selectedContactStatement.balance, selectedContactStatement.currency || "TRY")}</p>
               </div>
               <button onClick={() => setSelectedContactStatement(null)} className="text-slate-400">
                 <X className="w-5 h-5" />
@@ -222,9 +222,9 @@ export default function ContactsPage() {
                   <tr>
                     <th className="py-2 px-3">Tarih</th>
                     <th className="py-2 px-3">Belge / Açıklama</th>
-                    <th className="py-2 px-3 text-right">Borç (₺)</th>
-                    <th className="py-2 px-3 text-right">Alacak (₺)</th>
-                    <th className="py-2 px-3 text-right">Bakiye (₺)</th>
+                    <th className="py-2 px-3 text-right">Borç</th>
+                    <th className="py-2 px-3 text-right">Alacak</th>
+                    <th className="py-2 px-3 text-right">Bakiye</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -233,9 +233,9 @@ export default function ContactsPage() {
                     <tr key={idx} className={r.kind === "payment" ? "bg-emerald-50/50" : ""} data-testid={`statement-row-${r.kind}-${idx}`}>
                       <td className="py-2 px-3 text-slate-500 font-mono">{r.date}</td>
                       <td className="py-2 px-3 font-semibold text-slate-800"><span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${r.kind === "payment" ? "bg-emerald-500" : "bg-rose-500"}`} />{r.doc}</td>
-                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? `${formatTrAmount(r.debit)}` : '-'}</td>
-                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? `${formatTrAmount(r.credit)}` : '-'}</td>
-                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatTrAmount(r.balance)}</td>
+                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? fmtMoney(r.debit, selectedContactStatement.currency || "TRY") : '-'}</td>
+                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? fmtMoney(r.credit, selectedContactStatement.currency || "TRY") : '-'}</td>
+                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmtMoney(r.balance, selectedContactStatement.currency || "TRY")}</td>
                     </tr>
                   ))}
                 </tbody>
