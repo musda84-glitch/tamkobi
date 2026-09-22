@@ -433,8 +433,8 @@ export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalanc
     { key: "meal", label: "Yemek", value: meal },
     { key: "yol", label: "Yol", value: yol },
     { key: "salary", label: daily ? "Yevmiye" : "Maaş", value: wage },
-    { key: "bonus", label: "Prim", value: prim },
-    { key: "overtime", label: "Mesai", value: mesai },
+    { key: "bonus", label: "Prim hakedişi", value: prim },
+    { key: "overtime", label: "Fazla mesai ücreti", value: mesai },
     { key: "total", label: "Toplam", value: meal + yol + wage + prim + mesai },
   ];
 }
