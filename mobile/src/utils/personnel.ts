@@ -686,8 +686,16 @@ export function personnelExpensePayload(
   };
 }
 
-export function employeeCardActionTitles(): string[] {
-  return EMPLOYEE_CARD_ACTIONS.map((a) => a.title);
+export function employeeCardActionTitle(
+  action: { key: string; title: string },
+  emp?: Pick<Employee, "pay_type"> | null,
+): string {
+  if (action.key === "salary" && isDailyWage(emp)) return "Yevmiye öde";
+  return action.title;
+}
+
+export function employeeCardActionTitles(emp?: Pick<Employee, "pay_type"> | null): string[] {
+  return EMPLOYEE_CARD_ACTIONS.map((a) => employeeCardActionTitle(a, emp));
 }
 
 export function payrollBreakdown(p: Payroll): string {

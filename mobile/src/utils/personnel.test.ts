@@ -205,6 +205,9 @@ describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
+    expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
+      "Avans", "Yevmiye öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai",
+    ]);
     expect(employeeCardActionsByGroup("work").map((a) => a.title)).toEqual(["Görev ata", "+ Mesai"]);
     expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport", "bonus", "otpay"]);
     expect(titles).not.toContain("Düzenle");

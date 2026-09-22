@@ -17,6 +17,7 @@ import {
   leaveStatusTr,
   leaveTypeTr,
   dailyEarned,
+  isDailyPayroll,
   isDailyWage,
   monthlyPayrollLoad,
   openPayroll,
@@ -29,6 +30,7 @@ import {
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
   EMPLOYEE_CARD_WORK_ACTIONS,
+  employeeCardActionTitle,
   allowanceDue,
   bonusDue,
   bonusPayPayload,
@@ -827,7 +829,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!payItem}
-        title="Maaş ödemesi onayı"
+        title={payItem && isDailyPayroll(payItem) ? "Yevmiye ödemesi onayı" : "Maaş ödemesi onayı"}
         subtitle={payItem ? `${payItem.employee_name} · ${payItem.period} · ${fmtMoney(payItem.final_payable)}` : undefined}
         onClose={() => setPayItem(null)}
         testID="salary-pay-sheet"
@@ -920,7 +922,7 @@ function EmpActionChip({
   const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
   return (
     <PayChip
-      title={action.title}
+      title={employeeCardActionTitle(action, emp)}
       color={tone.color}
       bg={tone.bg}
       testID={`emp-card-${action.key}-btn-${eid}`}
