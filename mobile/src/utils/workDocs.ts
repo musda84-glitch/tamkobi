@@ -310,6 +310,13 @@ export function hydrateWorkItem(
   return item;
 }
 
+export function bumpWorkItemQty(qty: unknown, delta: number): number {
+  const cur = Number(qty);
+  const next = (Number.isFinite(cur) ? cur : 0) + delta;
+  const rounded = Math.round(next * 1000) / 1000;
+  return rounded < 0 ? 0 : rounded;
+}
+
 export function workItemLineGross(it: WorkItem): number {
   const qty = Number(it.quantity || 0);
   const rate = Number(it.vat_rate || 0);

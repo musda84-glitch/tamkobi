@@ -46,6 +46,7 @@ import {
   quoteSaveMessage,
   workItemFromProduct,
   workItemImage,
+  bumpWorkItemQty,
   workItemLineGross,
   workItemNameHits,
   workItemNoteOpen,
@@ -65,6 +66,10 @@ describe("workDocs", () => {
     expect(t.subtotal).toBe(100);
     expect(t.vat).toBe(20);
     expect(t.grandTotal).toBe(120);
+    expect(bumpWorkItemQty(1, 1)).toBe(2);
+    expect(bumpWorkItemQty(1, -1)).toBe(0);
+    expect(bumpWorkItemQty(0, -1)).toBe(0);
+    expect(bumpWorkItemQty(1.5, 1)).toBe(2.5);
     expect(workItemLineGross({ name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true })).toBe(120);
     const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true, thumbnail_url: "koltuk.jpg" });
     expect(fromCard.price_includes_vat).toBe(true);
