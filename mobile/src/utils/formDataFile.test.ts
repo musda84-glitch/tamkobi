@@ -3,6 +3,7 @@ import {
   imageUploadRequest,
   lineItemImageUploadRequest,
   imageUploaderCopy,
+  removeGalleryImage,
   isExpoFetchFilePart,
   pickBrowserImage,
   pickBrowserImages,
@@ -148,6 +149,9 @@ describe("pickerFileMeta and upload target", () => {
     expect(imageUploaderCopy("project").label).toMatch(/Proje/);
     expect(imageUploaderCopy("product").label).toMatch(/Stok/);
     expect(imageUploaderCopy("partner").label).toMatch(/Ortak/);
+    expect(removeGalleryImage(["/a.jpg", "/b.jpg", "/a.jpg"], "/a.jpg")).toEqual(["/b.jpg"]);
+    expect(removeGalleryImage(["/a.jpg"], "/missing.jpg")).toEqual(["/a.jpg"]);
+    expect(removeGalleryImage(null, "/a.jpg")).toEqual([]);
     expect(imageUploadRequest("partner", "ort1", "c1")).toEqual({
       path: "/files/upload",
       query: { entity: "partner_photo", entity_id: "ort1", company_id: "c1" },

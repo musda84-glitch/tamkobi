@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { confirmAction } from "./chips";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
 import { colors, radius } from "../theme";
 import { compressPickerAsset } from "../utils/compressUploadImage";
@@ -26,6 +27,7 @@ export function ImageUploader({
   entityId,
   images,
   onUploaded,
+  onRemoved,
   editable = true,
   label,
   hint,
@@ -35,6 +37,7 @@ export function ImageUploader({
   entityId?: string;
   images: string[];
   onUploaded: (url: string) => void;
+  onRemoved?: (url: string) => void;
   editable?: boolean;
   label?: string;
   hint?: string;
@@ -115,14 +118,41 @@ export function ImageUploader({
       {!entityId ? <Muted>Kayıt oluşturulduktan sonra fotoğraf ekleyebilirsiniz.</Muted> : null}
       <Row style={{ flexWrap: "wrap" }}>
         {images.map((img) => (
-          <Pressable
+          <View
             key={img}
-            testID={`${testID}-img`}
-            onPress={() => Linking.openURL(fileUrl(client.baseUrl, img))}
             style={{ width: 96, height: 96, borderRadius: radius.md, overflow: "hidden", borderWidth: 1, borderColor: colors.border }}
           >
-            <Image source={{ uri: fileUrl(client.baseUrl, img) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
-          </Pressable>
+            <Pressable
+              testID={`${testID}-img`}
+              onPress={() => Linking.openURL(fileUrl(client.baseUrl, img))}
+              style={{ width: "100%", height: "100%" }}
+            >
+              <Image source={{ uri: fileUrl(client.baseUrl, img) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
+            </Pressable>
+            {editable && onRemoved ? (
+              <Pressable
+                testID={`${testID}-remove`}
+                accessibilityLabel="Fotoğrafı sil"
+                onPress={() => confirmAction("Fotoğraf", "Bu fotoğraf silinsin mi?", () => onRemoved(img))}
+                hitSlop={8}
+                style={{
+                  position: "absolute",
+                  top: 4,
+                  right: 4,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: "#fff",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Ionicons name="trash" size={14} color={colors.danger} />
+              </Pressable>
+            ) : null}
+          </View>
         ))}
         {!images.length ? (
           <View style={{ width: 96, height: 96, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, alignItems: "center", justifyContent: "center" }}>

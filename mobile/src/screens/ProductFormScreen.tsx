@@ -11,6 +11,7 @@ import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen 
 import { colors, spacing } from "../theme";
 import type { Product } from "../types";
 import { idOf } from "../utils/money";
+import { removeGalleryImage } from "../utils/formDataFile";
 import { productGalleryUrls } from "../utils/productDisplay";
 import {
   PRODUCT_TYPES,
@@ -197,6 +198,14 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         entityId={productId}
         images={photos}
         onUploaded={(url) => setPhotos((prev) => (prev.includes(url) ? prev : [...prev, url]))}
+        onRemoved={(url) => {
+          const next = removeGalleryImage(photos, url);
+          setPhotos(next);
+          if (!productId) return;
+          void put(client, `/products/${productId}/images`, { images: next, image_url: next[0] || "" }).catch((err) => {
+            setError(apiErrorMessage(err, "Fotoğraf silinemedi."));
+          });
+        }}
         editable={canEdit}
         testID="stock-photos"
       />
