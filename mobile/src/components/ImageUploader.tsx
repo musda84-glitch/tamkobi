@@ -47,8 +47,10 @@ export function ImageUploader({
   const copy = imageUploaderCopy(entity);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const title = label ?? copy.label;
   const help = hint ?? copy.hint;
+  const canRemove = editable && !!onRemoved;
 
   const sendAll = async (assets: PickerAssetLike[]) => {
     if (!entityId) { setError("Önce kaydı oluşturun, sonra fotoğraf ekleyin."); return; }
@@ -114,6 +116,7 @@ export function ImageUploader({
     <Card testID={testID}>
       <Muted>{title}</Muted>
       {help ? <Muted>{help}</Muted> : null}
+      {canRemove ? <Muted>Silmek için fotoğrafa basılı tutun.</Muted> : null}
       {error ? <Text style={{ color: colors.danger, fontWeight: "700" }}>{error}</Text> : null}
       {!entityId ? <Muted>Kayıt oluşturulduktan sonra fotoğraf ekleyebilirsiniz.</Muted> : null}
       <Row style={{ flexWrap: "wrap" }}>
@@ -124,30 +127,52 @@ export function ImageUploader({
           >
             <Pressable
               testID={`${testID}-img`}
-              onPress={() => Linking.openURL(fileUrl(client.baseUrl, img))}
+              accessibilityHint={canRemove ? "Silmek için basılı tutun" : undefined}
+              delayLongPress={350}
+              onLongPress={canRemove ? () => setPendingRemove(img) : undefined}
+              onPress={() => {
+                if (pendingRemove === img) {
+                  setPendingRemove(null);
+                  return;
+                }
+                void Linking.openURL(fileUrl(client.baseUrl, img));
+              }}
               style={{ width: "100%", height: "100%" }}
             >
               <Image source={{ uri: fileUrl(client.baseUrl, img) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
             </Pressable>
-            {editable && onRemoved ? (
+            {canRemove && pendingRemove === img ? (
               <Pressable
-                testID={`${testID}-remove`}
-                accessibilityLabel="Fotoğrafı sil"
-                onPress={() => confirmAction("Fotoğraf", "Bu fotoğraf silinsin mi?", () => onRemoved(img))}
-                hitSlop={12}
+                onPress={() => setPendingRemove(null)}
                 style={{
                   position: "absolute",
-                  top: 3,
-                  right: 3,
-                  width: 16,
-                  height: 16,
-                  borderRadius: 8,
-                  backgroundColor: "rgba(255,255,255,0.92)",
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
                   alignItems: "center",
                   justifyContent: "center",
+                  backgroundColor: "rgba(0,0,0,0.45)",
                 }}
               >
-                <Ionicons name="close" size={11} color={colors.danger} />
+                <Pressable
+                  testID={`${testID}-remove`}
+                  accessibilityLabel="Fotoğrafı sil"
+                  onPress={() => confirmAction("Fotoğraf", "Bu fotoğraf silinsin mi?", () => {
+                    onRemoved?.(img);
+                    setPendingRemove(null);
+                  })}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: "#fff",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="trash" size={18} color={colors.danger} />
+                </Pressable>
               </Pressable>
             ) : null}
           </View>
