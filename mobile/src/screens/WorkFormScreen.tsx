@@ -69,7 +69,6 @@ import {
   workItemFromProduct,
   workItemImage,
   workItemLineGross,
-  workItemNameHits,
   workItemNoteOpen,
   workItemTotals,
   itemStripe,
@@ -286,12 +285,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   const patchItem = (i: number, field: keyof WorkItem, value: string | number | boolean) => {
     setItems((rows) => rows.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
-  };
-
-  const applyLineProduct = (i: number, p: Product) => {
-    setItems((rows) => rows.map((it, idx) => (
-      idx === i ? { ...workItemFromProduct(p), quantity: it.quantity || 1, description: it.description || "" } : it
-    )));
   };
 
   const toggleLineKind = (i: number) => {
@@ -717,7 +710,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
-            const lineHits = canEdit && kind === "quote" ? workItemNameHits(products, it) : [];
             const noteShown = kind === "quote" && workItemNoteOpen(it, noteOpen[i]);
             return (
             <View
@@ -758,16 +750,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                     value={it.name}
                     onChangeText={(v) => patchItem(i, "name", v)}
                     editable={canEdit}
-                    placeholder={it.is_service ? "Hizmet adı yazın" : "Stok adı / SKU ara"}
+                    placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
                   />
-                  {lineHits.map((p) => (
-                    <ProductPickRow
-                      key={idOf(p)}
-                      product={p}
-                      testID={`q-item-hit-${i}-${idOf(p)}`}
-                      onPress={() => applyLineProduct(i, p)}
-                    />
-                  ))}
                   <ProductThumb
                     uri={workItemImage(it, prod)}
                     width={QUOTE_ITEM_THUMB.width}
