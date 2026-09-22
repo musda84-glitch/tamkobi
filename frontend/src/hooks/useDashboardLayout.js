@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 const STORAGE_KEY = "dashboard_layout";
 
 export const DEFAULT_DASHBOARD_LAYOUT = [
+  "staff",
   "alerts",
   "overview",
   "decision",
@@ -17,6 +18,7 @@ export const DEFAULT_DASHBOARD_LAYOUT = [
 ];
 
 const SECTION_LABELS = {
+  staff: "Görevlerim & mesajlar",
   alerts: "Personel & Operasyon",
   overview: "Tahsilat / Ödeme / Fatura",
   decision: "Yönetici karar özeti",

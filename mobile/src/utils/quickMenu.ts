@@ -1,5 +1,5 @@
 import type { SessionUser, License } from "./permissions";
-import { can, moduleOn } from "./permissions";
+import { can, hasSelfPersonnelRecord, moduleOn } from "./permissions";
 
 export type QuickTone = "emerald" | "sky" | "amber" | "indigo" | "teal" | "orange" | "violet" | "rose" | "slate";
 
@@ -15,6 +15,8 @@ export type QuickTile = {
   /** Bildirim, arama, ayarlar gibi herkese açık kısayollar. */
   always?: boolean;
   needsEdit?: boolean;
+  /** Personel kartı bağlı kullanıcılara özel (atanan görevler). */
+  self?: boolean;
 };
 
 /**
@@ -37,6 +39,7 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "barcode", label: "Barkod", path: "/stock", href: "/stok?scan=1", icon: "barcode", tone: "indigo" },
   { id: "sevk", label: "Sevkiyat", path: "/sevk", href: "/sevk", icon: "cube", tone: "teal" },
   { id: "atolye", label: "Atölye Ekranı", path: "/atolye", href: "/atolye", icon: "build", tone: "orange" },
+  { id: "my_tasks", label: "Görevlerim", path: "/personelim", href: "/personelim?tab=gorevler", icon: "checkbox", tone: "indigo", self: true },
   { id: "personnel", label: "Personel", path: "/personnel", href: "/personnel", icon: "people-circle", tone: "violet" },
   { id: "notifications", label: "Bildirimler", path: "/", href: "/notifications", icon: "notifications", tone: "rose", always: true },
 ];
@@ -55,6 +58,7 @@ export const QUICK_TONE_COLORS: Record<QuickTone, { bg: string; border: string; 
 };
 
 const TASK_PATH_MAP: Record<string, string> = {
+  "/": "/",
   "/invoices": "/invoices",
   "/edoc-inbox": "/edoc-inbox",
   "/contacts": "/contacts",
@@ -92,6 +96,11 @@ export function visibleQuickTiles(user: SessionUser, license: License): QuickTil
   const seen = new Set<string>();
   return QUICK_TILES.filter((tile) => {
     if (seen.has(tile.id)) return false;
+    if (tile.self) {
+      if (!hasSelfPersonnelRecord(user) || !can(user, tile.path) || !moduleOn(license, tile.path)) return false;
+      seen.add(tile.id);
+      return true;
+    }
     if (!tile.always && (!can(user, tile.path, tile.needsEdit ? "edit" : "view") || !moduleOn(license, tile.path))) {
       return false;
     }

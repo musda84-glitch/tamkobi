@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus, UtensilsCrossed, Bus } from "lucide-react";
+import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus, UtensilsCrossed, Bus, MessageSquare } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -16,6 +16,7 @@ import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "..
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
+import { StaffMessagesPanel } from "./StaffMessagesPanel";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
@@ -110,6 +111,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [accounts, setAccounts] = useState(accountsProp || []);
   const [quickPay, setQuickPay] = useState(null);
   const [taskOpen, setTaskOpen] = useState(false);
+  const [msgOpen, setMsgOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [yevmiyeOpen, setYevmiyeOpen] = useState(null);
   const [payItem, setPayItem] = useState(null);
@@ -122,6 +124,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   useEscape(() => {
     if (quickPay) return;
     if (termOpen) { setTermOpen(false); setTermOk(false); return; }
+    if (msgOpen) { setMsgOpen(false); return; }
     if (taskOpen) { setTaskOpen(false); return; }
     if (ledgerOpen) { setLedgerOpen(false); return; }
     if (yevmiyeOpen) { setYevmiyeOpen(null); return; }
@@ -260,7 +263,9 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </div>
           <div className="grid grid-cols-2 gap-1.5" data-testid="emp-card-work-actions">
             <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
+            <button type="button" onClick={() => setMsgOpen((v) => !v)} className={`${btn} bg-violet-50 hover:bg-violet-100 text-violet-800 border-violet-200`} data-testid="emp-card-msg-btn"><MessageSquare className="w-3.5 h-3.5 inline mr-1" />Mesaj</button>
           </div>
+          {msgOpen ? <StaffMessagesPanel employeeId={id} testId="emp-card-messages" /> : null}
           </div>
         </div>
         <div className="flex gap-1 px-5 border-b overflow-x-auto">{TABS.map(([k, l, I]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`emp-tab-${k}`}><I className="w-3.5 h-3.5" /> {l}</button>)}</div>

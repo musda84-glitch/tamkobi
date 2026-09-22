@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   UserRound, Wallet, ClipboardList, Factory, Clock, CalendarDays,
   AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2,
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 
 const money = (n) => `${formatTrAmount(Number(n || 0))} ₺`;
 const statusTr = {
@@ -38,6 +39,7 @@ const TABS = [
 
 export default function MyPersonnelPage() {
   const { user } = useAuth();
+  const [params] = useSearchParams();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [tab, setTab] = useState("ozet");
   const [data, setData] = useState(null);
@@ -55,6 +57,10 @@ export default function MyPersonnelPage() {
   }, [month]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = params.get("tab");
+    if (TABS.some((x) => x.id === t)) setTab(t);
+  }, [params]);
 
   if (loading && !data) {
     return (
@@ -154,6 +160,7 @@ export default function MyPersonnelPage() {
         </div>
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-personnel-month" />
       </div>
+      <StaffMessagesPanel compact testId="my-personnel-messages" />
 
       {!emp && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800" data-testid="my-personnel-no-employee">

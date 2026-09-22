@@ -10,6 +10,7 @@ from saas import PANEL_MODULE_FROM  # noqa: E402
 
 def test_personnel_me_skipped_from_rbac():
     assert any(p.startswith("/api/personnel/me") for p in SKIP_PREFIXES)
+    assert any(p.startswith("/api/personnel/messages") for p in SKIP_PREFIXES)
     assert any(p.startswith("/api/personnel/bonuses/self") for p in SKIP_PREFIXES)
     assert any(p.startswith("/api/personnel/attendance/intraday-leave-request") for p in SKIP_PREFIXES)
 

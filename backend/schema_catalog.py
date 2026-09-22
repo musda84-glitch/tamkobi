@@ -391,6 +391,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "employee_id", "start_date", "end_date", "status"),
         "refs": ("employees._id",),
     },
+    "staff_messages": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel ile yönetici uygulama içi mesajları.",
+        "keys": ("_id", "company_id", "employee_id", "from_side", "from_user_id", "body", "created_at", "read_at"),
+        "refs": ("employees._id", "users._id"),
+    },
     "bonus_payments": {
         "scope": SCOPE_TENANT,
         "description": "Prim / avans / yan ödeme.",

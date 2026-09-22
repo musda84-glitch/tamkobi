@@ -1,3 +1,4 @@
+import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
@@ -99,6 +100,7 @@ function Chip({
 
 export function PersonelimScreen() {
   const { client } = useAuth();
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [tab, setTab] = useState<TabId>("ozet");
   const [data, setData] = useState<PersonelimPayload | null>(null);
@@ -128,6 +130,11 @@ export function PersonelimScreen() {
   }, [client, month]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const raw = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+    if (TABS.some((t) => t.id === raw)) setTab(raw as TabId);
+  }, [params.tab]);
 
   const emp = data?.employee;
   const bal = data?.balance;

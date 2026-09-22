@@ -7,6 +7,7 @@ import { useBadges } from "../auth/BadgeContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
 import { Badge, Card, ErrorBanner, Muted, Row, Screen, StatRows } from "../components/kit";
 import { NotificationsPanel } from "../components/NotificationsPanel";
+import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
@@ -22,16 +23,19 @@ export function HomeScreen() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
+  const [openTasks, setOpenTasks] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const showFinance = showHomeFinanceSummary(user);
+  const role = (user?.role || "").toLowerCase();
+  const showMessages = hasSelfPersonnelRecord(user) || role === "admin" || role === "manager";
   const { tiles, notifications } = useMemo(
     () => splitNotificationsTile(visibleQuickTiles(user, license)),
     [user, license]
   );
 
-  const badges = useMemo(() => tileBadges(notes, live), [notes, live]);
+  const badges = useMemo(() => tileBadges(notes, { ...live, my_tasks: openTasks }), [notes, live, openTasks]);
 
   const quickItems: ActionTile[] = useMemo(
     () => tiles.map((tile) => ({
@@ -62,8 +66,10 @@ export function HomeScreen() {
           : Promise.resolve(null),
         refreshBadges(),
       ]);
+      const openMine = (me?.tasks || []).filter((t) => !t.done).length;
+      setOpenTasks(openMine);
       const homeTasks = visibleHomeTasks(ov?.tasks, user, {
-        openTasks: (me?.tasks || []).filter((t) => !t.done).length,
+        openTasks: openMine,
         openWorkOrders: (me?.work_orders || []).length,
       });
       setOverview(ov ? { ...ov, tasks: homeTasks } : ov);
@@ -97,6 +103,11 @@ export function HomeScreen() {
 
       <View testID="home-quick-menu">
         <ActionTiles size="md" items={quickItems} />
+        {showMessages ? (
+          <View style={{ marginTop: 8 }}>
+            <StaffMessagesPanel client={client} onChanged={refreshBadges} />
+          </View>
+        ) : null}
         {notifications ? (
           <View style={{ marginTop: 4 }}>
             <NotificationsPanel
