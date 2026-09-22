@@ -855,6 +855,18 @@ export function workItemLineKind(kind: WorkKind): "quote" | null {
   return kind === "project" ? null : "quote";
 }
 
+/** GET /quotes|/projects|/surveys bazen dizi, bazen {quotes:[]} döner. */
+export function asWorkList<T>(raw: unknown): T[] {
+  if (Array.isArray(raw)) return raw as T[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const key of ["quotes", "projects", "surveys", "items", "data", "rows", "results"]) {
+      if (Array.isArray(o[key])) return o[key] as T[];
+    }
+  }
+  return [];
+}
+
 /** Satır görselleri teklif / keşif galerisinde durmaz. */
 export function workGalleryWithoutLinePhotos(
   images: string[] | null | undefined,

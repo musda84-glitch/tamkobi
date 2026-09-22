@@ -36,6 +36,7 @@ import {
   surveyListSubtitle,
   surveyStatusTone,
   quotePayload,
+  asWorkList,
   quoteProjectSyncPayload,
   quoteToProjectAction,
   surveyPayload,
@@ -218,6 +219,11 @@ describe("workDocs", () => {
     expect(quoteProjectSyncPayload({ quote_number: "TKF-2" }).name).toBe("TKF-2 projesi");
     expect(quoteProjectSyncPayload({}).name).toBe("Teklif projesi");
     expect(quoteProjectSyncPayload({ images: [] }).images).toBeUndefined();
+    expect(asWorkList([{ id: "q1" }])).toEqual([{ id: "q1" }]);
+    expect(asWorkList({ quotes: [{ id: "q2" }] })).toEqual([{ id: "q2" }]);
+    expect(asWorkList({ projects: [{ id: "p1" }] })).toEqual([{ id: "p1" }]);
+    expect(asWorkList({ detail: "nope" })).toEqual([]);
+    expect(asWorkList(null)).toEqual([]);
   });
 
   it("requires at least one named quote line and a project name", () => {

@@ -1,5 +1,5 @@
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -13,6 +13,7 @@ import { mapsLink } from "../utils/geo";
 import { isCompletedProjectStatus, normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import {
   SURVEY_MAPS_ACTION,
+  asWorkList,
   newButtonLabel,
   quoteListSubtitle,
   quoteListTitle,
@@ -47,29 +48,36 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
+  const loadGen = useRef(0);
 
   const load = useCallback(async () => {
+    if (!companyId) return;
+    const gen = ++loadGen.current;
     setRefreshing(true);
     try {
       if (kind === "quote") {
-        const rows = await get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, summary: 1 });
-        setQuotes(rows || []);
+        const rows = asWorkList<QuoteDoc>(await get(client, "/quotes", { company_id: companyId, summary: 1 }));
+        if (gen !== loadGen.current) return;
+        setQuotes(rows);
       } else if (kind === "project") {
         const [rows, stages] = await Promise.all([
-          get<ProjectDoc[]>(client, "/projects", { company_id: companyId, light: 1 }),
+          get(client, "/projects", { company_id: companyId, light: 1 }),
           get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] })),
         ]);
-        setProjects(rows || []);
+        if (gen !== loadGen.current) return;
+        setProjects(asWorkList<ProjectDoc>(rows));
         setProjectStages(normalizeProjectStages(stages?.stages));
       } else {
-        const rows = await get<SurveyDoc[]>(client, "/surveys", { company_id: companyId });
-        setSurveys(rows || []);
+        const rows = asWorkList<SurveyDoc>(await get(client, "/surveys", { company_id: companyId }));
+        if (gen !== loadGen.current) return;
+        setSurveys(rows);
       }
       setError(null);
     } catch (err) {
+      if (gen !== loadGen.current) return;
       setError(apiErrorMessage(err, "Liste yüklenemedi."));
     } finally {
-      setRefreshing(false);
+      if (gen === loadGen.current) setRefreshing(false);
     }
   }, [client, companyId, kind]);
 
@@ -139,9 +147,11 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       {!filtered.length ? (
         <Empty
           icon={meta.icon}
-          title={meta.empty}
+          title={!companyId || (refreshing && !quotes.length && !projects.length && !surveys.length) ? "Yükleniyor…" : meta.empty}
           hint={
-            kind === "project" && completedProjectCount && !showCompleted
+            !companyId || (refreshing && !quotes.length && !projects.length && !surveys.length)
+              ? "Kayıtlar getiriliyor."
+              : kind === "project" && completedProjectCount && !showCompleted
               ? "Açık proje yok — tamamlananları göstermek için üstteki düğmeyi kullanın."
               : canEdit ? `${newButtonLabel(kind)} ile başlayın.` : undefined
           }
