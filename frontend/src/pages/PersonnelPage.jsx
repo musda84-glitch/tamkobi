@@ -322,7 +322,7 @@ export default function PersonnelPage() {
     setQuickPay({ p: payrollStubFor(emp), type: "bonus", amount: due > 0 ? due : "" });
   };
   const openOtPayFor = (emp) => {
-    const due = Number(emp?.balance?.overtime_due ?? emp?.balance?.overtime_pay || 0) || 0;
+    const due = Number(emp?.balance?.overtime_due ?? emp?.balance?.overtime_pay ?? 0) || 0;
     setQuickPay({ p: payrollStubFor(emp), type: "overtime", amount: due > 0 ? due : "" });
   };
 
@@ -615,7 +615,7 @@ export default function PersonnelPage() {
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>
                 <span className="text-slate-400">Fazla mesai ücreti:</span>
-                <span className="text-sm font-bold text-violet-800">{Number(emp.balance?.overtime_due ?? emp.balance?.overtime_pay || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
+                <span className="text-sm font-bold text-violet-800">{Number(emp.balance?.overtime_due ?? emp.balance?.overtime_pay ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
               </div>
             </div>
             <div className="space-y-1.5">
