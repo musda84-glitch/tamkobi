@@ -4,18 +4,26 @@ import { toast } from "sonner";
 import { CheckCircle2, Circle, ClipboardList, Loader2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import {
+  dueDateFromDays,
+  empIdOf,
+  isClosedProject,
+  nextTasksAfterAssign,
+  parseTaskDays,
+  validateEmployeeTaskAssign,
+} from "../utils/employeeTaskAssign";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
-const empIdOf = (e) => String(e?.id || e?._id || "");
 
-/** Personel kartından proje görevi ata */
+/** Personel kartından iç / dış görev ata */
 export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved }) {
   useEscape(onClose);
   const empId = empIdOf(employee);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ project_id: "", title: "", due_date: "", duration_days: "" });
+  const [kind, setKind] = useState("field");
+  const [form, setForm] = useState({ project_id: "", task_id: "", title: "", due_date: "", duration_days: "" });
   const [showCompleted, setShowCompleted] = useState(false);
 
   const load = useCallback(async () => {
@@ -27,7 +35,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
       setProjects(rows);
       setForm((s) => {
         if (s.project_id) return s;
-        const first = rows.find((p) => p.status !== "completed") || rows[0];
+        const first = rows.find((p) => !isClosedProject(p)) || rows[0];
         return { ...s, project_id: first ? (first.id || first._id) : "" };
       });
     } catch {
@@ -49,37 +57,50 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
       })),
   );
   const openTasks = myTasks.filter((t) => !(t.done || t.status === "done" || t.status === "completed"));
-  const closed = projects.filter((p) => p.status === "completed" || p.status === "tamamlandı");
-  const assignable = projects.filter((p) => p.status !== "completed" && p.status !== "tamamlandı");
+  const closed = projects.filter((p) => isClosedProject(p));
+  const assignable = projects.filter((p) => !isClosedProject(p));
   const projectOptions = showCompleted ? [...assignable, ...closed] : assignable;
   const selected = projects.find((p) => (p.id || p._id) === form.project_id);
   const selectedHasLoc = selected && selected.latitude != null && selected.longitude != null;
+  const projectTasks = (selected?.tasks || []).map((t, i) => ({
+    id: t.id || `t_${i}`,
+    title: t.title || t.name || "",
+    done: !!(t.done || t.status === "done" || t.status === "completed"),
+    assignee_name: t.assignee_name || "",
+  })).filter((t) => t.title);
+  const days = kind === "field" ? parseTaskDays(form.duration_days) : null;
+
+  const pickProject = async (projectId) => {
+    setForm((s) => ({ ...s, project_id: projectId, task_id: "", title: "" }));
+    if (!projectId) return;
+    try {
+      const r = await axios.get(`${API_URL}/projects/${projectId}`);
+      if (r.data) {
+        setProjects((prev) => prev.map((p) => ((p.id || p._id) === projectId ? { ...p, ...r.data, tasks: r.data.tasks || p.tasks } : p)));
+      }
+    } catch { /* list already has light row */ }
+  };
 
   const save = async (e) => {
     e.preventDefault();
-    const title = (form.title || "").trim();
-    if (!title) { toast.error("Görev başlığı girin."); return; }
+    const invalid = validateEmployeeTaskAssign(form.project_id, form.task_id, form.title);
+    if (invalid) { toast.error(invalid); return; }
     const project = projects.find((p) => (p.id || p._id) === form.project_id);
     if (!project) { toast.error("Proje seçin."); return; }
+    const due = days ? dueDateFromDays(new Date().toISOString().slice(0, 10), days) : (form.due_date || undefined);
+    const next = nextTasksAfterAssign(project.tasks, employee, {
+      taskId: form.task_id,
+      title: form.title,
+      durationDays: days || undefined,
+      dueDate: due,
+      kind,
+    });
+    if (next.error) { toast.error(next.error); return; }
     setBusy(true);
     try {
-      const next = [
-        ...(project.tasks || []),
-        {
-          id: `t_${Date.now()}`,
-          title,
-          done: false,
-          assignee_id: empId,
-          assignee_name: employee.full_name,
-          due_date: form.due_date || null,
-          duration_days: (() => {
-            const n = Math.trunc(Number(form.duration_days));
-            return n > 0 ? n : null;
-          })(),
-        },
-      ];
-      await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next });
-      toast.success(`${employee.full_name} için görev atandı.`);
+      await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next.tasks });
+      const work = (next.tasks.find((t) => t.id === form.task_id)?.title || form.title || "iş").trim();
+      toast.success(`${employee.full_name} · ${work} · ${kind === "office" ? "iç görev" : "dış görev"}`);
       onSaved?.();
       onClose();
     } catch (err) {
@@ -90,15 +111,16 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} data-testid="emp-task-modal">
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} data-testid="emp-task-modal">
       <form
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}
         className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto"
+        data-testid="emp-card-task-modal"
       >
         <div className="flex items-center justify-between border-b pb-2">
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <ClipboardList className="w-4 h-4 text-indigo-600" /> Görev Ata — {employee.full_name}
+            <ClipboardList className="w-4 h-4 text-indigo-600" /> Görev ata — {employee.full_name}
           </h3>
           <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
         </div>
@@ -109,6 +131,23 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
           </div>
         ) : (
           <>
+            <div className="grid grid-cols-2 gap-1.5" data-testid="emp-task-kind">
+              {[["office", "İç görev"], ["field", "Dış görev"]].map(([k, label]) => (
+                <button
+                  type="button"
+                  key={k}
+                  onClick={() => {
+                    setKind(k);
+                    if (k === "office") setForm((s) => ({ ...s, duration_days: "", due_date: "" }));
+                  }}
+                  className={`py-2 rounded-lg border text-[12px] font-semibold ${kind === k ? (k === "field" ? "bg-indigo-50 text-indigo-800 border-indigo-200" : "bg-slate-100 text-slate-800 border-slate-300") : "bg-white text-slate-500 border-slate-200"}`}
+                  data-testid={`emp-task-kind-${k}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 space-y-1.5" data-testid="emp-task-existing">
               <div className="text-[10px] font-bold uppercase text-slate-500">
                 Mevcut görevler ({openTasks.length} açık / {myTasks.length} toplam)
@@ -128,87 +167,111 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
               )}
             </div>
 
-            {projectOptions.length === 0 ? (
+            {projectOptions.length === 0 && !form.project_id ? (
               <p className="text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">
                 Görev atamak için önce Projeler modülünden bir proje oluşturun.
               </p>
             ) : (
               <>
-                <div>
-                  <label className="block font-semibold mb-1">Dış görev kaç gün?</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="366"
-                    value={form.duration_days}
-                    onChange={(e) => {
-                      const duration_days = e.target.value;
-                      const n = Math.trunc(Number(duration_days));
-                      let due_date = form.due_date;
-                      if (n > 0) {
-                        const d = new Date();
-                        d.setDate(d.getDate() + n - 1);
-                        due_date = d.toISOString().slice(0, 10);
-                      }
-                      setForm({ ...form, duration_days, due_date });
-                    }}
-                    placeholder="Örn: 3"
-                    className={inputCls}
-                    data-testid="emp-task-days"
-                  />
-                </div>
+                {kind === "field" ? (
+                  <div>
+                    <label className="block font-semibold mb-1">Dış görev kaç gün?</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="366"
+                      value={form.duration_days}
+                      onChange={(e) => {
+                        const duration_days = e.target.value;
+                        const n = parseTaskDays(duration_days);
+                        setForm({
+                          ...form,
+                          duration_days,
+                          due_date: n ? dueDateFromDays(new Date().toISOString().slice(0, 10), n) : form.due_date,
+                        });
+                      }}
+                      placeholder="Örn: 3"
+                      className={inputCls}
+                      data-testid="emp-task-days"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500" data-testid="emp-task-days-hint">
+                      {days ? `${days} gün · bitiş ${form.due_date || dueDateFromDays(new Date().toISOString().slice(0, 10), days)}` : "Dış görevde kaç gün çalışacağını yazın; bitiş tarihi hesaplanır."}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500" data-testid="emp-task-office-hint">İç görev ofiste yapılır; konum kontrolü ücreti etkilemez.</p>
+                )}
                 <div>
                   <label className="block font-semibold mb-1">Proje</label>
-                  {closed.length ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowCompleted((v) => !v)}
-                      className="mb-1 text-[11px] font-semibold text-indigo-700"
-                      data-testid="emp-task-show-completed"
-                    >
-                      {showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${closed.length})`}
-                    </button>
-                  ) : null}
                   <select
                     value={form.project_id}
-                    onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+                    onChange={(e) => pickProject(e.target.value)}
                     className={inputCls}
                     data-testid="emp-task-project"
                   >
                     <option value="">Proje seçin</option>
                     {projectOptions.map((p) => (
                       <option key={p.id || p._id} value={p.id || p._id}>
-                        {p.status === "completed" ? "Tamamlandı · " : ""}{p.project_number ? `${p.project_number} · ` : ""}{p.name}
+                        {isClosedProject(p) ? "Tamamlandı · " : ""}{p.project_number ? `${p.project_number} · ` : ""}{p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {closed.length ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCompleted((v) => !v)}
+                      className="mt-1 text-[11px] font-medium text-slate-500 hover:text-slate-700"
+                      data-testid="emp-task-show-completed"
+                    >
+                      {showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${closed.length})`}
+                    </button>
+                  ) : null}
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Yapacağı iş</label>
+                  <select
+                    value={form.task_id}
+                    onChange={(e) => setForm({ ...form, task_id: e.target.value, title: e.target.value ? "" : form.title })}
+                    className={inputCls}
+                    disabled={!form.project_id}
+                    data-testid="emp-task-job"
+                  >
+                    <option value="">{form.project_id ? "Listeden iş seçin" : "Önce proje seçin"}</option>
+                    {projectTasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title}{t.assignee_name ? ` · ${t.assignee_name}` : ""}{t.done ? " (bitti)" : ""}
                       </option>
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block font-semibold mb-1">Görev</label>
-                  <input
-                    value={form.title}
-                    onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    placeholder="Örn: Montaj, keşif, teslimat"
-                    className={inputCls}
-                    autoFocus
-                    data-testid="emp-task-title"
-                  />
-                </div>
+                {!form.task_id ? (
+                  <div>
+                    <label className="block font-semibold mb-1">Yeni iş adı</label>
+                    <input
+                      value={form.title}
+                      onChange={(e) => setForm({ ...form, title: e.target.value })}
+                      placeholder="Listede yoksa yazın: keşif, montaj"
+                      className={inputCls}
+                      data-testid="emp-task-title"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500" data-testid="emp-task-who">
+                    {employee.full_name} bu işe atanacak
+                    {projectTasks.find((t) => t.id === form.task_id)?.title ? ` · ${projectTasks.find((t) => t.id === form.task_id).title}` : ""}
+                  </p>
+                )}
                 <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">
-                  Dış görevde işe giriş/çıkış görev yerinden yapılır
-                  {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
-                  {Math.trunc(Number(form.duration_days)) > 0 ? ` · ${Math.trunc(Number(form.duration_days))} gün.` : ""}
+                  {kind === "office"
+                    ? "İç görev: giriş/çıkış ofisten; gün içi konum kontrolü ücreti etkilemez."
+                    : (
+                      <>
+                        Dış görevde işe giriş/çıkış görev yerinden yapılır
+                        {selectedHasLoc ? ` — ${selected.name || "proje"} konumu iş yeri sayılır.` : selected ? " — bu projenin konumu yoksa giriş konumsuz (firma ofisi zorunlu değil)." : "."}
+                        {days ? ` · ${days} gün.` : ""}
+                      </>
+                    )}
                 </p>
-                <div>
-                  <label className="block font-semibold mb-1">Son tarih (opsiyonel)</label>
-                  <input
-                    type="date"
-                    value={form.due_date}
-                    onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                    className={inputCls}
-                    data-testid="emp-task-due"
-                  />
-                </div>
               </>
             )}
           </>
@@ -218,11 +281,11 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
           <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
           <button
             type="submit"
-            disabled={busy || loading || projectOptions.length === 0}
+            disabled={busy || loading || (!projectOptions.length && !form.project_id)}
             className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold disabled:opacity-50"
             data-testid="emp-task-save"
           >
-            {busy ? "Kaydediliyor…" : "Görevi Ata"}
+            {busy ? "Kaydediliyor…" : `${employee.full_name} bu işe ata`}
           </button>
         </div>
       </form>

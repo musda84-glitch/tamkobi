@@ -37,6 +37,9 @@ import {
   validateSelfLeave,
   validateOvertime,
   validateTaskAssign,
+  isFieldTask,
+  normalizeTaskKind,
+  taskKindLabel,
   parseYevmiyeDays,
   parseYevmiyeWage,
   pendingYevmiyeBonus,
@@ -350,7 +353,14 @@ describe("project task assign", () => {
     expect(created.tasks).toHaveLength(2);
     expect(created.tasks[1]).toMatchObject({ id: "t_new", title: "Keşif", assignee_id: "e1", done: false });
     const withDays = assignEmployeeToTasks(tasks, { id: "e1", full_name: "Ali" }, { title: "Montaj", newId: "t_d", durationDays: 3, dueDate: dueDateFromDays("2026-09-22", 3) });
-    expect(withDays.tasks[1]).toMatchObject({ duration_days: 3, due_date: "2026-09-24" });
+    expect(withDays.tasks[1]).toMatchObject({ duration_days: 3, due_date: "2026-09-24", kind: "field" });
+    const office = assignEmployeeToTasks(tasks, { id: "e1", full_name: "Ali" }, { title: "Ofis", newId: "t_o", kind: "office", durationDays: 4 });
+    expect(office.tasks[1]).toMatchObject({ kind: "office", title: "Ofis" });
+    expect(office.tasks[1].duration_days).toBeFalsy();
+    expect(normalizeTaskKind("iç")).toBe("office");
+    expect(normalizeTaskKind("field")).toBe("field");
+    expect(isFieldTask({ kind: "office" })).toBe(false);
+    expect(taskKindLabel("office")).toBe("İç görev");
     expect(parseTaskDays("3")).toBe(3);
     expect(dueDateFromDays("2026-09-22", 1)).toBe("2026-09-22");
     expect(assignEmployeeToTasks(tasks, { id: "e1" }, {}).error).toBe("Görev adı girin.");

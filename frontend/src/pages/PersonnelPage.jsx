@@ -16,7 +16,9 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
+import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
+import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
+import { employeePayActionTitle, isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { workplaceShort } from "../utils/workplace";
 
 import {
@@ -77,6 +79,8 @@ export default function PersonnelPage() {
   const [busySalaryId, setBusySalaryId] = useState(null);
   const [otAssign, setOtAssign] = useState(null);
   const [taskEmp, setTaskEmp] = useState(null);
+  const [ledgerEmp, setLedgerEmp] = useState(null);
+  const [yevmiyeEmp, setYevmiyeEmp] = useState(null);
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
 
@@ -319,6 +323,10 @@ export default function PersonnelPage() {
 
   const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
   const openBonusFor = (emp) => {
+    if (isDailyWage(emp)) {
+      setYevmiyeEmp(emp);
+      return;
+    }
     const due = Number(emp?.balance?.bonus_pending || 0) || 0;
     setQuickPay({ p: payrollStubFor(emp), type: "bonus", amount: due > 0 ? due : "" });
   };
@@ -354,6 +362,10 @@ export default function PersonnelPage() {
   };
 
   const openSalaryFor = async (emp) => {
+    if (isDailyWage(emp)) {
+      setLedgerEmp(emp);
+      return;
+    }
     const eid = empIdOf(emp);
     let item = payrolls.find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
     if (!item) {
@@ -641,7 +653,7 @@ export default function PersonnelPage() {
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 disabled:opacity-50"
                 data-testid={`employee-salary-btn-${emp.tc_kimlik || empKey}`}
               >
-                <Banknote className="w-3.5 h-3.5" /> Maaş
+                <Banknote className="w-3.5 h-3.5" /> {employeePayActionTitle("salary", emp)}
               </button>
               <button
                 type="button"
@@ -667,7 +679,7 @@ export default function PersonnelPage() {
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200"
                 data-testid={`employee-bonus-btn-${emp.tc_kimlik || empKey}`}
               >
-                <Gift className="w-3.5 h-3.5" /> Prim öde
+                <Gift className="w-3.5 h-3.5" /> {employeePayActionTitle("bonus", emp)}
               </button>
               <button
                 type="button"
@@ -1126,7 +1138,28 @@ export default function PersonnelPage() {
           employee={taskEmp}
           companyId={companyId}
           onClose={() => setTaskEmp(null)}
-          onSaved={() => notifyDataChanged({ companyId, scopes: ["personnel"] })}
+          onSaved={() => { notifyDataChanged({ companyId, scopes: ["personnel"] }); loadPersonnelData(); }}
+        />
+      )}
+      {ledgerEmp && (
+        <EmployeeLedgerModal
+          employee={ledgerEmp}
+          companyId={companyId}
+          accounts={bankAccounts}
+          remaining={Number(ledgerEmp?.balance?.remaining) || 0}
+          advances={Number(ledgerEmp?.balance?.advances) || 0}
+          onClose={() => setLedgerEmp(null)}
+          onDone={loadPersonnelData}
+        />
+      )}
+      {yevmiyeEmp && (
+        <EmployeeYevmiyeModal
+          employee={yevmiyeEmp}
+          companyId={companyId}
+          accounts={bankAccounts}
+          haveDays={yevmiyeDaysOf(yevmiyeEmp)}
+          onClose={() => setYevmiyeEmp(null)}
+          onDone={loadPersonnelData}
         />
       )}
       {otAssign && (

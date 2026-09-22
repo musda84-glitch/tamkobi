@@ -9,10 +9,12 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { QuickPayModal } from "./QuickPayModal";
-import { empIdOf, nextTasksAfterAssign, validateEmployeeTaskAssign } from "../utils/employeeTaskAssign";
+import { EmployeeAssignTaskModal } from "./EmployeeAssignTaskModal";
+import { EmployeeLedgerModal } from "./EmployeeLedgerModal";
+import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
 import { formatTrAmount } from "../utils/money";
-import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
+import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -108,6 +110,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [accounts, setAccounts] = useState(accountsProp || []);
   const [quickPay, setQuickPay] = useState(null);
   const [taskOpen, setTaskOpen] = useState(false);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [yevmiyeOpen, setYevmiyeOpen] = useState(null);
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
@@ -119,6 +123,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     if (quickPay) return;
     if (termOpen) { setTermOpen(false); setTermOk(false); return; }
     if (taskOpen) { setTaskOpen(false); return; }
+    if (ledgerOpen) { setLedgerOpen(false); return; }
+    if (yevmiyeOpen) { setYevmiyeOpen(null); return; }
     if (payItem) { setPayItem(null); return; }
     onClose();
   });
@@ -227,7 +233,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             <button type="button" onClick={() => setTab("salary")} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
             <button type="button" onClick={() => setQuickPay({ type: "advance" })} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
-            <button type="button" onClick={openSalaryPay} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Maaş</button>
+            <button type="button" onClick={() => (isDailyWage(e) ? setLedgerOpen(true) : openSalaryPay())} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />{employeePayActionTitle("salary", e)}</button>
             <button type="button" onClick={() => setQuickPay({ type: "expense", initialMode: "new" })} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
             <button type="button" onClick={() => {
               const due = Number(card?.balance?.meal_due ?? e.meal_allowance ?? 0) || 0;
@@ -238,9 +244,15 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               setQuickPay({ type: "expense", category: "Yol / Ulaşım", description: "Yol / ulaşım ödemesi", amount: due > 0 ? due : "", initialMode: "new" });
             }} className={`${btn} bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border-cyan-200`} title="Yol ödemesi — masraf" data-testid="emp-card-transport-btn"><Bus className="w-3.5 h-3.5 inline mr-1" />Yol</button>
             <button type="button" onClick={() => {
+              if (isDailyWage(e)) {
+                const unpaidYev = (card?.bonuses || []).filter((b) => b.type === "yevmiye" && b.status !== "paid");
+                const haveDays = unpaidYev.reduce((s, b) => s + (Number(b.worked_days) || 0), 0);
+                setYevmiyeOpen({ haveDays });
+                return;
+              }
               const due = Number(card?.balance?.bonus_pending || 0) || 0;
               setQuickPay({ type: "bonus", amount: due > 0 ? due : "" });
-            }} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200`} data-testid="emp-card-bonus-btn">Prim öde</button>
+            }} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200`} data-testid="emp-card-bonus-btn">{employeePayActionTitle("bonus", e)}</button>
             <button type="button" onClick={() => {
               const due = Number(card?.balance?.overtime_due ?? card?.overtime?.amount ?? 0) || 0;
               setQuickPay({ type: "overtime", amount: due > 0 ? due : "" });
@@ -293,7 +305,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                           <li key={t.id || i}>
                             {t.title || "Görev"}
                             {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                            {t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                            {t.kind === "office" ? " · iç görev" : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
                           </li>
                         ))}
                       </ul>
@@ -327,7 +339,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 <div>
                   <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1">Avans / prim / masraf</div>
                   <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Durum</th></tr></thead>
-                    <tbody className="divide-y">{!(card.bonuses || []).length && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}{(card.bonuses || []).map((b) => <tr key={b.id}><td className="py-1.5 font-semibold">{b.type_label || b.type}{b.type === "yevmiye" && b.worked_days ? <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div> : null}</td><td>{b.period || "—"}</td><td className="text-slate-500">{b.account_name || b.note || "—"}</td><td className="text-right font-bold">{fmt(b.amount)} ₺</td><td className="text-right"><Badge s={b.status} />{b.type === "yevmiye" && b.status !== "paid" ? <div className="text-[10px] text-indigo-700 font-semibold">düzenlenebilir</div> : null}</td></tr>)}</tbody></table>
+                    <tbody className="divide-y">{!(card.bonuses || []).length && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}{(card.bonuses || []).map((b) => <tr key={b.id}><td className="py-1.5 font-semibold">{b.type_label || b.type}{b.type === "yevmiye" && b.worked_days ? <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div> : null}</td><td>{b.period || "—"}</td><td className="text-slate-500">{b.account_name || b.note || "—"}</td><td className="text-right font-bold">{fmt(b.amount)} ₺</td><td className="text-right"><Badge s={b.status} />{b.type === "yevmiye" && b.status !== "paid" ? <div className="flex justify-end gap-2 mt-0.5"><button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button><button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-row-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button></div> : null}</td></tr>)}</tbody></table>
                 </div>
               </div>
             )}
@@ -365,7 +377,32 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         onClose={() => setQuickPay(null)}
         onDone={afterMoney}
       />}
-      {taskOpen ? <AssignEmployeeTaskModal employee={e} companyId={companyId} onClose={() => setTaskOpen(false)} /> : null}
+      {taskOpen ? <EmployeeAssignTaskModal employee={e} companyId={companyId} onClose={() => setTaskOpen(false)} onSaved={afterMoney} /> : null}
+      {ledgerOpen ? (
+        <EmployeeLedgerModal
+          employee={e}
+          companyId={companyId}
+          accounts={accounts}
+          remaining={remaining}
+          advances={Number(card?.balance?.advances) || 0}
+          onClose={() => setLedgerOpen(false)}
+          onDone={afterMoney}
+        />
+      ) : null}
+      {yevmiyeOpen ? (
+        <EmployeeYevmiyeModal
+          employee={e}
+          companyId={companyId}
+          accounts={accounts}
+          haveDays={yevmiyeOpen.haveDays || 0}
+          editId={yevmiyeOpen.editId || ""}
+          initialDays={yevmiyeOpen.initialDays || ""}
+          initialWage={yevmiyeOpen.initialWage || ""}
+          initialNote={yevmiyeOpen.initialNote || ""}
+          onClose={() => setYevmiyeOpen(null)}
+          onDone={afterMoney}
+        />
+      ) : null}
       {payItem && (() => {
         const sgkPay = Boolean(String((card?.employee || e)?.sgk_number || "").trim());
         const empIban = (card?.employee || e)?.iban;
@@ -434,86 +471,3 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     </div>
   );
 };
-
-function AssignEmployeeTaskModal({ employee, companyId, onClose }) {
-  const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState("");
-  const [taskId, setTaskId] = useState("");
-  const [title, setTitle] = useState("");
-  const [durationDays, setDurationDays] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } })
-      .then((r) => setProjects(r.data || []))
-      .catch(() => toast.error("Projeler yüklenemedi."));
-  }, [companyId]);
-  const project = projects.find((p) => empIdOf(p) === projectId);
-  const tasks = (project?.tasks || []).map((t, i) => ({
-    id: t.id || `t_${i}`,
-    title: t.title || t.name || "",
-    done: !!(t.done || t.status === "done" || t.status === "completed"),
-    assignee_name: t.assignee_name || "",
-  }));
-  const save = async (e) => {
-    e.preventDefault();
-    const invalid = validateEmployeeTaskAssign(projectId, taskId, title);
-    if (invalid) { toast.error(invalid); return; }
-    const days = Math.trunc(Number(durationDays));
-    const due = days > 0 ? new Date(Date.now() + (days - 1) * 86400000).toISOString().slice(0, 10) : undefined;
-    const next = nextTasksAfterAssign(project?.tasks, employee, {
-      taskId, title, durationDays: days > 0 ? days : undefined, dueDate: due,
-    });
-    if (next.error) { toast.error(next.error); return; }
-    setBusy(true);
-    try {
-      await axios.put(`${API_URL}/projects/${projectId}`, { tasks: next.tasks });
-      toast.success(`${employee.full_name} ${project?.name || "projeye"} atandı.`);
-      onClose();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Görev ataması kaydedilemedi.");
-    } finally { setBusy(false); }
-  };
-  return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); onClose(); }} data-testid="emp-card-task-modal">
-      <form className="bg-white rounded-2xl max-w-md w-full p-6 space-y-3 shadow-2xl border border-slate-200 text-xs" onClick={(ev) => ev.stopPropagation()} onSubmit={save}>
-        <div className="flex items-center justify-between border-b pb-2">
-          <h3 className="text-base font-bold text-slate-900">Görev ata</h3>
-          <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
-        </div>
-        <p className="text-slate-600">{employee.full_name} · proje görevi seçin veya yeni yazın</p>
-        <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-card-task-field-hint">
-          Dış görevde işe giriş/çıkış, projenin konumu iş yeri sayılarak görev yerinden yapılır.
-          {project && project.latitude != null && project.longitude != null ? ` Seçili proje konumu kayıtlı.` : project ? " Seçili projenin konumu yoksa giriş konumsuz olur (firma ofisi zorunlu değil)." : ""}
-        </p>
-        <div>
-          <label className="block font-semibold text-slate-700 mb-1">Proje</label>
-          <select value={projectId} onChange={(ev) => { setProjectId(ev.target.value); setTaskId(""); }} className="w-full border rounded-lg p-2" data-testid="emp-card-task-project">
-            <option value="">Proje seçin</option>
-            {projects.map((p) => <option key={empIdOf(p)} value={empIdOf(p)}>{p.name || "Proje"}{p.project_number ? ` · ${p.project_number}` : ""}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block font-semibold text-slate-700 mb-1">Mevcut görev</label>
-          <select value={taskId} onChange={(ev) => setTaskId(ev.target.value)} className="w-full border rounded-lg p-2" data-testid="emp-card-task-existing" disabled={!projectId}>
-            <option value="">Yeni görev yaz</option>
-            {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}{t.assignee_name ? ` · ${t.assignee_name}` : ""}{t.done ? " (bitti)" : ""}</option>)}
-          </select>
-        </div>
-        {!taskId ? (
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Yeni görev adı</label>
-            <input value={title} onChange={(ev) => setTitle(ev.target.value)} placeholder="Örn: Keşif, montaj" className="w-full border rounded-lg p-2" data-testid="emp-card-task-title" />
-          </div>
-        ) : null}
-        <div>
-          <label className="block font-semibold text-slate-700 mb-1">Dış görev gün sayısı</label>
-          <input value={durationDays} onChange={(ev) => setDurationDays(ev.target.value)} type="number" min="1" max="366" placeholder="Örn: 3" className="w-full border rounded-lg p-2" data-testid="emp-card-task-days" />
-        </div>
-        <div className="flex justify-end gap-2 pt-2 border-t">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
-          <button type="submit" disabled={busy} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-card-task-save">Personeli ata</button>
-        </div>
-      </form>
-    </div>
-  );
-}

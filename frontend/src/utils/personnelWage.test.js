@@ -1,7 +1,12 @@
 import {
   dailyWageOf,
+  employeePayActionTitle,
   isDailyWage,
+  ledgerPayPayload,
+  parseYevmiyeDays,
+  yevmiyeAddHint,
   yevmiyeDaysOf,
+  yevmiyePayPayload,
   monthlyLoad,
   payrollWageLine,
   periodWage,
@@ -34,5 +39,20 @@ describe("personnel wage", () => {
   it("formats payroll yevmiye line", () => {
     expect(payrollWageLine({ pay_type: "monthly", worked_days: 22 })).toBe("");
     expect(payrollWageLine({ pay_type: "daily", worked_days: 18, daily_wage: 1500 })).toMatch(/^18 gün × .+ ₺$/);
+  });
+
+  it("builds yevmiye and ledger payloads", () => {
+    expect(parseYevmiyeDays("6")).toBe(6);
+    expect(yevmiyeAddHint(6, 3)).toBe("6 gün + 3 gün = 9 gün");
+    expect(yevmiyePayPayload("e1", { pay_type: "daily", daily_wage: 1500 }, "6", "2026-09", "", "", "1500")).toMatchObject({
+      employee_id: "e1", type: "yevmiye", amount: 9000, worked_days: 6, daily_wage: 1500,
+    });
+    expect(ledgerPayPayload("e1", "alacak", "2500", "2026-09", "fazla")).toMatchObject({
+      employee_id: "e1", type: "bakiye", amount: 2500, note: "fazla",
+    });
+    expect(ledgerPayPayload("e1", "borc", "800", "2026-09", "")).toMatchObject({ type: "borc", amount: 800, note: "Borç" });
+    expect(employeePayActionTitle("salary", { pay_type: "daily" })).toBe("Bakiye öde");
+    expect(employeePayActionTitle("bonus", { pay_type: "daily" })).toBe("Yevmiye günü");
+    expect(employeePayActionTitle("salary", { pay_type: "monthly" })).toBe("Maaş");
   });
 });

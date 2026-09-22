@@ -46,3 +46,58 @@ export function payrollWageLine(p) {
   const wage = dailyWageOf(p);
   return `${days} gün × ${wage.toLocaleString("tr-TR")} ₺`;
 }
+
+export function parseYevmiyeDays(raw) {
+  const n = Math.trunc(Number(String(raw || "").trim().replace(",", ".")));
+  if (!Number.isFinite(n) || n < 1 || n > 31) return null;
+  return n;
+}
+
+export function parseYevmiyeWage(raw) {
+  const n = Number(String(raw || "").trim().replace(",", "."));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function yevmiyeAddHint(existingDays = 0, newDays = 0) {
+  if (existingDays > 0 && newDays > 0) return `${existingDays} gün + ${newDays} gün = ${existingDays + newDays} gün`;
+  if (existingDays > 0) return `Mevcut ${existingDays} gün · yazılan gün artı olarak eklenir`;
+  return "Yazılan gün personel alacağına eklenir.";
+}
+
+export function yevmiyeDaysLine(emp, days = 0, wageOverride) {
+  const d = Math.max(0, Math.trunc(Number(days) || 0));
+  const wage = wageOverride != null ? Number(wageOverride) : dailyWageOf(emp);
+  return `${d} gün × ${wage.toLocaleString("tr-TR")} ₺`;
+}
+
+export function yevmiyePayPayload(employeeId, emp, daysRaw, period, accountId, note, wageRaw = "") {
+  const days = parseYevmiyeDays(daysRaw) || 0;
+  const wage = parseYevmiyeWage(wageRaw) ?? dailyWageOf(emp);
+  return {
+    employee_id: employeeId,
+    type: "yevmiye",
+    amount: periodWage({ ...emp, daily_wage: wage, pay_type: "daily" }, days),
+    period,
+    note: (note || "").trim() || yevmiyeDaysLine({ daily_wage: wage }, days, wage),
+    worked_days: days,
+    daily_wage: wage,
+  };
+}
+
+export function ledgerPayPayload(employeeId, side, amount, period, note) {
+  const debt = side === "borc";
+  return {
+    employee_id: employeeId,
+    type: debt ? "borc" : "bakiye",
+    amount: Number(String(amount || "").replace(",", ".")) || 0,
+    period,
+    note: (note || "").trim() || (debt ? "Borç" : "Bakiye ödemesi"),
+  };
+}
+
+export function employeePayActionTitle(key, emp) {
+  if (key === "salary") return isDailyWage(emp) ? "Bakiye öde" : "Maaş";
+  if (key === "bonus") return isDailyWage(emp) ? "Yevmiye günü" : "Prim öde";
+  return "";
+}

@@ -288,12 +288,30 @@ def task_is_open(task: Optional[dict]) -> bool:
     return (task.get("status") or "") not in ("done", "completed", "tamamlandi")
 
 
+def task_kind_of(task: Optional[dict]) -> str:
+    """İç görev = office, dış görev = field. Eski kayıtlarda kind yoksa dış görev."""
+    if not isinstance(task, dict):
+        return "field"
+    raw = str(task.get("kind") or task.get("task_kind") or "").strip()
+    norm = (
+        raw.replace("İ", "i").replace("I", "i").lower()
+        .replace("ı", "i").replace("ç", "c").replace("ş", "s")
+    )
+    if norm in ("office", "ic", "internal", "iceride"):
+        return "office"
+    return "field"
+
+
+def task_is_field(task: Optional[dict]) -> bool:
+    return task_kind_of(task) == "field"
+
+
 def pick_field_assignment(rows: list, today: str) -> Optional[dict]:
     """Açık proje görevi (dış görev). Bugün bitişli > tarihsiz > ileriki > geçmiş."""
     today = (today or "")[:10]
     open_rows = [
         a for a in (rows or [])
-        if task_is_open(a) and (a.get("project_status") or "") != "completed"
+        if task_is_open(a) and task_is_field(a) and (a.get("project_status") or "") != "completed"
     ]
     if not open_rows:
         return None
@@ -386,6 +404,7 @@ def assignment_from_project(proj: dict, task: dict) -> dict:
         "status": task.get("status"),
         "due_date": task.get("due_date"),
         "duration_days": _duration_days_of(task),
+        "kind": task_kind_of(task),
         "project_id": proj.get("_id") or proj.get("id"),
         "project_name": proj.get("name"),
         "project_number": proj.get("project_number"),
