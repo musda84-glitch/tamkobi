@@ -20,7 +20,11 @@ export type WorkItem = {
   price_includes_vat?: boolean;
   image_url?: string;
   thumbnail_url?: string;
+  is_service?: boolean;
+  description?: string;
 };
+
+export const QUOTE_ITEM_THUMB_SIZE = 80;
 
 export type QuoteApproval = {
   status?: string;
@@ -166,7 +170,7 @@ export const SURVEY_STATUSES = [
 ];
 
 export function emptyItem(): WorkItem {
-  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" };
+  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet", is_service: false, description: "" };
 }
 
 export function namedItems(items: WorkItem[]): WorkItem[] {
@@ -187,15 +191,17 @@ export function workItemFromProduct(prod: {
   sale_price?: number;
   vat_rate?: number;
   unit?: string;
+  type?: string;
   price_includes_vat?: boolean;
   thumbnail_url?: string;
   image_url?: string;
   images?: string[];
 }): WorkItem {
   const photo = productImage(prod);
+  const is_service = prod.type === "service";
   return {
     ...emptyItem(),
-    product_id: idOf(prod),
+    product_id: is_service ? "" : idOf(prod),
     name: String(prod.name || ""),
     unit_price: Number(prod.sale_price) || 0,
     vat_rate: Number(prod.vat_rate) || 20,
@@ -203,7 +209,39 @@ export function workItemFromProduct(prod: {
     price_includes_vat: !!prod.price_includes_vat,
     image_url: photo || undefined,
     thumbnail_url: prod.thumbnail_url || undefined,
+    is_service,
   };
+}
+
+export function toggleWorkItemService(item: WorkItem): WorkItem {
+  const is_service = !item.is_service;
+  if (is_service) {
+    return { ...item, is_service: true, product_id: "", image_url: undefined, thumbnail_url: undefined };
+  }
+  return { ...item, is_service: false };
+}
+
+export function workItemNameHits<T extends { id?: string; _id?: string; name?: string; sku?: string; barcode?: string; category?: string }>(
+  products: T[] | null | undefined,
+  item: Pick<WorkItem, "name" | "is_service" | "product_id">,
+  limit = 6,
+): T[] {
+  if (item.is_service) return [];
+  const q = String(item.name || "").trim();
+  if (q.length < 2) return [];
+  const pid = item.product_id || "";
+  const s = q.toLowerCase();
+  return (products || [])
+    .filter((p) => {
+      if (pid && idOf(p) === pid && String(p.name || "") === q) return false;
+      return [p.name, p.sku, p.barcode, p.category].some((v) => String(v || "").toLowerCase().includes(s));
+    })
+    .slice(0, limit);
+}
+
+export function workItemNoteOpen(item: Pick<WorkItem, "description">, forced?: boolean): boolean {
+  if (forced != null) return forced;
+  return Boolean(String(item.description || "").trim());
 }
 
 export function workItemImage(
