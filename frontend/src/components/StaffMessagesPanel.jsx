@@ -189,14 +189,14 @@ export function StaffMessagesPanel({
 
   if (!data) {
     return (
-      <div className="bg-white border border-violet-100 rounded-2xl p-4 text-xs text-slate-400 flex items-center gap-2" data-testid={testId}>
+      <div className="bg-violet-50 border border-violet-200 rounded-[20px] p-2.5 text-xs text-slate-400 flex items-center gap-2" data-testid={testId}>
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mesajlar yükleniyor…
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-violet-200 rounded-2xl p-4 space-y-3" data-testid={testId}>
+    <div className="bg-violet-50 border border-violet-200 rounded-[20px] p-2.5 space-y-2 shadow-sm" data-testid={testId}>
       <div className="flex items-center gap-2">
         <div className="w-8 h-8 rounded-xl bg-violet-600 text-white flex items-center justify-center">
           <MessageSquare className="w-4 h-4" />
@@ -225,7 +225,7 @@ export function StaffMessagesPanel({
           <button
             type="button"
             onClick={toggleHidden}
-            className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg border border-violet-200 text-violet-700 bg-violet-50"
+            className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg border border-violet-200 text-violet-700 bg-white"
             data-testid={`${testId}-toggle`}
           >
             {hidden ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
