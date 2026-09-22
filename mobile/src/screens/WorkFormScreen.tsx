@@ -769,16 +769,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   {kind === "quote" ? (
                     <Row style={{ alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                       <Row style={{ flexWrap: "wrap", gap: 4, flex: 1, alignItems: "center" }}>
-                        {canEdit ? (
-                          <Pressable
-                            onPress={() => removeItem(i)}
-                            testID={`q-item-del-${i}`}
-                            accessibilityLabel="Kalemi sil"
-                            style={{ width: 24, height: 28, alignItems: "center", justifyContent: "center", flexShrink: 0, marginLeft: -2 }}
-                          >
-                            <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                          </Pressable>
-                        ) : null}
                         <Chip
                           compact
                           label="Ürün"
@@ -796,14 +786,26 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           onPress={() => !it.is_service && toggleLineKind(i)}
                         />
                       </Row>
-                      {!it.is_service ? (
-                        <ProductThumb
-                          uri={workItemImage(it, prod)}
-                          width={QUOTE_ITEM_THUMB.width}
-                          height={QUOTE_ITEM_THUMB.height}
-                          testID={`q-item-thumb-${i}`}
-                        />
-                      ) : null}
+                      <Row style={{ alignItems: "flex-start", gap: 4, flexShrink: 0 }}>
+                        {!it.is_service ? (
+                          <ProductThumb
+                            uri={workItemImage(it, prod)}
+                            width={QUOTE_ITEM_THUMB.width}
+                            height={QUOTE_ITEM_THUMB.height}
+                            testID={`q-item-thumb-${i}`}
+                          />
+                        ) : null}
+                        {canEdit ? (
+                          <Pressable
+                            onPress={() => removeItem(i)}
+                            testID={`q-item-del-${i}`}
+                            accessibilityLabel="Kalemi sil"
+                            style={{ width: 24, height: 28, alignItems: "center", justifyContent: "center" }}
+                          >
+                            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                          </Pressable>
+                        ) : null}
+                      </Row>
                     </Row>
                   ) : (
                     <Field
