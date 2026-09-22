@@ -569,7 +569,8 @@ export function PersonnelScreen() {
       await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
       setTaskEmp(null);
       setTaskDays("");
-      setMessage(`${taskEmp.full_name} ${project.name || "projeye"} atandı.`);
+      const work = (next.tasks.find((t) => t.id === taskId)?.title || taskTitle || "iş").trim();
+      setMessage(`${taskEmp.full_name} · ${work} · ${project.name || "proje"}`);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
@@ -1330,8 +1331,8 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!taskEmp}
         title="Görev ata"
-        subtitle={taskEmp ? `${taskEmp.full_name} · dış görev gününü yazın, proje seçin` : undefined}
-        onClose={() => { setTaskEmp(null); setTaskDays(""); }}
+        subtitle={taskEmp ? `${taskEmp.full_name} · atama bu personele · yapacağı işi seçin` : undefined}
+        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); }}
         testID="task-assign-sheet"
       >
         <Field
@@ -1353,20 +1354,46 @@ export function PersonnelScreen() {
           label="Proje"
           testID="task-project-select"
           value={taskProjectId}
-          onChange={(v) => { setTaskProjectId(v); setTaskId(""); }}
+          onChange={(v) => {
+            setTaskProjectId(v);
+            setTaskId("");
+            setTaskTitle("");
+            if (!v) return;
+            get<ProjectWithTasks>(client, `/projects/${v}`)
+              .then((full) => {
+                if (!full) return;
+                setProjects((prev) => prev.map((p) => (idOf(p) === v ? { ...p, ...full, tasks: full.tasks || p.tasks } : p)));
+              })
+              .catch(() => undefined);
+          }}
           groups={projectSelectGroups(projects)}
           emptyLabel="Proje seçin"
         />
         <GroupedSelect
-          label="Mevcut görev"
+          label="Yapacağı iş"
           testID="task-existing-select"
           value={taskId}
-          onChange={setTaskId}
+          onChange={(v) => { setTaskId(v); if (v) setTaskTitle(""); }}
           groups={taskSelectGroups(projects.find((p) => idOf(p) === taskProjectId)?.tasks)}
-          emptyLabel="Yeni görev yaz"
+          emptyLabel={taskProjectId ? "Listeden iş seçin" : "Önce proje seçin"}
         />
+        {taskEmp && taskId ? (
+          <Muted testID="task-assign-who">
+            {taskEmp.full_name} bu işe atanacak
+            {(() => {
+              const t = (projects.find((p) => idOf(p) === taskProjectId)?.tasks || []).find((x) => (x.id || "") === taskId);
+              return t?.title ? ` · ${t.title}` : "";
+            })()}
+          </Muted>
+        ) : null}
         {!taskId ? (
-          <Field label="Yeni görev adı" testID="task-title-input" value={taskTitle} onChangeText={setTaskTitle} placeholder="Örn: Keşif, montaj" />
+          <Field
+            label="Yeni iş adı"
+            testID="task-title-input"
+            value={taskTitle}
+            onChangeText={setTaskTitle}
+            placeholder="Listede yoksa yazın: keşif, montaj"
+          />
         ) : null}
         <Muted testID="task-assign-field-hint">
           {(() => {
@@ -1384,7 +1411,13 @@ export function PersonnelScreen() {
             return days ? `${hint} · ${days} gün` : hint;
           })()}
         </Muted>
-        <PrimaryButton title="Personeli ata" testID="task-assign-save-btn" color={colors.indigo} loading={busy} onPress={saveTaskAssign} />
+        <PrimaryButton
+          title={taskEmp ? `${taskEmp.full_name} bu işe ata` : "Bu personele ata"}
+          testID="task-assign-save-btn"
+          color={colors.indigo}
+          loading={busy}
+          onPress={saveTaskAssign}
+        />
       </B2BSheet>
     </Screen>
   );
