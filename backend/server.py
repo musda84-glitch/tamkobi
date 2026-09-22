@@ -10575,6 +10575,49 @@ async def create_recipe(recipe: Recipe):
     await db.products.update_one({"_id": recipe.finished_product_id}, {"$set": {"has_recipe": True}})
     return clean_doc(doc)
 
+
+@api_router.post("/production/recipes/{recipe_id}/copy")
+async def copy_recipe(recipe_id: str):
+    """Reçeteyi kopyala: yeni BOM kodu ve (Kopya) adı; malzemeler/adımlar korunur."""
+    src = await db.recipes.find_one({"_id": recipe_id})
+    if not src:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    now = datetime.now(timezone.utc).isoformat()
+    new_id = str(uuid.uuid4())
+    name = str(src.get("name") or "Reçete").strip()
+    if not name.endswith(" (Kopya)"):
+        name = f"{name} (Kopya)"
+    code = f"BOM-{str(uuid.uuid4().int)[:6]}"
+    # Kod çakışmasın
+    for _ in range(8):
+        if not await db.recipes.find_one({"company_id": src.get("company_id"), "code": code}, {"_id": 1}):
+            break
+        code = f"BOM-{str(uuid.uuid4().int)[:6]}"
+    skip = {"_id", "id", "code", "name", "created_at", "updated_at", "copied_from"}
+    doc = {k: v for k, v in src.items() if k not in skip}
+    # materials/steps: deep-ish copy of lists/dicts
+    if isinstance(doc.get("materials"), list):
+        doc["materials"] = [dict(m) if isinstance(m, dict) else m for m in doc["materials"]]
+    if isinstance(doc.get("steps"), list):
+        doc["steps"] = [dict(s) if isinstance(s, dict) else s for s in doc["steps"]]
+    doc.update({
+        "_id": new_id,
+        "name": name,
+        "code": code,
+        "created_at": now,
+        "updated_at": now,
+        "copied_from": recipe_id,
+        "is_active": True,
+    })
+    await _fill_material_costs(doc.get("materials") or [])
+    doc.update(_recipe_costs(doc))
+    await db.recipes.insert_one(doc)
+    if doc.get("finished_product_id"):
+        await db.products.update_one({"_id": doc["finished_product_id"]}, {"$set": {"has_recipe": True}})
+    out = clean_doc(doc)
+    return {**out, "message": f"{out.get('code')} olarak kopyalandı."}
+
+
 @api_router.put("/production/recipes/{recipe_id}")
 async def update_recipe(recipe_id: str, req: Dict[str, Any]):
     r = await db.recipes.find_one({"_id": recipe_id})

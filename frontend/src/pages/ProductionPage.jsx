@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, AlertTriangle, Clock, Package, MonitorPlay, BellRing, Loader2 } from "lucide-react";
+import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, AlertTriangle, Clock, Package, MonitorPlay, BellRing, Loader2, Copy } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
@@ -108,6 +108,16 @@ export default function ProductionPage() {
 
   const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const copyRecipe = async (r) => {
+    try {
+      const res = await axios.post(`${API_URL}/production/recipes/${r.id}/copy`);
+      toast.success(res.data.message || "Reçete kopyalandı.");
+      await loadRecipes();
+      if (res.data?.id) setRecipeModal({ recipe: res.data });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kopyalanamadı.");
+    }
+  };
   const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
   const recipeCount = recipesLoaded ? recipes.length : (kpis.recipes || products.filter((p) => p.has_recipe).length);
   const missingCount = tab === "missing" ? missingMeta.count : (kpis.missing_notifications || missingMeta.count || 0);
@@ -350,7 +360,18 @@ export default function ProductionPage() {
           {recipes.length === 0 && <div className="col-span-full bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400"><BookOpen className="w-8 h-8 mx-auto mb-2 text-slate-300" />Henüz reçete yok. "Yeni Reçete" ile ürün ağacını tanımlayın.</div>}
           {recipes.map((r) => { const fp = products.find((p) => p.id === r.finished_product_id); return (
             <div key={r.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs hover:shadow-md transition" data-testid={`recipe-card-${r.code}`}>
-              <div className="flex justify-between items-start gap-2"><div className="min-w-0"><div className="font-mono text-[10px] text-slate-400">{r.code}</div><div className="font-bold text-slate-900 truncate">{r.name}</div><div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div></div><div className="flex gap-1 shrink-0"><button onClick={() => setRecipeModal({ recipe: r })} className="p-1.5 border rounded-lg hover:bg-slate-50" title="Düzenle" data-testid={`recipe-edit-${r.code}`}><Pencil className="w-3.5 h-3.5" /></button><button onClick={() => delRecipe(r)} className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" title="Sil" data-testid={`recipe-delete-${r.code}`}><Trash2 className="w-3.5 h-3.5" /></button></div></div>
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] text-slate-400">{r.code}</div>
+                  <div className="font-bold text-slate-900 truncate">{r.name}</div>
+                  <div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button type="button" onClick={() => copyRecipe(r)} className="p-1.5 border rounded-lg hover:bg-indigo-50 hover:border-indigo-200 text-slate-600 hover:text-indigo-700" title="Kopyala" data-testid={`recipe-copy-${r.code}`}><Copy className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => setRecipeModal({ recipe: r })} className="p-1.5 border rounded-lg hover:bg-slate-50" title="Düzenle" data-testid={`recipe-edit-${r.code}`}><Pencil className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => delRecipe(r)} className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" title="Sil" data-testid={`recipe-delete-${r.code}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
               <div className="bg-slate-50 rounded-xl p-2 divide-y divide-slate-100">{(r.materials || []).map((m, i) => { const mp = products.find((p) => p.id === m.product_id); const low = mp && mp.stock_quantity < m.quantity; return <div key={i} className="flex justify-between py-1"><span className={low ? "text-rose-600 font-semibold" : "text-slate-700"}>{m.product_name}{m.wastage_percent > 0 && <span className="text-slate-400"> (+%{m.wastage_percent} fire)</span>}</span><span className="font-semibold">{m.quantity} {m.unit}{mp && <span className="text-slate-400 font-normal"> / stok {mp.stock_quantity}</span>}</span></div>; })}</div>
               <div className="flex justify-between items-center pt-1"><div><div className="text-[10px] uppercase text-slate-400 font-semibold">Birim Maliyet</div><div className="font-black text-emerald-700 text-sm">{fmt(r.unit_cost || r.total_estimated_cost / (r.target_quantity || 1))} ₺</div>{fp?.sale_price > 0 && <div className="text-[10px] text-slate-500">Satış {fmt(fp.sale_price)} ₺</div>}</div><button onClick={() => setOrderModal(fp || { id: r.finished_product_id, name: r.finished_product_name })} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`recipe-produce-${r.code}`}><Factory className="w-3.5 h-3.5" /> Üret</button></div>
             </div>); })}
