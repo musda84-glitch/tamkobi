@@ -20,7 +20,16 @@ export type Employee = {
   status?: string;
   annual_leave_days?: number;
   used_leave_days?: number;
+  photo_url?: string | null;
 };
+
+export function employeeInitials(name?: string | null): string {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toLocaleUpperCase("tr-TR");
+  }
+  return (parts[0] || "?").slice(0, 2).toLocaleUpperCase("tr-TR");
+}
 
 export type Payroll = {
   id?: string;
@@ -424,8 +433,8 @@ export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalanc
     { key: "meal", label: "Yemek", value: meal },
     { key: "yol", label: "Yol", value: yol },
     { key: "salary", label: daily ? "Yevmiye" : "Maaş", value: wage },
-    { key: "bonus", label: "Prim", value: prim },
-    { key: "overtime", label: "Mesai", value: mesai },
+    { key: "bonus", label: "Prim hakedişi", value: prim },
+    { key: "overtime", label: "Fazla mesai ücreti", value: mesai },
     { key: "total", label: "Toplam", value: meal + yol + wage + prim + mesai },
   ];
 }

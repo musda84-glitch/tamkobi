@@ -1,5 +1,6 @@
 import {
   draftFromEmployee,
+  employeeInitials,
   employeePayload,
   emptyEmployeeDraft,
   leaveDays,
@@ -36,6 +37,14 @@ import {
   validateOvertime,
   validateTaskAssign,
 } from "./personnel";
+
+describe("employee initials", () => {
+  it("uses first and last name letters", () => {
+    expect(employeeInitials("Muhammed Usta")).toBe("MU");
+    expect(employeeInitials("Ali")).toBe("AL");
+    expect(employeeInitials("")).toBe("?");
+  });
+});
 
 describe("employee draft", () => {
   it("requires name and TC", () => {
@@ -83,8 +92,8 @@ describe("payroll helpers", () => {
       ["Yemek", 1750],
       ["Yol", 850],
       ["Maaş", 30000],
-      ["Prim", 0],
-      ["Mesai", 0],
+      ["Prim hakedişi", 0],
+      ["Fazla mesai ücreti", 0],
       ["Toplam", 32600],
     ]);
     expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200, bonus_pending: 4000, overtime_due: 1250 }).map((r) => [r.key, r.value])).toEqual([
@@ -100,8 +109,8 @@ describe("payroll helpers", () => {
       ["Yemek", 100],
       ["Yol", 0],
       ["Yevmiye", 1500],
-      ["Prim", 0],
-      ["Mesai", 0],
+      ["Prim hakedişi", 0],
+      ["Fazla mesai ücreti", 0],
       ["Toplam", 1600],
     ]);
     expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
