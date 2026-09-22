@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { confirmAction } from "./chips";
 import { Card, Muted, PrimaryButton, Row } from "./kit";
 import { colors, radius } from "../theme";
 import { compressPickerAsset } from "../utils/compressUploadImage";
@@ -26,6 +27,7 @@ export function ImageUploader({
   entityId,
   images,
   onUploaded,
+  onRemoved,
   editable = true,
   label,
   hint,
@@ -35,6 +37,7 @@ export function ImageUploader({
   entityId?: string;
   images: string[];
   onUploaded: (url: string) => void;
+  onRemoved?: (url: string) => void;
   editable?: boolean;
   label?: string;
   hint?: string;
@@ -44,8 +47,10 @@ export function ImageUploader({
   const copy = imageUploaderCopy(entity);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const title = label ?? copy.label;
   const help = hint ?? copy.hint;
+  const canRemove = editable && !!onRemoved;
 
   const sendAll = async (assets: PickerAssetLike[]) => {
     if (!entityId) { setError("Önce kaydı oluşturun, sonra fotoğraf ekleyin."); return; }
@@ -111,18 +116,66 @@ export function ImageUploader({
     <Card testID={testID}>
       <Muted>{title}</Muted>
       {help ? <Muted>{help}</Muted> : null}
+      {canRemove ? <Muted>Silmek için fotoğrafa basılı tutun.</Muted> : null}
       {error ? <Text style={{ color: colors.danger, fontWeight: "700" }}>{error}</Text> : null}
       {!entityId ? <Muted>Kayıt oluşturulduktan sonra fotoğraf ekleyebilirsiniz.</Muted> : null}
       <Row style={{ flexWrap: "wrap" }}>
         {images.map((img) => (
-          <Pressable
+          <View
             key={img}
-            testID={`${testID}-img`}
-            onPress={() => Linking.openURL(fileUrl(client.baseUrl, img))}
             style={{ width: 96, height: 96, borderRadius: radius.md, overflow: "hidden", borderWidth: 1, borderColor: colors.border }}
           >
-            <Image source={{ uri: fileUrl(client.baseUrl, img) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
-          </Pressable>
+            <Pressable
+              testID={`${testID}-img`}
+              accessibilityHint={canRemove ? "Silmek için basılı tutun" : undefined}
+              delayLongPress={350}
+              onLongPress={canRemove ? () => setPendingRemove(img) : undefined}
+              onPress={() => {
+                if (pendingRemove === img) {
+                  setPendingRemove(null);
+                  return;
+                }
+                void Linking.openURL(fileUrl(client.baseUrl, img));
+              }}
+              style={{ width: "100%", height: "100%" }}
+            >
+              <Image source={{ uri: fileUrl(client.baseUrl, img) }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} />
+            </Pressable>
+            {canRemove && pendingRemove === img ? (
+              <Pressable
+                onPress={() => setPendingRemove(null)}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(0,0,0,0.45)",
+                }}
+              >
+                <Pressable
+                  testID={`${testID}-remove`}
+                  accessibilityLabel="Fotoğrafı sil"
+                  onPress={() => confirmAction("Fotoğraf", "Bu fotoğraf silinsin mi?", () => {
+                    onRemoved?.(img);
+                    setPendingRemove(null);
+                  })}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: "#fff",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="trash" size={18} color={colors.danger} />
+                </Pressable>
+              </Pressable>
+            ) : null}
+          </View>
         ))}
         {!images.length ? (
           <View style={{ width: 96, height: 96, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border, alignItems: "center", justifyContent: "center" }}>

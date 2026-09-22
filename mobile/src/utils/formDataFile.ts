@@ -135,3 +135,8 @@ const COPY: Record<ImageEntity, { label: string; hint: string }> = {
 export function imageUploaderCopy(entity: ImageEntity) {
   return COPY[entity];
 }
+
+export function removeGalleryImage(images: string[] | null | undefined, url: string): string[] {
+  const drop = String(url || "").trim();
+  return (images || []).map((u) => String(u || "").trim()).filter((u) => u && u !== drop);
+}

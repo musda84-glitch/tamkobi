@@ -35,6 +35,7 @@ import {
   imageUploadRequest,
   lineItemImageUploadRequest,
   pickBrowserImage,
+  removeGalleryImage,
   resolveUploadBlob,
   uploadedImageUrl,
 } from "../utils/formDataFile";
@@ -390,6 +391,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const removeItem = (i: number) => {
     if (!canEdit) return;
     setItems((rows) => removeWorkItem(rows, i));
+  };
+
+  const persistWorkPhotos = async (next: string[]) => {
+    setPhotos(next);
+    if (!docId || !canEdit) return;
+    const path = kind === "quote" ? `/quotes/${docId}` : kind === "project" ? `/projects/${docId}` : `/surveys/${docId}`;
+    await put(client, path, { images: next });
+  };
+
+  const removeLineImage = (i: number) => {
+    if (!canEdit) return;
+    setItems((rows) => rows.map((row, idx) => (
+      idx === i ? { ...row, image_url: "", thumbnail_url: "", print_image_url: "" } : row
+    )));
   };
 
   const ensureQuoteStockCards = useCallback(async (rows: WorkItem[]): Promise<WorkItem[]> => {
@@ -966,20 +981,45 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                     </Row>
                   </Row>
                     <Row style={{ alignItems: "stretch", gap: 8 }}>
-                      <Pressable
-                        onPress={() => pickLineImage(i)}
-                        disabled={!canEdit}
-                        accessibilityLabel="Satır görseli ekle"
-                        testID={`q-item-thumb-pick-${i}`}
-                        style={{ justifyContent: "center", cursor: "pointer" as const }}
-                      >
-                        <ProductThumb
-                          uri={workItemImage(it, prod)}
-                          width={QUOTE_SERVICE_THUMB.width}
-                          height={QUOTE_SERVICE_THUMB.height}
-                          testID={`q-item-thumb-${i}`}
-                        />
-                      </Pressable>
+                      <View>
+                        <Pressable
+                          onPress={() => pickLineImage(i)}
+                          disabled={!canEdit}
+                          accessibilityLabel="Satır görseli ekle"
+                          testID={`q-item-thumb-pick-${i}`}
+                          style={{ justifyContent: "center", cursor: "pointer" as const }}
+                        >
+                          <ProductThumb
+                            uri={workItemImage(it, prod)}
+                            width={QUOTE_SERVICE_THUMB.width}
+                            height={QUOTE_SERVICE_THUMB.height}
+                            testID={`q-item-thumb-${i}`}
+                          />
+                        </Pressable>
+                        {canEdit && workItemImage(it, prod) ? (
+                          <Pressable
+                            testID={`q-item-thumb-remove-${i}`}
+                            accessibilityLabel="Satır görselini sil"
+                            onPress={() => confirmAction("Fotoğraf", "Satır görseli silinsin mi?", () => removeLineImage(i))}
+                            hitSlop={8}
+                            style={{
+                              position: "absolute",
+                              top: -6,
+                              right: -6,
+                              width: 22,
+                              height: 22,
+                              borderRadius: 11,
+                              backgroundColor: "#fff",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                            }}
+                          >
+                            <Ionicons name="close" size={12} color={colors.danger} />
+                          </Pressable>
+                        ) : null}
+                      </View>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                         <View>
                           <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>
@@ -1213,6 +1253,10 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           entityId={docId}
           images={workGalleryWithoutLinePhotos(photos, items)}
           onUploaded={(url) => setPhotos((prev) => [...prev, url])}
+          onRemoved={(url) => {
+            const next = removeGalleryImage(photos, url);
+            void persistWorkPhotos(next).catch((err) => setError(apiErrorMessage(err, "Fotoğraf silinemedi.")));
+          }}
           editable={canEdit}
           testID="work-photos"
         />
