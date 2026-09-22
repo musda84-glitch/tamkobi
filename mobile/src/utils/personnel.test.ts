@@ -305,6 +305,8 @@ describe("employee card actions", () => {
     expect(rows.map((r) => r.title)).toEqual(["Avans", "Maaş", "Maaş"]);
     expect(rows[0].amount).toBe(3750);
     expect(rows[1].subtitle).toContain("Ödeme bekliyor");
+    expect(rows[1].payable).toBe(true);
+    expect(rows[0].payable).toBe(false);
     expect(employeePayMoves(null)).toEqual([]);
     const daily = employeePayMoves({
       payrolls: [{ id: "d1", period: "2026-09", status: "pending", pay_type: "daily", worked_days: 12, daily_wage: 1500, final_payable: 18000 }],

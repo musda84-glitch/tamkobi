@@ -898,38 +898,53 @@ export function PersonnelScreen() {
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
         {!movesBusy && !moves.length ? <Muted>Bu personel için ödeme hareketi yok.</Muted> : null}
         {moves.map((row) => (
-          <ListRow
+          <View
             key={row.id}
             testID={`emp-pay-move-${row.id}`}
-            title={row.title}
-            subtitle={row.editable ? `${row.subtitle} · düzenle` : row.subtitle}
-            right={fmtMoney(row.amount)}
-            rightColor={row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text}
-            onPress={row.editable && movesEmp ? () => {
-              const emp = movesEmp;
-              setMovesEmp(null);
-              setMoves([]);
-              openYevmiyeDays(emp, {
-                id: row.id,
-                type: row.type,
-                amount: row.amount,
-                period: month,
-                note: row.note,
-                status: row.status,
-                worked_days: row.worked_days,
-                daily_wage: row.daily_wage,
-              });
-            } : undefined}
-            action={row.payable && canEdit && movesEmp ? (
-              <PayChip
-                title="Öde"
-                color={colors.primaryHover}
-                bg={colors.emerald50}
+            style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}
+          >
+            <Pressable
+              style={{ flex: 1, minWidth: 0 }}
+              onPress={row.editable && movesEmp ? () => {
+                const emp = movesEmp;
+                setMovesEmp(null);
+                setMoves([]);
+                openYevmiyeDays(emp, {
+                  id: row.id,
+                  type: row.type,
+                  amount: row.amount,
+                  period: month,
+                  note: row.note,
+                  status: row.status,
+                  worked_days: row.worked_days,
+                  daily_wage: row.daily_wage,
+                });
+              } : undefined}
+            >
+              <Text style={{ fontWeight: "800", color: colors.text }}>{row.title}</Text>
+              <Muted>{row.editable ? `${row.subtitle} · düzenle` : row.subtitle}</Muted>
+              <Text style={{ fontWeight: "800", color: row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text }}>
+                {fmtMoney(row.amount)}
+              </Text>
+            </Pressable>
+            {row.payable && canEdit ? (
+              <Pressable
                 testID={`emp-pay-move-pay-${row.id}`}
                 onPress={() => payUnpaidMove(row)}
-              />
-            ) : undefined}
-          />
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  backgroundColor: colors.emerald50,
+                  borderWidth: 1,
+                  borderColor: "#6EE7B7",
+                  flexShrink: 0,
+                }}
+              >
+                <Text style={{ fontWeight: "800", fontSize: 13, color: colors.primaryHover }}>Öde</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ))}
       </B2BSheet>
 
