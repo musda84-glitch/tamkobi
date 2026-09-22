@@ -589,6 +589,30 @@ export function quoteStatusTone(status?: string | null): QuoteStatusTone {
   return "slate";
 }
 
+export type WorkStatusTone = QuoteStatusTone | "indigo";
+
+const STATUS_DOT: Record<WorkStatusTone, string> = {
+  slate: "#94A3B8",
+  green: "#059669",
+  red: "#E11D48",
+  amber: "#F59E0B",
+  indigo: "#4F46E5",
+};
+
+export function workStatusTone(kind: WorkKind, status?: string | null): WorkStatusTone {
+  if (kind === "quote") return quoteStatusTone(status);
+  if (kind === "survey") return surveyStatusTone(status);
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "active") return "green";
+  if (key === "on_hold") return "amber";
+  if (key === "completed") return "indigo";
+  return "slate";
+}
+
+export function workStatusDotColor(kind: WorkKind, status?: string | null): string {
+  return STATUS_DOT[workStatusTone(kind, status)];
+}
+
 export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title">): string {
   return quote.quote_number || quote.title || "Teklif";
 }

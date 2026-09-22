@@ -10,7 +10,7 @@ import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { DateField } from "../components/DateField";
-import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
@@ -53,7 +53,9 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quotesForProject,
+  workStatusDotColor,
   workStatusSelectGroups,
+  workStatusTone,
   removeWorkItem,
   projectPayload,
   quotePayload,
@@ -302,6 +304,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     setItems((rows) => removeWorkItem(rows, i));
   };
 
+  const addProductFromSearch = (p: Product) => {
+    setItems((rows) => {
+      const emptyIdx = rows.findIndex((it) => !it.name);
+      const line = workItemFromProduct(p);
+      if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
+      return [...rows, line];
+    });
+    setProdQ("");
+  };
+
   const persistArgs = useRef({ form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes });
   persistArgs.current = { form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes };
 
@@ -541,7 +553,22 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     : null;
 
   return (
-    <Screen>
+    <Screen
+      stickyTop={kind !== "project" ? (
+        <Card testID="q-stock-search">
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Stok ara</Text>
+          <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
+          {prodHits.map((p) => (
+            <ProductPickRow
+              key={idOf(p)}
+              product={p}
+              testID={`q-prod-${idOf(p)}`}
+              onPress={() => addProductFromSearch(p)}
+            />
+          ))}
+        </Card>
+      ) : undefined}
+    >
       <H1>{heading}</H1>
       <Muted>{kind === "quote" ? "Cari ve kalemlerle fiyat teklifi." : kind === "project" ? "İş / saha projesi, bütçe ve cari." : "Keşif, ölçü ve teklife dönüştürme."}</Muted>
       <ErrorBanner message={error} />
@@ -641,37 +668,29 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
 
       {!isNew ? (
-        <GroupedSelect
-          dense
-          label="Durum"
-          testID={`${kind}-status`}
-          value={status}
-          onChange={(v) => canEdit && setStatus(v)}
-          groups={statusGroups}
-          emptyLabel="Durum seçin"
-        />
+        <View>
+          <Row style={{ gap: 6, marginBottom: 2 }}>
+            <Muted>Durum</Muted>
+            <View
+              testID={`${kind}-status-dot`}
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: workStatusDotColor(kind, status) }}
+            />
+            <Badge label={statusTr(status)} tone={workStatusTone(kind, status)} />
+          </Row>
+          <GroupedSelect
+            dense
+            testID={`${kind}-status`}
+            value={status}
+            onChange={(v) => canEdit && setStatus(v)}
+            groups={statusGroups}
+            emptyLabel="Durum seçin"
+          />
+        </View>
       ) : null}
 
       {kind !== "project" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
-          <Field dense label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-          {prodHits.map((p) => (
-            <ProductPickRow
-              key={idOf(p)}
-              product={p}
-              testID={`q-prod-${idOf(p)}`}
-              onPress={() => {
-                setItems((rows) => {
-                  const emptyIdx = rows.findIndex((it) => !it.name);
-                  const line = workItemFromProduct(p);
-                  if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
-                  return [...rows, line];
-                });
-                setProdQ("");
-              }}
-            />
-          ))}
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
             const lineHits = canEdit && kind === "quote" ? workItemNameHits(products, it) : [];

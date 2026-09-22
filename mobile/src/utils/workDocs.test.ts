@@ -30,6 +30,8 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quoteStatusTone,
+  workStatusDotColor,
+  workStatusTone,
   isSurveyConverted,
   surveyListSubtitle,
   surveyStatusTone,
@@ -346,6 +348,10 @@ describe("workDocs", () => {
     expect(quoteStatusTone("rejected")).toBe("red");
     expect(quoteStatusTone("draft")).toBe("slate");
     expect(quoteStatusTone("")).toBe("slate");
+    expect(workStatusTone("quote", "sent")).toBe("amber");
+    expect(workStatusTone("survey", "done")).toBe("indigo");
+    expect(workStatusTone("project", "active")).toBe("green");
+    expect(workStatusDotColor("quote", "rejected")).toBe("#E11D48");
   });
 
   it("shows survey status until the survey is converted to a quote", () => {
