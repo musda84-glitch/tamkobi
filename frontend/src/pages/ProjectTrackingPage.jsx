@@ -2,24 +2,45 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useParams } from "react-router-dom";
-import { Loader2, Building2, AlertTriangle, CheckCircle2, Circle, MapPin, CalendarClock, FileSignature, Ruler, ClipboardList, Camera, FileDown } from "lucide-react";
+import { Loader2, Building2, AlertTriangle, CheckCircle2, Circle, MapPin, CalendarClock, FileSignature, Ruler, ClipboardList, Camera, FileDown, ChevronDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { PublicQuoteContents } from "../components/PublicQuoteContents";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { formatTrAmount } from "../utils/money";
+import { publicProjectQuoteUrl, publicQuoteStatusLabel } from "../utils/publicProjectQuote";
 
 const SURVEY_TR = { planned: "Planlandı", done: "Yapıldı", quoted: "Teklife dönüştü" };
-const QUOTE_TR = { draft: "Hazırlanıyor", sent: "Gönderildi", accepted: "Onaylandı", rejected: "Reddedildi" };
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
 export default function ProjectTrackingPage() {
   const { token } = useParams();
   const [p, setP] = useState(null);
   const [err, setErr] = useState("");
+  const [openQuote, setOpenQuote] = useState("");
+  const [quoteDetails, setQuoteDetails] = useState({});
+  const [quoteBusy, setQuoteBusy] = useState("");
+  const [quoteErr, setQuoteErr] = useState("");
   useEffect(() => {
     axios.get(`${API_URL}/public/projects/${token}`)
       .then((r) => setP(r.data))
       .catch((e) => setErr(e.response?.data?.detail || "Proje yüklenemedi."));
   }, [token]);
+  const toggleQuote = async (q) => {
+    const key = q.quote_number || q.title;
+    if (openQuote === key) { setOpenQuote(""); setQuoteErr(""); return; }
+    setOpenQuote(key);
+    setQuoteErr("");
+    if (quoteDetails[key]) return;
+    setQuoteBusy(key);
+    try {
+      const r = await axios.get(publicProjectQuoteUrl(API_URL, token, q.quote_number));
+      setQuoteDetails((cur) => ({ ...cur, [key]: r.data }));
+    } catch (e) {
+      setQuoteErr(e.response?.data?.detail || "Teklif yüklenemedi.");
+    } finally {
+      setQuoteBusy("");
+    }
+  };
   if (!p && !err) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><Loader2 className="w-6 h-6 animate-spin text-slate-500" /></div>;
   if (!p) return <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6"><div className="bg-white rounded-2xl p-8 text-center shadow-xl max-w-sm" data-testid="public-project-error"><AlertTriangle className="w-10 h-10 text-rose-500 mx-auto mb-2" /><div className="font-bold text-slate-900">{err}</div></div></div>;
   const c = p.company || {};
@@ -166,13 +187,36 @@ export default function ProjectTrackingPage() {
           {p.quotes?.length > 0 && (
             <div className="border-t pt-4 space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800"><FileSignature className="w-3.5 h-3.5" /> Teklifler</div>
-              {p.quotes.map((q) => (
-                <div key={q.quote_number} className="flex justify-between text-xs bg-slate-50 rounded-lg px-3 py-2 gap-2">
-                  <span className="font-mono font-semibold">{q.quote_number}</span>
-                  <span className="text-slate-600 truncate">{q.title}</span>
-                  <span className="font-semibold shrink-0">{QUOTE_TR[q.approval_status] || QUOTE_TR[q.status] || q.status}</span>
-                </div>
-              ))}
+              {p.quotes.map((q) => {
+                const key = q.quote_number || q.title;
+                const open = openQuote === key;
+                const detail = quoteDetails[key];
+                return (
+                  <div key={key} className="rounded-lg bg-slate-50 overflow-hidden">
+                    <button
+                      type="button"
+                      className="w-full flex justify-between items-center text-xs px-3 py-2 gap-2 text-left"
+                      data-testid={`public-project-quote-${q.quote_number}`}
+                      aria-expanded={open}
+                      onClick={() => toggleQuote(q)}
+                    >
+                      <span className="font-mono font-semibold">{q.quote_number}</span>
+                      <span className="text-slate-600 truncate">{q.title}</span>
+                      <span className="font-semibold shrink-0 flex items-center gap-1">
+                        {publicQuoteStatusLabel(q)}
+                        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                      </span>
+                    </button>
+                    {open ? (
+                      <div className="px-3 pb-3 bg-white border-t border-slate-100">
+                        {quoteBusy === key ? <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div> : null}
+                        {quoteErr && !detail ? <div className="text-xs text-rose-600 font-semibold py-2" data-testid="public-project-quote-err">{quoteErr}</div> : null}
+                        {detail ? <div className="pt-3"><PublicQuoteContents q={detail} testIdPrefix="public-project-quote" /></div> : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

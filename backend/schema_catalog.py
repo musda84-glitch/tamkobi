@@ -376,7 +376,7 @@ COLLECTIONS = {
     "employees": {
         "scope": SCOPE_TENANT,
         "description": "Personel kartları, PIN, yan haklar.",
-        "keys": ("_id", "company_id", "full_name", "tc_kimlik", "salary", "user_id", "status", "start_date", "end_date"),
+        "keys": ("_id", "company_id", "full_name", "tc_kimlik", "sgk_number", "iban", "salary", "meal_allowance", "transport_allowance", "user_id", "status", "start_date", "end_date"),
         "refs": ("users._id",),
     },
     "payrolls": {

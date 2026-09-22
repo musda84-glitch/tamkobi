@@ -25,6 +25,7 @@ import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../util
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 import { formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
+import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -455,6 +456,7 @@ export default function ProjectsPage({ section } = {}) {
   const [showCompletedProjects, setShowCompletedProjects] = useState(() => {
     try { return sessionStorage.getItem(SHOW_COMPLETED_KEY) === "1"; } catch { return false; }
   });
+  const [openAddr, setOpenAddr] = useState({});
   const toggleOnlyPending = (on) => {
     setOnlyPending(on);
     try { sessionStorage.setItem(FILTER_KEY, on ? "1" : "0"); } catch { /* ignore */ }
@@ -606,7 +608,7 @@ export default function ProjectsPage({ section } = {}) {
               className={`bg-white border rounded-2xl p-4 space-y-2 text-xs transition ring-offset-2 ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"} ${focusFlash && focusFlash === String(p.project_number || p.id || p._id) ? "ring-2 ring-emerald-500 border-emerald-400 shadow-md" : ""}`}
               data-testid={`project-card-${p.project_number}`}
             >
-              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"} {p.address && `• ${p.address}`}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
+              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"}{p.address && (!shouldCollapseAddress(p.address) || openAddr[p.id]) ? ` • ${p.address}` : ""}{shouldCollapseAddress(p.address) ? <button type="button" onClick={() => setOpenAddr((s) => ({ ...s, [p.id]: !s[p.id] }))} className="ml-1 text-emerald-700 font-semibold" data-testid={`project-addr-toggle-${p.id}`}>{addressToggleLabel(!!openAddr[p.id])}</button> : null}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
               <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count || 0} • {fmt(p.quoted_total)} ₺</b></div>

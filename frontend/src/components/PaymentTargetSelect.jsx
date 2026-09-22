@@ -38,6 +38,8 @@ export const PaymentTargetSelect = ({
   includeCreditCards = true,
   /** Virman: entegre hesapları listeden tamamen çıkar (seçilemez gösterme). */
   excludeIntegrated = false,
+  /** Only these account types (e.g. ['bank'] for SGK salary). */
+  allowedTypes = null,
   emptyLabel,
   disabled = false,
 }) => {
@@ -51,12 +53,16 @@ export const PaymentTargetSelect = ({
       .then((r) => setLiveAccounts(Array.isArray(r.data) ? r.data : []))
       .catch(() => {});
   }, [companyId]);
+  const typeFilter = Array.isArray(allowedTypes) && allowedTypes.length
+    ? allowedTypes.map((t) => normalizeType(t)).filter(Boolean)
+    : null;
+  const partnersAllowed = includePartners && !typeFilter;
   const reloadPartners = useCallback(() => {
-    if (!includePartners || !companyId) { setPartners([]); return; }
+    if (!partnersAllowed || !companyId) { setPartners([]); return; }
     axios.get(`${API_URL}/banking/partners?company_id=${companyId}`)
       .then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false)))
       .catch(() => setPartners([]));
-  }, [companyId, includePartners]);
+  }, [companyId, partnersAllowed]);
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { reloadPartners(); }, [reloadPartners]);
   const refreshLive = useCallback(() => {
@@ -65,21 +71,24 @@ export const PaymentTargetSelect = ({
   }, [reloadAccounts, reloadPartners]);
   useDataRefresh(refreshLive, { companyId, scopes: ["cash"] });
 
-  const typeOrder = collectableOnly
-    ? COLLECT_TYPES
-    : (includeCreditCards ? SPEND_TYPES : COLLECT_TYPES);
+  const typeOrder = typeFilter
+    ? typeFilter
+    : (collectableOnly
+      ? COLLECT_TYPES
+      : (includeCreditCards ? SPEND_TYPES : COLLECT_TYPES));
   let pool = collectableOnly
     ? collectableAccounts(liveAccounts)
     : (includeCreditCards ? (liveAccounts || []) : collectableAccounts(liveAccounts));
+  if (typeFilter) pool = pool.filter((a) => typeFilter.includes(normalizeType(a.type)));
   if (excludeIntegrated) pool = pool.filter((a) => !a.is_integrated);
   const groups = typeOrder.map((t) => [t, pool.filter((a) => normalizeType(a.type) === t)]).filter(([, l]) => l.length);
-  const orphan = pool.filter((a) => !SPEND_TYPES.includes(normalizeType(a.type)));
+  const orphan = typeFilter ? [] : pool.filter((a) => !SPEND_TYPES.includes(normalizeType(a.type)));
 
   return (
     <select value={value || ""} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium ${className}`} data-testid={testId}>
       {emptyLabel != null && <option value="">{emptyLabel}</option>}
       {groups.map(([t, list]) => (
-        <optgroup key={t} label={TYPE_LABEL[t]}>
+        <optgroup key={t} label={TYPE_LABEL[t] || t}>
           {list.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
         </optgroup>
       ))}
@@ -88,7 +97,7 @@ export const PaymentTargetSelect = ({
           {orphan.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
         </optgroup>
       )}
-      {includePartners && partners.length > 0 && (
+      {partnersAllowed && partners.length > 0 && (
         <optgroup label="Ortaklar Hesabı">
           {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent ?? 0} · {fmt(p.balance)} ₺)</option>)}
         </optgroup>

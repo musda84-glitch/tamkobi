@@ -17,6 +17,10 @@ import {
   projectStatusSelectGroups,
   workStatusSelectGroups,
   projectCardBits,
+  addressToggleLabel,
+  shouldCollapseAddress,
+  projectsForContact,
+  mergeContactProjects,
   projectMetricSectionOrder,
   quotesForProject,
   projectPayload,
@@ -163,10 +167,34 @@ describe("workDocs", () => {
       expense_total: 18.5,
     });
     expect(bits.codes).toBe("PRJ-2026-0011 · TKF-2026-0004");
+    expect(bits.contactName).toBe("Mustafa BAL");
+    expect(bits.address).toBe("Kadıköy");
     expect(bits.contact).toBe("Mustafa BAL · Kadıköy");
+    expect(shouldCollapseAddress("Kadıköy")).toBe(false);
+    expect(shouldCollapseAddress("Kayabaşı Mah. Ulubatlı Hasan Cad. GİRİŞ KAYAŞEHİR")).toBe(true);
+    expect(addressToggleLabel(false)).toBe("Göster");
+    expect(addressToggleLabel(true)).toBe("Gizle");
     expect(bits.quoteCount).toBe(1);
     expect(bits.quoted).toBe(52.8);
     expect(bits.expense).toBe(18.5);
+  });
+
+  it("keeps only the selected contact's projects for the cari tab", () => {
+    const rows = [
+      { id: "p1", contact_id: "c1", name: "A" },
+      { id: "p2", contact_id: "c2", name: "B" },
+      { id: "p3", contact_id: "c1", name: "C" },
+    ];
+    expect(projectsForContact(rows, "c1").map((p) => p.id)).toEqual(["p1", "p3"]);
+    expect(projectsForContact(rows, "")).toEqual([]);
+  });
+
+  it("enriches overlay contact projects with light list metrics", () => {
+    const overlay = [{ id: "p1", contact_id: "c1", name: "A", budget: 10 }];
+    const light = [{ id: "p1", contact_id: "c1", name: "A", budget: 10, quote_count: 2, quoted_total: 80, expense_total: 5 }];
+    expect(mergeContactProjects(overlay, null)).toEqual(overlay);
+    expect(mergeContactProjects(overlay, light)[0].quoted_total).toBe(80);
+    expect(mergeContactProjects([], light)).toEqual(light);
   });
 
   it("picks quotes linked to a project and puts the focused metric first", () => {
