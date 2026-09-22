@@ -50,16 +50,20 @@ export function SevkScreen() {
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={<Field label="Ara" testID="sevk-search" value={q} onChangeText={setQ} placeholder="Sipariş no, müşteri, şehir" />}
+      stickyTop={(
+        <>
+          <ActionTiles
+            columns={3}
+            items={[
+              { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "sevk-refresh", onPress: load },
+              { key: "orders", label: "Siparişler", icon: "cart", tone: "amber", testID: "sevk-orders", onPress: () => go("Orders") },
+              { key: "stock", label: "Stok", icon: "cube", tone: "indigo", testID: "sevk-stock", onPress: () => go("Stock") },
+            ]}
+          />
+          <Field label="Ara" testID="sevk-search" value={q} onChangeText={setQ} placeholder="Sipariş no, müşteri, şehir" />
+        </>
+      )}
     >
-      <ActionTiles
-        columns={3}
-        items={[
-          { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "sevk-refresh", onPress: load },
-          { key: "orders", label: "Siparişler", icon: "cart", tone: "amber", testID: "sevk-orders", onPress: () => go("Orders") },
-          { key: "stock", label: "Stok", icon: "cube", tone: "indigo", testID: "sevk-stock", onPress: () => go("Stock") },
-        ]}
-      />
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty icon="cube-outline" title="Toplanacak sipariş yok" hint="Yeni siparişler geldiğinde burada listelenir." />
