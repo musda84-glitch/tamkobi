@@ -791,22 +791,35 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
                         testID={`q-item-note-toggle-${i}`}
                         accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
-                        style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 2 }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          alignSelf: "flex-start",
+                          gap: 6,
+                          minHeight: 32,
+                          paddingHorizontal: 10,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: noteShown ? colors.indigo : colors.border,
+                          backgroundColor: noteShown ? colors.indigo50 : "#fff",
+                        }}
                       >
-                        <Ionicons name={noteShown ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
-                        <Muted>{noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}</Muted>
+                        <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
+                        <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
+                          {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
+                        </Text>
                       </Pressable>
                       {noteShown ? (
                         <Field
                           dense
                           multiline
-                          numberOfLines={2}
+                          numberOfLines={3}
                           label="Açıklama"
                           testID={`q-item-note-${i}`}
                           value={it.description || ""}
                           onChangeText={(v) => patchItem(i, "description", v)}
                           editable={canEdit}
-                          placeholder="Satır notu"
+                          placeholder="Satır notu, ölçü, kesim…"
                         />
                       ) : null}
                     </>
