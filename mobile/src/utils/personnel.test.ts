@@ -40,6 +40,7 @@ import {
   parseYevmiyeWage,
   pendingYevmiyeBonus,
   unpaidYevmiyeTotals,
+  yevmiyeAccrual,
   dueDateFromDays,
   parseTaskDays,
   validateYevmiyeDays,
@@ -138,6 +139,14 @@ describe("payroll helpers", () => {
       { type: "yevmiye", status: "pending", worked_days: 1, amount: 1500 },
       { type: "yevmiye", status: "paid", worked_days: 2, amount: 3000 },
     ])).toEqual({ days: 7, amount: 10500 });
+    expect(yevmiyeAccrual({
+      bonuses: [{ type: "yevmiye", status: "pending", worked_days: 6, amount: 9000 }],
+      payrolls: [
+        { id: "p1", employee_id: "e1", pay_type: "daily", status: "pending", worked_days: 1, daily_wage: 1500, final_payable: 1500 },
+        { id: "p2", employee_id: "e1", pay_type: "daily", status: "paid", worked_days: 2, final_payable: 3000 },
+      ],
+      employeeId: "e1",
+    })).toEqual({ days: 7, amount: 10500 });
     expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
     expect(overtimeDue({ overtime_pay: 1800, overtime_due: 600 })).toBe(600);
     expect(enrichEmployeeBalance({

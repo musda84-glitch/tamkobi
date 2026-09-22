@@ -142,13 +142,35 @@ export function yevmiyeDaysFromBonus(b?: EmployeeBonus | null): number | null {
   return n > 0 ? n : null;
 }
 
-/** Ödenmemiş yevmiye kayıtlarının gün ve tutar toplamı. */
+/** Ödenmemiş yevmiye prim kayıtlarının gün ve tutar toplamı. */
 export function unpaidYevmiyeTotals(bonuses?: EmployeeBonus[] | null): { days: number; amount: number } {
   let days = 0;
   let amount = 0;
   for (const b of (bonuses || []).filter(isUnpaidYevmiye)) {
     days += yevmiyeDaysFromBonus(b) || 0;
     amount += Number(b.amount) || 0;
+  }
+  return { days, amount };
+}
+
+/** Ödenmemiş yevmiye prim + günlük bordro: kartta görünen gün/tutar toplamı. */
+export function yevmiyeAccrual(input?: {
+  bonuses?: EmployeeBonus[] | null;
+  payrolls?: Payroll[] | null;
+  employeeId?: string;
+} | null): { days: number; amount: number } {
+  const bonus = unpaidYevmiyeTotals(input?.bonuses);
+  const seen = new Set<string>();
+  let days = bonus.days;
+  let amount = bonus.amount;
+  for (const p of input?.payrolls || []) {
+    if (input?.employeeId && p.employee_id && p.employee_id !== input.employeeId) continue;
+    if (!isDailyPayroll(p) || String(p.status || "") === "paid") continue;
+    const id = idOf(p) || `${p.period || ""}-${p.worked_days || ""}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    days += Math.max(0, Math.trunc(Number(p.worked_days) || 0));
+    amount += Number(p.final_payable ?? p.net_salary) || 0;
   }
   return { days, amount };
 }

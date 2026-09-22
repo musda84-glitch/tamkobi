@@ -35,7 +35,7 @@ import {
   parseYevmiyeWage,
   pendingYevmiyeBonus,
   parseTaskDays,
-  unpaidYevmiyeTotals,
+  yevmiyeAccrual,
   dueDateFromDays,
   validateTaskDays,
   validateYevmiyeDays,
@@ -152,7 +152,7 @@ export function PersonnelScreen() {
       setProjects(Array.isArray(projs) ? projs : []);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, unpaidYevmiyeTotals(card?.bonuses)] as const;
+        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, yevmiyeAccrual({ bonuses: card?.bonuses, payrolls: card?.payrolls, employeeId: idOf(e) })] as const;
       }));
       setBalances(Object.fromEntries(pairs.filter((row) => !!row[1]).map(([id, bal]) => [id, bal as EmployeeBalance] as const)));
       const photos = Object.fromEntries(pairs.flatMap(([id, , url]) => (url ? [[id, url] as const] : [])));
@@ -162,13 +162,17 @@ export function PersonnelScreen() {
         const eid = idOf(e);
         const attWp = (att?.summary || []).find((s) => s.employee_id === eid)?.workplace;
         const wp = pickEmployeeWorkplace(e.workplace, cardWp[eid], attWp, fieldWorkplaceFromProjects(projs || [], eid));
-        const yev = yevFromCard[eid];
+        const cardYev = yevFromCard[eid] || { days: 0, amount: 0 };
+        const fromPays = yevmiyeAccrual({
+          payrolls: (pays || []).filter((p) => p.employee_id === eid),
+          employeeId: eid,
+        });
         return {
           ...e,
           photo_url: e.photo_url || photos[eid],
           workplace: wp,
-          yevmiye_days: yev?.days || e.yevmiye_days,
-          yevmiye_due: yev?.amount || e.yevmiye_due,
+          yevmiye_days: Math.max(cardYev.days || 0, Number(e.yevmiye_days) || 0, fromPays.days),
+          yevmiye_due: Math.max(cardYev.amount || 0, Number(e.yevmiye_due) || 0, fromPays.amount),
         };
       }));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
@@ -661,10 +665,11 @@ export function PersonnelScreen() {
             const due = remainingDue(balances[eid], unpaid);
             const bal = balances[eid];
             const daysPresent = (attendance?.summary || []).find((s) => s.employee_id === eid)?.days_present || 0;
+            const fromPays = yevmiyeAccrual({ payrolls: payrolls.filter((p) => p.employee_id === eid), employeeId: eid });
             const comp = employeeCompRows(emp, bal, {
               daysPresent,
-              yevmiyeDays: emp.yevmiye_days,
-              yevmiyeAmount: emp.yevmiye_due,
+              yevmiyeDays: Math.max(Number(emp.yevmiye_days) || 0, fromPays.days),
+              yevmiyeAmount: Math.max(Number(emp.yevmiye_due) || 0, fromPays.amount),
             });
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>

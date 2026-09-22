@@ -11704,7 +11704,7 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
         doc["workplace"] = workplaces.get(eid)
         yev_days, yev_amt = 0, 0.0
         for b in emp_bonuses:
-            if b.get("type") != "yevmiye" or b.get("status") == "paid":
+            if str(b.get("type") or "").lower() != "yevmiye" or b.get("status") == "paid":
                 continue
             try:
                 yev_amt += float(b.get("amount") or 0)
@@ -11718,6 +11718,17 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
                 m = re.search(r"(\d+)\s*gün", str(b.get("note") or ""))
                 d = int(m.group(1)) if m else 0
             yev_days += max(0, d)
+        for p in pmap.get(eid) or []:
+            if personnel_wage.pay_type_of(p) != "daily" or p.get("status") == "paid":
+                continue
+            try:
+                yev_amt += float(p.get("final_payable") or p.get("net_salary") or 0)
+            except (TypeError, ValueError):
+                pass
+            try:
+                yev_days += max(0, int(float(p.get("worked_days") or 0)))
+            except (TypeError, ValueError):
+                pass
         doc["yevmiye_days"] = yev_days
         doc["yevmiye_due"] = round(yev_amt, 2)
         out.append(doc)
