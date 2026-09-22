@@ -1,12 +1,17 @@
 import {
   inboxUnreadTotal,
   mergeInboxWithDirectory,
+  mergeManagerInbox,
   messageAuthor,
   messagePreview,
   parseHiddenFlag,
+  parsePeerValue,
+  peerPostBody,
   previewStaffMessages,
+  requireManagerId,
   unreadStaffMessages,
   validateMessageBody,
+  managerSelectGroups,
 } from "./staffMessages";
 
 describe("staffMessages", () => {
@@ -31,5 +36,24 @@ describe("staffMessages", () => {
     );
     expect(merged.map((r) => r.employee_id)).toEqual(["e1", "e2"]);
     expect(merged[1].last).toBeNull();
+  });
+
+  it("lets staff pick a manager and open group or manager peers", () => {
+    expect(requireManagerId("", [{ id: "u1", name: "Ali" }])).toBe("Yönetici seçin.");
+    expect(requireManagerId("u1", [{ id: "u1", name: "Ali" }])).toBeNull();
+    expect(requireManagerId("", [])).toBeNull();
+    const mgrs = mergeManagerInbox(
+      [{ user_id: "u1", name: "Ali", unread: 2, last: { body: "selam" } }],
+      [{ id: "u1", name: "Ali" }, { id: "u2", name: "Ayşe" }, { id: "me", name: "Ben" }],
+      "me",
+    );
+    expect(mgrs.map((r) => r.user_id)).toEqual(["u1", "u2"]);
+    const groups = managerSelectGroups([{ id: "u2", name: "Ayşe" }, { id: "me", name: "Ben" }], [{ user_id: "_all", name: "Tüm yöneticiler" }], "me");
+    expect(groups[0].options.map((o) => o.value)).toEqual(["u2", "_all"]);
+    expect(parsePeerValue("m:u2")).toEqual({ kind: "manager", id: "u2" });
+    expect(parsePeerValue("g:g1")).toEqual({ kind: "group", id: "g1" });
+    expect(parsePeerValue("e1")).toEqual({ kind: "emp", id: "e1" });
+    expect(peerPostBody({ kind: "manager", id: "u2" }, { body: "x" })).toEqual({ body: "x", to_user_id: "u2" });
+    expect(peerPostBody({ kind: "group", id: "g1" }, { body: "x" })).toEqual({ body: "x", group_id: "g1" });
   });
 });

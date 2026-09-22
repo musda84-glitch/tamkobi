@@ -1,12 +1,16 @@
 from staff_messages import (
+    group_title,
     inbox_from_rows,
     is_manager,
+    manager_inbox_from_rows,
+    merge_manager_directory,
     message_doc,
     normalize_body,
     preview_messages,
     public_message,
     unread_for_reader,
     user_company_id,
+    user_in_group,
     validate_body,
 )
 
@@ -56,3 +60,38 @@ def test_message_doc_public():
     assert pub["from_side"] == "manager"
     assert pub["body"] == "Montaja gel"
     assert "created_at" in pub
+    assert pub["thread_kind"] == "legacy"
+
+
+def test_manager_inbox_and_group_helpers():
+    assert group_title("  Ekip  ") == "Ekip"
+    assert group_title("") == "Grup"
+    group = {"member_user_ids": ["u1"], "member_employee_ids": ["e2"]}
+    assert user_in_group(group, "u1")
+    assert user_in_group(group, "", "e2")
+    assert not user_in_group(group, "u9")
+    rows = [
+        {"_id": "m1", "to_user_id": "u1", "from_side": "staff", "body": "selam", "read_at": None},
+        {"_id": "m2", "from_side": "manager", "from_user_id": "u2", "from_name": "Ayşe", "body": "ok", "read_at": None},
+        {"_id": "m3", "group_id": "g1", "body": "grup", "read_at": None},
+    ]
+    inbox = manager_inbox_from_rows(rows, [{"id": "u1", "name": "Ali"}, {"id": "u2", "name": "Ayşe"}], "staff1")
+    ids = [r["user_id"] for r in inbox]
+    assert "u1" in ids and "u2" in ids
+    assert inbox[0]["unread"] >= 1
+    merged = merge_manager_directory(
+        [{"user_id": "u1", "name": "Ali", "unread": 1, "last": {"body": "x"}}],
+        [{"id": "u1", "name": "Ali"}, {"id": "u3", "name": "Can"}],
+    )
+    assert {r["user_id"] for r in merged} == {"u1", "u3"}
+
+
+def test_inbox_hides_other_manager_dms():
+    rows = [
+        {"_id": "a", "employee_id": "e1", "employee_name": "Ali", "from_side": "staff", "to_user_id": "mgrA", "body": "özel", "read_at": None},
+        {"_id": "b", "employee_id": "e1", "employee_name": "Ali", "from_side": "staff", "to_user_id": "mgrB", "body": "diğer", "read_at": None},
+        {"_id": "c", "employee_id": "e2", "employee_name": "Ayşe", "from_side": "staff", "body": "genel", "read_at": None},
+    ]
+    inbox = inbox_from_rows(rows, "mgrA")
+    assert [r["employee_id"] for r in inbox] == ["e1", "e2"]
+    assert inbox[0]["last"]["body"] == "özel"
