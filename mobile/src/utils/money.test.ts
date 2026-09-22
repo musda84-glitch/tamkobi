@@ -1,4 +1,4 @@
-import { fmtMoney, getPriceDecimals, idOf, setPriceDecimals } from "./money";
+import { fmtMoney, formatMoneyInput, getPriceDecimals, idOf, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
 
 afterEach(() => {
   setPriceDecimals(2);
@@ -22,6 +22,21 @@ describe("fmtMoney", () => {
     expect(getPriceDecimals()).toBe(4);
     setPriceDecimals(0);
     expect(fmtMoney(12.4)).toMatch(/12 ₺/);
+  });
+});
+
+describe("money input draft", () => {
+  it("keeps in-progress decimals and parses comma or dot", () => {
+    expect(sanitizeMoneyInput("2.")).toBe("2.");
+    expect(sanitizeMoneyInput("2,")).toBe("2,");
+    expect(sanitizeMoneyInput("2.10")).toBe("2.10");
+    expect(sanitizeMoneyInput("12a.3b0")).toBe("12.30");
+    expect(parseMoneyInput("2.")).toBe(2);
+    expect(parseMoneyInput("2,10")).toBe(2.1);
+    expect(parseMoneyInput("2.10")).toBe(2.1);
+    expect(parseMoneyInput("")).toBe(0);
+    expect(formatMoneyInput(2.1)).toBe("2.10");
+    expect(formatMoneyInput(5.05)).toBe("5.05");
   });
 });
 

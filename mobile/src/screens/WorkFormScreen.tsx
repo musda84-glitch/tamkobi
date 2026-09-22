@@ -28,7 +28,7 @@ import { normalizeProjectStages, type ProjectStage } from "../utils/projectStage
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
-import { fmtMoney, getPriceDecimals, idOf, todayIso } from "../utils/money";
+import { formatMoneyInput, fmtMoney, idOf, parseMoneyInput, sanitizeMoneyInput, todayIso } from "../utils/money";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
@@ -104,9 +104,7 @@ import {
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
 
 function quotePriceText(v: unknown): string {
-  const x = Number(v);
-  if (!Number.isFinite(x)) return "";
-  return x.toFixed(getPriceDecimals());
+  return formatMoneyInput(v);
 }
 
 function quoteDraftSig(
@@ -181,6 +179,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [noteOpen, setNoteOpen] = useState<Record<number, boolean>>({});
   const [grossDraft, setGrossDraft] = useState<Record<number, string>>({});
+  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -888,8 +888,9 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   })}
                   onChangeText={(v) => {
                     if (!canEdit) return;
-                    setGrossDraft((m) => ({ ...m, [i]: v }));
-                    const unit = workItemPriceFromGross(it, n(v));
+                    const typed = sanitizeMoneyInput(v);
+                    setGrossDraft((m) => ({ ...m, [i]: typed }));
+                    const unit = workItemPriceFromGross(it, parseMoneyInput(typed));
                     setItems((rows) => rows.map((row, idx) => (
                       idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
                     )));
@@ -1020,15 +1021,32 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 testID={`q-item-qty-dec-${i}`}
                                 accessibilityLabel="Miktarı azalt"
                                 disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
+                                onPress={() => {
+                                  setQtyDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1));
+                                }}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
                               </Pressable>
                               <TextInput
                                 testID={`q-item-qty-${i}`}
-                                value={String(it.quantity)}
-                                onChangeText={(v) => patchItem(i, "quantity", n(v))}
+                                value={qtyDraft[i] ?? String(it.quantity || "")}
+                                onFocus={() => setQtyDraft((m) => ({ ...m, [i]: String(it.quantity || "") }))}
+                                onBlur={() => setQtyDraft((m) => {
+                                  const next = { ...m };
+                                  delete next[i];
+                                  return next;
+                                })}
+                                onChangeText={(v) => {
+                                  const typed = sanitizeMoneyInput(v);
+                                  setQtyDraft((m) => ({ ...m, [i]: typed }));
+                                  patchItem(i, "quantity", parseMoneyInput(typed));
+                                }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
                                 style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
@@ -1037,7 +1055,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 testID={`q-item-qty-inc-${i}`}
                                 accessibilityLabel="Miktarı artır"
                                 disabled={!canEdit}
-                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
+                                onPress={() => {
+                                  setQtyDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1));
+                                }}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
@@ -1063,8 +1088,18 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                             >
                               <TextInput
                                 testID={`q-item-price-${i}`}
-                                value={quotePriceText(it.unit_price)}
-                                onChangeText={(v) => patchItem(i, "unit_price", n(v))}
+                                value={priceDraft[i] ?? quotePriceText(it.unit_price)}
+                                onFocus={() => setPriceDraft((m) => ({ ...m, [i]: quotePriceText(it.unit_price) }))}
+                                onBlur={() => setPriceDraft((m) => {
+                                  const next = { ...m };
+                                  delete next[i];
+                                  return next;
+                                })}
+                                onChangeText={(v) => {
+                                  const typed = sanitizeMoneyInput(v);
+                                  setPriceDraft((m) => ({ ...m, [i]: typed }));
+                                  patchItem(i, "unit_price", parseMoneyInput(typed));
+                                }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
                                 numberOfLines={1}
