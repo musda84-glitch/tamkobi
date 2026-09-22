@@ -717,43 +717,56 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             >
               <View style={{ gap: 4 }}>
                   {kind === "quote" ? (
-                    <Row style={{ flexWrap: "wrap", gap: 4 }}>
-                      <Chip
-                        compact
-                        label="Ürün"
-                        active={!it.is_service}
-                        color={colors.primary}
-                        testID={`q-item-kind-product-${i}`}
-                        onPress={() => it.is_service && toggleLineKind(i)}
-                      />
-                      <Chip
-                        compact
-                        label="Hizmet"
-                        active={!!it.is_service}
-                        color={colors.indigo}
-                        testID={`q-item-kind-service-${i}`}
-                        onPress={() => !it.is_service && toggleLineKind(i)}
+                    <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                        <Row style={{ flexWrap: "wrap", gap: 4 }}>
+                          <Chip
+                            compact
+                            label="Ürün"
+                            active={!it.is_service}
+                            color={colors.primary}
+                            testID={`q-item-kind-product-${i}`}
+                            onPress={() => it.is_service && toggleLineKind(i)}
+                          />
+                          <Chip
+                            compact
+                            label="Hizmet"
+                            active={!!it.is_service}
+                            color={colors.indigo}
+                            testID={`q-item-kind-service-${i}`}
+                            onPress={() => !it.is_service && toggleLineKind(i)}
+                          />
+                        </Row>
+                        <Field
+                          dense
+                          label={it.is_service ? "Hizmet adı" : "Ürün"}
+                          testID={`q-item-name-${i}`}
+                          value={it.name}
+                          onChangeText={(v) => patchItem(i, "name", v)}
+                          editable={canEdit}
+                          placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
+                        />
+                      </View>
+                      <ProductThumb
+                        uri={workItemImage(it, prod)}
+                        width={QUOTE_ITEM_THUMB.width}
+                        height={QUOTE_ITEM_THUMB.height}
+                        testID={`q-item-thumb-${i}`}
                       />
                     </Row>
-                  ) : null}
-                  <Field
-                    dense
-                    label={it.is_service ? "Hizmet adı" : "Ürün"}
-                    testID={`q-item-name-${i}`}
-                    value={it.name}
-                    onChangeText={(v) => patchItem(i, "name", v)}
-                    editable={canEdit}
-                    placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
-                  />
-                  <Row style={{ alignItems: "flex-start", gap: 8 }}>
-                    <ProductThumb
-                      uri={workItemImage(it, prod)}
-                      width={QUOTE_ITEM_THUMB.width}
-                      height={QUOTE_ITEM_THUMB.height}
-                      testID={`q-item-thumb-${i}`}
+                  ) : (
+                    <Field
+                      dense
+                      label={it.is_service ? "Hizmet adı" : "Ürün"}
+                      testID={`q-item-name-${i}`}
+                      value={it.name}
+                      onChangeText={(v) => patchItem(i, "name", v)}
+                      editable={canEdit}
+                      placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
                     />
-                    {kind === "quote" ? (
-                      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                  )}
+                  {kind === "quote" ? (
+                    <View style={{ gap: 4 }}>
                         <Row style={{ alignItems: "flex-end", gap: 6 }}>
                           <View style={{ flexShrink: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
@@ -840,7 +853,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           ) : null}
                         </Row>
                       </View>
-                    ) : (
+                  ) : (
+                    <Row style={{ alignItems: "flex-start", gap: 8 }}>
+                      <ProductThumb
+                        uri={workItemImage(it, prod)}
+                        width={QUOTE_ITEM_THUMB.width}
+                        height={QUOTE_ITEM_THUMB.height}
+                        testID={`q-item-thumb-${i}`}
+                      />
                       <Row style={{ flex: 1, alignItems: "flex-end", gap: 6 }}>
                         <View style={{ width: 52, flexShrink: 0 }}>
                           <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
@@ -862,8 +882,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           </Pressable>
                         ) : null}
                       </Row>
-                    )}
-                  </Row>
+                    </Row>
+                  )}
                   {kind === "quote" ? (
                     <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                       {VAT_OPTIONS.map((v) => (
