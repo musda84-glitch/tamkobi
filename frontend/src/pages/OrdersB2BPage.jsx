@@ -40,26 +40,13 @@ import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
 import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
+import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
-
-const ORDER_COL_DEFAULTS = {
-  order_number: 158,
-  customer_name: 335,
-  items: 332,
-  total_amount: 96,
-  order_status: 142,
-  actions: 400,
-};
-const ORDER_COL_LIMITS = {
-  min: { order_number: 110, customer_name: 140, items: 160, total_amount: 80, order_status: 120, actions: 240 },
-  max: { order_number: 480, customer_name: 760, items: 760, total_amount: 240, order_status: 360, actions: 720 },
-};
-const ORDER_SELECT_COL = 40;
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -285,21 +272,21 @@ export default function OrdersB2BPage() {
     const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
     return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
   }, [orders, customerFilter, ordF, sort]);
-  const { widths: colW, onResizeStart } = usePersistedColumnWidths("orders", ORDER_COL_DEFAULTS, ORDER_COL_LIMITS);
-  const tableWidth = ORDER_SELECT_COL + Object.values(colW).reduce((sum, n) => sum + n, 0);
+  const { widths: colW, onResizeStart } = usePersistedColumnWidths("orders-fit", ORDER_COL_DEFAULTS, ORDER_COL_LIMITS);
+  const tableWidth = orderTableMinWidth(colW);
   const ColResize = ({ k }) => (
     <span
       role="separator"
       aria-orientation="vertical"
       title="Sütun genişliğini ayarla"
       data-testid={`ord-col-resize-${k}`}
-      className="absolute right-0 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-indigo-400"
+      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize touch-none opacity-0 hover:opacity-100 hover:bg-indigo-400 group-hover/th:opacity-60"
       onPointerDown={(e) => onResizeStart(k, e)}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
     />
   );
   const SortTh = ({ k, children, className = "" }) => (
-    <th className={`relative px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} style={{ width: colW[k] }} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>
+    <th className={`group/th relative px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} style={{ width: colW[k] }} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>
       {children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
       <ColResize k={k} />
     </th>
@@ -541,8 +528,8 @@ export default function OrdersB2BPage() {
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto overflow-y-hidden pr-3 [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]">
-            <table className="table-fixed text-left text-xs text-slate-600" style={{ width: tableWidth }}>
+          <div className="overflow-x-auto">
+            <table className="table-fixed w-full text-left text-xs text-slate-600" style={{ minWidth: tableWidth }}>
                   <colgroup>
                     <col style={{ width: ORDER_SELECT_COL }} />
                     <col style={{ width: colW.order_number }} />
@@ -560,7 +547,7 @@ export default function OrdersB2BPage() {
                   <SortTh k="items">Ürünler</SortTh>
                   <SortTh k="total_amount" className="text-right">Tutar</SortTh>
                   <SortTh k="order_status">Sipariş Durumu</SortTh>
-                  <th className="relative px-4 py-3 pr-8 text-center" style={{ width: colW.actions }}>İşlemler<ColResize k="actions" /></th>
+                  <th className="group/th relative px-4 py-3 text-center" style={{ width: colW.actions }}>İşlemler<ColResize k="actions" /></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -622,7 +609,7 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className="px-4 py-3 pr-8 text-center overflow-hidden">
+                    <td className="px-4 py-3 text-center overflow-hidden">
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
