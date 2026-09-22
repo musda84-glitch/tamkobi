@@ -89,3 +89,20 @@ def test_alacak_and_borc_adjust_remaining(api, emp):
     finally:
         for bid in created:
             api.delete(f"{API}/personnel/bonuses/{bid}", timeout=30)
+
+
+def test_bakiye_payment_reduces_remaining(api, emp):
+    eid = emp["id"]
+    bid = None
+    try:
+        before = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        r = api.post(f"{API}/personnel/bonuses", json={
+            "employee_id": eid, "type": "bakiye", "amount": 275, "note": "TEST_bakiye_pay",
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        bid = r.json()["id"]
+        after = float((_bal(api.get(f"{API}/personnel/employees/{eid}/card", timeout=30).json()).get("remaining") or 0))
+        assert after == pytest.approx(before - 275, abs=0.01)
+    finally:
+        if bid:
+            api.delete(f"{API}/personnel/bonuses/{bid}", timeout=30)

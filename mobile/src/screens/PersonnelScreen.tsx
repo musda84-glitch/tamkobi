@@ -415,13 +415,13 @@ export function PersonnelScreen() {
         payAccount,
         ledgerNote,
       ));
-      const label = ledgerSide === "borc" ? "borç" : "alacak";
+      const label = ledgerSide === "borc" ? "borç" : "bakiye";
       setLedgerEmp(null);
       setLedgerAmount("");
       setLedgerNote("");
       setMessage(payAccount
-        ? `${ledgerEmp.full_name} için ${label} ödendi.`
-        : `${ledgerEmp.full_name} için ${label} yazıldı.`);
+        ? `${ledgerEmp.full_name} için ${label} ödemesi yapıldı.`
+        : `${ledgerEmp.full_name} için ${label} kaydedildi.`);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Kayıt yazılamadı."));
@@ -1179,8 +1179,8 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!ledgerEmp}
-        title="Alacak / Borç"
-        subtitle={ledgerEmp ? `${ledgerEmp.full_name} · tutar yazın` : undefined}
+        title="Bakiye ödemesi"
+        subtitle={ledgerEmp ? `${ledgerEmp.full_name} · kalan ${fmtMoney(remainingDue(balances[idOf(ledgerEmp)], unpaidPayrollTotal(idOf(ledgerEmp), payrolls)))}` : undefined}
         onClose={() => { setLedgerEmp(null); setLedgerAmount(""); setLedgerNote(""); }}
         testID="emp-ledger-sheet"
       >
@@ -1189,7 +1189,13 @@ export function PersonnelScreen() {
             <Pressable
               key={side}
               testID={`emp-ledger-side-${side}`}
-              onPress={() => setLedgerSide(side)}
+              onPress={() => {
+                setLedgerSide(side);
+                if (!ledgerEmp) return;
+                const due = remainingDue(balances[idOf(ledgerEmp)], unpaidPayrollTotal(idOf(ledgerEmp), payrolls));
+                const debt = Number(balances[idOf(ledgerEmp)]?.advances) || 0;
+                setLedgerAmount(side === "borc" ? (debt > 0 ? String(debt) : "") : (due > 0 ? String(due) : ""));
+              }}
               style={{
                 flex: 1,
                 minHeight: 40,
@@ -1209,23 +1215,23 @@ export function PersonnelScreen() {
         </Row>
         <Muted testID="emp-ledger-hint">
           {ledgerSide === "borc"
-            ? "Personelin size borcu — kalan alacaktan düşülür."
-            : "Personelin alacağı — mevcut bakiyeye eklenir."}
+            ? "Personel borcunu yazar — kalan alacaktan düşülür."
+            : "Kalan alacak bakiyesini öder — personel alacağı düşer."}
         </Muted>
         <Field
           label="Tutar (₺)"
           testID="emp-ledger-amount"
           value={ledgerAmount}
           onChangeText={setLedgerAmount}
-          keyboardType="numeric"
-          placeholder="Örn: 2500"
+          keyboardType="decimal-pad"
+          placeholder="Kalan bakiye"
         />
         <Field
           label="Açıklama"
           testID="emp-ledger-note"
           value={ledgerNote}
           onChangeText={setLedgerNote}
-          placeholder={ledgerSide === "borc" ? "Örn: eksik malzeme" : "Örn: ek hak ediş"}
+          placeholder={ledgerSide === "borc" ? "Borç açıklaması" : "Bakiye ödemesi"}
         />
         <GroupedSelect
           label="Kasa / Banka / Ortak"
@@ -1233,10 +1239,10 @@ export function PersonnelScreen() {
           value={payAccount}
           onChange={setPayAccount}
           groups={payGroups}
-          emptyLabel={ledgerSide === "borc" ? "Ödeme yok — borca yaz" : "Ödeme yok — alacağa yaz"}
+          emptyLabel={ledgerSide === "borc" ? "Ödeme yok — borca yaz" : "Ödeme yok — bakiyeyi kaydet"}
         />
         <PrimaryButton
-          title={payAccount ? "Kaydet & Öde" : (ledgerSide === "borc" ? "Borca yaz" : "Alacağa yaz")}
+          title={payAccount ? "Bakiyeyi öde" : (ledgerSide === "borc" ? "Borcu yaz" : "Bakiyeyi kaydet")}
           testID="emp-ledger-submit"
           color={ledgerSide === "borc" ? colors.danger : colors.primaryHover}
           loading={busy}

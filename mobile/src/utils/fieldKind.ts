@@ -16,6 +16,6 @@ export function fieldUsesTimePicker(
   const ph = String(placeholder || "");
   if (/(hours-input|time-input)$/.test(id)) return true;
   if (lab === "saat" || lab === "toplam saat" || lab === "başlangıç saati" || lab === "bitiş saati") return true;
-  if (/örn:\s*2/i.test(ph)) return true;
+  if (/^örn:\s*2([.,]\d+)?(\s*(sa|saat)?)?$/i.test(ph.trim())) return true;
   return false;
 }

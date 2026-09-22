@@ -185,6 +185,7 @@ const BONUS_TYPE_TR: Record<string, string> = {
   yevmiye: "Yevmiye",
   alacak: "Alacak",
   borc: "Borç",
+  bakiye: "Bakiye",
 };
 
 export function isDeletableBonus(b?: EmployeeBonus | null): boolean {
@@ -679,10 +680,10 @@ export function ledgerPayPayload(
   const debt = side === "borc";
   return {
     employee_id: employeeId,
-    type: (debt ? "borc" : "alacak") as LedgerSide,
+    type: debt ? "borc" : "bakiye",
     amount: num(amount),
     period,
-    note: note.trim() || (debt ? "Borç" : "Alacak"),
+    note: note.trim() || (debt ? "Borç" : "Bakiye ödemesi"),
     ...splitPaymentTarget(accountId),
   };
 }
@@ -926,7 +927,7 @@ export function employeeCardActionTitle(
   action: { key: string; title: string },
   emp?: Pick<Employee, "pay_type"> | null,
 ): string {
-  if (action.key === "salary" && isDailyWage(emp)) return "Alacak / Borç";
+  if (action.key === "salary" && isDailyWage(emp)) return "Bakiye öde";
   if (action.key === "bonus" && isDailyWage(emp)) return "Yevmiye günü";
   return action.title;
 }
