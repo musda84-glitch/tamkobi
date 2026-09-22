@@ -8190,8 +8190,8 @@ async def create_bonus(req: Dict[str, Any]):
     amount = float(req.get("amount", 0))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense
-    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi"}
+    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime
+    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai"}
     if b_type not in labels:
         raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
@@ -10833,10 +10833,18 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
         bmap.setdefault(b.get("employee_id"), []).append(b)
     for x in expenses:
         emap.setdefault(x.get("employee_id"), []).append(x)
+    company = await db.companies.find_one({"_id": company_id}) or {}
     out = []
     for e in employees:
         eid = e["_id"]
-        bal = await _employee_receivable(e, pmap.get(eid) or [], bmap.get(eid) or [], month, expenses=emap.get(eid) or [])
+        ot = await attendance.overtime_pay_for_period(company, e, month)
+        bal = await _employee_receivable(
+            {**e, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
+            pmap.get(eid) or [],
+            bmap.get(eid) or [],
+            month,
+            expenses=emap.get(eid) or [],
+        )
         doc = clean_doc(e)
         doc["balance"] = bal
         out.append(doc)
@@ -10921,10 +10929,18 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
     extra_advance = round(max(0.0, advances - payroll_adv), 2)
     remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance, 2)
+    ot_earned = round(_emp_num(emp.get("_overtime_pay")), 2)
+    ot_hours = round(_emp_num(emp.get("_overtime_hours")), 2)
+    ot_paid = round(sum(
+        _emp_num(b.get("amount")) for b in bonuses
+        if b.get("type") == "overtime" and b.get("status") == "paid" and str(b.get("period") or "").startswith(month)
+    ), 2)
+    overtime_due = round(max(0.0, ot_earned - ot_paid), 2)
     return {
         "remaining": remaining, "unpaid_payroll": unpaid_payroll, "unpaid_expenses": unpaid_expenses,
         "meal_due": meal_due, "transport_due": transport_due, "bonus_pending": bonus_pending, "advances": extra_advance,
         "meal_allowance": meal, "transport_allowance": transport, "month": month,
+        "overtime_pay": ot_earned, "overtime_hours": ot_hours, "overtime_due": overtime_due,
     }
 
 
@@ -11076,7 +11092,7 @@ async def employee_card(emp_id: str):
             "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
             "pending_invite": clean_doc(invite) if invite else None,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
-            "balance": await _employee_receivable(emp, payrolls, bonuses, month)}
+            "balance": await _employee_receivable({**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]}, payrolls, bonuses, month)}
 
 
 def _truthy_confirm(v) -> bool:

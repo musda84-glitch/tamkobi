@@ -52,6 +52,9 @@ export type EmployeeBalance = {
   transport_due?: number;
   meal_allowance?: number;
   transport_allowance?: number;
+  overtime_pay?: number;
+  overtime_due?: number;
+  overtime_hours?: number;
 };
 
 export type EmployeeBonus = {
@@ -72,6 +75,7 @@ export type EmployeeCard = {
   payrolls?: Payroll[];
   bonuses?: EmployeeBonus[];
   balance?: EmployeeBalance;
+  overtime?: { hours?: number; amount?: number };
 };
 
 export type EmployeePayMove = {
@@ -89,6 +93,7 @@ const BONUS_TYPE_TR: Record<string, string> = {
   second_salary: "İkinci Maaş",
   advance: "Avans",
   expense: "Masraf Ödemesi",
+  overtime: "Fazla Mesai",
 };
 
 export function bonusTypeTr(type?: string | null, fallback?: string | null): string {
@@ -382,16 +387,46 @@ export function openPayroll(employeeId: string, payrolls: Payroll[]): Payroll | 
   return (payrolls || []).find((p) => p.employee_id === employeeId && p.status !== "paid");
 }
 
+export function bonusDue(balance?: EmployeeBalance | null): number {
+  return Number(balance?.bonus_pending) || 0;
+}
+
+export function overtimeDue(balance?: EmployeeBalance | null): number {
+  if (balance?.overtime_due != null && Number.isFinite(Number(balance.overtime_due))) {
+    return Number(balance.overtime_due) || 0;
+  }
+  return Number(balance?.overtime_pay) || 0;
+}
+
+/** Kart bakiyesine dönem mesai tutarını yaz (ödenen fazla mesai düşülür). */
+export function enrichEmployeeBalance(card?: EmployeeCard | null, month = ""): EmployeeBalance | null {
+  if (!card?.balance && !card?.overtime) return null;
+  const bal: EmployeeBalance = { ...(card.balance || {}) };
+  const earned = Number(card.overtime?.amount ?? bal.overtime_pay) || 0;
+  const hours = Number(card.overtime?.hours ?? bal.overtime_hours) || 0;
+  const paid = (card.bonuses || [])
+    .filter((b) => String(b.type || "") === "overtime" && b.status === "paid" && (!month || String(b.period || "").startsWith(month)))
+    .reduce((s, b) => s + (Number(b.amount) || 0), 0);
+  bal.overtime_pay = earned;
+  bal.overtime_hours = hours;
+  if (bal.overtime_due == null) bal.overtime_due = Math.max(0, Math.round((earned - paid) * 100) / 100);
+  return bal;
+}
+
 export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalance | null): { key: string; label: string; value: number }[] {
   const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
   const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
   const daily = isDailyWage(emp);
   const wage = daily ? (Number(emp?.daily_wage) || 0) : (Number(emp?.salary) || 0);
+  const prim = bonusDue(balance);
+  const mesai = overtimeDue(balance);
   return [
     { key: "meal", label: "Yemek", value: meal },
     { key: "yol", label: "Yol", value: yol },
     { key: "salary", label: daily ? "Yevmiye" : "Maaş", value: wage },
-    { key: "total", label: "Toplam", value: meal + yol + wage },
+    { key: "bonus", label: "Prim", value: prim },
+    { key: "overtime", label: "Mesai", value: mesai },
+    { key: "total", label: "Toplam", value: meal + yol + wage + prim + mesai },
   ];
 }
 
@@ -422,6 +457,25 @@ export function advancePayload(employeeId: string, amount: string, period: strin
     amount: num(amount),
     period,
     note: note.trim(),
+    ...splitPaymentTarget(accountId),
+  };
+}
+
+export function bonusPayPayload(
+  employeeId: string,
+  kind: "bonus" | "overtime",
+  amount: string,
+  period: string,
+  accountId: string,
+  note: string,
+) {
+  const overtime = kind === "overtime";
+  return {
+    employee_id: employeeId,
+    type: overtime ? "overtime" as const : "bonus" as const,
+    amount: num(amount),
+    period,
+    note: note.trim() || (overtime ? "Fazla mesai ücreti" : "Prim"),
     ...splitPaymentTarget(accountId),
   };
 }
@@ -578,6 +632,8 @@ export const EMPLOYEE_CARD_PAY_ACTIONS = [
   { key: "salary", title: "Maaş öde" },
   { key: "meal", title: "Yemek" },
   { key: "transport", title: "Yol" },
+  { key: "bonus", title: "Prim öde" },
+  { key: "otpay", title: "Mesai öde" },
 ] as const;
 
 export const EMPLOYEE_CARD_WORK_ACTIONS = [

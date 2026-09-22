@@ -16,6 +16,10 @@ import {
   employeeCardActionTitles,
   employeeCardActionsByGroup,
   employeePayMoves,
+  enrichEmployeeBalance,
+  bonusDue,
+  overtimeDue,
+  bonusPayPayload,
   allowanceDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
@@ -79,15 +83,41 @@ describe("payroll helpers", () => {
       ["Yemek", 1750],
       ["Yol", 850],
       ["Maaş", 30000],
+      ["Prim", 0],
+      ["Mesai", 0],
       ["Toplam", 32600],
+    ]);
+    expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200, bonus_pending: 4000, overtime_due: 1250 }).map((r) => [r.key, r.value])).toEqual([
+      ["meal", 500],
+      ["yol", 200],
+      ["salary", 30000],
+      ["bonus", 4000],
+      ["overtime", 1250],
+      ["total", 35950],
     ]);
     expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200 }).find((r) => r.key === "yol")?.value).toBe(200);
     expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value])).toEqual([
       ["Yemek", 100],
       ["Yol", 0],
       ["Yevmiye", 1500],
+      ["Prim", 0],
+      ["Mesai", 0],
       ["Toplam", 1600],
     ]);
+    expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
+    expect(overtimeDue({ overtime_pay: 1800, overtime_due: 600 })).toBe(600);
+    expect(enrichEmployeeBalance({
+      overtime: { hours: 3, amount: 1800 },
+      bonuses: [{ type: "overtime", status: "paid", period: "2026-09", amount: 600 }],
+      balance: { remaining: 0 },
+    }, "2026-09")?.overtime_due).toBe(1200);
+    expect(bonusPayPayload("e1", "overtime", "1200", "2026-09", "partner:p1", "")).toMatchObject({
+      employee_id: "e1",
+      type: "overtime",
+      amount: 1200,
+      note: "Fazla mesai ücreti",
+      partner_id: "p1",
+    });
     expect(monthlyPayrollLoad([{ salary: 10000 }, { pay_type: "daily", daily_wage: 1000 }])).toBe(36000);
     expect(validateAdvance("")).toBe("Avans tutarı girin.");
     expect(validateAdvance("2500")).toBeNull();
@@ -165,9 +195,9 @@ describe("overtime assign", () => {
 describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
-    expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Görev ata", "+ Mesai"]);
+    expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionsByGroup("work").map((a) => a.title)).toEqual(["Görev ata", "+ Mesai"]);
-    expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport"]);
+    expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport", "bonus", "otpay"]);
     expect(titles).not.toContain("Düzenle");
     expect(titles).not.toContain("Sil");
     expect(allowanceDue({ meal_allowance: 5000 }, { meal_due: 3750 }, "meal")).toBe(3750);

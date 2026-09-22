@@ -236,6 +236,14 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               const due = Number(card?.balance?.transport_due ?? e.transport_allowance ?? 0) || 0;
               setQuickPay({ type: "expense", category: "Yol / Ulaşım", description: "Yol / ulaşım ödemesi", amount: due > 0 ? due : "", initialMode: "new" });
             }} className={`${btn} bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border-cyan-200`} title="Yol ödemesi — masraf" data-testid="emp-card-transport-btn"><Bus className="w-3.5 h-3.5 inline mr-1" />Yol</button>
+            <button type="button" onClick={() => {
+              const due = Number(card?.balance?.bonus_pending || 0) || 0;
+              setQuickPay({ type: "bonus", amount: due > 0 ? due : "" });
+            }} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200`} data-testid="emp-card-bonus-btn">Prim öde</button>
+            <button type="button" onClick={() => {
+              const due = Number(card?.balance?.overtime_due ?? card?.overtime?.amount ?? 0) || 0;
+              setQuickPay({ type: "overtime", amount: due > 0 ? due : "" });
+            }} className={`${btn} bg-violet-50 hover:bg-violet-100 text-violet-800 border-violet-200`} data-testid="emp-card-otpay-btn">Mesai öde</button>
           </div>
           <div className="grid grid-cols-2 gap-1.5" data-testid="emp-card-work-actions">
             <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
@@ -251,7 +259,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <Stat label={isDailyWage(e) ? "Yevmiye" : "Net Maaş"} value={isDailyWage(e) ? `${fmt(e.daily_wage)} ₺ / gün` : `${fmt(e.salary)} ₺`} sub={isDailyWage(e) ? `${card.attendance.days_present || 0} gün = ${fmt(periodWage(e, card.attendance.days_present))} ₺ · tahmini ay ${fmt(monthlyLoad(e))} ₺` : `Bordro brüt ${fmt(e.payroll_salary || e.salary * 1.4)} ₺${e.second_salary ? ` · 2. maaş ${fmt(e.second_salary)} ₺` : ""}`} testid="emp-stat-salary" /><Stat label="Kalan İzin" value={`${card.leave_balance.remaining} / ${card.leave_balance.annual} gün`} testid="emp-stat-leave" />
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
                   <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={card.balance?.month ? `Dönem ${card.balance.month}` : undefined} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
-                  <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(ot.amount || 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
+                  <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(card.balance?.overtime_due ?? ot.amount || 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
+                  <Stat label="Prim hakedişi" value={`${fmt(card.balance?.bonus_pending || 0)} ₺`} testid="emp-stat-bonus-due" />
                   <Stat label="İşe Giriş" value={formatTrDate(e.start_date)} testid="emp-stat-start" />
                   <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>

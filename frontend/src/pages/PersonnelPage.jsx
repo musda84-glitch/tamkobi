@@ -317,6 +317,14 @@ export default function PersonnelPage() {
   };
 
   const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
+  const openBonusFor = (emp) => {
+    const due = Number(emp?.balance?.bonus_pending || 0) || 0;
+    setQuickPay({ p: payrollStubFor(emp), type: "bonus", amount: due > 0 ? due : "" });
+  };
+  const openOtPayFor = (emp) => {
+    const due = Number(emp?.balance?.overtime_due ?? emp?.balance?.overtime_pay || 0) || 0;
+    setQuickPay({ p: payrollStubFor(emp), type: "overtime", amount: due > 0 ? due : "" });
+  };
 
   const openMealExpenseFor = (emp) => {
     const bal = emp?.balance || {};
@@ -601,6 +609,14 @@ export default function PersonnelPage() {
                   {Number(emp.balance?.remaining || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
                 </span>
               </div>
+              <div className="flex items-center justify-between text-xs" data-testid={`employee-bonus-due-${emp.tc_kimlik || empKey}`}>
+                <span className="text-slate-400">Prim hakedişi:</span>
+                <span className="text-sm font-bold text-amber-800">{Number(emp.balance?.bonus_pending || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
+              </div>
+              <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>
+                <span className="text-slate-400">Fazla mesai ücreti:</span>
+                <span className="text-sm font-bold text-violet-800">{Number(emp.balance?.overtime_due ?? emp.balance?.overtime_pay || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
+              </div>
             </div>
             <div className="space-y-1.5">
             <div className="grid grid-cols-2 gap-1.5">
@@ -638,6 +654,22 @@ export default function PersonnelPage() {
                 data-testid={`employee-transport-btn-${emp.tc_kimlik || empKey}`}
               >
                 <Bus className="w-3.5 h-3.5" /> Yol
+              </button>
+              <button
+                type="button"
+                onClick={() => openBonusFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200"
+                data-testid={`employee-bonus-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Gift className="w-3.5 h-3.5" /> Prim öde
+              </button>
+              <button
+                type="button"
+                onClick={() => openOtPayFor(emp)}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                data-testid={`employee-otpay-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Timer className="w-3.5 h-3.5" /> Mesai öde
               </button>
               </div>
               <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>

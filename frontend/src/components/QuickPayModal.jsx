@@ -23,6 +23,7 @@ const presetTitle = (category) => {
 export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, onDone, initialMode, initialCategory, initialDescription, initialAmount, allowances }) => {
   useEscape(onClose);
   const isExpense = type === "expense";
+  const bonusKind = type === "bonus" || type === "overtime" ? type : null;
   const presetCat = initialCategory || "";
   const defaultCat = presetCat || "Personel Masrafı";
   const allowanceHint = (() => {
@@ -63,13 +64,17 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
     axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`).then((r) => setCats(r.data)).catch(() => {});
   }, [isExpense, companyId, p.employee_id, initialMode, presetCat]);
   const selected = open.find((x) => x.id === f.expense_id);
-  const title = isExpense ? (presetTitle(presetCat) || (initialMode === "new" || mode === "new" ? "Masraf Ekle" : "Masraf Ödemesi")) : "Avans Ver";
+  const title = isExpense
+    ? (presetTitle(presetCat) || (initialMode === "new" || mode === "new" ? "Masraf Ekle" : "Masraf Ödemesi"))
+    : bonusKind === "overtime" ? "Mesai Ücreti Öde" : bonusKind === "bonus" ? "Prim Öde" : "Avans Ver";
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
       if (!isExpense) {
-        await axios.post(`${API_URL}/personnel/bonuses`, { employee_id: p.employee_id, type: "advance", amount: Number(f.amount), period: p.period, note: f.note, ...splitPaymentTarget(f.account_id) });
-        toast.success(`${p.employee_name} için avans kaydedildi.`);
+        const bType = bonusKind || "advance";
+        const note = f.note || (bType === "overtime" ? "Fazla mesai ücreti" : bType === "bonus" ? "Prim" : "");
+        await axios.post(`${API_URL}/personnel/bonuses`, { employee_id: p.employee_id, type: bType, amount: Number(f.amount), period: p.period, note, ...splitPaymentTarget(f.account_id) });
+        toast.success(`${p.employee_name} için ${bType === "overtime" ? "fazla mesai ücreti" : bType === "bonus" ? "prim" : "avans"} kaydedildi.`);
       } else if (mode === "existing") {
         if (!selected) throw new Error("Masraf seçin.");
         if (!f.account_id) throw new Error("Ödeme için kasa/banka seçin.");
@@ -107,6 +112,8 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
           ? (presetCat === MEAL_CAT || presetCat === TRANSPORT_CAT
             ? `${presetTitle(presetCat)} masraf olarak kaydedilir; personel kalan alacağından düşer, Masraflar modülünde görünür.`
             : "Masraflar → personel filtresinde ve personel kartında görünür; ödeme kasa/bankadan düşer.")
+          : bonusKind === "overtime" ? `${p.period} dönemi · Fazla mesai ücreti gayri resmi ödeme olarak kaydedilir.`
+          : bonusKind === "bonus" ? `${p.period} dönemi · Prim gayri resmi ödeme olarak kaydedilir.`
           : `${p.period} dönemi · Avans bordroda mahsup olarak görünür.`}</div>
         <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={busy} className={`px-4 py-1.5 text-white rounded-lg font-semibold ${isExpense ? "bg-sky-600" : "bg-amber-600"}`} data-testid="quick-pay-submit">{busy ? "…" : isExpense && mode === "existing" ? "Öde" : f.account_id ? "Kaydet & Öde" : "Kaydet"}</button></div>
       </form>
