@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff } from "lucide-react";
@@ -217,10 +217,13 @@ export default function ProjectsPage({ section } = {}) {
   const { activeCompany, loading: authLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || (!authLoading ? "comp_nexus_main_01" : "");
   const pathTab = section || (location.pathname.includes("/surveys") ? "surveys" : location.pathname.includes("/projects") && !location.pathname.includes("/quotes") ? "projects" : "quotes");
   const [tab, setTab] = useState(pathTab);
   useEffect(() => { setTab(pathTab); }, [pathTab]);
+  const focusId = searchParams.get("focus") || searchParams.get("project") || "";
+  const [focusFlash, setFocusFlash] = useState("");
   const [quotes, setQuotes] = useState([]); const [projects, setProjects] = useState([]); const [surveys, setSurveys] = useState([]);
   const [contacts, setContacts] = useState([]); const [products, setProducts] = useState([]);
   const [refsReady, setRefsReady] = useState(false);
@@ -474,6 +477,29 @@ export default function ProjectsPage({ section } = {}) {
   const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, visibleProjects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
   const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
 
+  useEffect(() => {
+    if (!focusId || listLoading || !projects.length) return;
+    const target = projects.find((p) => String(p.id || p._id) === String(focusId) || String(p.project_number) === String(focusId));
+    if (!target) return;
+    if (tab !== "projects") setTab("projects");
+    if (isCompletedProject(target) && !showCompletedProjects) toggleShowCompleted(true);
+    const key = target.project_number || target.id || target._id;
+    setFocusFlash(String(key));
+    const t = window.setTimeout(() => {
+      const el = document.querySelector(`[data-testid="project-card-${key}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    const clear = window.setTimeout(() => {
+      setFocusFlash("");
+      const next = new URLSearchParams(searchParams);
+      next.delete("focus");
+      next.delete("project");
+      setSearchParams(next, { replace: true });
+    }, 3500);
+    return () => { window.clearTimeout(t); window.clearTimeout(clear); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per focus id when list ready
+  }, [focusId, listLoading, projects]);
+
   return (
     <div className="space-y-6" data-testid="projects-page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -577,7 +603,11 @@ export default function ProjectsPage({ section } = {}) {
             </div>
           )}
           {visibleProjects.map((p) => (
-            <div key={p.id} className={`bg-white border rounded-2xl p-4 space-y-2 text-xs ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"}`} data-testid={`project-card-${p.project_number}`}>
+            <div
+              key={p.id}
+              className={`bg-white border rounded-2xl p-4 space-y-2 text-xs transition ring-offset-2 ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"} ${focusFlash && focusFlash === String(p.project_number || p.id || p._id) ? "ring-2 ring-emerald-500 border-emerald-400 shadow-md" : ""}`}
+              data-testid={`project-card-${p.project_number}`}
+            >
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"}{p.address && (!shouldCollapseAddress(p.address) || openAddr[p.id]) ? ` • ${p.address}` : ""}{shouldCollapseAddress(p.address) ? <button type="button" onClick={() => setOpenAddr((s) => ({ ...s, [p.id]: !s[p.id] }))} className="ml-1 text-emerald-700 font-semibold" data-testid={`project-addr-toggle-${p.id}`}>{addressToggleLabel(!!openAddr[p.id])}</button> : null}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
               <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
                 <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
