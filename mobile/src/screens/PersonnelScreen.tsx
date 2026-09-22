@@ -123,9 +123,11 @@ export function PersonnelScreen() {
       setAttendance(att);
       const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), enrichEmployeeBalance(card, month)] as const;
+        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url] as const;
       }));
-      setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance] => !!row[1])));
+      setBalances(Object.fromEntries(pairs.filter((row): row is readonly [string, EmployeeBalance, string | null | undefined] => !!row[1]).map(([id, bal]) => [id, bal] as const)));
+      const photos = Object.fromEntries(pairs.flatMap(([id, , url]) => (url ? [[id, url] as const] : [])));
+      setEmployees((list) => list.map((e) => ({ ...e, photo_url: e.photo_url || photos[idOf(e)] })));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
       if ((accs || []).length) setPayAccount((cur) => cur || idOf(accs[0]));
       else if (firstPartner) setPayAccount((cur) => cur || `partner:${idOf(firstPartner)}`);
@@ -461,7 +463,7 @@ export function PersonnelScreen() {
                   <EmployeeAvatar
                     name={emp.full_name}
                     photoUrl={emp.photo_url}
-                    size={48}
+                    size={56}
                     testID={`emp-card-photo-${eid}`}
                   />
                   <View style={{ flex: 1, minWidth: 0 }}>
