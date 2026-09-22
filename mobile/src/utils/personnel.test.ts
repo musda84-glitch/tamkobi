@@ -14,6 +14,7 @@ import {
   remainingLeaveDays,
   unpaidPayrollTotal,
   employeeCardActionTitles,
+  employeePayMoves,
   assignEmployeeToTasks,
   overtimePayload,
   projectSelectGroups,
@@ -77,6 +78,13 @@ describe("payroll helpers", () => {
       ["Toplam", 32600],
     ]);
     expect(employeeCompRows({ salary: 30000 }, { meal_allowance: 500, transport_due: 200 }).find((r) => r.key === "yol")?.value).toBe(200);
+    expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500, meal_allowance: 100 }).map((r) => [r.label, r.value])).toEqual([
+      ["Yemek", 100],
+      ["Yol", 0],
+      ["Yevmiye", 1500],
+      ["Toplam", 1600],
+    ]);
+    expect(monthlyPayrollLoad([{ salary: 10000 }, { pay_type: "daily", daily_wage: 1000 }])).toBe(36000);
     expect(validateAdvance("")).toBe("Avans tutarı girin.");
     expect(validateAdvance("2500")).toBeNull();
     expect(advanceRequestPayload(" 2500 ", " maaş ", "2026-09")).toEqual({
@@ -156,6 +164,22 @@ describe("employee card actions", () => {
     expect(titles).toEqual(["Avans", "Maaş öde", "Görev ata", "+ Mesai"]);
     expect(titles).not.toContain("Düzenle");
     expect(titles).not.toContain("Sil");
+  });
+
+  it("lists maaş and avans as payment moves, newest first", () => {
+    const rows = employeePayMoves({
+      payrolls: [
+        { id: "p1", period: "2026-08", status: "paid", paid_date: "2026-08-31", final_payable: 28000 },
+        { id: "p2", period: "2026-09", status: "pending", final_payable: 28100 },
+      ],
+      bonuses: [
+        { id: "b1", type: "advance", amount: 3750, period: "2026-09", status: "paid", created_at: "2026-09-10", note: "Avans" },
+      ],
+    });
+    expect(rows.map((r) => r.title)).toEqual(["Avans", "Maaş", "Maaş"]);
+    expect(rows[0].amount).toBe(3750);
+    expect(rows[1].subtitle).toContain("Ödeme bekliyor");
+    expect(employeePayMoves(null)).toEqual([]);
   });
 });
 

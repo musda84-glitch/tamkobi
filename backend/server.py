@@ -73,6 +73,7 @@ from card_match import sanitize_card_fields
 import cheques
 import fx
 import attendance
+import personnel_wage
 import trash
 import migration
 import pricing
@@ -10817,10 +10818,10 @@ async def create_employee(emp: Employee):
     await db.employees.insert_one(doc)
     return clean_doc(doc)
 
-EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
+EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "meal_allowance", "transport_allowance"}
-EMPLOYEE_NUMERIC = {"salary", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
+EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
 
@@ -11229,7 +11230,9 @@ async def generate_payroll(req: Dict[str, Any]):
 
     generated = []
     for emp in employees:
-        net = float(emp.get("salary", 30000.0) or 0)
+        att_rows = await db.attendance.find({"employee_id": str(emp.get("_id")), "date": {"$regex": f"^{period}"}}).to_list(40)
+        days_present = attendance.summarize(att_rows).get("days_present") or 0
+        net = personnel_wage.period_wage(emp, days_present)
         gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
         second = float(emp.get("second_salary") or 0)
         ot = await attendance.overtime_pay_for_period(company, emp, period)
@@ -11247,6 +11250,9 @@ async def generate_payroll(req: Dict[str, Any]):
             "period": period,
             "net_salary": net,
             "gross_salary": gross,
+            "pay_type": personnel_wage.pay_type_of(emp),
+            "daily_wage": personnel_wage.daily_wage_of(emp),
+            "worked_days": days_present,
             "second_salary": second,
             "overtime_hours": ot["overtime_hours"],
             "overtime_weekday_hours": ot["weekday_hours"],

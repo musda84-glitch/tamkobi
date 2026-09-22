@@ -12,6 +12,8 @@ export type Employee = {
   phone?: string;
   email?: string;
   salary?: number;
+  pay_type?: string;
+  daily_wage?: number;
   meal_allowance?: number;
   transport_allowance?: number;
   start_date?: string;
@@ -49,11 +51,84 @@ export type EmployeeBalance = {
   transport_allowance?: number;
 };
 
+export type EmployeeBonus = {
+  id?: string;
+  _id?: string;
+  type?: string;
+  type_label?: string;
+  amount?: number;
+  period?: string;
+  note?: string;
+  account_name?: string;
+  status?: string;
+  created_at?: string;
+};
+
 export type EmployeeCard = {
   employee?: Employee;
   payrolls?: Payroll[];
+  bonuses?: EmployeeBonus[];
   balance?: EmployeeBalance;
 };
+
+export type EmployeePayMove = {
+  id: string;
+  kind: "payroll" | "bonus";
+  title: string;
+  subtitle: string;
+  amount: number;
+  date: string;
+  status?: string;
+};
+
+const BONUS_TYPE_TR: Record<string, string> = {
+  bonus: "Prim",
+  second_salary: "İkinci Maaş",
+  advance: "Avans",
+  expense: "Masraf Ödemesi",
+};
+
+export function bonusTypeTr(type?: string | null, fallback?: string | null): string {
+  const key = String(type || "");
+  return BONUS_TYPE_TR[key] || fallback || "Ödeme";
+}
+
+export function bonusStatusTr(status?: string | null): string {
+  const key = String(status || "");
+  if (key === "paid") return "Ödendi";
+  if (key === "pending") return "Bekliyor";
+  if (key === "approved") return "Onaylı";
+  if (key === "rejected") return "Reddedildi";
+  return key;
+}
+
+/** Personel kartı: maaş + avans/prim satırlarını tarihe göre yeni→eski. */
+export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] {
+  const rows: EmployeePayMove[] = [];
+  for (const p of card?.payrolls || []) {
+    rows.push({
+      id: idOf(p) || `pay-${p.period || ""}`,
+      kind: "payroll",
+      title: "Maaş",
+      subtitle: [p.period, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · "),
+      amount: Number(p.final_payable ?? p.net_salary) || 0,
+      date: String(p.paid_date || p.period || ""),
+      status: p.status,
+    });
+  }
+  for (const b of card?.bonuses || []) {
+    rows.push({
+      id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
+      kind: "bonus",
+      title: bonusTypeTr(b.type, b.type_label),
+      subtitle: [b.period, bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
+      amount: Number(b.amount) || 0,
+      date: String(b.created_at || b.period || ""),
+      status: b.status,
+    });
+  }
+  return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
 
 export type EmployeeDraft = {
   full_name: string;
@@ -196,8 +271,16 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
   return body;
 }
 
+export function isDailyWage(emp?: Employee | null): boolean {
+  const t = String(emp?.pay_type || "monthly").toLowerCase();
+  return t === "daily" || t === "yevmiye" || t === "gunluk" || t === "günlük";
+}
+
 export function monthlyPayrollLoad(employees: Employee[]): number {
-  return (employees || []).reduce((s, e) => s + (Number(e.salary) || 0), 0);
+  return (employees || []).reduce((s, e) => {
+    if (isDailyWage(e)) return s + (Number(e.daily_wage) || 0) * 26;
+    return s + (Number(e.salary) || 0);
+  }, 0);
 }
 
 export function remainingLeaveDays(emp?: Employee | null): number {
@@ -278,12 +361,13 @@ export function openPayroll(employeeId: string, payrolls: Payroll[]): Payroll | 
 export function employeeCompRows(emp?: Employee | null, balance?: EmployeeBalance | null): { key: string; label: string; value: number }[] {
   const meal = Number(emp?.meal_allowance ?? balance?.meal_allowance ?? balance?.meal_due ?? 0) || 0;
   const yol = Number(emp?.transport_allowance ?? balance?.transport_allowance ?? balance?.transport_due ?? 0) || 0;
-  const salary = Number(emp?.salary) || 0;
+  const daily = isDailyWage(emp);
+  const wage = daily ? (Number(emp?.daily_wage) || 0) : (Number(emp?.salary) || 0);
   return [
     { key: "meal", label: "Yemek", value: meal },
     { key: "yol", label: "Yol", value: yol },
-    { key: "salary", label: "Maaş", value: salary },
-    { key: "total", label: "Toplam", value: meal + yol + salary },
+    { key: "salary", label: daily ? "Yevmiye" : "Maaş", value: wage },
+    { key: "total", label: "Toplam", value: meal + yol + wage },
   ];
 }
 

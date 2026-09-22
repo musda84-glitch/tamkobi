@@ -637,7 +637,9 @@ class Employee(BaseDocument):
     position: str
     phone: str
     email: str
-    salary: float  # Net Maaş
+    salary: float = 0.0  # Net aylık maaş (yevmiyelide 0 / tahmini)
+    pay_type: str = "monthly"  # monthly | daily
+    daily_wage: float = 0.0  # Günlük yevmiye
     meal_allowance: float = 0.0  # Aylık yemek
     transport_allowance: float = 0.0  # Aylık yol / ulaşım
     start_date: str

@@ -76,6 +76,8 @@ export default function PersonnelPage() {
     phone: "",
     email: "",
     salary: 35000,
+    pay_type: "monthly",
+    daily_wage: "",
     start_date: new Date().toISOString().split("T")[0],
     photo_url: "",
   };
@@ -96,6 +98,8 @@ export default function PersonnelPage() {
       phone: emp.phone || "",
       email: emp.email || "",
       salary: emp.salary ?? 0,
+      pay_type: emp.pay_type === "daily" ? "daily" : "monthly",
+      daily_wage: emp.daily_wage ?? "",
       start_date: emp.start_date || new Date().toISOString().split("T")[0],
       photo_url: emp.photo_url || "",
     });
@@ -163,7 +167,15 @@ export default function PersonnelPage() {
       toast.error("Lütfen ad soyad ve TC kimlik no girin.");
       return;
     }
-    const body = { ...newEmployee, salary: Number(newEmployee.salary) };
+    const daily = Number(newEmployee.daily_wage || 0);
+    const monthly = Number(newEmployee.salary || 0);
+    const isDaily = newEmployee.pay_type === "daily";
+    const body = {
+      ...newEmployee,
+      pay_type: isDaily ? "daily" : "monthly",
+      daily_wage: isDaily ? daily : 0,
+      salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
+    };
     try {
       if (editingEmp) {
         const id = editingEmp.id || editingEmp._id;
@@ -479,8 +491,8 @@ export default function PersonnelPage() {
 
             <div className="pt-2 border-t border-slate-100 space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Net Maaş:</span>
-                <span className="text-sm font-bold text-slate-900">{emp.salary?.toLocaleString('tr-TR')} ₺</span>
+                <span className="text-slate-400">{emp.pay_type === "daily" ? "Yevmiye:" : "Net Maaş:"}</span>
+                <span className="text-sm font-bold text-slate-900">{emp.pay_type === "daily" ? `${Number(emp.daily_wage || 0).toLocaleString("tr-TR")} ₺ / gün` : `${emp.salary?.toLocaleString("tr-TR")} ₺`}</span>
               </div>
               <div className="flex items-center justify-between text-xs" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
                 <span className="text-slate-400">Kalan Alacak:</span>
@@ -692,7 +704,29 @@ export default function PersonnelPage() {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Net Maaş (₺)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Ücret tipi</label>
+                  <div className="flex gap-1" data-testid="employee-pay-type">
+                    <button type="button" onClick={() => setNewEmployee({ ...newEmployee, pay_type: "monthly" })} className={`flex-1 py-2 rounded-lg text-xs font-semibold border ${newEmployee.pay_type === "daily" ? "bg-white text-slate-600 border-slate-200" : "bg-emerald-600 text-white border-emerald-600"}`} data-testid="employee-pay-monthly">Aylık maaş</button>
+                    <button type="button" onClick={() => setNewEmployee({ ...newEmployee, pay_type: "daily" })} className={`flex-1 py-2 rounded-lg text-xs font-semibold border ${newEmployee.pay_type === "daily" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200"}`} data-testid="employee-pay-daily">Günlük yevmiye</button>
+                  </div>
+                </div>
+              </div>
+              {newEmployee.pay_type === "daily" ? (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Günlük yevmiye (₺)</label>
+                  <input
+                    type="number"
+                    value={newEmployee.daily_wage}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, daily_wage: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
+                    data-testid="employee-daily-wage-input"
+                    placeholder="Örn: 1500"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Bordro = yevmiye × o ay gelen gün. Tahmini ay: {((Number(newEmployee.daily_wage) || 0) * 26).toLocaleString("tr-TR")} ₺ (26 gün).</p>
+                </div>
+              ) : (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Net maaş (₺)</label>
                   <input
                     type="number"
                     value={newEmployee.salary}
@@ -701,7 +735,7 @@ export default function PersonnelPage() {
                     data-testid="employee-salary-input"
                   />
                 </div>
-              </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Departman</label>

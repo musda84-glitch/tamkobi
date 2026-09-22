@@ -4,15 +4,13 @@ import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
-import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
-import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
 import {
   LEAVE_TYPES,
-  SALARY_CALC_ROWS,
   employeeSelectGroups,
   leaveDays,
   leaveStatusTr,
@@ -25,6 +23,7 @@ import {
   remainingDue,
   employeeCompRows,
   unpaidPayrollTotal,
+  employeePayMoves,
   EMPLOYEE_CARD_ACTIONS,
   assignEmployeeToTasks,
   overtimePayload,
@@ -40,15 +39,15 @@ import {
   type Employee,
   type EmployeeBalance,
   type EmployeeCard,
+  type EmployeePayMove,
   type LeaveRequest,
   type Payroll,
   type ProjectWithTasks,
-  type SalaryCalc,
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
-type Tab = "payroll" | "attendance" | "leaves" | "salary";
+type Tab = "payroll" | "attendance" | "leaves";
 
 export function PersonnelScreen() {
   const { client, companyId, can } = useAuth();
@@ -72,9 +71,9 @@ export function PersonnelScreen() {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
-  const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
-  const [calcAmount, setCalcAmount] = useState("50000");
-  const [calc, setCalc] = useState<SalaryCalc | null>(null);
+  const [movesEmp, setMovesEmp] = useState<Employee | null>(null);
+  const [moves, setMoves] = useState<EmployeePayMove[]>([]);
+  const [movesBusy, setMovesBusy] = useState(false);
   const [otEmp, setOtEmp] = useState<Employee | null>(null);
   const [otHours, setOtHours] = useState("");
   const [otStart, setOtStart] = useState("");
@@ -282,6 +281,22 @@ export function PersonnelScreen() {
     }
   };
 
+  const openMoves = async (emp: Employee) => {
+    setMovesEmp(emp);
+    setMoves([]);
+    setMovesBusy(true);
+    try {
+      const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
+      setMoves(employeePayMoves(card));
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Ödeme hareketleri yüklenemedi."));
+      setMovesEmp(null);
+    } finally {
+      setMovesBusy(false);
+    }
+  };
+
   const decideLeave = async (id: string, status: "approved" | "rejected") => {
     try {
       await post(client, `/personnel/leaves/${id}/decide`, { status });
@@ -289,19 +304,6 @@ export function PersonnelScreen() {
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
-    }
-  };
-
-  const runCalc = async () => {
-    setBusy(true);
-    try {
-      const r = await post<SalaryCalc>(client, "/personnel/salary-calc", { mode: calcMode, amount: Number(calcAmount) || 0 });
-      setCalc(r);
-      setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Hesaplanamadı."));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -324,7 +326,6 @@ export function PersonnelScreen() {
           { key: "payroll", label: "Bordro", icon: "people", count: employees.length },
           { key: "attendance", label: "Puantaj", icon: "time" },
           { key: "leaves", label: "İzinler", icon: "calendar", count: pendingLeaves || undefined },
-          { key: "salary", label: "Hesapla", icon: "calculator" },
         ]}
       />
 
@@ -374,9 +375,15 @@ export function PersonnelScreen() {
                     ) : null}
                   </Row>
                 ) : null}
-                {canEdit ? (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
-                    {EMPLOYEE_CARD_ACTIONS.map((action) => {
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-actions-${eid}`}>
+                  <PayChip
+                    title="Hareketler"
+                    color={colors.secondary}
+                    bg="#F1F5F9"
+                    testID={`emp-card-moves-btn-${eid}`}
+                    onPress={() => openMoves(emp)}
+                  />
+                  {canEdit ? EMPLOYEE_CARD_ACTIONS.map((action) => {
                       const press = {
                         advance: () => {
                           setAdvanceEmp(emp);
@@ -406,9 +413,8 @@ export function PersonnelScreen() {
                           onPress={press}
                         />
                       );
-                    })}
-                  </View>
-                ) : null}
+                    }) : null}
+                </View>
               </Card>
             );
           })}
@@ -515,35 +521,26 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {tab === "salary" ? (
-        <Card testID="salary-calculator">
-          <Text style={{ fontWeight: "800", color: colors.text }}>Maaş hesaplama (brüt ⇄ net)</Text>
-          <Row>
-            <Chip label="Brütten nete" active={calcMode === "gross"} testID="salary-mode-gross" onPress={() => setCalcMode("gross")} />
-            <Chip label="Netten brüte" active={calcMode === "net"} testID="salary-mode-net" onPress={() => setCalcMode("net")} />
-          </Row>
-          <Field
-            label={calcMode === "gross" ? "Brüt maaş (₺)" : "Net maaş (₺)"}
-            testID="salary-amount-input"
-            value={calcAmount}
-            onChangeText={setCalcAmount}
-            keyboardType="numeric"
+      <B2BSheet
+        visible={!!movesEmp}
+        title="Ödeme hareketleri"
+        subtitle={movesEmp?.full_name}
+        onClose={() => { setMovesEmp(null); setMoves([]); }}
+        testID="emp-pay-moves-sheet"
+      >
+        {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
+        {!movesBusy && !moves.length ? <Muted>Bu personel için ödeme hareketi yok.</Muted> : null}
+        {moves.map((row) => (
+          <ListRow
+            key={row.id}
+            testID={`emp-pay-move-${row.id}`}
+            title={row.title}
+            subtitle={row.subtitle}
+            right={fmtMoney(row.amount)}
+            rightColor={row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text}
           />
-          <PrimaryButton title="Hesapla" testID="salary-calc-btn" color={colors.indigo} loading={busy} onPress={runCalc} />
-          <Muted>2026 yaklaşık oranlar; resmi bordro için mali müşavirinizle doğrulayın.</Muted>
-          {calc ? (
-            <StatRows
-              testID="salary-result"
-              items={SALARY_CALC_ROWS.map((row) => ({
-                key: row.key,
-                label: row.label,
-                value: fmtMoney(calc[row.key]),
-                valueColor: row.tone === "green" ? colors.primary : row.tone === "red" ? colors.danger : undefined,
-              }))}
-            />
-          ) : null}
-        </Card>
-      ) : null}
+        ))}
+      </B2BSheet>
 
       <B2BSheet
         visible={!!advanceEmp}
