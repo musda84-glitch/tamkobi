@@ -1427,7 +1427,9 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
     inv_count = await db.invoices.count_documents({})
     items = [{"product_id": it.get("product_id"), "name": it.get("name"), "quantity": it.get("quantity"), "unit": it.get("unit", "Adet"), "unit_price": it.get("unit_price"),
               "vat_rate": it.get("vat_rate", 20), "discount_rate": it.get("discount_rate", 0), "total": it.get("total"),
-              "sku": it.get("sku") or "", "barcode": it.get("barcode") or ""} for it in q.get("items", [])]
+              "sku": it.get("sku") or "", "barcode": it.get("barcode") or "",
+              "is_service": bool(it.get("is_service") or not it.get("product_id")),
+              "description": it.get("description") or ""} for it in q.get("items", [])]
     await _fill_stock_codes(q["company_id"], items)
     inv = {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "invoice_number": f"NX{datetime.now(timezone.utc).year}{str(inv_count + 1).zfill(8)}", "contact_id": q.get("contact_id"),
            "contact_name": q.get("contact_name"), "invoice_type": "sales", "e_type": req.get("e_type", "e_archive"), "items": items, "subtotal": q["subtotal"], "vat_total": q["vat_total"],

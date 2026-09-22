@@ -3,14 +3,14 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { DateField } from "../components/DateField";
-import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
@@ -25,7 +25,7 @@ import { go } from "../nav";
 import { coordText, mapsLink } from "../utils/geo";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import type { StagePhoto } from "../utils/stagePhotos";
-import { statusTr } from "../utils/labels";
+import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { filterProducts } from "../utils/productDisplay";
@@ -44,6 +44,7 @@ import {
   hydrateWorkItem,
   namedItems,
   newButtonLabel,
+  QUOTE_ITEM_THUMB,
   PROJECT_MAPS_ACTION,
   PROJECT_NEW_QUOTE_ACTION,
   SURVEY_MAPS_ACTION,
@@ -52,7 +53,9 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quotesForProject,
+  workStatusDotColor,
   workStatusSelectGroups,
+  workStatusTone,
   removeWorkItem,
   projectPayload,
   quotePayload,
@@ -62,9 +65,12 @@ import {
   surveyPayload,
   validateProjectName,
   validateQuoteItems,
+  toggleWorkItemService,
+  bumpWorkItemQty,
   workItemFromProduct,
   workItemImage,
   workItemLineGross,
+  workItemNoteOpen,
   workItemTotals,
   itemStripe,
   type ProjectDoc,
@@ -98,6 +104,8 @@ function quoteDraftSig(
       quantity: Number(it.quantity) || 0,
       unit_price: Number(it.unit_price) || 0,
       vat_rate: Number(it.vat_rate) || 0,
+      is_service: !!it.is_service,
+      description: it.description || "",
     })),
   });
 }
@@ -141,6 +149,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [photos, setPhotos] = useState<string[]>([]);
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
+  const [noteOpen, setNoteOpen] = useState<Record<number, boolean>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -275,13 +284,28 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const prodHits = prodQ.trim().length < 2 ? [] : filterProducts(products, prodQ, "all", 8);
   const statusGroups = workStatusSelectGroups(kind, status, projectStages);
 
-  const patchItem = (i: number, field: keyof WorkItem, value: string | number) => {
+  const patchItem = (i: number, field: keyof WorkItem, value: string | number | boolean) => {
     setItems((rows) => rows.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
+  };
+
+  const toggleLineKind = (i: number) => {
+    if (!canEdit) return;
+    setItems((rows) => rows.map((it, idx) => (idx === i ? toggleWorkItemService(it) : it)));
   };
 
   const removeItem = (i: number) => {
     if (!canEdit) return;
     setItems((rows) => removeWorkItem(rows, i));
+  };
+
+  const addProductFromSearch = (p: Product) => {
+    setItems((rows) => {
+      const emptyIdx = rows.findIndex((it) => !it.name);
+      const line = workItemFromProduct(p);
+      if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
+      return [...rows, line];
+    });
+    setProdQ("");
   };
 
   const persistArgs = useRef({ form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes });
@@ -623,39 +647,63 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
 
       {!isNew ? (
-        <GroupedSelect
-          dense
-          label="Durum"
-          testID={`${kind}-status`}
-          value={status}
-          onChange={(v) => canEdit && setStatus(v)}
-          groups={statusGroups}
-          emptyLabel="Durum seçin"
-        />
+        <View>
+          <Row style={{ gap: 8, marginBottom: 4, alignItems: "center" }}>
+            <Muted>Durum</Muted>
+            <View
+              testID={`${kind}-status-dot`}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: workStatusDotColor(kind, status),
+              }}
+            />
+            <Badge label={statusTr(status)} tone={workStatusTone(kind, status)} />
+          </Row>
+          <GroupedSelect
+            dense
+            testID={`${kind}-status`}
+            value={status}
+            onChange={(v) => canEdit && setStatus(v)}
+            groups={statusGroups}
+            emptyLabel="Durum seçin"
+            swatchColor={workStatusDotColor(kind, status)}
+          />
+        </View>
       ) : null}
 
       {kind !== "project" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Kalemler</Text>
-          <Field dense label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
-          {prodHits.map((p) => (
-            <ProductPickRow
-              key={idOf(p)}
-              product={p}
-              testID={`q-prod-${idOf(p)}`}
-              onPress={() => {
-                setItems((rows) => {
-                  const emptyIdx = rows.findIndex((it) => !it.name);
-                  const line = workItemFromProduct(p);
-                  if (emptyIdx >= 0) return rows.map((it, i) => (i === emptyIdx ? line : it));
-                  return [...rows, line];
-                });
-                setProdQ("");
-              }}
-            />
-          ))}
+          <View
+            testID="q-stock-search"
+            style={{
+              backgroundColor: colors.slate50,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 12,
+              padding: 8,
+              gap: 6,
+            }}
+          >
+            <Field dense label="Ürün ara" testID="q-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU" />
+            {prodHits.length ? (
+              <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 168 }}>
+                {prodHits.map((p) => (
+                  <ProductPickRow
+                    key={idOf(p)}
+                    product={p}
+                    testID={`q-prod-${idOf(p)}`}
+                    onPress={() => addProductFromSearch(p)}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
+          </View>
           {items.map((it, i) => {
             const prod = products.find((p) => idOf(p) === it.product_id);
+            const noteShown = kind === "quote" && workItemNoteOpen(it, noteOpen[i]);
             return (
             <View
               key={i}
@@ -667,31 +715,156 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 gap: 6,
               }}
             >
-              <Row style={{ alignItems: "center", gap: 8 }}>
-                <ProductThumb uri={workItemImage(it, prod)} size={52} testID={`q-item-thumb-${i}`} />
-                <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                  <Field dense label="Ad" testID={`q-item-name-${i}`} value={it.name} onChangeText={(v) => patchItem(i, "name", v)} editable={canEdit} />
-                  <Row style={{ alignItems: "flex-end", gap: 6 }}>
-                    <View style={{ width: 52, flexShrink: 0 }}>
-                      <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                    </View>
-                    <View style={{ width: 70, flexShrink: 0 }}>
-                      <Field dense label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
-                    </View>
-                    <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, fontSize: 13, marginBottom: 4 }} testID={`q-item-gross-${i}`}>
-                      {it.name ? fmtMoney(workItemLineGross(it)) : ""}
-                    </Text>
-                    {canEdit ? (
-                      <Pressable
-                        onPress={() => removeItem(i)}
-                        testID={`q-item-del-${i}`}
-                        accessibilityLabel="Kalemi sil"
-                        style={{ width: 28, height: 30, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                      >
-                        <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                      </Pressable>
-                    ) : null}
-                  </Row>
+              <View style={{ gap: 4 }}>
+                  {kind === "quote" ? (
+                    <Row style={{ flexWrap: "wrap", gap: 4 }}>
+                      <Chip
+                        compact
+                        label="Ürün"
+                        active={!it.is_service}
+                        color={colors.primary}
+                        testID={`q-item-kind-product-${i}`}
+                        onPress={() => it.is_service && toggleLineKind(i)}
+                      />
+                      <Chip
+                        compact
+                        label="Hizmet"
+                        active={!!it.is_service}
+                        color={colors.indigo}
+                        testID={`q-item-kind-service-${i}`}
+                        onPress={() => !it.is_service && toggleLineKind(i)}
+                      />
+                    </Row>
+                  ) : null}
+                  <Field
+                    dense
+                    label={it.is_service ? "Hizmet adı" : "Ürün"}
+                    testID={`q-item-name-${i}`}
+                    value={it.name}
+                    onChangeText={(v) => patchItem(i, "name", v)}
+                    editable={canEdit}
+                    placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
+                  />
+                  <ProductThumb
+                    uri={workItemImage(it, prod)}
+                    width={QUOTE_ITEM_THUMB.width}
+                    height={QUOTE_ITEM_THUMB.height}
+                    testID={`q-item-thumb-${i}`}
+                  />
+                  {kind === "quote" ? (
+                    <>
+                      <Row style={{ alignItems: "flex-end", gap: 8 }}>
+                        <View style={{ flexShrink: 0 }}>
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, marginBottom: 2 }}>{trUpper("Miktar")}</Text>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                              borderRadius: 999,
+                              backgroundColor: "#fff",
+                              overflow: "hidden",
+                              minHeight: 40,
+                            }}
+                          >
+                            <Pressable
+                              testID={`q-item-qty-dec-${i}`}
+                              accessibilityLabel="Miktarı azalt"
+                              disabled={!canEdit}
+                              onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
+                              style={{ width: 36, height: 40, alignItems: "center", justifyContent: "center" }}
+                            >
+                              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>−</Text>
+                            </Pressable>
+                            <TextInput
+                              testID={`q-item-qty-${i}`}
+                              value={String(it.quantity)}
+                              onChangeText={(v) => patchItem(i, "quantity", n(v))}
+                              keyboardType="decimal-pad"
+                              editable={canEdit}
+                              style={{ width: 44, textAlign: "center", fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 40 }}
+                            />
+                            <Pressable
+                              testID={`q-item-qty-inc-${i}`}
+                              accessibilityLabel="Miktarı artır"
+                              disabled={!canEdit}
+                              onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
+                              style={{ width: 36, height: 40, alignItems: "center", justifyContent: "center" }}
+                            >
+                              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text }}>+</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, marginBottom: 2 }}>{trUpper("Birim Fiyat (KDV Hariç)")}</Text>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                              borderRadius: 999,
+                              backgroundColor: "#fff",
+                              minHeight: 40,
+                              paddingHorizontal: 12,
+                              gap: 6,
+                            }}
+                          >
+                            <TextInput
+                              testID={`q-item-price-${i}`}
+                              value={String(it.unit_price)}
+                              onChangeText={(v) => patchItem(i, "unit_price", n(v))}
+                              keyboardType="decimal-pad"
+                              editable={canEdit}
+                              style={{ flex: 1, fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 40 }}
+                            />
+                            <Text style={{ color: colors.muted, fontWeight: "700" }}>₺</Text>
+                          </View>
+                        </View>
+                      </Row>
+                      <Row style={{ justifyContent: "flex-end", alignItems: "flex-end", gap: 8, marginTop: 4 }}>
+                        <View style={{ flex: 1, alignItems: "flex-end" }}>
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted }}>{trUpper("Satır Toplamı (KDV Dahil)")}</Text>
+                          <Text testID={`q-item-gross-${i}`} style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>
+                            {it.name ? fmtMoney(workItemLineGross(it)) : fmtMoney(0)}
+                          </Text>
+                        </View>
+                        {canEdit ? (
+                          <Pressable
+                            onPress={() => removeItem(i)}
+                            testID={`q-item-del-${i}`}
+                            accessibilityLabel="Kalemi sil"
+                            style={{ width: 28, height: 36, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                          >
+                            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                          </Pressable>
+                        ) : null}
+                      </Row>
+                    </>
+                  ) : (
+                    <Row style={{ alignItems: "flex-end", gap: 6 }}>
+                      <View style={{ width: 52, flexShrink: 0 }}>
+                        <Field dense label="Miktar" testID={`q-item-qty-${i}`} value={String(it.quantity)} onChangeText={(v) => patchItem(i, "quantity", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                      </View>
+                      <View style={{ width: 70, flexShrink: 0 }}>
+                        <Field dense label="Fiyat" testID={`q-item-price-${i}`} value={String(it.unit_price)} onChangeText={(v) => patchItem(i, "unit_price", n(v))} keyboardType="decimal-pad" editable={canEdit} />
+                      </View>
+                      <Text style={{ flex: 1, minWidth: 56, textAlign: "right", fontWeight: "800", color: colors.text, fontSize: 13, marginBottom: 4 }} testID={`q-item-gross-${i}`}>
+                        {it.name ? fmtMoney(workItemLineGross(it)) : ""}
+                      </Text>
+                      {canEdit ? (
+                        <Pressable
+                          onPress={() => removeItem(i)}
+                          testID={`q-item-del-${i}`}
+                          accessibilityLabel="Kalemi sil"
+                          style={{ width: 28, height: 30, alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                        >
+                          <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                        </Pressable>
+                      ) : null}
+                    </Row>
+                  )}
                   {kind === "quote" ? (
                     <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                       {VAT_OPTIONS.map((v) => (
@@ -706,8 +879,46 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       ))}
                     </Row>
                   ) : null}
-                </View>
-              </Row>
+                  {kind === "quote" ? (
+                    <>
+                      <Pressable
+                        onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
+                        testID={`q-item-note-toggle-${i}`}
+                        accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          alignSelf: "flex-start",
+                          gap: 6,
+                          minHeight: 32,
+                          paddingHorizontal: 10,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: noteShown ? colors.indigo : colors.border,
+                          backgroundColor: noteShown ? colors.indigo50 : "#fff",
+                        }}
+                      >
+                        <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
+                        <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
+                          {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
+                        </Text>
+                      </Pressable>
+                      {noteShown ? (
+                        <Field
+                          dense
+                          multiline
+                          numberOfLines={3}
+                          label="Açıklama"
+                          testID={`q-item-note-${i}`}
+                          value={it.description || ""}
+                          onChangeText={(v) => patchItem(i, "description", v)}
+                          editable={canEdit}
+                          placeholder="Satır notu, ölçü, kesim…"
+                        />
+                      ) : null}
+                    </>
+                  ) : null}
+              </View>
             </View>
             );
           })}

@@ -20,7 +20,12 @@ export type WorkItem = {
   price_includes_vat?: boolean;
   image_url?: string;
   thumbnail_url?: string;
+  is_service?: boolean;
+  description?: string;
 };
+
+export const QUOTE_ITEM_THUMB = { width: 36, height: 36 };
+export const QUOTE_ITEM_THUMB_SIZE = QUOTE_ITEM_THUMB.width;
 
 export type QuoteApproval = {
   status?: string;
@@ -166,7 +171,7 @@ export const SURVEY_STATUSES = [
 ];
 
 export function emptyItem(): WorkItem {
-  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet" };
+  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet", is_service: false, description: "" };
 }
 
 export function namedItems(items: WorkItem[]): WorkItem[] {
@@ -187,15 +192,17 @@ export function workItemFromProduct(prod: {
   sale_price?: number;
   vat_rate?: number;
   unit?: string;
+  type?: string;
   price_includes_vat?: boolean;
   thumbnail_url?: string;
   image_url?: string;
   images?: string[];
 }): WorkItem {
   const photo = productImage(prod);
+  const is_service = prod.type === "service";
   return {
     ...emptyItem(),
-    product_id: idOf(prod),
+    product_id: is_service ? "" : idOf(prod),
     name: String(prod.name || ""),
     unit_price: Number(prod.sale_price) || 0,
     vat_rate: Number(prod.vat_rate) || 20,
@@ -203,7 +210,66 @@ export function workItemFromProduct(prod: {
     price_includes_vat: !!prod.price_includes_vat,
     image_url: photo || undefined,
     thumbnail_url: prod.thumbnail_url || undefined,
+    is_service,
   };
+}
+
+export function toggleWorkItemService(item: WorkItem): WorkItem {
+  const is_service = !item.is_service;
+  if (is_service) {
+    return { ...item, is_service: true, product_id: "", image_url: undefined, thumbnail_url: undefined };
+  }
+  return { ...item, is_service: false };
+}
+
+/** Ad alanındaki uzun metinden SKU / kelime parçaları (stok araması). */
+export function workItemSearchTokens(name: string): string[] {
+  const raw = String(name || "").trim();
+  if (raw.length < 2) return [];
+  const parts = raw
+    .split(/[\s*,;|/]+/)
+    .map((t) => t.replace(/[():]+/g, "").trim())
+    .filter((t) => t.length >= 2);
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const part of parts) {
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(key);
+  }
+  if (!seen.has(raw.toLowerCase()) && raw.length >= 2 && raw.length <= 40) tokens.unshift(raw.toLowerCase());
+  return tokens;
+}
+
+function productSearchHay<T extends { name?: string; sku?: string; barcode?: string; category?: string }>(p: T): string[] {
+  return [p.name, p.sku, p.barcode, p.category].map((v) => String(v || "").toLowerCase()).filter(Boolean);
+}
+
+export function workItemNameHits<T extends { id?: string; _id?: string; name?: string; sku?: string; barcode?: string; category?: string }>(
+  products: T[] | null | undefined,
+  item: Pick<WorkItem, "name" | "is_service" | "product_id">,
+  limit = 6,
+): T[] {
+  if (item.is_service) return [];
+  const q = String(item.name || "").trim();
+  if (q.length < 2) return [];
+  const pid = item.product_id || "";
+  const tokens = workItemSearchTokens(q);
+  const full = q.toLowerCase();
+  return (products || [])
+    .filter((p) => {
+      if (pid && idOf(p) === pid) return false;
+      const hay = productSearchHay(p);
+      if (hay.some((h) => h.includes(full) || (full.length <= 48 && full.includes(h)))) return true;
+      return tokens.some((t) => hay.some((h) => h.includes(t) || (t.length >= 4 && t.includes(h))));
+    })
+    .slice(0, limit);
+}
+
+export function workItemNoteOpen(item: Pick<WorkItem, "description">, forced?: boolean): boolean {
+  if (forced != null) return forced;
+  return Boolean(String(item.description || "").trim());
 }
 
 export function workItemImage(
@@ -242,6 +308,13 @@ export function hydrateWorkItem(
   if (item.price_includes_vat != null) return item;
   if (fromProd) return { ...item, price_includes_vat: true };
   return item;
+}
+
+export function bumpWorkItemQty(qty: unknown, delta: number): number {
+  const cur = Number(qty);
+  const next = (Number.isFinite(cur) ? cur : 0) + delta;
+  const rounded = Math.round(next * 1000) / 1000;
+  return rounded < 0 ? 0 : rounded;
 }
 
 export function workItemLineGross(it: WorkItem): number {
@@ -549,6 +622,30 @@ export function quoteStatusTone(status?: string | null): QuoteStatusTone {
   if (key === "accepted") return "green";
   if (key === "rejected") return "red";
   return "slate";
+}
+
+export type WorkStatusTone = QuoteStatusTone | "indigo";
+
+const STATUS_DOT: Record<WorkStatusTone, string> = {
+  slate: "#94A3B8",
+  green: "#059669",
+  red: "#E11D48",
+  amber: "#F59E0B",
+  indigo: "#4F46E5",
+};
+
+export function workStatusTone(kind: WorkKind, status?: string | null): WorkStatusTone {
+  if (kind === "quote") return quoteStatusTone(status);
+  if (kind === "survey") return surveyStatusTone(status);
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "active") return "green";
+  if (key === "on_hold") return "amber";
+  if (key === "completed") return "indigo";
+  return "slate";
+}
+
+export function workStatusDotColor(kind: WorkKind, status?: string | null): string {
+  return STATUS_DOT[workStatusTone(kind, status)];
 }
 
 export function quoteListSubtitle(quote: Pick<QuoteDoc, "quote_number" | "title">): string {

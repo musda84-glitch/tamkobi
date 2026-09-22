@@ -30,6 +30,8 @@ import {
   quoteListSubtitle,
   quoteListTitle,
   quoteStatusTone,
+  workStatusDotColor,
+  workStatusTone,
   isSurveyConverted,
   surveyListSubtitle,
   surveyStatusTone,
@@ -44,10 +46,16 @@ import {
   quoteSaveMessage,
   workItemFromProduct,
   workItemImage,
+  bumpWorkItemQty,
   workItemLineGross,
+  workItemNameHits,
+  workItemNoteOpen,
   workItemTotals,
   hydrateWorkItem,
   itemStripe,
+  QUOTE_ITEM_THUMB,
+  QUOTE_ITEM_THUMB_SIZE,
+  toggleWorkItemService,
 } from "./workDocs";
 
 describe("workDocs", () => {
@@ -58,6 +66,10 @@ describe("workDocs", () => {
     expect(t.subtotal).toBe(100);
     expect(t.vat).toBe(20);
     expect(t.grandTotal).toBe(120);
+    expect(bumpWorkItemQty(1, 1)).toBe(2);
+    expect(bumpWorkItemQty(1, -1)).toBe(0);
+    expect(bumpWorkItemQty(0, -1)).toBe(0);
+    expect(bumpWorkItemQty(1.5, 1)).toBe(2.5);
     expect(workItemLineGross({ name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true })).toBe(120);
     const fromCard = workItemFromProduct({ id: "p1", name: "Koltuk", sale_price: 120, vat_rate: 20, price_includes_vat: true, thumbnail_url: "koltuk.jpg" });
     expect(fromCard.price_includes_vat).toBe(true);
@@ -98,6 +110,41 @@ describe("workDocs", () => {
     expect(t.vat).toBe(40);
     expect(t.grandTotal).toBe(240);
     expect(namedItems([{ ...emptyItem(), name: "X" }, emptyItem()])).toHaveLength(1);
+  });
+
+  it("searches stock from the line name and toggles ürün / hizmet", () => {
+    const products = [
+      { id: "p1", name: "Dekorasyon Profili", sku: "DL120", barcode: "868", category: "Profil" },
+      { id: "p2", name: "Kapı kolu", sku: "KK-1", barcode: "111", category: "Aksesuar" },
+    ];
+    expect(workItemNameHits(products, { name: "D", is_service: false })).toEqual([]);
+    expect(workItemNameHits(products, { name: "dekor", is_service: false }).map((p) => p.id)).toEqual(["p1"]);
+    expect(workItemNameHits(products, { name: "dekor", is_service: true })).toEqual([]);
+    expect(workItemNameHits(products, { name: "Dekorasyon Profili", product_id: "p1", is_service: false })).toEqual([]);
+    expect(workItemNameHits(products, {
+      name: "*Koli içi 14 boy*Boy ölçüsü 290cm* DL120-ANT-G74 Dekorasyon Profili (Decoration Profile)",
+      is_service: false,
+    }).map((p) => p.id)).toEqual(["p1"]);
+    expect(workItemNameHits(products, { name: "DL120", is_service: false }).map((p) => p.id)).toEqual(["p1"]);
+    const service = toggleWorkItemService({ ...emptyItem(), product_id: "p1", name: "Profil", image_url: "x.jpg" });
+    expect(service.is_service).toBe(true);
+    expect(service.product_id).toBe("");
+    expect(service.image_url).toBeUndefined();
+    expect(toggleWorkItemService(service).is_service).toBe(false);
+    const fromSvc = workItemFromProduct({ id: "s1", name: "Montaj", type: "service", sale_price: 500 });
+    expect(fromSvc.is_service).toBe(true);
+    expect(fromSvc.product_id).toBe("");
+    expect(QUOTE_ITEM_THUMB.width).toBe(36);
+    expect(QUOTE_ITEM_THUMB.height).toBe(36);
+    expect(QUOTE_ITEM_THUMB_SIZE).toBe(QUOTE_ITEM_THUMB.width);
+    expect(workItemNoteOpen({ description: "" })).toBe(false);
+    expect(workItemNoteOpen({ description: "Kesim notu" })).toBe(true);
+    expect(workItemNoteOpen({ description: "Kesim notu" }, false)).toBe(false);
+    const q = quotePayload("comp", { contact_id: "c1", contact_name: "Acme", title: "T", valid_until: "", notes: "" }, [
+      { ...emptyItem(), name: "İşçilik", is_service: true, description: "Montaj" },
+    ]);
+    expect(q.items[0].is_service).toBe(true);
+    expect(q.items[0].description).toBe("Montaj");
   });
 
   it("removes a quote or survey line and keeps one empty row", () => {
@@ -314,6 +361,10 @@ describe("workDocs", () => {
     expect(quoteStatusTone("rejected")).toBe("red");
     expect(quoteStatusTone("draft")).toBe("slate");
     expect(quoteStatusTone("")).toBe("slate");
+    expect(workStatusTone("quote", "sent")).toBe("amber");
+    expect(workStatusTone("survey", "done")).toBe("indigo");
+    expect(workStatusTone("project", "active")).toBe("green");
+    expect(workStatusDotColor("quote", "rejected")).toBe("#E11D48");
   });
 
   it("shows survey status until the survey is converted to a quote", () => {

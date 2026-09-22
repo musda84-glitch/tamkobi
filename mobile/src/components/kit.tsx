@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
-  stickyTop: { backgroundColor: colors.background, zIndex: 20 },
+  stickyTop: { backgroundColor: colors.background, zIndex: 20, borderBottomWidth: 1, borderBottomColor: colors.border },
   stickyPad: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4, paddingBottom: spacing.xs },
   card: {
     backgroundColor: colors.surface,

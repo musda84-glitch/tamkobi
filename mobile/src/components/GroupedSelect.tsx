@@ -8,19 +8,20 @@ import { Muted } from "./kit";
 export type SelectOption = { value: string; label: string; disabled?: boolean };
 export type SelectGroup = { label: string; options: SelectOption[] };
 
-function triggerBox(dense?: boolean) {
+function triggerBox(dense?: boolean, swatchColor?: string) {
   return {
     minHeight: dense ? 40 : 48,
     borderWidth: 1.5,
-    borderColor: "#C7D2FE",
+    borderColor: swatchColor || "#C7D2FE",
     borderRadius: radius.md,
     paddingHorizontal: dense ? 10 : 12,
+    paddingLeft: swatchColor ? (dense ? 32 : 36) : (dense ? 10 : 12),
     backgroundColor: colors.indigo50,
   } as const;
 }
 
-const selectStyle = (dense?: boolean): React.CSSProperties => ({
-  ...triggerBox(dense),
+const selectStyle = (dense?: boolean, swatchColor?: string): React.CSSProperties => ({
+  ...triggerBox(dense, swatchColor),
   width: "100%",
   borderStyle: "solid",
   paddingRight: 36,
@@ -33,6 +34,15 @@ const selectStyle = (dense?: boolean): React.CSSProperties => ({
   MozAppearance: "none",
 });
 
+function StatusSwatch({ color, testID }: { color: string; testID?: string }) {
+  return (
+    <View
+      testID={testID}
+      style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: color, flexShrink: 0 }}
+    />
+  );
+}
+
 function Chevron({ dense }: { dense?: boolean }) {
   return <Ionicons name="chevron-down" size={dense ? 18 : 20} color={colors.indigo} />;
 }
@@ -44,6 +54,7 @@ function NativeGroupedSelect({
   emptyLabel,
   testID,
   dense,
+  swatchColor,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -51,6 +62,7 @@ function NativeGroupedSelect({
   emptyLabel?: string;
   testID?: string;
   dense?: boolean;
+  swatchColor?: string;
 }) {
   const [open, setOpen] = useState(false);
   const all = groups.flatMap((g) => g.options);
@@ -64,13 +76,15 @@ function NativeGroupedSelect({
         accessibilityHint="Açılır menü"
         onPress={() => setOpen((v) => !v)}
         style={{
-          ...triggerBox(dense),
+          ...triggerBox(dense, swatchColor),
+          paddingLeft: dense ? 10 : 12,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 8,
         }}
       >
+        {swatchColor ? <StatusSwatch color={swatchColor} testID={testID ? `${testID}-swatch` : undefined} /> : null}
         <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: dense ? 14 : 15 }}>{title}</Text>
         <Chevron dense={dense} />
       </Pressable>
@@ -110,6 +124,7 @@ export function GroupedSelect({
   emptyLabel,
   testID,
   dense,
+  swatchColor,
 }: {
   label?: string;
   value: string;
@@ -118,6 +133,7 @@ export function GroupedSelect({
   emptyLabel?: string;
   testID?: string;
   dense?: boolean;
+  swatchColor?: string;
 }) {
   return (
     <View style={{ marginBottom: dense ? 4 : spacing.md }} testID={testID ? `${testID}-wrap` : undefined}>
@@ -125,6 +141,11 @@ export function GroupedSelect({
       {Platform.OS === "web"
         ? (
           <View style={{ position: "relative", justifyContent: "center" }}>
+            {swatchColor ? (
+              <View pointerEvents="none" style={{ position: "absolute", left: 12, top: 0, bottom: 0, justifyContent: "center", zIndex: 1 }}>
+                <StatusSwatch color={swatchColor} testID={testID ? `${testID}-swatch` : undefined} />
+              </View>
+            ) : null}
             {createElement(
               "select",
               {
@@ -132,7 +153,7 @@ export function GroupedSelect({
                 onChange: (e: { target: { value: string } }) => onChange(e.target.value),
                 "data-testid": testID,
                 "aria-label": label || "Açılır menü",
-                style: selectStyle(dense),
+                style: selectStyle(dense, swatchColor),
               },
               [
                 emptyLabel != null ? createElement("option", { key: "__empty", value: "" }, emptyLabel) : null,
@@ -151,7 +172,7 @@ export function GroupedSelect({
           </View>
         )
         : (
-          <NativeGroupedSelect value={value} onChange={onChange} groups={groups} emptyLabel={emptyLabel} testID={testID} dense={dense} />
+          <NativeGroupedSelect value={value} onChange={onChange} groups={groups} emptyLabel={emptyLabel} testID={testID} dense={dense} swatchColor={swatchColor} />
         )}
     </View>
   );
