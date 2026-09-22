@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, Share, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -30,6 +30,10 @@ import {
   isChequePayment,
   isLockedPayment,
   lockedPaymentLabel,
+  paymentAmountColor,
+  paymentAmountPrefix,
+  paymentKindLabel,
+  paymentRowSurface,
   paymentEditFrom,
   paymentEditPayload,
   planPayload,
@@ -83,7 +87,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 
 export function ContactDetailScreen() {
   const { client, companyId, can, activeCompany, baseUrl } = useAuth();
-  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
+  const { id, name, collect } = useLocalSearchParams<{ id: string; name?: string; collect?: string }>();
   const canEditContact = can("/contacts", "edit");
   const canInvoice = can("/invoices", "edit");
   const canBank = can("/banking", "edit");
@@ -250,6 +254,7 @@ export function ContactDetailScreen() {
       const pool = isIn ? collectableAccounts(accs) : accs;
       const firstAcc = pool[0] ? idOf(pool[0]) : "";
       const firstPartner = pars.find((p) => p.is_active !== false);
+      setTab("payments");
       setPayForm({
         type: isIn ? "inflow" : "outflow",
         amount: Math.max(0, bal).toFixed(2),
@@ -264,6 +269,13 @@ export function ContactDetailScreen() {
       setError(apiErrorMessage(err, "Hesaplar yüklenemedi."));
     }
   };
+
+  const collectOpened = useRef(false);
+  useEffect(() => {
+    if (collectOpened.current || String(collect || "") !== "1" || !canBank || !data) return;
+    collectOpened.current = true;
+    void openPay();
+  }, [canBank, collect, data, openPay]);
 
   const savePay = async () => {
     if (!payForm) return;
@@ -658,12 +670,12 @@ export function ContactDetailScreen() {
   const actionTiles: ActionTile[] = [
     canEditContact && { key: "edit", label: "Düzenle", icon: "create" as const, tone: "slate" as const, testID: "detail-edit-contact-btn", onPress: () => go("ContactEdit", { id }) },
     { key: "statement", label: "Ekstre", icon: "document-text" as const, tone: "indigo" as const, testID: "detail-statement-btn", onPress: () => go("ContactStatement", { id, name: c.name || name }) },
+    canBank && { key: "collect", label: "Tahsilat", icon: "wallet" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
     canQuote && { key: "quote", label: "Teklif", icon: "create" as const, tone: "amber" as const, testID: "detail-quote-btn", onPress: () => go("QuoteNew", docParams) },
     canOrder && { key: "order", label: "Sipariş", icon: "cart" as const, tone: "orange" as const, testID: "detail-order-btn", onPress: () => (can("/saha") ? go("Field", { contact_id: id, contact_name: c.name || name }) : go("Orders")) },
     canSurvey && { key: "survey", label: "Keşif", icon: "construct" as const, tone: "teal" as const, testID: "detail-survey-btn", onPress: () => go("SurveyNew", docParams) },
     canInvoice && { key: "sell", label: "Satış yap", icon: "arrow-up-circle" as const, tone: "emerald" as const, testID: "detail-sell-btn", onPress: () => go("InvoiceNew", { type: "sales", ...docParams }) },
     canInvoice && { key: "buy", label: "Alış yap", icon: "arrow-down-circle" as const, tone: "sky" as const, testID: "detail-buy-btn", onPress: () => go("InvoiceNew", { type: "purchase", ...docParams }) },
-    canBank && { key: "collect", label: "Tahsilat", icon: "wallet" as const, tone: "emerald" as const, testID: "detail-collect-btn", onPress: openPay },
     { key: "message", label: "Mesaj", icon: "chatbubble-ellipses" as const, tone: "violet" as const, testID: "detail-message-btn", onPress: openMessage },
     canEditContact && {
       key: "terms",
@@ -772,8 +784,6 @@ export function ContactDetailScreen() {
           <Row style={{ flexWrap: "wrap" }}>
             <Chip label="Tahsilat (müşteriden)" active={payForm.type === "inflow"} testID="collect-type-in" onPress={() => setPayForm({ ...payForm, type: "inflow", description: payForm.method === "cash" ? "Cari tahsilat" : payForm.description })} />
             <Chip label="Ödeme (cariye)" active={payForm.type === "outflow"} testID="collect-type-out" color={colors.danger} onPress={() => setPayForm({ ...payForm, type: "outflow", description: payForm.method === "cash" ? "Cari ödeme" : payForm.description })} />
-            <Chip label="Çek tahsilatı" active={false} testID="collect-type-cheque" onPress={() => openPaper("cheque", "inflow")} />
-            <Chip label="Senet tahsilatı" active={false} testID="collect-type-promissory" onPress={() => openPaper("promissory", "inflow")} />
           </Row>
           <Muted>Tahsil şekli</Muted>
           <Row style={{ flexWrap: "wrap" }}>
@@ -909,17 +919,34 @@ export function ContactDetailScreen() {
               <PrimaryButton title="Vazgeç" onPress={() => setPayEdit(null)} testID="pay-edit-cancel" />
             </Card>
           ) : null}
-          {!payments.length ? <Muted>Ödeme yok.</Muted> : payments.map((p: ContactPayment, idx: number) => {
+          {!payments.length ? <Muted>Tahsilat / ödeme yok.</Muted> : payments.map((p: ContactPayment, idx: number) => {
             const locked = isLockedPayment(p);
             const chequeId = isChequePayment(p) ? chequeIdOfPayment(p, cheques) : "";
             const showChequeBtns = (canBank || canCheque) && isChequePayment(p);
+            const tone = paymentAmountColor(p);
+            const kind = paymentKindLabel(p);
+            const surface = paymentRowSurface(p);
             return (
-              <View key={idOf(p) || idx} style={{ gap: 4 }}>
+              <View
+                key={idOf(p) || idx}
+                style={{
+                  gap: 4,
+                  backgroundColor: surface.bg,
+                  borderRadius: 12,
+                  borderLeftWidth: 4,
+                  borderLeftColor: surface.border,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}
+              >
                 <ListRow
                   testID={`detail-pay-${idOf(p) || idx}`}
-                  title={`${p.type === "inflow" ? "Tahsilat" : p.type === "outflow" ? "Ödeme" : p.type || "Hareket"}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
+                  title={`${kind}${locked ? ` · ${lockedPaymentLabel(p)}` : ""}`}
+                  titleColor={tone}
                   subtitle={[fmtDate(p.date), p.account_name, p.description].filter(Boolean).join(" · ")}
-                  right={`${p.type === "inflow" ? "+" : "-"}${fmtMoney(p.amount)}`}
+                  right={`${paymentAmountPrefix(p)}${fmtMoney(p.amount)}`}
+                  rightColor={tone}
+                  badge={<Badge label={kind} tone={surface.badge} />}
                 />
                 <Row>
                   <View style={{ flex: 1 }}>
@@ -1116,6 +1143,7 @@ export function ContactDetailScreen() {
               baseUrl={baseUrl}
               onPatch={patchContactProject}
               onError={setError}
+              onCollect={canBank ? () => { void openPay(); } : undefined}
             />
           )}
         </>

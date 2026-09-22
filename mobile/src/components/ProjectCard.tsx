@@ -134,6 +134,7 @@ export function ProjectCard({
   onStatus,
   onTeam,
   onTrack,
+  onCollect,
   onPhotos,
   onPreview,
 }: {
@@ -146,6 +147,7 @@ export function ProjectCard({
   onStatus: (status: string) => void;
   onTeam: () => void;
   onTrack: () => void;
+  onCollect?: () => void;
   onPhotos: (id: string, patch: Pick<ProjectDoc, "stage_photos" | "images">) => void;
   onPreview: () => void;
 }) {
@@ -208,21 +210,28 @@ export function ProjectCard({
           onPress={() => go("ProjectDetail", { id, section: "expenses" })}
         />
       </Row>
-      {taskBits || trackLabel ? (
-        <Pressable onPress={() => go("ProjectDetail", { id })}>
-          <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-            {taskBits ? (
-              <View testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
-              </View>
-            ) : null}
-            {trackLabel ? (
-              <View testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
-                <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
-              </View>
-            ) : null}
-          </Row>
-        </Pressable>
+      {taskBits || trackLabel || onCollect ? (
+        <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          {taskBits ? (
+            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
+            </Pressable>
+          ) : null}
+          {trackLabel ? (
+            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
+            </Pressable>
+          ) : null}
+          {onCollect ? (
+            <Pressable
+              testID={`project-collect-badge-${id}`}
+              onPress={onCollect}
+              style={{ backgroundColor: colors.emerald50, borderRadius: 8, borderWidth: 1, borderColor: "#A7F3D0", paddingHorizontal: 8, paddingVertical: 4 }}
+            >
+              <Text style={{ fontWeight: "700", color: "#047857", fontSize: 11 }}>Tahsilat</Text>
+            </Pressable>
+          ) : null}
+        </Row>
       ) : null}
       {canEdit ? (
         <View style={{ marginTop: 8 }}>
@@ -290,17 +299,29 @@ export function ProjectCard({
             ) : null}
           </Row>
         ) : null}
-        {canEdit ? (
+        {canEdit || onCollect ? (
           <Row style={{ flexWrap: "wrap" }}>
-            <ActionBtn
-              title="Takip Linki"
-              testID={`project-track-${id}`}
-              onPress={onTrack}
-              bg={colors.emerald50}
-              border="#A7F3D0"
-              color="#047857"
-            />
-            {canCompleteProject(project.status) ? (
+            {onCollect ? (
+              <ActionBtn
+                title="Tahsilat"
+                testID={`project-collect-${id}`}
+                onPress={onCollect}
+                bg={colors.emerald50}
+                border="#A7F3D0"
+                color="#047857"
+              />
+            ) : null}
+            {canEdit ? (
+              <ActionBtn
+                title="Takip Linki"
+                testID={`project-track-${id}`}
+                onPress={onTrack}
+                bg={colors.indigo50}
+                border="#C7D2FE"
+                color="#3730A3"
+              />
+            ) : null}
+            {canEdit && canCompleteProject(project.status) ? (
               <ActionBtn
                 title={PROJECT_QUOTE_ACTION}
                 testID={`project-quote-${id}`}
@@ -579,6 +600,7 @@ export function ProjectCardsHost({
   baseUrl,
   onPatch,
   onError,
+  onCollect,
 }: {
   projects: ProjectDoc[];
   stages: ProjectStage[];
@@ -590,6 +612,7 @@ export function ProjectCardsHost({
   baseUrl: string;
   onPatch: (id: string, patch: Partial<ProjectDoc>) => void;
   onError: (msg: string) => void;
+  onCollect?: (project: ProjectDoc) => void;
 }) {
   const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
@@ -632,6 +655,7 @@ export function ProjectCardsHost({
             onStatus={(status) => setProjectStatus(id, status)}
             onTeam={() => setTeamProject(project)}
             onTrack={() => setTrackProject(project)}
+            onCollect={onCollect ? () => onCollect(project) : undefined}
             onPhotos={(pid, patch) => applyPatch(pid, patch)}
             onPreview={() => setPreviewProject(project)}
           />

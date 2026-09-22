@@ -168,6 +168,7 @@ export function ListRow({
   leading,
   image,
   badge,
+  titleColor,
   titleLines = 1,
   compactRight,
   onPress,
@@ -185,6 +186,7 @@ export function ListRow({
   leading?: React.ReactNode;
   image?: string;
   badge?: React.ReactNode;
+  titleColor?: string;
   titleLines?: number;
   compactRight?: boolean;
   onPress?: () => void;
@@ -199,7 +201,7 @@ export function ListRow({
       ) : null}
       <View style={{ flex: 1, minWidth: 80 }}>
         {isListRowNode(title) ? title : (
-          <Text style={styles.listTitle} numberOfLines={titleLines}>{listRowText(title)}</Text>
+          <Text style={[styles.listTitle, titleColor ? { color: titleColor } : null]} numberOfLines={titleLines}>{listRowText(title)}</Text>
         )}
         {subtitle ? <Text style={styles.muted} numberOfLines={2}>{listRowText(subtitle)}</Text> : null}
       </View>

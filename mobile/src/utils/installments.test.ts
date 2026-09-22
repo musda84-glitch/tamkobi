@@ -5,7 +5,12 @@ import {
   chequeIdOfPayment,
   isChequePayment,
   isLockedPayment,
+  isPaymentInflow,
   lockedPaymentLabel,
+  paymentAmountColor,
+  paymentAmountPrefix,
+  paymentKindLabel,
+  paymentRowSurface,
   paymentEditFrom,
   paymentEditPayload,
   planPayload,
@@ -58,6 +63,10 @@ describe("installments", () => {
     expect(lockedPaymentLabel({ source: "bank_sync" })).toBe("Banka");
     expect(isChequePayment({ source: "cheque", cheque_id: "c1" })).toBe(true);
     expect(isChequePayment({ source: "manual" })).toBe(false);
+    expect(isLockedPayment({ source: "expense" })).toBe(true);
+    expect(isLockedPayment({ source: "invoice", virtual: true })).toBe(true);
+    expect(lockedPaymentLabel({ source: "expense" })).toBe("Masraf");
+    expect(lockedPaymentLabel({ source: "invoice" })).toBe("Fatura");
     expect(chequeIdOfPayment({ cheque_id: "abc" })).toBe("abc");
     expect(chequeIdOfPayment({ id: "cheque-virt-xyz" })).toBe("xyz");
     expect(chequeIdOfPayment({ description: "CEK-2026-0001 · vade 2026-09-21" }, [{ id: "c9", number: "CEK-2026-0001" }])).toBe("c9");
@@ -70,6 +79,21 @@ describe("installments", () => {
     expect(validatePaymentEdit({ ...edit, amount: "0" })).toMatch(/Tutar/);
     expect(validatePaymentEdit({ ...edit, account_id: "" })).toMatch(/Kasa/);
     expect(paymentEditPayload(edit)).toEqual({ amount: 150, date: "2026-02-03", description: "Kasa", account_id: "acc1" });
+  });
+
+  it("colors tahsilat green and ödeme red", () => {
+    const collect = { type: "inflow" as const, amount: 50 };
+    const pay = { type: "outflow" as const, amount: 100 };
+    expect(isPaymentInflow(collect)).toBe(true);
+    expect(isPaymentInflow(pay)).toBe(false);
+    expect(paymentKindLabel(collect)).toBe("Tahsilat");
+    expect(paymentKindLabel(pay)).toBe("Ödeme");
+    expect(paymentAmountPrefix(collect)).toBe("+");
+    expect(paymentAmountPrefix(pay)).toBe("-");
+    expect(paymentAmountColor(collect)).toBe("#059669");
+    expect(paymentAmountColor(pay)).toBe("#E11D48");
+    expect(paymentRowSurface(collect)).toEqual({ bg: "#ECFDF5", border: "#059669", badge: "green" });
+    expect(paymentRowSurface(pay)).toEqual({ bg: "#FFF1F2", border: "#E11D48", badge: "red" });
   });
 
   it("maps vade form to apply-terms body", () => {

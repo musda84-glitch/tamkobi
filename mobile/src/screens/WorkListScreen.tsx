@@ -38,6 +38,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const canEdit = can(meta.perm, "edit");
   const canExp = can("/expenses", "edit");
   const canQuote = can("/quotes", "edit");
+  const canBank = can("/banking", "edit");
   const [quotes, setQuotes] = useState<QuoteDoc[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
   const [surveys, setSurveys] = useState<SurveyDoc[]>([]);
@@ -157,6 +158,11 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           baseUrl={baseUrl}
           onPatch={patchProject}
           onError={setError}
+          onCollect={canBank ? (project) => {
+            const cid = String(project.contact_id || "");
+            if (!cid) { setError("Bu projenin carisi yok."); return; }
+            go("ContactDetail", { id: cid, name: project.contact_name || "", collect: "1" });
+          } : undefined}
         />
       ) : filtered.map((r) => (
         <ListRow
