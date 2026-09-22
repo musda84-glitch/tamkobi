@@ -873,7 +873,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         disabled={!canEdit}
                         accessibilityLabel="Satır görseli ekle"
                         testID={`q-item-thumb-pick-${i}`}
-                        style={{ justifyContent: "center", position: "relative", cursor: "pointer" as const }}
+                        style={{ justifyContent: "center", cursor: "pointer" as const }}
                       >
                         <ProductThumb
                           uri={workItemImage(it, prod)}
@@ -881,23 +881,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           height={QUOTE_SERVICE_THUMB.height}
                           testID={`q-item-thumb-${i}`}
                         />
-                        {canEdit ? (
-                          <View
-                            style={{
-                              position: "absolute",
-                              bottom: 3,
-                              right: 3,
-                              width: 20,
-                              height: 20,
-                              borderRadius: 10,
-                              backgroundColor: colors.indigo,
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <Ionicons name="add" size={14} color="#fff" />
-                          </View>
-                        ) : null}
                       </Pressable>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                         <View>
