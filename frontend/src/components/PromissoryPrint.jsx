@@ -1,9 +1,9 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney, moneySuffix } from "../utils/money";
 
-const fmt = (n) => formatTrAmount((n || 0));
-const moneyWords = (n) => `${fmt(n)} Türk Lirası`;
+const currencyName = (c) => ({ TRY: "Türk Lirası", USD: "Amerikan Doları", EUR: "Euro", GBP: "Sterlin", CHF: "İsviçre Frangı", JPY: "Japon Yeni" }[c] || c);
+const moneyWords = (n, c) => `${fmtMoney(n, c).replace(` ${moneySuffix(c)}`, "")} ${currencyName(c)}`;
 
 /** Taksit planından üretilen senetleri yazdırır (her senet ayrı sayfa). */
 export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
@@ -21,7 +21,9 @@ export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
           </div>
         </div>
         <div id="print-area" className="p-4 space-y-6">
-          {notes.map((n, idx) => (
+          {notes.map((n, idx) => {
+            const ccy = n.currency || contact?.currency || company?.currency || "TRY";
+            return (
             <div key={n.id || n.number || idx} className="promissory-sheet border-2 border-slate-900 rounded-lg p-6 text-xs text-slate-900 break-inside-avoid" style={{ pageBreakAfter: idx < notes.length - 1 ? "always" : "auto" }}>
               <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3 mb-4">
                 <div>
@@ -51,8 +53,8 @@ export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
               </div>
               <div className="border border-slate-900 rounded-lg p-4 mb-4 bg-slate-50">
                 <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Bedel</div>
-                <div className="text-2xl font-black">{fmt(n.amount)} ₺</div>
-                <div className="text-slate-600 mt-1">Yalnız {moneyWords(n.amount)}</div>
+                <div className="text-2xl font-black">{fmtMoney(n.amount, ccy)}</div>
+                <div className="text-slate-600 mt-1">Yalnız {moneyWords(n.amount, ccy)}</div>
               </div>
               <p className="leading-relaxed mb-6">
                 İşbu senet bedeli nakden/malan ahzolunmuştur. Vadesinde {company?.name || "lehtar"} veya emrine yukarıda yazılı tutarı
@@ -69,7 +71,8 @@ export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       <style>{`@media print { body * { visibility: hidden !important; } #print-area, #print-area * { visibility: visible !important; } #print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } .promissory-sheet { border: 2px solid #000 !important; } }`}</style>

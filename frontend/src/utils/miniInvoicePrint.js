@@ -1,22 +1,23 @@
-import { formatTrAmount } from "./money";
+import { fmtMoney } from "./money";
 /** Compact invoice slip used by the orders bulk menu. */
 
 export const miniInvoiceSize = (key) => (key === "8x20" ? { w: 80, h: 200, label: "8×20 cm" } : { w: 100, h: 150, label: "10×15 cm" });
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const money = (n) => formatTrAmount((Number(n) || 0));
 
 export const buildMiniInvoiceHtml = (orders, company = {}, sizeKey = "10x15") => {
   const { w, h } = miniInvoiceSize(sizeKey);
   const pages = (orders || []).map((o) => {
-    const rows = (o.items || []).map((it) => `<tr><td>${esc(it.product_name || it.name)}</td><td class="r">${esc(it.quantity)} ${esc(it.unit || "ad")}</td><td class="r">${money(it.total_incl ?? it.total)} ₺</td></tr>`).join("");
+    const ccy = o.currency || company.currency || "TRY";
+    const money = (n) => fmtMoney(n, ccy);
+    const rows = (o.items || []).map((it) => `<tr><td>${esc(it.product_name || it.name)}</td><td class="r">${esc(it.quantity)} ${esc(it.unit || "ad")}</td><td class="r">${money(it.total_incl ?? it.total)}</td></tr>`).join("");
     const total = o.grand_total ?? o.total_amount ?? 0;
     return `<section class="slip">
       <div class="co">${esc(company.name || "")}</div>
       <div class="title">${esc(o.invoice_number || o.order_number)}</div>
       <div class="who">${esc(o.customer_name || "")}</div>
       <table>${rows}</table>
-      <div class="tot">Toplam <b>${money(total)} ₺</b></div>
+      <div class="tot">Toplam <b>${money(total)}</b></div>
     </section>`;
   }).join("");
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Mini fatura</title>

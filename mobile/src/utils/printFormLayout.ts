@@ -77,8 +77,9 @@ export const printNetAmount = (doc: Record<string, unknown> = {}, items: Record<
   return round2(items.reduce((sum, it) => sum + Number(it.total || 0), 0));
 };
 
-export const balanceSentence = (amount: unknown): string => {
+export const balanceSentence = (amount: unknown, currency = "TRY"): string => {
   if (amount == null || amount === "" || Number.isNaN(Number(amount))) return "";
   const formatted = Number(amount).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `Güncel bakiyeniz: ${formatted} TL`;
+  const suffix = !currency || currency === "TRY" ? "₺" : String(currency);
+  return `Güncel bakiyeniz: ${formatted} ${suffix}`;
 };

@@ -40,7 +40,8 @@ test("line total includes vat and shelf reads only a real location", () => {
   expect(printShelfLabel({}, { raf_yeri: "A-12" })).toBe("A-12");
 });
 
-test("balance sentence uses TL not the lira sign", () => {
-  expect(balanceSentence(1240)).toBe("Güncel bakiyeniz: 1.240,00 TL");
+test("balance sentence includes currency suffix", () => {
+  expect(balanceSentence(1240)).toBe("Güncel bakiyeniz: 1.240,00 ₺");
+  expect(balanceSentence(1240, "USD")).toBe("Güncel bakiyeniz: 1.240,00 USD");
   expect(balanceSentence(null)).toBe("");
 });

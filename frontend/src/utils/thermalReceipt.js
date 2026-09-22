@@ -1,9 +1,8 @@
-import { formatTrAmount } from "./money";
+import { fmtMoney } from "./money";
 /**
  * 80mm termal POS fişi — tarayıcı yazdırma penceresi (ESC/POS sürücüsü gerekmez).
  */
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-const money = (n) => formatTrAmount(Number(n || 0));
 
 const PAY_LABEL = { cash: "NAKİT", card: "KART", mixed: "NAKİT+KART" };
 
@@ -11,6 +10,8 @@ export function printThermalReceipt(receipt, { autoPrint = true } = {}) {
   if (!receipt) return false;
   const w = window.open("", "_blank", "width=420,height=720");
   if (!w) return false;
+  const ccy = receipt.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   const items = (receipt.items || [])
     .map((it) => {
       const meta = [it.lot_number && `Lot:${esc(it.lot_number)}`, it.serial_number && `Seri:${esc(it.serial_number)}`, it.expiry_date && `SKT:${esc(it.expiry_date)}`]
@@ -51,9 +52,9 @@ td.amt{text-align:right;white-space:nowrap;width:18mm}
   <div class="hr"></div>
   <table><tbody>${items}</tbody></table>
   <div class="hr"></div>
-  <div>Ara Toplam: ${money(receipt.subtotal)} ₺</div>
-  <div>KDV: ${money(receipt.vat_total)} ₺</div>
-  <div class="total">TOPLAM: ${money(receipt.grand_total)} ₺</div>
+  <div>Ara Toplam: ${money(receipt.subtotal)}</div>
+  <div>KDV: ${money(receipt.vat_total)}</div>
+  <div class="total">TOPLAM: ${money(receipt.grand_total)}</div>
   <div class="hr"></div>
   <div class="center foot">Bizi tercih ettiğiniz için teşekkürler.<br/>TamKobi Hızlı Satış</div>
 </section>

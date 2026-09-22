@@ -4599,6 +4599,7 @@ async def pos_checkout(req: Dict[str, Any], request: Request):
             "subtotal": subtotal,
             "vat_total": vat_total,
             "grand_total": grand,
+            "currency": invoice.get("currency") or company.get("currency") or "TRY",
         },
         "message": f"Satış tamamlandı: {grand:,.2f} ₺",
     }
@@ -4771,6 +4772,7 @@ async def pos_return(req: Dict[str, Any], request: Request):
             "subtotal": inv.get("subtotal") or 0,
             "vat_total": inv.get("vat_total") or 0,
             "grand_total": grand,
+            "currency": inv.get("currency") or company.get("currency") or "TRY",
             "is_return": True,
             "original_invoice_number": inv.get("invoice_number"),
         },

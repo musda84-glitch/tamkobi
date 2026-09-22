@@ -119,7 +119,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const thStyle = isMinimal ? { borderBottom: "2px solid #0f172a" } : isBold ? { backgroundColor: "#0f172a" } : { backgroundColor: color };
   const thCls = isMinimal ? "text-slate-900" : "text-white";
   const hideAll = !!tpl.hide_all_prices, hideLine = hideAll || !!tpl.hide_line_prices, hideVat = hideAll || !!tpl.hide_vat;
-  const suf = moneySuffix(doc.currency);
+  const suf = moneySuffix(doc.currency || company?.currency || "TRY");
   const fmtM = (n) => `${fmt(n)} ${suf}`;
   const title = tpl.title_override || docTitle(docType, doc);
   const itemNote = (it) => it.note || it.notes || it.description || it.line_note || "";
@@ -128,7 +128,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
   const showBarcode = tpl.show_barcode !== false;
   const vatLines = printVatLines(doc, items);
   const netAmount = printNetAmount(doc, items);
-  const balanceText = !hideAll ? balanceSentence(contactBalance) : "";
+  const balanceText = !hideAll ? balanceSentence(contactBalance, doc.currency || company?.currency || "TRY") : "";
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
@@ -351,7 +351,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Ödeme Planı ({plan.length} taksit)</div>
-              <table className="w-full border-collapse"><tbody>{plan.map((r) => <tr key={r.no} className="border-b border-slate-100"><td className="py-1 font-semibold">{r.label}</td><td className="py-1 text-slate-500 font-mono">{r.due_date}</td><td className="py-1 text-right font-semibold">{fmt(r.amount)} ₺</td><td className="py-1 text-right w-20">{r.status === "paid" ? <span className="text-emerald-700 font-bold">Ödendi</span> : r.status ? <span className="text-slate-400">Bekliyor</span> : null}</td></tr>)}</tbody></table>
+              <table className="w-full border-collapse"><tbody>{plan.map((r) => <tr key={r.no} className="border-b border-slate-100"><td className="py-1 font-semibold">{r.label}</td><td className="py-1 text-slate-500 font-mono">{r.due_date}</td><td className="py-1 text-right font-semibold">{fmtM(r.amount)}</td><td className="py-1 text-right w-20">{r.status === "paid" ? <span className="text-emerald-700 font-bold">Ödendi</span> : r.status ? <span className="text-slate-400">Bekliyor</span> : null}</td></tr>)}</tbody></table>
             </div>
           )}
           {(doc.notes || doc.terms) && <div className="mt-6 text-slate-600 whitespace-pre-wrap">{doc.notes}{doc.terms && <div className="mt-2"><b>Şartlar:</b> {doc.terms}</div>}</div>}

@@ -30,11 +30,21 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
 test("mini invoice slip uses the requested paper size", () => {
   expect(miniInvoiceSize("8x20")).toEqual({ w: 80, h: 200, label: "8×20 cm" });
   const html = buildMiniInvoiceHtml(
-    [{ order_number: "SIP-1", invoice_number: "FAT-1", customer_name: "Mustafa", items: [{ product_name: "Raf", quantity: 1, total: 100 }], grand_total: 110 }],
+    [{ order_number: "SIP-1", invoice_number: "FAT-1", customer_name: "Mustafa", items: [{ product_name: "Raf", quantity: 1, total: 100 }], grand_total: 110, currency: "USD" }],
     { name: "TamKobi" },
     "10x15"
   );
   expect(html).toContain("size:100mm 150mm");
   expect(html).toContain("Mustafa");
   expect(html).toContain("FAT-1");
+  expect(html).toContain("USD");
+  expect(html).not.toContain(" ₺");
+});
+
+test("mini invoice defaults to TRY suffix", () => {
+  const html = buildMiniInvoiceHtml(
+    [{ invoice_number: "FAT-2", items: [], grand_total: 50 }],
+    { name: "TamKobi" }
+  );
+  expect(html).toContain("₺");
 });

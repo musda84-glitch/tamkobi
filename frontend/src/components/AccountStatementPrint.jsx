@@ -2,9 +2,7 @@
 import React, { useMemo } from "react";
 import { Printer, X } from "lucide-react";
 import { useEscape } from "../utils/useEscape";
-import { formatTrAmount } from "../utils/money";
-
-const fmt = (n) => formatTrAmount((Number(n) || 0));
+import { fmtMoney } from "../utils/money";
 
 export const txSignedAmount = (tx, accountId) => {
   const amt = Number(tx.amount) || 0;
@@ -47,6 +45,8 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
   const { rows, opening, closing } = useMemo(() => buildAccountStatementRows(transactions, account), [transactions, account]);
   const totIn = rows.filter((r) => r.signed > 0).reduce((s, r) => s + r.signed, 0);
   const totOut = rows.filter((r) => r.signed < 0).reduce((s, r) => s + r.signed, 0);
+  const ccy = account?.currency || company?.currency || "TRY";
+  const money = (n) => fmtMoney(n, ccy);
   const subtitle = account
     ? `${account.bank_name || ""} — ${account.account_name || ""}`.trim()
     : title || "Tüm hesaplar";
@@ -93,7 +93,7 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
                 <tr className="border-b border-slate-100 bg-slate-50 font-semibold">
                   <td className="p-2" colSpan={4}>Açılış bakiyesi</td>
                   <td className="p-2 text-right" />
-                  <td className="p-2 text-right">{fmt(opening)} ₺</td>
+                  <td className="p-2 text-right">{money(opening)}</td>
                 </tr>
               )}
               {rows.map((r, i) => (
@@ -103,9 +103,9 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
                   <td className="p-2">{typeLabel(r)}</td>
                   <td className="p-2">{[r.description, r.contact_name].filter(Boolean).join(" • ")}</td>
                   <td className={`p-2 text-right font-bold ${r.signed > 0 ? "text-emerald-700" : r.signed < 0 ? "text-rose-700" : "text-slate-700"}`}>
-                    {r.signed > 0 ? "+" : ""}{fmt(r.signed)} ₺
+                    {r.signed > 0 ? "+" : ""}{money(r.signed)}
                   </td>
-                  {account && <td className="p-2 text-right font-semibold">{fmt(r.balance)} ₺</td>}
+                  {account && <td className="p-2 text-right font-semibold">{money(r.balance)}</td>}
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -114,9 +114,9 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-slate-900 font-bold">
-                <td className="p-2" colSpan={4}>TOPLAM · Giren +{fmt(totIn)} ₺ · Çıkan {fmt(totOut)} ₺</td>
-                <td className="p-2 text-right">{fmt(totIn + totOut)} ₺</td>
-                {account && <td className="p-2 text-right">{fmt(closing)} ₺</td>}
+                <td className="p-2" colSpan={4}>TOPLAM · Giren +{money(totIn)} · Çıkan {money(totOut)}</td>
+                <td className="p-2 text-right">{money(totIn + totOut)}</td>
+                {account && <td className="p-2 text-right">{money(closing)}</td>}
               </tr>
             </tfoot>
           </table>
@@ -124,7 +124,7 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
             <div className="mt-6 flex justify-end">
               <div className="rounded-xl px-4 py-3 text-right bg-slate-50 border border-slate-200">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div>
-                <div className="text-xl font-black text-slate-900">{fmt(closing)} ₺</div>
+                <div className="text-xl font-black text-slate-900">{money(closing)}</div>
               </div>
             </div>
           )}

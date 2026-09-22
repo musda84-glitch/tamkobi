@@ -6,7 +6,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Printer, X, Tag } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { isEan13 } from "../utils/barcodeFormat";
-import { formatTrAmount } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 
 const SIZES = [
   { key: "40x20", label: "40 × 20 mm (Raf)", w: 40, h: 20, img: false },
@@ -46,7 +46,8 @@ export const BarcodeLabelPrint = ({ product, company, onClose }) => {
   const [copies, setCopies] = useState(4);
   const [extra, setExtra] = useState("");
   const [opts, setOpts] = useState({ name: true, price: true, sku: true, image: true, company: true, tags: false, qr: false, extra: false });
-  const fmt = (n) => formatTrAmount((n || 0)) + " ₺";
+  const ccy = product.currency || company?.currency || "TRY";
+  const fmt = (n) => fmtMoney(n, ccy);
   const showImg = opts.image && size.img && target.image_url;
   const labelProps = { t: target, size, opts, showImg, company, fmt, extra };
 

@@ -1,4 +1,4 @@
-import { formatTrAmount } from "./money";
+import { formatTrAmount, moneySuffix } from "./money";
 /** Order and quote print forms share one line table (shelf, barcode, discount, VAT-incl.). */
 
 export const isOrderQuotePrint = (docType) => docType === "order" || docType === "quote";
@@ -75,8 +75,8 @@ export const printNetAmount = (doc = {}, items = []) => {
   return round2(items.reduce((sum, it) => sum + Number(it.total || 0), 0));
 };
 
-export const balanceSentence = (amount) => {
+export const balanceSentence = (amount, currency = "TRY") => {
   if (amount == null || amount === "" || Number.isNaN(Number(amount))) return "";
   const formatted = formatTrAmount(Number(amount));
-  return `Güncel bakiyeniz: ${formatted} TL`;
+  return `Güncel bakiyeniz: ${formatted} ${moneySuffix(currency)}`;
 };

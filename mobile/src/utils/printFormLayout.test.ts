@@ -51,8 +51,9 @@ describe("printFormLayout", () => {
     expect(printShelfLabel({}, { raf_yeri: "A-12" })).toBe("A-12");
   });
 
-  it("writes the balance sentence with TL, not the lira sign", () => {
-    expect(balanceSentence(1240)).toBe("Güncel bakiyeniz: 1.240,00 TL");
+  it("writes the balance sentence with currency suffix", () => {
+    expect(balanceSentence(1240)).toBe("Güncel bakiyeniz: 1.240,00 ₺");
+    expect(balanceSentence(1240, "USD")).toBe("Güncel bakiyeniz: 1.240,00 USD");
     expect(balanceSentence(null)).toBe("");
   });
 });
