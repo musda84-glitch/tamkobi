@@ -16,6 +16,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
+import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
 import { employeePayActionTitle, isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
@@ -81,14 +82,15 @@ export default function PersonnelPage() {
   const [taskEmp, setTaskEmp] = useState(null);
   const [ledgerEmp, setLedgerEmp] = useState(null);
   const [yevmiyeEmp, setYevmiyeEmp] = useState(null);
+  const [roleOptions, setRoleOptions] = useState([]);
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
 
   const emptyEmployee = {
     full_name: "",
     tc_kimlik: "",
-    department: "Satış & Pazarlama",
-    position: "Uzman",
+    department: "",
+    position: "",
     phone: "",
     email: "",
     salary: 35000,
@@ -183,6 +185,13 @@ export default function PersonnelPage() {
   useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
   const refreshPersonnelSilent = useCallback(() => loadPersonnelData(), [loadPersonnelData]);
   useDataRefresh(refreshPersonnelSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
+
+  useEffect(() => {
+    if (!companyId) return;
+    axios.get(`${API_URL}/personnel/role-options`, { params: { company_id: companyId } })
+      .then((r) => setRoleOptions(r.data?.roles || []))
+      .catch(() => setRoleOptions([]));
+  }, [companyId]);
 
   const loadPendingReqs = useCallback(async () => {
     if (!companyId) return;
@@ -468,7 +477,7 @@ export default function PersonnelPage() {
     setBusyReqId(id);
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision });
-      toast.success(r.data?.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      toast.success(r.data?.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
       await afterRequestDecision();
     } catch (err) {
       toast.error(err.response?.data?.detail || "İşlem başarısız.");
@@ -977,13 +986,17 @@ export default function PersonnelPage() {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Pozisyon / Görev</label>
-                  <input
-                    type="text"
+                  <select
                     value={newEmployee.position}
                     onChange={(e) => setNewEmployee({ ...newEmployee, position: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
                     data-testid="employee-position-input"
-                  />
+                  >
+                    <option value="">Rol seçin…</option>
+                    {positionOptionsFromRoles(roleOptions, newEmployee.position).map((o) => (
+                      <option key={`${o.code}-${o.value}`} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">

@@ -170,8 +170,8 @@ function AttendanceRecCard({
           ) : null}
           {yevAdj ? (
             <>
-              <PrimaryButton title="Yevmiye onayla" color={colors.primary} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
-              <PrimaryButton title="Kart ücreti" color={colors.danger} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
+              <PrimaryButton title="Ücret kes" color={colors.warning} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
+              <PrimaryButton title="Ücret kesme" color={colors.primary} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
             </>
           ) : null}
           {locExit ? (
@@ -1293,7 +1293,7 @@ export function PersonnelScreen() {
 
       {tab === "attendance" ? (
         <>
-          <Field label="Ay" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
+          <Field label="Aylık dönem" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
           {!(attendance?.summary || []).length ? (
             <Empty icon="time-outline" title="Puantaj yok" hint="Çalışan ekleyince giriş/çıkış burada görünür." />
           ) : (attendance?.summary || []).map((s: AttendanceSummary) => (

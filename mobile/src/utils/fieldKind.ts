@@ -1,3 +1,19 @@
+/** YYYY-AA / ay dönemi alanı → ay seçici. */
+export function fieldUsesMonthPicker(
+  testID?: string | null,
+  label?: string | null,
+  placeholder?: string | null,
+): boolean {
+  if (fieldUsesDatePicker(testID, placeholder)) return false;
+  const id = String(testID || "");
+  const lab = String(label || "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase().trim();
+  const ph = String(placeholder || "").trim();
+  if (/(month-input|-month$|bonus-period|pay-moves-month)$/.test(id)) return true;
+  if (ph === "YYYY-AA" || /^\d{4}-\d{2}$/.test(ph)) return true;
+  if (lab === "ay" || lab === "dönem" || lab.startsWith("dönem ")) return true;
+  return false;
+}
+
 /** YYYY-MM-DD placeholder veya tarih test id → takvim. */
 export function fieldUsesDatePicker(testID?: string | null, placeholder?: string | null): boolean {
   const ph = String(placeholder || "");

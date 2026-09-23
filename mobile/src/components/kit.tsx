@@ -16,12 +16,13 @@ import {
 } from "react-native";
 import { publicErrorMessage } from "../api/errors";
 import { colors, radius, spacing, typeface } from "../theme";
-import { fieldUsesDatePicker, fieldUsesTimePicker } from "../utils/fieldKind";
+import { fieldUsesDatePicker, fieldUsesMonthPicker, fieldUsesTimePicker } from "../utils/fieldKind";
 import { contentBottomPad, SCREEN_BASE_PAD } from "../utils/keyboardPad";
 import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
 import { trUpper } from "../utils/labels";
 import { listRowText, isListRowNode } from "../utils/listRow";
 import { DateField } from "./DateField";
+import { MonthField } from "./MonthField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
@@ -118,6 +119,18 @@ export function PrimaryButton({
 
 export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean; dense?: boolean }) {
   const { label, style, compact, dense, ...rest } = props;
+  if (fieldUsesMonthPicker(props.testID, label, typeof props.placeholder === "string" ? props.placeholder : undefined)) {
+    return (
+      <MonthField
+        label={label}
+        value={String(props.value ?? "")}
+        onChangeText={props.onChangeText || (() => { /* no-op */ })}
+        testID={props.testID}
+        editable={props.editable !== false}
+        dense={dense}
+      />
+    );
+  }
   if (fieldUsesDatePicker(props.testID, typeof props.placeholder === "string" ? props.placeholder : undefined)) {
     return (
       <DateField

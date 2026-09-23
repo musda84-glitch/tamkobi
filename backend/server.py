@@ -8387,8 +8387,8 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "id": att.get("_id") or att.get("id"),
             "employee_id": att.get("employee_id"),
             "employee_name": att.get("employee_name") or "—",
-            "title": "Yevmiye düzeltmesi",
-            "detail": f"{att.get('date') or ''} · kart {float(full_amt):,.2f} ₺ → önerilen {float(proposed):,.2f} ₺"
+            "title": "Geç giriş — ücret",
+            "detail": f"{att.get('date') or ''} · tam {float(full_amt):,.2f} ₺ → kesilecek {float(proposed):,.2f} ₺"
                       + (f" · {' · '.join(bits)}" if bits else ""),
             "created_at": adj.get("requested_at") or att.get("updated_at") or att.get("date") or "",
             "link": "/personnel?tab=attendance",
@@ -11960,6 +11960,22 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
     return {"status": "success", "finished": finished, "consumed": consumed, "message": f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")}
 
 # ----------------- PERSONEL & BORDRO -----------------
+@api_router.get("/personnel/role-options")
+async def personnel_role_options(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Personel kartı Pozisyon/Görev seçenekleri — şirket rollerinden (settings yetkisi gerekmez)."""
+    await rbac.ensure_roles(company_id)
+    roles = await db.roles.find({"company_id": company_id}, {"code": 1, "name": 1, "is_system": 1}).to_list(100)
+    rows = []
+    for r in roles:
+        name = (r.get("name") or "").strip()
+        code = (r.get("code") or "").strip()
+        if not name:
+            continue
+        rows.append({"code": code, "name": name, "is_system": bool(r.get("is_system"))})
+    rows.sort(key=lambda x: (0 if x.get("is_system") else 1, x["name"].lower()))
+    return {"roles": rows}
+
+
 @api_router.get("/personnel/employees")
 async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     employees = await db.employees.find({"company_id": company_id}).to_list(100)

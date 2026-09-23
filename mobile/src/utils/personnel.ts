@@ -204,7 +204,7 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   intraday_leave: "Gün içi izin",
   dispute: "İtiraz",
   advance: "Avans",
-  yevmiye_adjustment: "Yevmiye",
+  yevmiye_adjustment: "Geç giriş ücreti",
   location_exit: "Konum dışı",
 };
 
@@ -258,7 +258,7 @@ export function pendingRequestDecisionMessage(it: PendingRequest, approved: Requ
     return approved ? "Konum dışı çıkış onaylandı (kesinti yok)." : "Konum dışı çıkış reddedildi.";
   }
   if (it.kind === "yevmiye_adjustment") {
-    return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
+    return approved ? "Ücret kesildi." : "Ücret kesilmedi.";
   }
   if (it.kind === "dispute") {
     return approved ? "İtiraz düzeltildi olarak kapatıldı." : "İtiraz reddedildi.";
@@ -284,8 +284,8 @@ export function requestDecisionActions(kind?: string | null): { key: string; tit
   }
   if (kind === "yevmiye_adjustment") {
     return [
-      { key: "approve", title: "Onayla", decision: true, color: "primary" },
-      { key: "reject", title: "Kart ücreti", decision: false, color: "danger" },
+      { key: "approve", title: "Ücret kes", decision: true, color: "warning" },
+      { key: "reject", title: "Ücret kesme", decision: false, color: "primary" },
     ];
   }
   return [
@@ -835,11 +835,11 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
   return {
     full_name: "",
     tc_kimlik: "",
-    department: "Satış & Pazarlama",
-    position: "Uzman",
+    department: "",
+    position: "",
     phone: "",
     email: "",
-    salary: "35000",
+    salary: "",
     start_date: today,
     pay_type: "monthly",
     daily_wage: "",
@@ -852,6 +852,32 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
     emergency_contact: "",
     notes: "",
   };
+}
+
+export function positionOptionsFromRoles(
+  roles: { code?: string; name?: string }[] | null | undefined,
+  current = "",
+): { value: string; label: string; code: string }[] {
+  const seen = new Set<string>();
+  const opts: { value: string; label: string; code: string }[] = [];
+  for (const r of roles || []) {
+    const name = String(r?.name || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    opts.push({ value: name, label: name, code: String(r.code || "") });
+  }
+  const cur = String(current || "").trim();
+  if (cur && !seen.has(cur)) {
+    opts.unshift({ value: cur, label: `${cur} (kayıtlı)`, code: "" });
+  }
+  return opts;
+}
+
+export function positionSelectGroups(
+  roles: { code?: string; name?: string }[] | null | undefined,
+  current = "",
+): { label: string; options: { value: string; label: string }[] }[] {
+  return [{ label: "Roller", options: positionOptionsFromRoles(roles, current) }];
 }
 
 export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
@@ -993,12 +1019,12 @@ export function yevmiyeStatusLine(rec?: {
     return `Yevmiye ${proposed} ₺ önerildi — yönetici onayı bekleniyor`;
   }
   if (adj.status === "approved") {
-    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (geç/erken onaylandı)`;
+    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (ücret kesildi)`;
   }
   if (adj.status === "rejected" && full) {
-    return `Yevmiye ${full} ₺ (kart ücreti)`;
+    return `Yevmiye ${full} ₺ (ücret kesilmedi)`;
   }
-  if (full) return `Yevmiye ${full} ₺ (kart ücreti)`;
+  if (full) return `Yevmiye ${full} ₺`;
   return "";
 }
 

@@ -56,7 +56,7 @@ export const AttendancePanel = ({ companyId }) => {
   const decideYevmiye = async (id, decision) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision }, { withCredentials: true });
-      toast.success(r.data.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      toast.success(r.data.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
@@ -85,7 +85,7 @@ export const AttendancePanel = ({ companyId }) => {
   if (!data) return null;
   return (
     <div className="space-y-4 text-xs" data-testid="attendance-panel">
-      <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-600" /> Puantaj — Giriş / Çıkış & Mesai</h3><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-slate-50 border rounded-lg p-1.5" data-testid="attendance-month-input" /></div>
+      <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-600" /> Puantaj — Giriş / Çıkış & Mesai</h3><label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Aylık dönem<input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-xs font-semibold text-slate-800 normal-case tracking-normal" data-testid="attendance-month-input" /></label></div>
       <WorkScheduleSettings companyId={companyId} onSaved={load} />
       <ShiftPlanner companyId={companyId} onChanged={load} />
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Mesai</th><th className="px-4 py-2">Bugün</th><th className="px-4 py-2 text-right">Gün</th><th className="px-4 py-2 text-right">Devamsız</th><th className="px-4 py-2 text-right">İzin</th><th className="px-4 py-2 text-right">Saat</th><th className="px-4 py-2 text-right">F. Mesai</th><th className="px-4 py-2 text-right">Mesai ₺</th><th className="px-4 py-2 text-right">Geç</th><th className="px-4 py-2 text-right">Onaysız</th><th className="px-4 py-2"></th></tr></thead>
@@ -140,8 +140,8 @@ export const AttendancePanel = ({ companyId }) => {
               </span>
               {r.yevmiye_adjustment_request?.status === "pending" ? (
                 <>
-                  <button type="button" onClick={() => decideYevmiye(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-yevmiye-approve-${r.id}`}>Onayla</button>
-                  <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Kart ücreti</button>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-yevmiye-approve-${r.id}`}>Ücret kes</button>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Ücret kesme</button>
                 </>
               ) : null}
             </span>
